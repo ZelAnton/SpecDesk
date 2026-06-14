@@ -29,7 +29,7 @@ that directory:
 
 ```sh
 cd webview
-npm install          # no committed lockfile yet — install resolves the tree
+npm ci               # install exactly the committed package-lock.json
 npm run typecheck    # tsc --noEmit (strict; warnings-as-errors gate for types)
 npm run lint         # biome check .
 npm run format       # biome format --write .
@@ -50,8 +50,8 @@ npm run bundle       # esbuild → ../src/SpecDesk.Host/wwwroot/webview.js
   from the project graph and `BuildDependency` entries in the `.slnx`.
 - **F# compile order is significant** — list `.fs` files in dependency order in
   each `.fsproj`.
-- See [`AGENTS.md`](AGENTS.md) for the full, authoritative set of conventions
-  (exception-handling style, comments, architecture, multi-language layout).
+- See [`docs/`](docs/README.md) for architecture and design; the
+  [roadmap](docs/ROADMAP.md) tracks current milestones.
 
 ## Changelog
 

@@ -95,3 +95,10 @@ tab_width = 2
 
 [*.md]
 trim_trailing_whitespace = false
+
+# The webview is formatted by Biome (2-space). Override the repo-wide tab default
+# so editors honouring EditorConfig don't fight Biome on its .ts/.json files.
+[webview/**]
+indent_style = space
+indent_size = 2
+tab_width = 2

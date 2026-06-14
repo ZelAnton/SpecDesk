@@ -33,7 +33,7 @@ tests/
 webview/                   # TS  — CodeMirror editor, preview, IPC client (esbuild)
 ```
 
-See [AGENTS.md](AGENTS.md) for build/test/lint commands and contributor conventions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test/lint commands and contributor conventions.
 
 ## Quick start
 
