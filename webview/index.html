@@ -25,6 +25,19 @@
     <input id="echo-input" type="text" value="hello" />
     <button id="echo-btn" type="button">Echo</button>
     <div id="output">(no reply yet)</div>
+
+    <h2>PoC-1 — app:// assets</h2>
+    <p>These load from disk via the custom scheme:</p>
+    <img src="app://repo/sample.svg" alt="sample.svg via app://" width="64" height="64" />
+    <img src="app://repo/sample.png" alt="sample.png via app://" width="64" height="64" />
+    <p>
+      Traversal probe (must stay broken): a percent-encoded <code>../</code> survives URL
+      normalization, so this actually reaches the resolver, which rejects it via the containment
+      check (a plain <code>..</code> would be collapsed by WebView2 before the handler sees it).
+      <img src="app://repo/..%2f..%2fsample.svg" alt="blocked (path traversal rejected)"
+           width="32" height="32" />
+    </p>
+
     <script type="module" src="./webview.js"></script>
   </body>
 </html>

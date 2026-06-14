@@ -18,5 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Photino host wiring the bridge, and a webview echo round-trip correlated by message `id`.
   The `SpecDesk.Host` build now auto-bundles the webview (esbuild); skip with
   `-p:SkipWebview=true`.
+- PoC-1 — `app://` asset scheme: a Photino custom-scheme handler serves local files to the
+  webview, with path-traversal protection (`AppAssetResolver`). Lets the preview load local
+  images without `file://` CORS issues.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main
