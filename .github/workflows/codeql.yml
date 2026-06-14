@@ -39,7 +39,8 @@ jobs:
           build-mode: manual
 
       - name: Build
-        run: dotnet build SpecDesk.slnx --configuration Release
+        # -p:SkipWebview=true skips the Node-dependent BundleWebview target (no Node here).
+        run: dotnet build SpecDesk.slnx --configuration Release -p:SkipWebview=true
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4

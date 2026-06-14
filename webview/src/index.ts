@@ -1,35 +1,38 @@
 /**
- * SpecDesk webview — IPC client placeholder.
- *
- * The bundle (built with esbuild) runs inside the WebView2 surface hosted by
- * SpecDesk.Host. Messages are exchanged with the .NET host over Photino's
- * `window.external.sendMessage` channel. This is a scaffold: real message
- * kinds and payload shapes land with the IPC protocol implementation.
+ * SpecDesk webview entrypoint (PoC-0). Wires the echo demo: send the input text to the native
+ * host as an `echo` request and render the correlated reply. The real editor/preview UI lands
+ * in later PoCs.
  */
 
-interface HostBridge {
-  sendMessage?: (message: string) => void;
-}
+import { ipc, postReady } from "./ipc.js";
 
-/** Photino injects `window.external.sendMessage`; it is absent outside the host. */
-function hostBridge(): HostBridge | undefined {
-  return (globalThis as { external?: HostBridge }).external;
-}
-
-/**
- * Send a typed message to the .NET host. No-op (returns false) when not running
- * inside the host shell, so the same bundle can load in a plain browser for dev.
- */
-export function sendToHost(kind: string, payload: unknown): boolean {
-  const bridge = hostBridge();
-  if (!bridge?.sendMessage) {
-    return false;
+function wire(): void {
+  const input = document.querySelector<HTMLInputElement>("#echo-input");
+  const button = document.querySelector<HTMLButtonElement>("#echo-btn");
+  const output = document.querySelector<HTMLDivElement>("#output");
+  if (!input || !button || !output) {
+    return;
   }
-  bridge.sendMessage(JSON.stringify({ kind, payload }));
-  return true;
+
+  ipc.start();
+
+  button.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const reply = await ipc.request("echo", { text: input.value });
+        const payload = reply.payload as { text?: string } | undefined;
+        output.textContent = `Reply (id=${reply.id ?? "?"}): ${payload?.text ?? ""}`;
+      } catch (error) {
+        output.textContent = `Error: ${String(error)}`;
+      }
+    })();
+  });
+
+  postReady();
 }
 
-/** Announce to the host that the webview has finished loading. */
-export function postReady(): boolean {
-  return sendToHost("ready", null);
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", wire);
+} else {
+  wire();
 }

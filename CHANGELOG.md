@@ -14,5 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plan in `docs/ROADMAP.md`.
 - Cross-platform CI (Linux/Windows/macOS) building and testing the .NET solution and the
   webview, with NuGet dependency auditing, CodeQL (C# + TypeScript), and Dependabot.
+- PoC-0 — native↔webview IPC: a typed JSON envelope and router (`SpecDesk.Contracts`), a
+  Photino host wiring the bridge, and a webview echo round-trip correlated by message `id`.
+  The `SpecDesk.Host` build now auto-bundles the webview (esbuild); skip with
+  `-p:SkipWebview=true`.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

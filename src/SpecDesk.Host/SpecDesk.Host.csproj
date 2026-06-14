@@ -19,4 +19,20 @@
 		<PackageReference Include="Photino.NET" />
 	</ItemGroup>
 
+	<!--
+		Build the webview bundle (esbuild) before the .NET output is laid down, then stage the
+		generated wwwroot/ files. The Content items are added INSIDE the target, after the bundle
+		is written, so the fresh files are copied in the same build. Pass -p:SkipWebview=true to
+		skip this (the node-less CI .NET jobs do); `npm ci` runs only when node_modules is absent.
+	-->
+	<Target Name="BundleWebview" BeforeTargets="AssignTargetPaths"
+	        Condition="'$(SkipWebview)' != 'true' And Exists('$(RepoRoot)webview\package.json')">
+		<Exec Command="npm ci" WorkingDirectory="$(RepoRoot)webview"
+		      Condition="!Exists('$(RepoRoot)webview\node_modules')" />
+		<Exec Command="npm run bundle" WorkingDirectory="$(RepoRoot)webview" />
+		<ItemGroup>
+			<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+		</ItemGroup>
+	</Target>
+
 </Project>

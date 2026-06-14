@@ -1,5 +1,8 @@
 <Solution>
 	<Folder Name="/Tests/">
+		<Project Path="tests/SpecDesk.Contracts.Tests/SpecDesk.Contracts.Tests.csproj">
+			<BuildDependency Project="src/SpecDesk.Contracts/SpecDesk.Contracts.csproj" />
+		</Project>
 		<Project Path="tests/SpecDesk.Core.Tests/SpecDesk.Core.Tests.fsproj">
 			<BuildDependency Project="src/SpecDesk.Core/SpecDesk.Core.fsproj" />
 		</Project>

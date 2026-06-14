@@ -62,11 +62,13 @@ jobs:
       - name: Restore
         run: dotnet restore SpecDesk.slnx
 
+      # -p:SkipWebview=true skips the SpecDesk.Host BundleWebview target — this job has no
+      # Node.js; the webview is built and tested in the separate `webview` job below.
       - name: Build
-        run: dotnet build SpecDesk.slnx --no-restore --configuration Release
+        run: dotnet build SpecDesk.slnx --no-restore --configuration Release -p:SkipWebview=true
 
       - name: Test
-        run: dotnet test SpecDesk.slnx --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
+        run: dotnet test SpecDesk.slnx --no-build --configuration Release -p:SkipWebview=true --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
 
       # Test results are uploaded even when the Test step fails, so a red CI run
       # can be diagnosed from the .trx without re-running locally.
@@ -105,3 +107,6 @@ jobs:
       - run: npm run lint
 
       - run: npm test
+
+      # Exercise the esbuild pipeline (output is not committed — wwwroot/ is git-ignored).
+      - run: npm run bundle
