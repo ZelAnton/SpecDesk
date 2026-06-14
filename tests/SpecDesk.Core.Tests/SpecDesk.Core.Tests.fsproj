@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<!-- F# compile order is significant — list test files in dependency order. -->
+	<ItemGroup>
+		<Compile Include="PlaceholderTests.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\SpecDesk.Core\SpecDesk.Core.fsproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Explicit FSharp.Core required under Central Package Management. -->
+		<PackageReference Include="FSharp.Core" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="NUnit" />
+		<PackageReference Include="NUnit3TestAdapter" />
+	</ItemGroup>
+
+</Project>

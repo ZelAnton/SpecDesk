@@ -1,0 +1,21 @@
+<Solution>
+	<Folder Name="/Tests/">
+		<Project Path="tests/SpecDesk.Core.Tests/SpecDesk.Core.Tests.fsproj">
+			<BuildDependency Project="src/SpecDesk.Core/SpecDesk.Core.fsproj" />
+		</Project>
+		<Project Path="tests/SpecDesk.Markdown.Tests/SpecDesk.Markdown.Tests.fsproj">
+			<BuildDependency Project="src/SpecDesk.Markdown/SpecDesk.Markdown.fsproj" />
+		</Project>
+		<Project Path="tests/SpecDesk.Diff.Tests/SpecDesk.Diff.Tests.fsproj">
+			<BuildDependency Project="src/SpecDesk.Diff/SpecDesk.Diff.fsproj" />
+		</Project>
+	</Folder>
+	<Project Path="src/SpecDesk.Contracts/SpecDesk.Contracts.csproj" />
+	<Project Path="src/SpecDesk.Core/SpecDesk.Core.fsproj" />
+	<Project Path="src/SpecDesk.Markdown/SpecDesk.Markdown.fsproj" />
+	<Project Path="src/SpecDesk.Diff/SpecDesk.Diff.fsproj" />
+	<Project Path="src/SpecDesk.Git/SpecDesk.Git.csproj" />
+	<Project Path="src/SpecDesk.GitHub/SpecDesk.GitHub.csproj" />
+	<Project Path="src/SpecDesk.Ai/SpecDesk.Ai.csproj" />
+	<Project Path="src/SpecDesk.Host/SpecDesk.Host.csproj" />
+</Solution>
