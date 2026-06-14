@@ -1,0 +1,39 @@
+<Project>
+	<PropertyGroup>
+		<!-- Repository root — MSBuildThisFileDirectory is the directory containing this file (with trailing separator). -->
+		<RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+	</PropertyGroup>
+
+	<PropertyGroup>
+		<AnalysisLevel>latest-recommended</AnalysisLevel>
+		<LangVersion>latest</LangVersion>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+		<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+		<ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+		<RepositoryType>git</RepositoryType>
+		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+		<!-- Audit direct AND transitive dependencies against the NuGet advisory
+		     database on restore. NU1901-1904 (vulnerability) findings stay
+		     warnings here on purpose: with TreatWarningsAsErrors a freshly
+		     disclosed CVE would otherwise break every build until a fix ships.
+		     Promote them to errors per project if you want a hard gate. -->
+		<NuGetAudit>true</NuGetAudit>
+		<NuGetAuditMode>all</NuGetAuditMode>
+		<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+
+		<!-- The un-stamped template's project/assembly/namespace name __ProjectName__
+		     contains underscores, which trips CA1707 ("identifiers should not contain
+		     underscores") and — with TreatWarningsAsErrors — breaks the build before
+		     the template has been initialized. Suppress CA1707 only while a project
+		     name still contains an underscore, so it is silenced exactly for the
+		     placeholder and disappears on its own once scripts/init.ps1 renames the
+		     projects to your chosen (normally underscore-free) name, restoring the
+		     full latest-recommended analysis. If you deliberately pick a name with
+		     underscores, the suppression simply stays — a sensible default for that
+		     choice. -->
+		<NoWarn Condition="$(MSBuildProjectName.Contains('_'))">$(NoWarn);CA1707</NoWarn>
+	</PropertyGroup>
+</Project>

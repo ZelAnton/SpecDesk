@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\SpecDesk.Contracts\SpecDesk.Contracts.csproj" />
+		<ProjectReference Include="..\SpecDesk.Core\SpecDesk.Core.fsproj" />
+		<ProjectReference Include="..\SpecDesk.Markdown\SpecDesk.Markdown.fsproj" />
+		<ProjectReference Include="..\SpecDesk.Diff\SpecDesk.Diff.fsproj" />
+		<ProjectReference Include="..\SpecDesk.Git\SpecDesk.Git.csproj" />
+		<ProjectReference Include="..\SpecDesk.GitHub\SpecDesk.GitHub.csproj" />
+		<ProjectReference Include="..\SpecDesk.Ai\SpecDesk.Ai.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Photino.NET" />
+	</ItemGroup>
+
+</Project>
