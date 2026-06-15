@@ -10,10 +10,10 @@
 	<ItemGroup>
 		<!-- F# runtime — required explicitly on every F# project (lib AND test) under
 		     CPM, because the F# SDK's implicit FSharp.Core reference is dropped. -->
-		<PackageVersion Include="FSharp.Core" Version="9.0.300" />
+		<PackageVersion Include="FSharp.Core" Version="9.0.303" />
 
 		<!-- Production dependencies -->
-		<PackageVersion Include="Markdig" Version="0.42.0" />
+		<PackageVersion Include="Markdig" Version="0.45.0" />
 		<PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
 		<PackageVersion Include="Octokit" Version="14.0.0" />
 		<PackageVersion Include="Photino.NET" Version="4.0.16" />
