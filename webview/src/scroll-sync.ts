@@ -33,6 +33,17 @@ export class ScrollSync {
     this.clearSoon("preview");
   }
 
+  /**
+   * Suppress the next scroll event from both panes. Used around a height-sync reconcile, whose
+   * spacer/margin changes can shift scroll positions and would otherwise be read as a user scroll.
+   */
+  suppress(): void {
+    this.ignoreEditor = true;
+    this.ignorePreview = true;
+    this.clearSoon("editor");
+    this.clearSoon("preview");
+  }
+
   /** The preview scrolled; drive the editor unless this is our own echo. */
   fromPreview(): void {
     if (this.ignorePreview) {

@@ -32,5 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   F# rule engine (format sniff + re-encode/downscale/metadata-strip via ImageSharp, token
   expansion, slugified naming, `{hash8}` de-duplication, repository containment); the Markdown
   renderer rewrites relative image links to `app://`. Git staging is deferred to PoC-4.
+- Height-synced scroll: the editor now pads each source block with a spacer (or the preview with a
+  margin) so a tall rendered block — an image, heading, or wrapped line — lines up vertically with
+  its source. The panes track pixel-for-pixel instead of drifting between anchors, recomputing on
+  re-render, image load, font load, and window resize.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

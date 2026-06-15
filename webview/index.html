@@ -55,17 +55,39 @@
         overflow: hidden;
         border-right: 1px solid #ddd;
       }
-      /* The preview container is the scroll + offset parent for scroll-sync math. */
+      /* The preview container is the scroll + offset parent for scroll-sync math. Reserve the
+         scrollbar gutter so its width never changes when the scrollbar appears. */
       #preview {
         position: relative;
         overflow: auto;
+        scrollbar-gutter: stable;
         padding: 0 1.5rem;
       }
       .cm-editor {
         height: 100%;
       }
+      /* Reserve the editor's scrollbar gutter too. Without this, adding height-sync spacers makes
+         the scrollbar appear, which narrows the content and re-wraps lines, which changes the
+         spacers — an oscillating feedback loop while typing with wrapping on. */
+      .cm-scroller {
+        scrollbar-gutter: stable;
+      }
       #preview img {
         max-width: 100%;
+      }
+      /* The rendered block matching the editor's cursor line (prominent). */
+      #preview .sd-active-block {
+        background: #fff7d6;
+        box-shadow: -0.4rem 0 0 #fff7d6;
+      }
+      /* The rendered block under the mouse pointer (faint, auxiliary). */
+      #preview .sd-hover-block {
+        background: #f2f2f2;
+        box-shadow: -0.4rem 0 0 #f2f2f2;
+      }
+      /* The editor source line under the mouse pointer (faint, auxiliary). */
+      .cm-hover-line {
+        background: rgba(0, 0, 0, 0.035);
       }
       #preview table {
         border-collapse: collapse;
@@ -87,6 +109,8 @@
     <div id="toolbar">
       <button id="open-btn" type="button">Open…</button>
       <button id="save-btn" type="button">Save</button>
+      <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
+      <button id="trace-btn" type="button" aria-pressed="false">Trace: off</button>
       <span id="status">(no document)</span>
     </div>
     <div id="panes">

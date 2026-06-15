@@ -92,6 +92,9 @@ public sealed class HostController
 			case MessageKinds.ImagePaste:
 				OnImagePaste(message);
 				break;
+			case MessageKinds.TraceSave:
+				OnTraceSave(message);
+				break;
 			default:
 				// Unknown kinds are ignored — forward compatibility with later PoCs.
 				break;
@@ -258,6 +261,41 @@ public sealed class HostController
 				ReplyInserted(id, markdown);
 			}
 		});
+	}
+
+	private void OnTraceSave(IpcMessage message)
+	{
+		TraceSavePayload? payload = SafeGetPayload<TraceSavePayload>(message);
+		if (payload is null)
+		{
+			return;
+		}
+
+		// Write straight to a fixed file rather than via a save dialog — Photino's ShowSaveFile is
+		// unreliable here, and a debug trace just needs to land somewhere predictable. Use the
+		// user-profile root (MyDocuments can be redirected to a non-existent path on some machines).
+		string directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		if (string.IsNullOrEmpty(directory))
+		{
+			directory = Path.GetTempPath();
+		}
+
+		string path = Path.Combine(directory, "specdesk-trace.log");
+
+		try
+		{
+			Directory.CreateDirectory(directory);
+			File.WriteAllText(path, payload.Text);
+			_send(IpcSerializer.SerializeEvent(
+				MessageKinds.Error,
+				new ErrorPayload($"Trace saved to {path}")));
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_send(IpcSerializer.SerializeEvent(
+				MessageKinds.Error,
+				new ErrorPayload($"Could not save the trace: {ex.Message}")));
+		}
 	}
 
 	private void ReplyInserted(string? id, string markdown) =>

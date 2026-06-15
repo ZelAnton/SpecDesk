@@ -13,6 +13,7 @@ public static class MessageKinds
 	public const string ActionOpen = "action.open";
 	public const string ActionSave = "action.save";
 	public const string ImagePaste = "image.paste";
+	public const string TraceSave = "trace.save";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -42,3 +43,6 @@ public sealed record ImagePastePayload(string Base64, string? OriginalName, stri
 /// <summary>Payload of <c>image.inserted</c> (native→webview): the Markdown link to insert
 /// (empty when the image could not be processed).</summary>
 public sealed record ImageInsertedPayload(string Markdown);
+
+/// <summary>Payload of <c>trace.save</c> (webview→native): a diagnostic trace to write to a file.</summary>
+public sealed record TraceSavePayload(string Text);

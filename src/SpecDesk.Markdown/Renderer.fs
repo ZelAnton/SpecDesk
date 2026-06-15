@@ -8,6 +8,7 @@ open System.Collections.Generic
 open System.IO
 open System.Text.RegularExpressions
 open Markdig
+open Markdig.Extensions.Tables
 open Markdig.Renderers
 open Markdig.Renderers.Html
 open Markdig.Syntax
@@ -59,15 +60,38 @@ let render (docDir: string) (text: string) : RenderResult =
     let lines = Lines.build text
     let spans = ResizeArray<LineSpan>()
 
-    for block in doc do
-        let startLine = block.Line
-        let span = block.Span
+    // Stamp a scroll-sync anchor (data-line attributes + a line-map entry) onto a syntax node.
+    let tag (node: MarkdownObject) (startLine: int) (span: SourceSpan) =
         let endOffset = if span.End >= span.Start then span.End else span.Start
         let endLine = Lines.lineOfOffset lines endOffset
-        let attrs = block.GetAttributes()
+        let attrs = node.GetAttributes()
         attrs.AddProperty("data-line-start", string startLine)
         attrs.AddProperty("data-line-end", string endLine)
         spans.Add({ LineStart = startLine; LineEnd = endLine })
+
+    // Anchor at the finest rendered granularity so each source line aligns with its rendered
+    // counterpart — not just the top of a multi-line block. Container blocks are recursed into and
+    // never tagged themselves (tagging both a container and its child would place a misaligned
+    // spacer); only the leaf rendered elements (<p>, <h*>, <li>, <tr>, <hr>, <pre>) carry anchors.
+    let rec tagTree (block: Block) =
+        match block with
+        | :? Table as table ->
+            for rowObject in table do
+                match rowObject with
+                | :? TableRow as row -> tag row row.Line row.Span
+                | _ -> ()
+        | :? ListBlock as list ->
+            for itemObject in list do
+                match itemObject with
+                | :? ListItemBlock as item -> tag item item.Line item.Span
+                | _ -> ()
+        | :? QuoteBlock as quote -> for child in quote do tagTree child
+        | :? LeafBlock -> tag block block.Line block.Span
+        | :? ContainerBlock as container -> for child in container do tagTree child
+        | _ -> ()
+
+    for block in doc do
+        tagTree block
 
     use writer = new StringWriter()
     let htmlRenderer = HtmlRenderer(writer)

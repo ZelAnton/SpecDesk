@@ -6,10 +6,10 @@ open SpecDesk.Markdown
 let private occurrences (sub: string) (s: string) : int = s.Split(sub).Length - 1
 
 [<Test>]
-let ``line map has one entry per top-level block`` () =
+let ``line map has one entry per rendered anchor (list items counted individually)`` () =
     let result = Renderer.render "" "# H\n\npara\n\n- a\n- b"
-    // heading, paragraph, list = 3 top-level blocks
-    Assert.That(result.LineMap.Length, Is.EqualTo 3)
+    // heading + paragraph + two list items = 4 anchors (lists are anchored per item)
+    Assert.That(result.LineMap.Length, Is.EqualTo 4)
 
 [<Test>]
 let ``a multi-line block carries its full source range`` () =
@@ -56,3 +56,26 @@ let ``absolute image links are left untouched`` () =
     let result = Renderer.render "" "![a](https://example.com/x.png) ![b](app://repo/y.png)"
     Assert.That(result.Html, Does.Contain "src=\"https://example.com/x.png\"")
     Assert.That(result.Html, Does.Contain "src=\"app://repo/y.png\"")
+
+[<Test>]
+let ``table rows are anchored individually, not the table block`` () =
+    // Header row (line 0) + data row (line 2) → two anchors, one per <tr>, none on <table>.
+    let result = Renderer.render "" "| A | B |\n| - | - |\n| 1 | 2 |"
+    Assert.That(result.LineMap.Length, Is.EqualTo 2)
+    Assert.That(result.Html, Does.Contain "<tr data-line-start=\"0\"")
+    Assert.That(result.Html, Does.Contain "<tr data-line-start=\"2\"")
+    Assert.That(result.Html, Does.Not.Contain "<table data-line-start")
+
+[<Test>]
+let ``list items are anchored individually, not the list block`` () =
+    let result = Renderer.render "" "- one\n- two\n- three"
+    Assert.That(result.LineMap.Length, Is.EqualTo 3)
+    Assert.That(result.Html, Does.Contain "<li data-line-start=\"0\"")
+    Assert.That(result.Html, Does.Contain "<li data-line-start=\"2\"")
+    Assert.That(result.Html, Does.Not.Contain "<ul data-line-start")
+
+[<Test>]
+let ``blockquote paragraphs are anchored, not the quote block`` () =
+    let result = Renderer.render "" "> quoted line"
+    Assert.That(result.Html, Does.Contain "<p data-line-start=\"0\"")
+    Assert.That(result.Html, Does.Not.Contain "<blockquote data-line-start")

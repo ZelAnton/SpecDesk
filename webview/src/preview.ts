@@ -11,6 +11,14 @@ export interface PreviewBlock {
   lineEnd: number;
 }
 
+/** A rendered block's source line range plus its measured pixel geometry (for height-sync). */
+export interface BlockGeometry {
+  lineStart: number;
+  lineEnd: number;
+  top: number;
+  height: number;
+}
+
 /**
  * Whether a `preview.html` result is fresh enough to apply: a result whose version is older than
  * the last one applied is stale and must be dropped (pure, so it is unit-tested directly).
@@ -41,9 +49,18 @@ export class Preview {
   private readonly el: HTMLElement;
   private lastVersion = -1;
   private blocks: PreviewBlock[] = [];
+  private onContentResize: (() => void) | undefined;
+  private onHover: ((line: number | null) => void) | undefined;
 
   constructor(el: HTMLElement) {
     this.el = el;
+    // Report the source line of the rendered block under the mouse (for the faint hover highlight).
+    this.el.addEventListener("mousemove", (event) => {
+      const block = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-line-start]");
+      const line = block ? Number(block.getAttribute("data-line-start")) : Number.NaN;
+      this.onHover?.(Number.isNaN(line) ? null : line);
+    });
+    this.el.addEventListener("mouseleave", () => this.onHover?.(null));
     // Links in the preview must never navigate the app away (the whole webview would be
     // replaced), and a `javascript:` URL must never execute. Swallow anchor clicks; opening
     // links externally is a later concern. This also blocks the `javascript:` scheme that
@@ -55,6 +72,21 @@ export class Preview {
     });
   }
 
+  /** Register a callback fired when rendered content changes height (e.g. an image finished loading). */
+  setOnContentResize(callback: () => void): void {
+    this.onContentResize = callback;
+  }
+
+  /** Register a callback fired with the 0-based source line of the block under the mouse (or null). */
+  setOnHover(callback: (line: number | null) => void): void {
+    this.onHover = callback;
+  }
+
+  /** Inner width of the preview (its wrapping width) — for diagnostics. */
+  contentWidth(): number {
+    return this.el.clientWidth;
+  }
+
   /** Inject a rendered result, dropping it if a newer one was already applied. Returns whether applied. */
   apply(html: string, version: number): boolean {
     if (!isFresh(this.lastVersion, version)) {
@@ -63,7 +95,46 @@ export class Preview {
     this.lastVersion = version;
     this.el.innerHTML = html;
     this.indexBlocks();
+    // Images change block heights only once they decode; re-sync heights on each load.
+    for (const img of this.el.querySelectorAll("img")) {
+      img.addEventListener("load", () => this.onContentResize?.(), { once: true });
+    }
     return true;
+  }
+
+  /** Per-block source-line range plus measured pixel geometry, in document order (for height-sync). */
+  blockGeometry(): BlockGeometry[] {
+    return this.blocks.map((block) => ({
+      lineStart: block.lineStart,
+      lineEnd: block.lineEnd,
+      top: this.blockTop(block.el),
+      height: block.el.getBoundingClientRect().height,
+    }));
+  }
+
+  /**
+   * Distance from the top of the scrolled content to an element's top, in a single coordinate
+   * system. `offsetTop` is relative to the offset parent (which differs for table rows vs. block
+   * elements), so we use bounding rects relative to the container instead.
+   */
+  private blockTop(el: HTMLElement): number {
+    return el.getBoundingClientRect().top - this.el.getBoundingClientRect().top + this.el.scrollTop;
+  }
+
+  /** Highlight the rendered block matching the editor's cursor line (and clear the others). */
+  highlightSourceLine(line: number): void {
+    const target = blockForLine(this.blocks, line);
+    for (const block of this.blocks) {
+      block.el.classList.toggle("sd-active-block", block === target);
+    }
+  }
+
+  /** Faintly highlight the rendered block under the mouse (null clears it). */
+  highlightHoverLine(line: number | null): void {
+    const target = line === null ? undefined : blockForLine(this.blocks, line);
+    for (const block of this.blocks) {
+      block.el.classList.toggle("sd-hover-block", target !== undefined && block === target);
+    }
   }
 
   /** Scroll the preview so the rendered block for the given 0-based source line aligns at the top. */
@@ -74,7 +145,8 @@ export class Preview {
     }
     const span = block.lineEnd - block.lineStart + 1;
     const fraction = span > 1 ? (line - block.lineStart) / span : 0;
-    this.el.scrollTop = block.el.offsetTop + fraction * block.el.offsetHeight;
+    this.el.scrollTop =
+      this.blockTop(block.el) + fraction * block.el.getBoundingClientRect().height;
   }
 
   /** The 0-based source line at the top of the preview viewport (the inverse of the above). */
@@ -82,7 +154,7 @@ export class Preview {
     const scrollTop = this.el.scrollTop;
     let current: PreviewBlock | undefined;
     for (const block of this.blocks) {
-      if (block.el.offsetTop <= scrollTop) {
+      if (this.blockTop(block.el) <= scrollTop) {
         current = block;
       } else {
         break;
@@ -92,9 +164,9 @@ export class Preview {
     if (current === undefined) {
       return 0;
     }
-    const height = current.el.offsetHeight;
+    const height = current.el.getBoundingClientRect().height;
     const span = current.lineEnd - current.lineStart + 1;
-    const fraction = height > 0 ? (scrollTop - current.el.offsetTop) / height : 0;
+    const fraction = height > 0 ? (scrollTop - this.blockTop(current.el)) / height : 0;
     return current.lineStart + Math.floor(fraction * span);
   }
 

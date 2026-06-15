@@ -11,6 +11,7 @@ export const Kinds = {
   actionOpen: "action.open",
   actionSave: "action.save",
   imagePaste: "image.paste",
+  traceSave: "trace.save",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
