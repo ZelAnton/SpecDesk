@@ -5,38 +5,94 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>SpecDesk</title>
     <style>
-      body {
+      :root {
         font-family: system-ui, sans-serif;
-        margin: 2rem;
         color: #1a1a1a;
       }
-      #output {
-        margin-top: 1rem;
-        padding: 0.75rem;
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      #toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid #ddd;
+        background: #fafafa;
+      }
+      #toolbar button {
+        padding: 0.3rem 0.8rem;
+      }
+      #status {
+        margin-left: auto;
+        color: #666;
+        font-size: 0.85rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 50%;
+      }
+      #panes {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+      }
+      #editor,
+      #preview {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        box-sizing: border-box;
+      }
+      /* CodeMirror manages its own scroller, so the outer pane must not scroll too. */
+      #editor {
+        overflow: hidden;
+        border-right: 1px solid #ddd;
+      }
+      /* The preview container is the scroll + offset parent for scroll-sync math. */
+      #preview {
+        position: relative;
+        overflow: auto;
+        padding: 0 1.5rem;
+      }
+      .cm-editor {
+        height: 100%;
+      }
+      #preview img {
+        max-width: 100%;
+      }
+      #preview table {
+        border-collapse: collapse;
+      }
+      #preview th,
+      #preview td {
+        border: 1px solid #ccc;
+        padding: 0.3rem 0.6rem;
+      }
+      #preview pre {
         background: #f3f3f3;
+        padding: 0.75rem;
         border-radius: 6px;
-        white-space: pre-wrap;
+        overflow: auto;
       }
     </style>
   </head>
   <body>
-    <h1>SpecDesk</h1>
-    <p>PoC-0 — native &harr; webview echo.</p>
-    <input id="echo-input" type="text" value="hello" />
-    <button id="echo-btn" type="button">Echo</button>
-    <div id="output">(no reply yet)</div>
-
-    <h2>PoC-1 — app:// assets</h2>
-    <p>These load from disk via the custom scheme:</p>
-    <img src="app://repo/sample.svg" alt="sample.svg via app://" width="64" height="64" />
-    <img src="app://repo/sample.png" alt="sample.png via app://" width="64" height="64" />
-    <p>
-      Traversal probe (must stay broken): a percent-encoded <code>../</code> survives URL
-      normalization, so this actually reaches the resolver, which rejects it via the containment
-      check (a plain <code>..</code> would be collapsed by WebView2 before the handler sees it).
-      <img src="app://repo/..%2f..%2fsample.svg" alt="blocked (path traversal rejected)"
-           width="32" height="32" />
-    </p>
+    <div id="toolbar">
+      <button id="open-btn" type="button">Open…</button>
+      <button id="save-btn" type="button">Save</button>
+      <span id="status">(no document)</span>
+    </div>
+    <div id="panes">
+      <div id="editor"></div>
+      <div id="preview"></div>
+    </div>
 
     <script type="module" src="./webview.js"></script>
   </body>

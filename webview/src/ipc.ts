@@ -87,12 +87,18 @@ export class IpcClient {
     this.handlers.get(message.kind)?.(message);
   }
 
-  /** Fire-and-forget message to the host. Returns false when no bridge is present. */
-  send(kind: string, payload?: unknown): boolean {
+  /**
+   * Fire-and-forget message to the host. Pass `opts.version` to stamp the monotonic editor
+   * counter onto the envelope (used by `editor.changed`). Returns false when no bridge is present.
+   */
+  send(kind: string, payload?: unknown, opts?: { version?: number }): boolean {
     if (!this.external?.sendMessage) {
       return false;
     }
     const message: IpcMessage = { kind, payload };
+    if (opts?.version !== undefined) {
+      message.version = opts.version;
+    }
     this.external.sendMessage(JSON.stringify(message));
     return true;
   }

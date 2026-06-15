@@ -6,7 +6,11 @@
 
 	<!-- F# compile order is significant — list files in dependency order. -->
 	<ItemGroup>
-		<Compile Include="Placeholder.fs" />
+		<Compile Include="Ast.fs" />
+		<Compile Include="Pipeline.fs" />
+		<Compile Include="Lines.fs" />
+		<Compile Include="Projection.fs" />
+		<Compile Include="Renderer.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

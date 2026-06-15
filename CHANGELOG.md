@@ -21,5 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PoC-1 — `app://` asset scheme: a Photino custom-scheme handler serves local files to the
   webview, with path-traversal protection (`AppAssetResolver`). Lets the preview load local
   images without `file://` CORS issues.
+- PoC-2 — editor + live preview + `lineMap`: a CodeMirror 6 source editor with a natively
+  rendered (Markdig) preview and bidirectional scroll-sync. `SpecDesk.Markdown` projects Markdig
+  to a line-stamped F# AST and renders HTML carrying `data-line-*` attributes plus a parallel line
+  map; the host (`HostController`/`PreviewCoordinator`) debounces, versions, and drops stale
+  renders so a fast typist never sees an out-of-date preview. Plain filesystem open/save included.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

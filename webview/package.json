@@ -30,6 +30,12 @@
     "lint": "biome check .",
     "format": "biome format --write ."
   },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.3.4",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.1",
+    "codemirror": "^6.0.2"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "esbuild": "^0.28.1",

@@ -1,38 +1,37 @@
 using Photino.NET;
-using SpecDesk.Contracts;
+using SpecDesk.Markdown;
 
 namespace SpecDesk.Host;
 
 internal static class Program
 {
-	// PoC-1 placeholder root for the app:// scheme.
+	// PoC-1 placeholder root for the app:// scheme + the demo document opened on launch.
 	// TODO(PoC-3/4): point AssetRoot at the opened repo working directory.
 	private static readonly string AssetRoot = Path.Combine(AppContext.BaseDirectory, "samples");
+	private static readonly string WelcomeDoc = Path.Combine(AssetRoot, "welcome.md");
 
 	[STAThread]
 	private static void Main()
 	{
-		// PoC-0 routes a single kind: an "echo" request is answered with an "echo.reply"
-		// carrying the same id and payload back. Later PoCs register real handlers here.
-		IpcRouter router = new IpcRouter()
-			.Register("echo", static request =>
-				new IpcMessage("echo.reply", Id: request.Id, Payload: request.Payload));
+		// Captured by the closures below; assigned before any message can arrive (Load is last).
+		PhotinoWindow? window = null;
 
-		PhotinoWindow window = new PhotinoWindow()
+		HostController controller = new(
+			render: Renderer.render,
+			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
+			// call from the background render task as well as from the message handler.
+			send: json => window!.SendWebMessage(json),
+			dialogs: new PhotinoFileDialogs(() => window!),
+			initialDocPath: WelcomeDoc);
+
+		window = new PhotinoWindow()
 			.SetTitle("SpecDesk")
 			.SetUseOsDefaultSize(false)
-			.SetSize(1024, 768)
+			.SetSize(1280, 800)
 			.Center()
 			// Custom scheme handlers must be registered before the page loads.
 			.RegisterCustomSchemeHandler("app", HandleAppAsset)
-			.RegisterWebMessageReceivedHandler((sender, message) =>
-			{
-				string? reply = router.Handle(message);
-				if (reply is not null && sender is PhotinoWindow source)
-				{
-					source.SendWebMessage(reply);
-				}
-			})
+			.RegisterWebMessageReceivedHandler((_, message) => controller.OnMessage(message))
 			.Load("wwwroot/index.html");
 
 		window.WaitForClose();
@@ -62,5 +61,51 @@ internal static class Program
 
 		contentType = "text/plain";
 		return Stream.Null;
+	}
+}
+
+/// <summary>Photino-backed native file pickers for <see cref="HostController"/>.</summary>
+internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window) : IFileDialogs
+{
+	private static readonly (string Name, string[] Extensions)[] Filters =
+	[
+		("Markdown", ["*.md", "*.markdown"]),
+		("All files", ["*.*"]),
+	];
+
+	public string? PickOpenFile() =>
+		OnUiThread(static w =>
+		{
+			string[] selection = w.ShowOpenFile("Open spec", string.Empty, false, Filters);
+			return selection.Length > 0 ? selection[0] : null;
+		});
+
+	public string? PickSaveFile(string? suggestedPath) =>
+		OnUiThread(w =>
+		{
+			string selection = w.ShowSaveFile("Save spec", suggestedPath ?? string.Empty, Filters);
+			return string.IsNullOrEmpty(selection) ? null : selection;
+		});
+
+	// Native file dialogs require the STA UI thread, but the web-message handler that triggers
+	// them may run on a background (MTA) thread. Marshal onto the window's UI thread via Invoke
+	// (which runs inline when already there) and block for the modal result.
+	private string? OnUiThread(Func<PhotinoWindow, string?> show)
+	{
+		PhotinoWindow w = window();
+		TaskCompletionSource<string?> completion = new();
+		w.Invoke(() =>
+		{
+			try
+			{
+				completion.SetResult(show(w));
+			}
+			catch (Exception)
+			{
+				// A dialog failure cancels the operation rather than crashing the UI thread.
+				completion.SetResult(null);
+			}
+		});
+		return completion.Task.GetAwaiter().GetResult();
 	}
 }

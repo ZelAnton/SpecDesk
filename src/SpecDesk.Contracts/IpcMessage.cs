@@ -35,6 +35,27 @@ public static class IpcSerializer
 		JsonSerializer.Serialize(message, Options);
 
 	/// <summary>
+	/// Build and serialize an outgoing envelope, encoding <paramref name="payload"/> as JSON with
+	/// the shared wire conventions. Use for native→webview events (and replies, via <paramref name="id"/>).
+	/// </summary>
+	public static string SerializeEvent(
+		string kind,
+		object? payload = null,
+		long? version = null,
+		string? id = null)
+	{
+		JsonElement? element = payload is null ? null : JsonSerializer.SerializeToElement(payload, Options);
+		return Serialize(new IpcMessage(kind, Id: id, Version: version, Payload: element));
+	}
+
+	/// <summary>
+	/// Deserialize the message's <c>payload</c> into <typeparamref name="T"/>, or return the type
+	/// default when there is no payload. Throws <see cref="JsonException"/> only on a shape mismatch.
+	/// </summary>
+	public static T? GetPayload<T>(this IpcMessage message) =>
+		message.Payload is { } element ? element.Deserialize<T>(Options) : default;
+
+	/// <summary>
 	/// Deserialize a wire string into an <see cref="IpcMessage"/>, returning <c>null</c> when
 	/// the input is not a valid envelope (malformed JSON, or no <c>kind</c>).
 	/// </summary>
