@@ -59,6 +59,30 @@ export class MarkdownEditor {
     return this.view.state.doc.toString();
   }
 
+  /** The editor's editable DOM element — where image paste/drop is captured. */
+  get contentDOM(): HTMLElement {
+    return this.view.contentDOM;
+  }
+
+  /** Current cursor position (used as the insert point for a pasted image). */
+  selectionHead(): number {
+    return this.view.state.selection.main.head;
+  }
+
+  /** Document position at the given client coordinates, or null (used for a drop point). */
+  posAtCoords(x: number, y: number): number | null {
+    return this.view.posAtCoords({ x, y });
+  }
+
+  /** Insert text at a position and place the cursor after it. */
+  insertAt(pos: number, text: string): void {
+    const clamped = Math.max(0, Math.min(pos, this.view.state.doc.length));
+    this.view.dispatch({
+      changes: { from: clamped, insert: text },
+      selection: { anchor: clamped + text.length },
+    });
+  }
+
   /** The 0-based source line at the top of the editor viewport. */
   topVisibleLine(): number {
     const rect = this.view.scrollDOM.getBoundingClientRect();

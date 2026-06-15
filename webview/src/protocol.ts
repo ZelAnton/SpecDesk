@@ -10,9 +10,11 @@ export const Kinds = {
   editorChanged: "editor.changed",
   actionOpen: "action.open",
   actionSave: "action.save",
+  imagePaste: "image.paste",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
+  imageInserted: "image.inserted",
   error: "error",
 } as const;
 
@@ -37,4 +39,16 @@ export interface DocLoadedPayload {
 /** Payload of `error` (native→webview). */
 export interface ErrorPayload {
   message: string;
+}
+
+/** Payload of `image.paste` (webview→native): one captured image as base64. */
+export interface ImagePastePayload {
+  base64: string;
+  originalName: string;
+  mime: string;
+}
+
+/** Payload of `image.inserted` (native→webview): the Markdown link to insert (empty on failure). */
+export interface ImageInsertedPayload {
+  markdown: string;
 }

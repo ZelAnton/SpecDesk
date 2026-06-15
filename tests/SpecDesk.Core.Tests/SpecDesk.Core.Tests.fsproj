@@ -7,7 +7,12 @@
 
 	<!-- F# compile order is significant — list test files in dependency order. -->
 	<ItemGroup>
-		<Compile Include="PlaceholderTests.fs" />
+		<Compile Include="TestImages.fs" />
+		<Compile Include="SlugTests.fs" />
+		<Compile Include="TokensTests.fs" />
+		<Compile Include="ImagesConfigTests.fs" />
+		<Compile Include="ImageProcessingTests.fs" />
+		<Compile Include="ImageEngineTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -5,11 +5,13 @@
  */
 
 import { MarkdownEditor } from "./editor.js";
+import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
 import { Preview } from "./preview.js";
 import {
   type DocLoadedPayload,
   type ErrorPayload,
+  type ImageInsertedPayload,
   Kinds,
   type PreviewPayload,
 } from "./protocol.js";
@@ -39,6 +41,26 @@ function wire(): void {
   sync = new ScrollSync(editor, preview);
   const reportPreviewScroll = rafThrottle(() => sync?.fromPreview());
   previewEl.addEventListener("scroll", reportPreviewScroll);
+
+  attachImageCapture(editor, (image) => {
+    void (async () => {
+      try {
+        const reply = await ipc.request(Kinds.imagePaste, {
+          base64: image.base64,
+          originalName: image.originalName,
+          mime: image.mime,
+        });
+        const payload = reply.payload as ImageInsertedPayload | undefined;
+        if (payload?.markdown) {
+          editor.insertAt(image.pos, payload.markdown);
+        }
+      } catch (error) {
+        if (statusEl) {
+          statusEl.textContent = `Image insert failed: ${String(error)}`;
+        }
+      }
+    })();
+  });
 
   ipc.on(Kinds.previewHtml, (message) => {
     const payload = message.payload as PreviewPayload | undefined;

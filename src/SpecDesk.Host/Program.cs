@@ -1,14 +1,14 @@
 using Photino.NET;
+using SpecDesk.Core;
 using SpecDesk.Markdown;
 
 namespace SpecDesk.Host;
 
 internal static class Program
 {
-	// PoC-1 placeholder root for the app:// scheme + the demo document opened on launch.
-	// TODO(PoC-3/4): point AssetRoot at the opened repo working directory.
-	private static readonly string AssetRoot = Path.Combine(AppContext.BaseDirectory, "samples");
-	private static readonly string WelcomeDoc = Path.Combine(AssetRoot, "welcome.md");
+	// The demo document opened on launch; its directory becomes the repo root (and app:// root).
+	private static readonly string WelcomeDoc =
+		Path.Combine(AppContext.BaseDirectory, "samples", "welcome.md");
 
 	[STAThread]
 	private static void Main()
@@ -22,6 +22,7 @@ internal static class Program
 			// call from the background render task as well as from the message handler.
 			send: json => window!.SendWebMessage(json),
 			dialogs: new PhotinoFileDialogs(() => window!),
+			inserter: InsertImage,
 			initialDocPath: WelcomeDoc);
 
 		window = new PhotinoWindow()
@@ -29,33 +30,67 @@ internal static class Program
 			.SetUseOsDefaultSize(false)
 			.SetSize(1280, 800)
 			.Center()
-			// Custom scheme handlers must be registered before the page loads.
-			.RegisterCustomSchemeHandler("app", HandleAppAsset)
+			// Custom scheme handlers must be registered before the page loads. The asset root
+			// follows the open document's repo (null until the first document loads).
+			.RegisterCustomSchemeHandler(
+				"app",
+				(object _, string _, string url, out string contentType) =>
+					ServeAsset(controller.RepoRoot, url, out contentType))
 			.RegisterWebMessageReceivedHandler((_, message) => controller.OnMessage(message))
 			.Load("wwwroot/index.html");
 
 		window.WaitForClose();
 	}
 
-	// Serve files referenced as app://<authority>/<path> from the asset root. A rejected
-	// (traversal), missing, or unreadable file returns Stream.Null, so the resource simply
-	// fails to load. This runs as a native WebView2 callback, so it must never let an exception
-	// escape into the message pump.
-	private static Stream HandleAppAsset(object sender, string scheme, string url, out string contentType)
+	// The image rule engine adapter: read the repo's .spectool.toml (if any) and run the F# engine.
+	private static string? InsertImage(
+		string repoRoot,
+		string docPath,
+		byte[] bytes,
+		string? originalName,
+		string? mime)
 	{
-		ResolvedAsset? asset = AppAssetResolver.Resolve(AssetRoot, url);
-		if (asset is not null)
+		string? toml = TryReadToml(Path.Combine(repoRoot, ".spectool.toml"));
+		ImageEngine.InsertOutcome outcome =
+			ImageEngine.insertForHost(repoRoot, docPath, toml, bytes, originalName, mime);
+		return outcome.Markdown;
+	}
+
+	private static string? TryReadToml(string path)
+	{
+		try
 		{
-			try
+			return File.Exists(path) ? File.ReadAllText(path) : null;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// A config we cannot read is treated as absent — the engine falls back to defaults.
+			return null;
+		}
+	}
+
+	// Serve files referenced as app://<authority>/<path> from the current repo root. A rejected
+	// (traversal), missing, or unreadable file — or no open document yet — returns Stream.Null, so
+	// the resource simply fails to load. This runs as a native WebView2 callback, so it must never
+	// let an exception escape into the message pump.
+	private static Stream ServeAsset(string? root, string url, out string contentType)
+	{
+		if (!string.IsNullOrEmpty(root))
+		{
+			ResolvedAsset? asset = AppAssetResolver.Resolve(root, url);
+			if (asset is not null)
 			{
-				Stream stream = File.OpenRead(asset.FilePath);
-				contentType = asset.ContentType;
-				return stream;
-			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-			{
-				// File vanished between resolution and open (TOCTOU), is locked, or is not
-				// readable. Fall through to the broken-resource response below.
+				try
+				{
+					Stream stream = File.OpenRead(asset.FilePath);
+					contentType = asset.ContentType;
+					return stream;
+				}
+				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+				{
+					// File vanished between resolution and open (TOCTOU), is locked, or is not
+					// readable. Fall through to the broken-resource response below.
+				}
 			}
 		}
 

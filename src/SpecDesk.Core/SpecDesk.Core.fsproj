@@ -6,7 +6,11 @@
 
 	<!-- F# compile order is significant — list files in dependency order. -->
 	<ItemGroup>
-		<Compile Include="Placeholder.fs" />
+		<Compile Include="Slug.fs" />
+		<Compile Include="ImagesConfig.fs" />
+		<Compile Include="Tokens.fs" />
+		<Compile Include="ImageProcessing.fs" />
+		<Compile Include="ImageEngine.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -16,6 +20,7 @@
 	<ItemGroup>
 		<!-- Explicit FSharp.Core required under Central Package Management. -->
 		<PackageReference Include="FSharp.Core" />
+		<PackageReference Include="SixLabors.ImageSharp" />
 	</ItemGroup>
 
 </Project>

@@ -7,20 +7,20 @@ let private occurrences (sub: string) (s: string) : int = s.Split(sub).Length - 
 
 [<Test>]
 let ``line map has one entry per top-level block`` () =
-    let result = Renderer.render "# H\n\npara\n\n- a\n- b"
+    let result = Renderer.render "" "# H\n\npara\n\n- a\n- b"
     // heading, paragraph, list = 3 top-level blocks
     Assert.That(result.LineMap.Length, Is.EqualTo 3)
 
 [<Test>]
 let ``a multi-line block carries its full source range`` () =
-    let result = Renderer.render "para line one\npara line two\n\n# Heading"
+    let result = Renderer.render "" "para line one\npara line two\n\n# Heading"
     Assert.That(result.LineMap.[0].LineStart, Is.EqualTo 0)
     Assert.That(result.LineMap.[0].LineEnd, Is.EqualTo 1)
     Assert.That(result.LineMap.[1].LineStart, Is.EqualTo 3)
 
 [<Test>]
 let ``rendered html carries data-line attributes`` () =
-    let result = Renderer.render "# H"
+    let result = Renderer.render "" "# H"
     Assert.That(result.Html, Does.Contain "data-line-start=\"0\"")
     Assert.That(result.Html, Does.Contain "data-line-end=\"0\"")
 
@@ -32,11 +32,27 @@ let ``every top-level block emits a line attribute`` () =
     let md =
         "# Heading\n\nA paragraph.\n\n- item one\n- item two\n\n> a quote\n\n```\ncode\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n---\n"
 
-    let result = Renderer.render md
+    let result = Renderer.render "" md
     Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
 
 [<Test>]
 let ``raw html is escaped, not emitted as live markup`` () =
-    let result = Renderer.render "<script>alert(1)</script>"
+    let result = Renderer.render "" "<script>alert(1)</script>"
     Assert.That(result.Html, Does.Not.Contain "<script>")
     Assert.That(result.Html, Does.Contain "&lt;script&gt;")
+
+[<Test>]
+let ``relative image link is rewritten to the app scheme`` () =
+    let result = Renderer.render "" "![alt](images/welcome/pic.png)"
+    Assert.That(result.Html, Does.Contain "src=\"app://repo/images/welcome/pic.png\"")
+
+[<Test>]
+let ``relative image link is resolved against the document directory`` () =
+    let result = Renderer.render "docs/specs" "![alt](img/pic.png)"
+    Assert.That(result.Html, Does.Contain "src=\"app://repo/docs/specs/img/pic.png\"")
+
+[<Test>]
+let ``absolute image links are left untouched`` () =
+    let result = Renderer.render "" "![a](https://example.com/x.png) ![b](app://repo/y.png)"
+    Assert.That(result.Html, Does.Contain "src=\"https://example.com/x.png\"")
+    Assert.That(result.Html, Does.Contain "src=\"app://repo/y.png\"")

@@ -12,10 +12,12 @@ public static class MessageKinds
 	public const string EditorChanged = "editor.changed";
 	public const string ActionOpen = "action.open";
 	public const string ActionSave = "action.save";
+	public const string ImagePaste = "image.paste";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
 	public const string PreviewHtml = "preview.html";
+	public const string ImageInserted = "image.inserted";
 	public const string Error = "error";
 }
 
@@ -33,3 +35,10 @@ public sealed record DocLoadedPayload(string Path, string Text);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);
+
+/// <summary>Payload of <c>image.paste</c> (webview→native): one captured image as base64.</summary>
+public sealed record ImagePastePayload(string Base64, string? OriginalName, string? Mime);
+
+/// <summary>Payload of <c>image.inserted</c> (native→webview): the Markdown link to insert
+/// (empty when the image could not be processed).</summary>
+public sealed record ImageInsertedPayload(string Markdown);

@@ -100,6 +100,16 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 > ⭐ This is the most important PoC. The `lineMap` and the single shared Markdig configuration
 > built here are reused by the diff (PoC‑6) and comments (PoC‑7). Do not rush it.
 
+> **Planned upgrade — height-synced scroll (PoC‑2 follow-up).** Today sync is *anchor-based*, so
+> the panes drift between anchors when a rendered block is taller than its source (an image,
+> heading, or soft-wrapped line is one source line but tall when rendered). The fix used by mature
+> Markdown editors is **height equalization via spacers**: per top-level block, measure both
+> heights (we already have the block↔line `lineMap`) and pad the *shorter* side to match — in the
+> editor via CodeMirror **block-widget decorations** below the source lines, and in the preview via
+> margins where the source is taller. Equal cumulative offsets ⇒ the panes align pixel-for-pixel
+> everywhere, not just at anchors. Recompute on each re-render, image load, font load, and window
+> resize; throttle for large documents. A dedicated step; not blocking PoC‑3.
+
 ## PoC‑3 — Image drop / paste → rule engine
 
 - **Goal:** drag or paste an image; it lands in the correct repo folder with a compliant name and a relative link appears at the cursor.

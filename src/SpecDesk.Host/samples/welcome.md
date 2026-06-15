@@ -39,7 +39,9 @@ let render (text: string) : RenderResult =
 
 1. Edit any line above.
 2. Scroll this pane — the editor follows.
-3. Use **Open…** to load another `.md`, or **Save** to write your edits back to disk.
+3. **Paste or drag an image** into the editor — it is saved into the repo, named automatically,
+   and linked here; the preview shows it straight away.
+4. Use **Open…** to load another `.md`, or **Save** to write your edits back to disk.
 
 ---
 
