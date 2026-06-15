@@ -34,6 +34,18 @@ export class ScrollSync {
   }
 
   /**
+   * Re-snap the preview precisely to the editor's top once scrolling has stopped. The live
+   * per-frame sync can rest a frame behind a momentum scroll's final position; this final pass
+   * uses the editor's sub-line-exact top so the panes' top edges line up. The editor (the code)
+   * is the reference — only the preview moves.
+   */
+  snapPreviewToEditor(): void {
+    this.ignorePreview = true;
+    this.preview.scrollToSourceLine(this.editor.topVisibleLineExact());
+    this.clearSoon("preview");
+  }
+
+  /**
    * Suppress the next scroll event from both panes. Used around a height-sync reconcile, whose
    * spacer/margin changes can shift scroll positions and would otherwise be read as a user scroll.
    */

@@ -137,14 +137,19 @@ export class Preview {
     }
   }
 
-  /** Scroll the preview so the rendered block for the given 0-based source line aligns at the top. */
+  /**
+   * Scroll the preview so the rendered block for the given source line aligns at the top. `line`
+   * may be fractional (see {@link MarkdownEditor.topVisibleLineExact}); the fractional part is
+   * interpolated across the block's height so a partly-scrolled source line maps to the matching
+   * point inside its rendered block rather than snapping to the block's top.
+   */
   scrollToSourceLine(line: number): void {
     const block = blockForLine(this.blocks, line);
     if (block === undefined) {
       return;
     }
     const span = block.lineEnd - block.lineStart + 1;
-    const fraction = span > 1 ? (line - block.lineStart) / span : 0;
+    const fraction = Math.min(Math.max((line - block.lineStart) / span, 0), 1);
     this.el.scrollTop =
       this.blockTop(block.el) + fraction * block.el.getBoundingClientRect().height;
   }

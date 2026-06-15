@@ -8,6 +8,7 @@ import { MarkdownEditor } from "./editor.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
+import { log } from "./log.js";
 import { Preview } from "./preview.js";
 import {
   type DocLoadedPayload,
@@ -26,18 +27,13 @@ function wire(): void {
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
-  const traceBtn = document.querySelector<HTMLButtonElement>("#trace-btn");
+  const exportLogBtn = document.querySelector<HTMLButtonElement>("#export-log-btn");
   if (!editorEl || !previewEl) {
     return;
   }
 
   const preview = new Preview(previewEl);
   let sync: ScrollSync | undefined;
-
-  // Diagnostic trace: when on, every height-sync summary is timestamped into a buffer; turning it
-  // off offers to save the buffer to a file (for diagnosing alignment without screenshots).
-  let tracing = false;
-  const traceLines: string[] = [];
 
   // Two cross-pane highlights: the caret line (prominent) and the mouse-hover line (faint,
   // auxiliary). Hover is suppressed when it coincides with the caret line so they don't fight.
@@ -58,6 +54,7 @@ function wire(): void {
       ipc.send(Kinds.editorChanged, { text }, { version });
     },
     onScroll: (topLine) => sync?.fromEditor(topLine),
+    onScrollSettle: () => sync?.snapPreviewToEditor(),
     onCursor: (line) => {
       activeLine = line;
       preview.highlightSourceLine(line);
@@ -74,22 +71,31 @@ function wire(): void {
   previewEl.addEventListener("scroll", reportPreviewScroll);
 
   // Height-sync: equalize editor/preview block heights so the panes align pixel-for-pixel.
-  // TEMP: surface the computed adjustments in the status bar to diagnose alignment.
-  const heightSync = new HeightSync(editor, preview, (summary) => {
-    if (statusEl) {
-      statusEl.textContent = summary;
-    }
-    if (tracing) {
-      traceLines.push(`${performance.now().toFixed(0)}ms ${summary}`);
-    }
-  });
+  // The per-reconcile summary goes to the structured log (file), not the status bar.
+  const heightSync = new HeightSync(editor, preview, (summary) => log.debug(summary));
   const reconcile = rafThrottle(() => {
     sync?.suppress();
     heightSync.reconcile();
   });
   preview.setOnContentResize(reconcile);
-  window.addEventListener("resize", reconcile);
   void document.fonts.ready.then(reconcile);
+
+  // On window resize both panes rewrap independently and height-sync must re-run. CodeMirror keeps
+  // its pixel scroll position (so the editor's top line shifts), while the preview keeps its own —
+  // so they drift apart. Re-equalize during the drag, then once it settles realign the preview to
+  // the editor's top line.
+  let resizeSettle: ReturnType<typeof setTimeout> | undefined;
+  window.addEventListener("resize", () => {
+    reconcile();
+    if (resizeSettle !== undefined) {
+      clearTimeout(resizeSettle);
+    }
+    resizeSettle = setTimeout(() => {
+      heightSync.reconcile();
+      sync?.suppress();
+      preview.scrollToSourceLine(editor.topVisibleLineExact());
+    }, 150);
+  });
 
   attachImageCapture(editor, (image) => {
     void (async () => {
@@ -104,9 +110,7 @@ function wire(): void {
           editor.insertAt(image.pos, payload.markdown);
         }
       } catch (error) {
-        if (statusEl) {
-          statusEl.textContent = `Image insert failed: ${String(error)}`;
-        }
+        log.error("Image paste request failed", String(error));
       }
     })();
   });
@@ -151,25 +155,13 @@ function wire(): void {
     reconcile(); // re-equalize for the new wrap mode (rafThrottle defers it past the relayout)
   });
 
-  traceBtn?.addEventListener("click", () => {
-    tracing = !tracing;
-    traceBtn.textContent = `Trace: ${tracing ? "on" : "off"}`;
-    traceBtn.setAttribute("aria-pressed", String(tracing));
-    if (tracing) {
-      traceLines.length = 0; // start a fresh capture
-    } else {
-      // Always hand the trace to the host so the Save dialog reliably opens, even if nothing was
-      // captured (e.g. no reconcile happened while tracing).
-      const text =
-        traceLines.length > 0
-          ? traceLines.join("\n")
-          : "(no height-sync events were captured during this trace)";
-      ipc.send(Kinds.traceSave, { text });
-    }
+  exportLogBtn?.addEventListener("click", () => {
+    ipc.send(Kinds.exportLog);
   });
 
   ipc.start();
   postReady();
+  log.info("Webview ready");
 }
 
 if (document.readyState === "loading") {

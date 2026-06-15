@@ -5,6 +5,7 @@
  */
 
 import type { MarkdownEditor } from "./editor.js";
+import { log } from "./log.js";
 
 export interface CapturedImage {
   base64: string;
@@ -36,7 +37,9 @@ async function emit(
 ): Promise<void> {
   for (const file of files) {
     const base64 = await readAsBase64(file).catch(() => null);
-    if (base64 !== null) {
+    if (base64 === null) {
+      log.warn("Could not read pasted image", { name: file.name, mime: file.type });
+    } else {
       onImage({ base64, originalName: file.name, mime: file.type, pos });
     }
   }

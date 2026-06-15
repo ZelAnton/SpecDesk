@@ -16,15 +16,20 @@ import type { EditorSpacer } from "./height-sync.js";
 import { rafThrottle } from "./raf.js";
 
 const DEBOUNCE_MS = 120;
+/** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
+const SCROLL_SETTLE_MS = 120;
 
 /** A zero-content block of a fixed pixel height, inserted to match a taller rendered block. */
 class SpacerWidget extends WidgetType {
-  constructor(readonly height: number) {
+  constructor(
+    readonly height: number,
+    readonly isLead = false,
+  ) {
     super();
   }
 
   eq(other: SpacerWidget): boolean {
-    return other.height === this.height;
+    return other.height === this.height && other.isLead === this.isLead;
   }
 
   toDOM(): HTMLElement {
@@ -80,8 +85,10 @@ const hoverLineField = StateField.define<DecorationSet>({
 export interface EditorCallbacks {
   /** Fired ~120 ms after the last keystroke, with the full text and its new version. */
   onChange: (text: string, version: number) => void;
-  /** Fired as the editor scrolls, with the 0-based source line at the viewport top. */
+  /** Fired as the editor scrolls, with the fractional 0-based source line at the viewport top. */
   onScroll: (topLine: number) => void;
+  /** Fired ~120 ms after scrolling stops — used to re-snap the preview precisely to the editor. */
+  onScrollSettle: () => void;
   /** Fired when the cursor moves, with the 0-based line it is on (for active-line highlighting). */
   onCursor: (line: number) => void;
   /** Fired as the mouse moves, with the 0-based line under the pointer (null when outside). */
@@ -94,6 +101,7 @@ export class MarkdownEditor {
   private readonly view: EditorView;
   private readonly onChange: (text: string, version: number) => void;
   private readonly onScroll: (topLine: number) => void;
+  private readonly onScrollSettle: () => void;
   private readonly onCursor: (line: number) => void;
   private readonly onHover: (line: number | null) => void;
   private readonly onGeometryChange: () => void;
@@ -104,6 +112,7 @@ export class MarkdownEditor {
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
     this.onScroll = callbacks.onScroll;
+    this.onScrollSettle = callbacks.onScrollSettle;
     this.onCursor = callbacks.onCursor;
     this.onHover = callbacks.onHover;
     this.onGeometryChange = callbacks.onGeometryChange;
@@ -145,8 +154,18 @@ export class MarkdownEditor {
       }),
     });
 
-    const reportScroll = rafThrottle(() => this.onScroll(this.topVisibleLine()));
-    this.view.scrollDOM.addEventListener("scroll", reportScroll);
+    // Live sync runs every frame (sub-line precise). When scrolling stops, fire a settle callback
+    // so the preview can be re-snapped exactly to the editor's top — the live frames can lag a
+    // momentum scroll's final resting position by a frame.
+    const reportScroll = rafThrottle(() => this.onScroll(this.topVisibleLineExact()));
+    let scrollSettleTimer: ReturnType<typeof setTimeout> | undefined;
+    this.view.scrollDOM.addEventListener("scroll", () => {
+      reportScroll();
+      if (scrollSettleTimer !== undefined) {
+        clearTimeout(scrollSettleTimer);
+      }
+      scrollSettleTimer = setTimeout(() => this.onScrollSettle(), SCROLL_SETTLE_MS);
+    });
 
     let hoverX = 0;
     let hoverY = 0;
@@ -197,14 +216,23 @@ export class MarkdownEditor {
     });
   }
 
-  /** The 0-based source line at the top of the editor viewport. */
-  topVisibleLine(): number {
+  /**
+   * The source line at the top of the editor viewport as a fractional 0-based line: the integer
+   * part is the line, the fractional part is how far the viewport top has scrolled into that
+   * line's block. Used for sub-line-precise scroll-sync so the preview's top edge lines up with
+   * the editor's instead of snapping to the nearest whole line (the cause of the residual drift).
+   */
+  topVisibleLineExact(): number {
+    const scrollTop = this.view.scrollDOM.scrollTop;
     const rect = this.view.scrollDOM.getBoundingClientRect();
     const pos = this.view.posAtCoords({ x: rect.left + 1, y: rect.top + 1 });
     if (pos === null) {
       return 0;
     }
-    return this.view.state.doc.lineAt(pos).number - 1;
+    const lineNumber = this.view.state.doc.lineAt(pos).number;
+    const block = this.view.lineBlockAt(this.view.state.doc.line(lineNumber).from);
+    const fraction = block.height > 0 ? (scrollTop - block.top) / block.height : 0;
+    return lineNumber - 1 + Math.min(Math.max(fraction, 0), 1);
   }
 
   /** Scroll so the given 0-based source line is at the top of the viewport. */
@@ -214,24 +242,36 @@ export class MarkdownEditor {
   }
 
   /**
-   * Natural top offset (excluding our spacer widgets) of each given 0-based source line, as a
-   * prefix sum of text line heights. Because spacers are separate block widgets, a text line's own
-   * `height` excludes them, so this is the spacer-free geometry — robust across edits with no
-   * tracked state (which is what previously drifted when line numbers shifted).
+   * Natural top offset (excluding our spacer widgets) of each given 0-based source line. Computed
+   * as CodeMirror's actual block top MINUS the spacers currently above that line (read live from
+   * the decoration set). This makes "natural" independent of whether spacers are applied — a true
+   * fixed point — so reconciling does not oscillate. (A prefix sum of line heights had counted the
+   * block widgets, creating a measure→apply→measure feedback loop.)
    */
   naturalLineTops(lines: number[]): number[] {
-    const doc = this.view.state.doc;
-    const padding = Number.parseFloat(getComputedStyle(this.view.contentDOM).paddingTop) || 0;
-    const targets = lines.map((line) => this.clampLine(line));
-    const maxLine = targets.length > 0 ? Math.max(...targets) : 0;
+    return lines.map((line) => {
+      const pos = this.view.state.doc.line(this.clampLine(line)).from;
+      return this.view.lineBlockAt(pos).top - this.spacerHeightAbove(pos);
+    });
+  }
 
-    const topByLine = new Map<number, number>();
-    let top = padding;
-    for (let line = 1; line <= maxLine; line++) {
-      topByLine.set(line, top);
-      top += this.view.lineBlockAt(doc.line(line).from).height;
+  /**
+   * Total height of spacer widgets above a document position. A spacer at <c>from</c> counts when
+   * <c>from &lt; pos</c>. Crucially the leading spacer (at position 0) is therefore NOT counted for
+   * the first anchor (pos 0) — CodeMirror's `lineBlockAt(0).top` does not include it, so counting it
+   * there would over-subtract and make the computed lead grow on every edit.
+   */
+  private spacerHeightAbove(pos: number): number {
+    let total = 0;
+    const cursor = this.view.state.field(spacerField).iter();
+    while (cursor.value !== null) {
+      const widget = (cursor.value.spec as { widget?: unknown }).widget;
+      if (widget instanceof SpacerWidget && cursor.from < pos) {
+        total += widget.height;
+      }
+      cursor.next();
     }
-    return targets.map((line) => topByLine.get(line) ?? padding);
+    return total;
   }
 
   /**
@@ -248,9 +288,11 @@ export class MarkdownEditor {
     );
     if (leadingHeight > 0) {
       ranges.push(
-        Decoration.widget({ widget: new SpacerWidget(leadingHeight), block: true, side: -1 }).range(
-          0,
-        ),
+        Decoration.widget({
+          widget: new SpacerWidget(leadingHeight, true),
+          block: true,
+          side: -1,
+        }).range(0),
       );
     }
     this.view.dispatch({ effects: setSpacersEffect.of(Decoration.set(ranges, true)) });

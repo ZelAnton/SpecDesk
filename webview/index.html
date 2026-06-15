@@ -89,6 +89,25 @@
       .cm-hover-line {
         background: rgba(0, 0, 0, 0.035);
       }
+      /* Synthetic height-sync padding inserted between source blocks so each lines up vertically
+         with its rendered counterpart. A light-gray cross-diagonal hatch (two opposed gradients,
+         gray bands as wide as the clear ones) marks it as service padding, not document content. */
+      .cm-sync-spacer {
+        background-image: repeating-linear-gradient(
+            45deg,
+            rgba(0, 0, 0, 0.06),
+            rgba(0, 0, 0, 0.06) 4px,
+            transparent 4px,
+            transparent 8px
+          ),
+          repeating-linear-gradient(
+            -45deg,
+            rgba(0, 0, 0, 0.06),
+            rgba(0, 0, 0, 0.06) 4px,
+            transparent 4px,
+            transparent 8px
+          );
+      }
       #preview table {
         border-collapse: collapse;
       }
@@ -110,7 +129,7 @@
       <button id="open-btn" type="button">Open…</button>
       <button id="save-btn" type="button">Save</button>
       <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
-      <button id="trace-btn" type="button" aria-pressed="false">Trace: off</button>
+      <button id="export-log-btn" type="button">Export log…</button>
       <span id="status">(no document)</span>
     </div>
     <div id="panes">

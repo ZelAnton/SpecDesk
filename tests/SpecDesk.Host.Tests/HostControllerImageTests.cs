@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
 using SpecDesk.Markdown;
 
@@ -37,7 +38,13 @@ public sealed class HostControllerImageTests
 		try
 		{
 			ImageInserter inserter = (_, _, _, _, _) => "![x](images/billing/x.png)";
-			HostController controller = new(StubRender, Send, new NoDialogs(), inserter, docPath);
+			HostController controller = new(
+				StubRender,
+				Send,
+				new NoDialogs(),
+				inserter,
+				NullLogger<HostController>.Instance,
+				docPath);
 
 			// Load the document so the controller has a current path + repo root.
 			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));

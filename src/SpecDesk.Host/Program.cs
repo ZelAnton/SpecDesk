@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Photino.NET;
 using SpecDesk.Core;
 using SpecDesk.Markdown;
@@ -10,9 +11,16 @@ internal static class Program
 	private static readonly string WelcomeDoc =
 		Path.Combine(AppContext.BaseDirectory, "samples", "welcome.md");
 
+	private static ILogger _engineLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
 	[STAThread]
 	private static void Main()
 	{
+		using ILoggerFactory loggerFactory = Logging.CreateFactory();
+		ILogger startup = loggerFactory.CreateLogger("SpecDesk.Host");
+		_engineLogger = loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine");
+		startup.LogInformation("SpecDesk starting; logs at {LogDirectory}", Logging.LogDirectory);
+
 		// Captured by the closures below; assigned before any message can arrive (Load is last).
 		PhotinoWindow? window = null;
 
@@ -21,8 +29,9 @@ internal static class Program
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
 			// call from the background render task as well as from the message handler.
 			send: json => window!.SendWebMessage(json),
-			dialogs: new PhotinoFileDialogs(() => window!),
+			dialogs: new PhotinoFileDialogs(() => window!, loggerFactory.CreateLogger("SpecDesk.Host.Dialogs")),
 			inserter: InsertImage,
+			logger: loggerFactory.CreateLogger<HostController>(),
 			initialDocPath: WelcomeDoc);
 
 		window = new PhotinoWindow()
@@ -40,6 +49,8 @@ internal static class Program
 			.Load("wwwroot/index.html");
 
 		window.WaitForClose();
+		startup.LogInformation("SpecDesk closing");
+		Serilog.Log.CloseAndFlush();
 	}
 
 	// The image rule engine adapter: read the repo's .spectool.toml (if any) and run the F# engine.
@@ -53,6 +64,11 @@ internal static class Program
 		string? toml = TryReadToml(Path.Combine(repoRoot, ".spectool.toml"));
 		ImageEngine.InsertOutcome outcome =
 			ImageEngine.insertForHost(repoRoot, docPath, toml, bytes, originalName, mime);
+		if (outcome.Error is not null)
+		{
+			_engineLogger.LogWarning("Image engine rejected the paste: {Error}", outcome.Error);
+		}
+
 		return outcome.Markdown;
 	}
 
@@ -100,7 +116,7 @@ internal static class Program
 }
 
 /// <summary>Photino-backed native file pickers for <see cref="HostController"/>.</summary>
-internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window) : IFileDialogs
+internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger logger) : IFileDialogs
 {
 	private static readonly (string Name, string[] Extensions)[] Filters =
 	[
@@ -109,23 +125,28 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window) : IFileDial
 	];
 
 	public string? PickOpenFile() =>
-		OnUiThread(static w =>
-		{
-			string[] selection = w.ShowOpenFile("Open spec", string.Empty, false, Filters);
-			return selection.Length > 0 ? selection[0] : null;
-		});
+		OnUiThread(
+			"ShowOpenFile",
+			static w =>
+			{
+				string[] selection = w.ShowOpenFile("Open spec", string.Empty, false, Filters);
+				return selection.Length > 0 ? selection[0] : null;
+			});
 
 	public string? PickSaveFile(string? suggestedPath) =>
-		OnUiThread(w =>
-		{
-			string selection = w.ShowSaveFile("Save spec", suggestedPath ?? string.Empty, Filters);
-			return string.IsNullOrEmpty(selection) ? null : selection;
-		});
+		OnUiThread(
+			"ShowSaveFile",
+			w =>
+			{
+				logger.LogDebug("ShowSaveFile(defaultPath={Path})", suggestedPath);
+				string selection = w.ShowSaveFile("Save spec", suggestedPath ?? string.Empty, Filters);
+				return string.IsNullOrEmpty(selection) ? null : selection;
+			});
 
 	// Native file dialogs require the STA UI thread, but the web-message handler that triggers
 	// them may run on a background (MTA) thread. Marshal onto the window's UI thread via Invoke
 	// (which runs inline when already there) and block for the modal result.
-	private string? OnUiThread(Func<PhotinoWindow, string?> show)
+	private string? OnUiThread(string name, Func<PhotinoWindow, string?> show)
 	{
 		PhotinoWindow w = window();
 		TaskCompletionSource<string?> completion = new();
@@ -135,9 +156,11 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window) : IFileDial
 			{
 				completion.SetResult(show(w));
 			}
-			catch (Exception)
+			catch (Exception ex)
 			{
-				// A dialog failure cancels the operation rather than crashing the UI thread.
+				// Log (rather than silently swallow) so a failing dialog is diagnosable, then cancel
+				// the operation rather than crashing the UI thread.
+				logger.LogError(ex, "Native dialog {Dialog} threw", name);
 				completion.SetResult(null);
 			}
 		});

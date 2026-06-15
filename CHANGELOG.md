@@ -32,9 +32,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   F# rule engine (format sniff + re-encode/downscale/metadata-strip via ImageSharp, token
   expansion, slugified naming, `{hash8}` de-duplication, repository containment); the Markdown
   renderer rewrites relative image links to `app://`. Git staging is deferred to PoC-4.
-- Height-synced scroll: the editor now pads each source block with a spacer (or the preview with a
-  margin) so a tall rendered block — an image, heading, or wrapped line — lines up vertically with
-  its source. The panes track pixel-for-pixel instead of drifting between anchors, recomputing on
-  re-render, image load, font load, and window resize.
+- Height-synced scroll: the editor pads each source block with a spacer so a taller rendered block —
+  an image, heading, table row, or wrapped line — lines up vertically with its source. The preview is
+  the fixed reference; only the editor adapts, so toggling wrap never shifts the rendered side. The
+  panes track pixel-for-pixel instead of drifting between anchors, recomputing on re-render, image
+  load, font load, and window resize. The synthetic spacer rows are marked with a faint cross-diagonal
+  hatch so they read as service padding, not document content.
+- Sub-line-precise scroll-sync: the editor reports a fractional top line (how far the viewport has
+  scrolled into a block, not just which line), and the preview interpolates within the matching
+  rendered block. When scrolling stops the preview re-snaps exactly to the editor's top — the code
+  pane is the reference — removing the small residual drift that remained after a momentum scroll.
+- Editor highlights and optional wrapping: the source line under the caret is highlighted in both
+  panes (prominent), the line under the mouse is highlighted faintly (auxiliary, suppressed when it
+  is the caret line), and a toolbar button toggles soft wrapping of long source lines.
+- Structured logging built into the host (`Microsoft.Extensions.Logging` over Serilog): an always-on
+  rolling daily log file at `%LOCALAPPDATA%\SpecDesk\logs\specdesk-<date>.log` plus a console sink.
+  Native call sites log routed messages, key parameters, and exceptions (including native file-dialog
+  failures that were previously swallowed); the webview logs to the same file over a `log` IPC
+  channel; and an "Export log…" toolbar button writes the current log to a chosen path.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

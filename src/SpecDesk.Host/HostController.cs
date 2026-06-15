@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using SpecDesk.Contracts;
 using SpecDesk.Markdown;
 
@@ -38,6 +39,7 @@ public sealed class HostController
 	private readonly Action<string> _send;
 	private readonly IFileDialogs _dialogs;
 	private readonly ImageInserter _inserter;
+	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	private readonly PreviewCoordinator _coordinator = new();
 
@@ -50,16 +52,19 @@ public sealed class HostController
 		Action<string> send,
 		IFileDialogs dialogs,
 		ImageInserter inserter,
+		ILogger<HostController> logger,
 		string? initialDocPath = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
 		ArgumentNullException.ThrowIfNull(dialogs);
 		ArgumentNullException.ThrowIfNull(inserter);
+		ArgumentNullException.ThrowIfNull(logger);
 		_render = render;
 		_send = send;
 		_dialogs = dialogs;
 		_inserter = inserter;
+		_logger = logger;
 		_initialDocPath = initialDocPath;
 	}
 
@@ -72,7 +77,19 @@ public sealed class HostController
 		IpcMessage? message = IpcSerializer.TryDeserialize(json);
 		if (message is null)
 		{
+			_logger.LogWarning("Dropped a malformed IPC frame ({Length} chars)", json.Length);
 			return;
+		}
+
+		// The webview log channel is high-volume and logs itself; don't echo its routing.
+		if (message.Kind != MessageKinds.Log)
+		{
+			_logger.LogDebug(
+				"IPC {Kind} (id={Id}, version={Version}, payload={Bytes}B)",
+				message.Kind,
+				message.Id,
+				message.Version,
+				message.Payload?.GetRawText().Length ?? 0);
 		}
 
 		switch (message.Kind)
@@ -92,11 +109,14 @@ public sealed class HostController
 			case MessageKinds.ImagePaste:
 				OnImagePaste(message);
 				break;
-			case MessageKinds.TraceSave:
-				OnTraceSave(message);
+			case MessageKinds.Log:
+				OnLog(message);
+				break;
+			case MessageKinds.ExportLog:
+				OnExportLog();
 				break;
 			default:
-				// Unknown kinds are ignored — forward compatibility with later PoCs.
+				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
 				break;
 		}
 	}
@@ -136,11 +156,12 @@ public sealed class HostController
 		{
 			result = _render(docDir, text);
 		}
-		catch (Exception)
+		catch (Exception ex)
 		{
 			// A parser fault must never crash the background task / message pump; the author sees
 			// a plain-language notice instead of a stale or broken preview — but only if this
 			// render is still the newest, so a superseded failure stays silent.
+			_logger.LogError(ex, "Markdown render failed (version {Version}, {Length} chars)", version, text.Length);
 			if (_coordinator.ShouldEmit(version))
 			{
 				_send(IpcSerializer.SerializeEvent(
@@ -189,9 +210,11 @@ public sealed class HostController
 		{
 			File.WriteAllText(path, _text);
 			_currentPath = path;
+			_logger.LogInformation("Saved {Path} ({Length} chars)", path, _text.Length);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
+			_logger.LogError(ex, "Could not save {Path}", path);
 			_send(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload("Could not save the file.")));
@@ -207,6 +230,7 @@ public sealed class HostController
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
+			_logger.LogError(ex, "Could not open {Path}", path);
 			_send(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload("Could not open the file.")));
@@ -216,6 +240,7 @@ public sealed class HostController
 		_text = text;
 		_currentPath = path;
 		_repoRoot = ResolveRepoRoot(path);
+		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, _repoRoot);
 		_send(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text)));
@@ -246,11 +271,17 @@ public sealed class HostController
 		string docPath = _currentPath;
 		string? originalName = payload.OriginalName;
 		string? mime = payload.Mime;
+		_logger.LogInformation(
+			"Image paste: {Bytes} bytes, name={Name}, mime={Mime}",
+			bytes.Length,
+			originalName,
+			mime);
 		_ = Task.Run(() =>
 		{
 			string? markdown = _inserter(repoRoot, docPath, bytes, originalName, mime);
 			if (markdown is null)
 			{
+				_logger.LogWarning("Image insert failed (name={Name}, mime={Mime})", originalName, mime);
 				_send(IpcSerializer.SerializeEvent(
 					MessageKinds.Error,
 					new ErrorPayload("Could not insert the image.")));
@@ -258,44 +289,87 @@ public sealed class HostController
 			}
 			else
 			{
+				_logger.LogInformation("Image inserted: {Markdown}", markdown);
 				ReplyInserted(id, markdown);
 			}
 		});
 	}
 
-	private void OnTraceSave(IpcMessage message)
+	// Route a webview log record into the host logger so native + webview share one log file.
+	private void OnLog(IpcMessage message)
 	{
-		TraceSavePayload? payload = SafeGetPayload<TraceSavePayload>(message);
+		LogPayload? payload = SafeGetPayload<LogPayload>(message);
 		if (payload is null)
 		{
 			return;
 		}
 
-		// Write straight to a fixed file rather than via a save dialog — Photino's ShowSaveFile is
-		// unreliable here, and a debug trace just needs to land somewhere predictable. Use the
-		// user-profile root (MyDocuments can be redirected to a non-existent path on some machines).
-		string directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-		if (string.IsNullOrEmpty(directory))
+		LogLevel level = payload.Level switch
 		{
-			directory = Path.GetTempPath();
-		}
+			"error" => LogLevel.Error,
+			"warn" => LogLevel.Warning,
+			"info" => LogLevel.Information,
+			_ => LogLevel.Debug,
+		};
 
-		string path = Path.Combine(directory, "specdesk-trace.log");
+		if (payload.Data is null)
+		{
+			_logger.Log(level, "[webview] {Message}", payload.Message);
+		}
+		else
+		{
+			_logger.Log(level, "[webview] {Message} {Data}", payload.Message, payload.Data);
+		}
+	}
+
+	// Offer to save the current log file elsewhere. This also exercises the save dialog, whose
+	// exception (if any) the dialog layer now logs — so the log explains the dialog's behaviour.
+	private void OnExportLog()
+	{
+		string? destination = _dialogs.PickSaveFile(Path.Combine(Logging.LogDirectory, "specdesk-export.log"));
+		if (destination is null)
+		{
+			_send(IpcSerializer.SerializeEvent(
+				MessageKinds.Error,
+				new ErrorPayload($"Logs are at {Logging.LogDirectory}")));
+			return;
+		}
 
 		try
 		{
-			Directory.CreateDirectory(directory);
-			File.WriteAllText(path, payload.Text);
+			File.WriteAllText(destination, ReadCurrentLog());
+			_logger.LogInformation("Exported log to {Path}", destination);
 			_send(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
-				new ErrorPayload($"Trace saved to {path}")));
+				new ErrorPayload($"Log exported to {destination}")));
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
+			_logger.LogError(ex, "Failed to export log to {Path}", destination);
 			_send(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
-				new ErrorPayload($"Could not save the trace: {ex.Message}")));
+				new ErrorPayload($"Could not export log: {ex.Message}")));
 		}
+	}
+
+	// Read the newest rolling log file with shared access (Serilog keeps it open for writing).
+	private static string ReadCurrentLog()
+	{
+		if (!Directory.Exists(Logging.LogDirectory))
+		{
+			return "(no log directory yet)";
+		}
+
+		string[] files = Directory.GetFiles(Logging.LogDirectory, "specdesk-*.log");
+		if (files.Length == 0)
+		{
+			return "(no log file yet)";
+		}
+
+		string newest = files.OrderBy(File.GetLastWriteTimeUtc).Last();
+		using FileStream stream = new(newest, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+		using StreamReader reader = new(stream);
+		return reader.ReadToEnd();
 	}
 
 	private void ReplyInserted(string? id, string markdown) =>
