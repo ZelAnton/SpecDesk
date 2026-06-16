@@ -28,9 +28,12 @@
 		<PackageReference Include="Serilog.Sinks.Console" />
 	</ItemGroup>
 
-	<!-- PoC-1 demo assets served via the app:// scheme. Tracked source (not generated). -->
+	<!-- PoC-1 demo assets served via the app:// scheme; PoC-4 also seeds them into a sample repo.
+	     Tracked source (not generated). The dotfile is listed explicitly because the glob does not
+	     reliably match a leading-dot file. -->
 	<ItemGroup>
 		<Content Include="samples\**" CopyToOutputDirectory="PreserveNewest" />
+		<Content Include="samples\.spectool.toml" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 
 	<!--

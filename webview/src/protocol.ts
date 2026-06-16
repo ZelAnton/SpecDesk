@@ -10,6 +10,11 @@ export const Kinds = {
   editorChanged: "editor.changed",
   actionOpen: "action.open",
   actionSave: "action.save",
+  actionEdit: "action.edit",
+  actionSaveVersion: "action.saveVersion",
+  actionDiscard: "action.discard",
+  branchNameRequest: "branch.name.request",
+  versionNoteRequest: "version.note.request",
   imagePaste: "image.paste",
   log: "log",
   exportLog: "action.exportLog",
@@ -17,8 +22,14 @@ export const Kinds = {
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
   imageInserted: "image.inserted",
+  branchNameSuggested: "branch.name.suggested",
+  versionNoteSuggested: "version.note.suggested",
+  status: "status",
   error: "error",
 } as const;
+
+/** Document lifecycle state names (mirror of F# Lifecycle.stateName). */
+export type StatusState = "published" | "draft" | "inReview" | "changesRequested" | "approved";
 
 /** One rendered top-level block's 0-based, inclusive source line range. */
 export interface LineSpan {
@@ -53,4 +64,33 @@ export interface ImagePastePayload {
 /** Payload of `image.inserted` (native→webview): the Markdown link to insert (empty on failure). */
 export interface ImageInsertedPayload {
   markdown: string;
+}
+
+/** Payload of `action.edit` (webview→native): the author's chosen draft (branch) name (empty → generated). */
+export interface EditPayload {
+  branchName: string;
+}
+
+/** Payload of `branch.name.suggested` (native→webview): generated, editable draft name for the Edit prompt. */
+export interface BranchNameSuggestedPayload {
+  name: string;
+}
+
+/** Payload of `action.saveVersion` (webview→native): the author's version note (commit message). */
+export interface SaveVersionPayload {
+  note: string;
+}
+
+/** Payload of `version.note.suggested` (native→webview): generated, editable note to prefill the prompt. */
+export interface VersionNoteSuggestedPayload {
+  note: string;
+}
+
+/** Payload of `status` (native→webview): the lifecycle state surfaced to the author. */
+export interface StatusPayload {
+  state: StatusState;
+  /** Author-facing text to display (including transient "Saving…" / "Saved just now"). */
+  label: string;
+  /** Working branch name — diagnostic only, never shown. */
+  branch?: string;
 }

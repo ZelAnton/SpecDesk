@@ -1,0 +1,16 @@
+# SpecDesk repository configuration (docs/design/10-repo-config.md).
+# Maintainer-owned policy for the sample spec repo. Every field is optional and falls back to a
+# sensible default; an invalid file degrades to defaults rather than breaking the app.
+
+[repo]
+default-base = "main"
+
+[branch]
+# Working-branch name pattern. Tokens: {docSlug}, {date:FORMAT}. The author never sees this.
+pattern = "spec/{docSlug}-{date:yyyyMMdd}"
+
+[images]
+folder = "images/{docSlug}"
+naming = "{docSlug}-{date:yyyyMMdd}-{seq}-{hash8}"
+preferred = "png"
+case = "kebab"

@@ -1,0 +1,298 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using SpecDesk.Contracts;
+using SpecDesk.Markdown;
+
+namespace SpecDesk.Host.Tests;
+
+[TestFixture]
+public sealed class HostControllerLifecycleTests
+{
+    private sealed class NoDialogs : IFileDialogs
+    {
+        public string? PickOpenFile() => null;
+
+        public string? PickSaveFile(string? suggestedPath) => null;
+    }
+
+    private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
+
+    private string _tempDir = string.Empty;
+    private string _docPath = string.Empty;
+    private readonly List<string> _sent = [];
+    private readonly object _gate = new();
+
+    [SetUp]
+    public void SetUp()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), "specdesk-life-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_tempDir);
+        _docPath = Path.Combine(_tempDir, "billing.md");
+        File.WriteAllText(_docPath, "# Billing");
+        lock (_gate)
+        {
+            _sent.Clear();
+        }
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, recursive: true);
+        }
+    }
+
+    private HostController NewController(FakeVersioning versioning, TimeSpan? autosaveIdle = null)
+    {
+        void Send(string json)
+        {
+            lock (_gate)
+            {
+                _sent.Add(json);
+            }
+        }
+
+        HostController controller = new(
+            StubRender,
+            Send,
+            new NoDialogs(),
+            (_, _, _, _, _) => null,
+            versioning,
+            NullLogger<HostController>.Instance,
+            _docPath,
+            autosaveIdle);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+        return controller;
+    }
+
+    [Test]
+    public void Edit_BeginsAWorkingBranchAndEmitsDraftStatus()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
+            Assert.That(status, Is.Not.Null);
+            Assert.That(status!.State, Is.EqualTo("draft"));
+            Assert.That(status.Label, Does.Contain("Draft"));
+            Assert.That(status.Branch, Does.StartWith("spec/billing-"));
+        });
+    }
+
+    [Test]
+    public void Edit_OnAnUnversionedFolder_ReportsAnError()
+    {
+        FakeVersioning versioning = new() { Versioned = false };
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(0));
+            Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+        });
+    }
+
+    [Test]
+    public void Edit_WithACustomDraftName_UsesTheSanitizedName()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        // Backslashes become '/', spaces and stray punctuation become '_', edges trimmed.
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ActionEdit,
+            new EditPayload(@"My New\Draft!")));
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
+            Assert.That(status!.Branch, Is.EqualTo("My_New/Draft"));
+        });
+    }
+
+    [Test]
+    public void SuggestBranchName_RepliesWithAnEditableNameEchoingTheId()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.BranchNameRequest, id: "b-1"));
+
+        IpcMessage? reply = FindKind(MessageKinds.BranchNameSuggested);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply, Is.Not.Null);
+            Assert.That(reply!.Id, Is.EqualTo("b-1"));
+            Assert.That(reply.GetPayload<BranchNameSuggestedPayload>()!.Name, Does.StartWith("spec/billing-"));
+        });
+    }
+
+    [Test]
+    public void TypingWhileDrafting_DoesNotCommitAndShowsUnsavedChanges()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning, TimeSpan.FromMilliseconds(20));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Billing v2"),
+            version: 1));
+
+        // Typing flips the status to "Unsaved changes" but never commits — committing is explicit.
+        StatusPayload? status = LatestStatus();
+        Assert.That(status!.Label, Is.EqualTo("Unsaved changes"));
+
+        // Give the idle disk-autosave time to fire and confirm it still did not create a commit.
+        Thread.Sleep(80);
+        Assert.That(versioning.SaveVersionCalls, Is.EqualTo(0), "typing must not commit");
+    }
+
+    [Test]
+    public void SaveVersion_CommitsWithTheGeneratedNoteWhenNoneGiven()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Billing v2"),
+            version: 1));
+
+        // Empty note → the host falls back to the generated version note (template "Update {docSlug}").
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ActionSaveVersion,
+            new SaveVersionPayload(string.Empty)));
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.SaveVersionCalls, Is.EqualTo(1));
+            Assert.That(versioning.LastCommitMessage, Does.Contain("billing"));
+            Assert.That(status!.Label, Is.EqualTo("Version saved"));
+            Assert.That(status.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void SaveVersion_UsesTheAuthorsEditedNote()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ActionSaveVersion,
+            new SaveVersionPayload("Clarify the refund rule")));
+
+        Assert.That(versioning.LastCommitMessage, Is.EqualTo("Clarify the refund rule"));
+    }
+
+    [Test]
+    public void SuggestVersionNote_RepliesWithAnEditableNoteEchoingTheId()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.VersionNoteRequest,
+            id: "note-1"));
+
+        IpcMessage? reply = FindKind(MessageKinds.VersionNoteSuggested);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply, Is.Not.Null);
+            Assert.That(reply!.Id, Is.EqualTo("note-1"));
+            Assert.That(reply.GetPayload<VersionNoteSuggestedPayload>()!.Note, Does.Contain("billing"));
+        });
+    }
+
+    [Test]
+    public void Discard_ReturnsToPublished()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionDiscard));
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.DiscardCalled, Is.True);
+            Assert.That(status!.State, Is.EqualTo("published"));
+        });
+    }
+
+    private StatusPayload? LatestStatus()
+    {
+        lock (_gate)
+        {
+            for (int i = _sent.Count - 1; i >= 0; i--)
+            {
+                IpcMessage? message = IpcSerializer.TryDeserialize(_sent[i]);
+                if (message is not null && message.Kind == MessageKinds.Status)
+                {
+                    return message.GetPayload<StatusPayload>();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private IpcMessage? WaitForKind(string kind)
+    {
+        return WaitFor(() =>
+            {
+                lock (_gate)
+                {
+                    return _sent.Select(IpcSerializer.TryDeserialize).Any(m => m is not null && m.Kind == kind);
+                }
+            })
+            ? FindKind(kind)
+            : null;
+    }
+
+    private IpcMessage? FindKind(string kind)
+    {
+        lock (_gate)
+        {
+            foreach (string json in _sent)
+            {
+                IpcMessage? message = IpcSerializer.TryDeserialize(json);
+                if (message is not null && message.Kind == kind)
+                {
+                    return message;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool WaitFor(Func<bool> condition)
+    {
+        for (int attempt = 0; attempt < 200; attempt++)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            Thread.Sleep(20);
+        }
+
+        return false;
+    }
+}

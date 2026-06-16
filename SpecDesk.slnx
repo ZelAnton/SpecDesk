@@ -9,6 +9,9 @@
 		<Project Path="tests/SpecDesk.Core.Tests/SpecDesk.Core.Tests.fsproj">
 			<BuildDependency Project="src/SpecDesk.Core/SpecDesk.Core.fsproj" />
 		</Project>
+		<Project Path="tests/SpecDesk.Git.Tests/SpecDesk.Git.Tests.csproj">
+			<BuildDependency Project="src/SpecDesk.Git/SpecDesk.Git.csproj" />
+		</Project>
 		<Project Path="tests/SpecDesk.Markdown.Tests/SpecDesk.Markdown.Tests.fsproj">
 			<BuildDependency Project="src/SpecDesk.Markdown/SpecDesk.Markdown.fsproj" />
 		</Project>

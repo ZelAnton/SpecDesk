@@ -29,6 +29,45 @@
       #toolbar button {
         padding: 0.3rem 0.8rem;
       }
+      /* Inline prompts shown below the toolbar: naming a draft (on Edit) and the version note (on
+         Save version). The `display` is scoped to :not([hidden]) so each bar is genuinely hidden
+         until revealed — an unscoped `#id { display: flex }` would out-specify the user-agent
+         `[hidden] { display: none }` rule and leak the bar (the bug this replaces). */
+      #branch-name-bar:not([hidden]),
+      #version-note-bar:not([hidden]) {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0.75rem;
+        border-bottom: 1px solid #ddd;
+        font-size: 0.85rem;
+      }
+      #branch-name-bar {
+        background: #e7f0ff;
+      }
+      #version-note-bar {
+        background: #fff7d6;
+      }
+      #branch-name-bar input,
+      #version-note-bar input,
+      #version-note-bar textarea {
+        flex: 1;
+        min-width: 0;
+        padding: 0.3rem 0.5rem;
+        font: inherit;
+      }
+      #version-note-bar textarea {
+        resize: vertical;
+      }
+      #branch-name-bar button,
+      #version-note-bar button {
+        padding: 0.3rem 0.8rem;
+      }
+      /* The ⌄ expand affordance is a compact square. */
+      #version-note-expand {
+        padding: 0.3rem 0.5rem;
+        line-height: 1;
+      }
       #status {
         margin-left: auto;
         color: #666;
@@ -127,10 +166,33 @@
   <body>
     <div id="toolbar">
       <button id="open-btn" type="button">Open…</button>
+      <button id="edit-btn" type="button">Edit</button>
+      <button id="save-version-btn" type="button" hidden>Save version</button>
+      <button id="discard-btn" type="button" hidden>Discard</button>
       <button id="save-btn" type="button">Save</button>
       <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
       <button id="export-log-btn" type="button">Export log…</button>
       <span id="status">(no document)</span>
+    </div>
+    <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
+         name; the author may keep or change it before starting to edit. -->
+    <div id="branch-name-bar" hidden>
+      <label for="branch-name-input">Name new draft</label>
+      <input id="branch-name-input" type="text" autocomplete="off" />
+      <button id="branch-name-confirm" type="button">Start editing</button>
+      <button id="branch-name-cancel" type="button">Cancel</button>
+    </div>
+    <!-- Inline editor for the version note (commit message), revealed by "Save version". The note is
+         seeded by the host and the author edits it before confirming — the one place a "commit
+         message" surfaces, in plain words. Single-line by default; the ⌄ button (or Down arrow)
+         expands it into a multi-line editor. -->
+    <div id="version-note-bar" hidden>
+      <label for="version-note-input">Please describe changes</label>
+      <input id="version-note-input" type="text" autocomplete="off" />
+      <textarea id="version-note-textarea" rows="4" autocomplete="off" hidden></textarea>
+      <button id="version-note-expand" type="button" title="More room (Down arrow)" aria-label="Expand to multiple lines">⌄</button>
+      <button id="version-note-confirm" type="button">Save</button>
+      <button id="version-note-cancel" type="button">Cancel</button>
     </div>
     <div id="panes">
       <div id="editor"></div>

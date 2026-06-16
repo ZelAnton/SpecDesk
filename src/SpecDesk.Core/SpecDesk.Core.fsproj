@@ -7,8 +7,11 @@
 	<!-- F# compile order is significant — list files in dependency order. -->
 	<ItemGroup>
 		<Compile Include="Slug.fs" />
+		<Compile Include="Toml.fs" />
+		<Compile Include="Lifecycle.fs" />
 		<Compile Include="ImagesConfig.fs" />
 		<Compile Include="Tokens.fs" />
+		<Compile Include="WorkflowConfig.fs" />
 		<Compile Include="ImageProcessing.fs" />
 		<Compile Include="ImageEngine.fs" />
 	</ItemGroup>

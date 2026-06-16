@@ -95,6 +95,8 @@ export interface EditorCallbacks {
   onHover: (line: number | null) => void;
   /** Fired when the editor's own geometry settles (wrap toggle, resize, font load) — re-sync heights. */
   onGeometryChange: () => void;
+  /** Fired when the user attempts to modify the document while it is read-only (offer to start editing). */
+  onEditAttempt: () => void;
 }
 
 export class MarkdownEditor {
@@ -105,7 +107,9 @@ export class MarkdownEditor {
   private readonly onCursor: (line: number) => void;
   private readonly onHover: (line: number | null) => void;
   private readonly onGeometryChange: () => void;
+  private readonly onEditAttempt: () => void;
   private readonly wrap = new Compartment();
+  private readonly editable = new Compartment();
   private version = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -116,6 +120,7 @@ export class MarkdownEditor {
     this.onCursor = callbacks.onCursor;
     this.onHover = callbacks.onHover;
     this.onGeometryChange = callbacks.onGeometryChange;
+    this.onEditAttempt = callbacks.onEditAttempt;
 
     const updates = EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -147,6 +152,11 @@ export class MarkdownEditor {
           basicSetup,
           markdown(),
           this.wrap.of(EditorView.lineWrapping),
+          // Start read-only: a document is only editable after the author clicks Edit (which forks a
+          // working branch). We use `readOnly` alone — NOT `editable: false` — so the caret, text
+          // selection, keyboard navigation and copy all keep working; only modifications are blocked.
+          // Programmatic dispatches (setText, image insert, spacers) still apply under readOnly.
+          this.editable.of(EditorState.readOnly.of(true)),
           spacerField,
           hoverLineField,
           updates,
@@ -179,6 +189,15 @@ export class MarkdownEditor {
       reportHover();
     });
     this.view.scrollDOM.addEventListener("mouseleave", () => this.onHover(null));
+
+    // A `beforeinput` only fires for modifying actions (typing, deletion, paste) — never for caret
+    // navigation. While read-only the change is blocked anyway, so we use it purely as the signal
+    // that the author is trying to write and should be offered the chance to start a draft.
+    this.view.contentDOM.addEventListener("beforeinput", () => {
+      if (this.view.state.readOnly) {
+        this.onEditAttempt();
+      }
+    });
   }
 
   /** Replace the whole document (used when a file is opened). Triggers a normal change/render. */
@@ -312,6 +331,17 @@ export class MarkdownEditor {
   setLineWrapping(enabled: boolean): void {
     this.view.dispatch({
       effects: this.wrap.reconfigure(enabled ? EditorView.lineWrapping : []),
+    });
+  }
+
+  /**
+   * Allow or block user editing. Read-only until the author starts editing (which forks a working
+   * branch), but the caret, selection and navigation stay available the whole time — only document
+   * modifications are blocked. Programmatic changes (setText, image insert, spacers) still apply.
+   */
+  setEditable(enabled: boolean): void {
+    this.view.dispatch({
+      effects: this.editable.reconfigure(enabled ? [] : EditorState.readOnly.of(true)),
     });
   }
 

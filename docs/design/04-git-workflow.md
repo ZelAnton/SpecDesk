@@ -34,7 +34,7 @@ decision away from the author. Committing is now an **explicit** action.
 
 | Author sees | Git / GitHub reality | Visible? |
 |-------------|----------------------|----------|
-| **Edit** | fetch latest, create working branch from published version | action button |
+| **Edit** (+ a draft name) | fetch latest, create working branch from published version | action button; the author confirms/edits a generated draft name |
 | **Saved** (automatic, continuous) | write working copy to disk — **no commit** | status text |
 | **Save a version** (+ a short note) | `git commit` with the note as the message | action button |
 | **Send for review** | push branch + open PR (title/description generated, editable) | action button (offered after the first version is saved) |
@@ -48,12 +48,19 @@ decision away from the author. Committing is now an **explicit** action.
 | **Sync** (background) | fetch / prune | invisible |
 | "Someone else changed this too" | rebase/merge conflict | reconciliation dialog |
 
-What stays **completely invisible**: branch names, commit SHAs, push, fetch, rebase, the word
-"pull request" itself (it is "review"). What is now **deliberately visible** (a considered
-departure from "hide everything"): the act of saving a version and its one-line note. The author
-never sees the word *commit*, but they do choose *when* a version exists and *what it says* —
-because only the author knows when a change is meaningful, and that note is what makes the history
-and the eventual review legible.
+What stays **completely invisible**: commit SHAs, push, fetch, rebase, the word "pull request"
+itself (it is "review"). What is now **deliberately visible** (a considered departure from "hide
+everything"): the act of saving a version and its one-line note, and the **draft name** the author
+gives when they start editing (the working branch's name). The author never sees the words *commit*
+or *branch*, but they do choose *when* a version exists, *what it says*, and *what the draft is
+called* — a generated default is offered for each, so accepting it is one keystroke, but only the
+author knows what is meaningful. The note and draft name are what make the history and the eventual
+review legible.
+
+The document is **read-only until Edit**: with no working branch there is nowhere safe to put
+changes, so the editor only becomes writable once Edit has forked the draft. This makes the gate
+obvious (you must start a draft before you can type) and prevents edits that would otherwise be
+silently discarded.
 
 ### The explicit chain (Save a version → Send / Update)
 
@@ -103,13 +110,20 @@ fresh via **Sync**.
 
 ### 2. Edit
 
-Clicking **Edit**:
+Until this point the editor is **read-only** — but fully navigable: the caret, selection, and
+keyboard navigation all work, only modification is blocked. Clicking **Edit** (or simply *starting
+to type* in the read-only document, which is treated as "I want to edit"):
 - ensures the local repo is fresh (fetch),
-- silently creates a working branch from the latest published version (pattern from
-  `.spectool.toml`, e.g. `spec/<docSlug>-<date>`),
-- shows status **Draft — only you can see this**.
+- prompts for a **draft name**, prefilled with a generated default from `.spectool.toml`
+  (e.g. `spec/<docSlug>-<date>`); the author keeps it (one keystroke) or types their own. The name
+  is cleaned to a valid form *as it is typed* (backslashes → `/`, spaces and other illegal
+  characters → `_`) and the host sanitizes again on submit; an empty name falls back to the default,
+- creates a working branch with that name from the latest published version,
+- makes the editor writable and shows status **Draft — only you can see this**.
 
-The author never names or sees the branch.
+This is the one place the working branch's name is author-chosen rather than hidden — a small,
+deliberate exception that gives the author a recognizable handle on their draft without exposing
+the word "branch". Cancelling the prompt leaves the document read-only and Published.
 
 ### 3. Write (continuous autosave to disk)
 
@@ -125,7 +139,8 @@ A button the author presses when a state is worth keeping. The app:
 - proposes a short **note** describing the change (deterministic template early — e.g. derived
   from the doc slug and the sections touched; the agent drafts a better one later),
 - lets the author **edit the note** before confirming (this is the author's commit message, in
-  plain words),
+  plain words). The note is a single line by default but expands into a multi-line editor on
+  demand (an expand affordance or the Down arrow), so a longer description is possible when wanted,
 - commits the working copy (document **and** any pasted image assets — see
   [06-images.md](06-images.md)) on the working branch,
 - status becomes **Version saved**,

@@ -45,6 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editor highlights and optional wrapping: the source line under the caret is highlighted in both
   panes (prominent), the line under the mouse is highlighted faintly (auxiliary, suppressed when it
   is the caret line), and a toolbar button toggles soft wrapping of long source lines.
+- PoC-4 — local versioning + document lifecycle: a document opens **read-only**; clicking **Edit**
+  prompts for a **draft name** (prefilled with a generated default, editable; sanitized to a valid
+  ref), forks a working branch with it from the published base, makes the editor writable, and enters
+  **Draft**. Typing autosaves to the working copy on disk (status shows **Unsaved changes**) but
+  **never commits on its own**. Committing is the author's explicit **Save version**: the app proposes
+  a plain-language note (the commit message), the author edits it, and only then is a commit made
+  (document and any pasted images together) — status **Version saved**.
+  **Discard** drops the draft and reverts to the published version. No git vocabulary surfaces beyond
+  the editable note and draft name — commit SHAs and the word "branch" stay invisible. `SpecDesk.Core`
+  gains a pure, unit-tested lifecycle state machine (`Lifecycle`) and the `[repo]`/`[branch]`/
+  `[commit]` config reader (`WorkflowConfig`, sharing a small hand-rolled `Toml` reader);
+  `SpecDesk.Git` wraps LibGit2Sharp behind `IDocumentVersioning` (init, branch, save-version, discard).
+  Entirely local — push/PR/GitHub come in PoC-5. On first run a writable sample spec repo is seeded
+  under `%LOCALAPPDATA%\SpecDesk\sample-repo` (git-initialized) so Edit/Save version work out of the
+  box without touching SpecDesk's own working tree.
 - Structured logging built into the host (`Microsoft.Extensions.Logging` over Serilog): an always-on
   rolling daily log file at `%LOCALAPPDATA%\SpecDesk\logs\specdesk-<date>.log` plus a console sink.
   Native call sites log routed messages, key parameters, and exceptions (including native file-dialog
