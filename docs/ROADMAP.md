@@ -17,9 +17,10 @@ Each PoC below answers four questions:
 Rules we hold ourselves to:
 
 1. **Every PoC ships something runnable.** Even PoC‑0 launches a window. We never have a milestone that only "lays groundwork".
-2. **No git vocabulary leaks to the author** — even in throwaway PoC UI, we use Draft / Saved / In review (see [design/04-git-workflow.md](design/04-git-workflow.md)).
-3. **Native is the brain, webview is thin.** Every PoC keeps Markdown/git/GitHub/AI logic in C#/F#; TypeScript stays minimal (see [design/02-architecture.md](design/02-architecture.md)).
-4. **`lineMap` is sacred.** Built in PoC‑2, reused by PoCs 6 and 7. Getting it right early is cheaper than retrofitting.
+2. **No git vocabulary leaks to the author** — even in throwaway PoC UI, we use Editing / Saved / Version saved / In review (see [design/04-git-workflow.md](design/04-git-workflow.md)). The one deliberate exception is the author-written **version note** (the commit message in plain words).
+3. **Committing is explicit, not automatic.** Autosave writes the working copy to disk; a commit only happens when the author chooses **Save a version**. No auto-commit-on-idle (see [design/04-git-workflow.md](design/04-git-workflow.md)).
+4. **Native is the brain, webview is thin.** Every PoC keeps Markdown/git/GitHub/AI logic in C#/F#; TypeScript stays minimal (see [design/02-architecture.md](design/02-architecture.md)).
+5. **`lineMap` is sacred.** Built in PoC‑2, reused by PoCs 6, 7, and 8. Getting it right early is cheaper than retrofitting.
 
 ## Dependency graph
 
@@ -29,20 +30,24 @@ flowchart TD
     P0 --> P2[PoC-2 Editor + Live Preview + lineMap]
     P1 --> P2
     P2 --> P3[PoC-3 Images]
-    P2 --> P4[PoC-4 Local Git + lifecycle]
+    P2 --> P4[PoC-4 Local versioning + lifecycle · explicit Save a version]
     P4 --> P5[PoC-5 Send for Review · GitHub]
     SPIKE[Spike-A GitHub Auth] -.feeds.-> P5
     P5 --> P6[PoC-6 Rendered Semantic Diff]
     P2 --> P6
-    P6 --> P7[PoC-7 Inline Comments + sync]
+    P6 --> P7[PoC-7 In-flight PR comparison]
     P5 --> P7
-    P4 --> P8[PoC-8 AI Agent]
-    P5 --> P9[PoC-9 Conflict handling + Publish]
+    P6 --> P8[PoC-8 Inline Comments + sync]
+    P5 --> P8
+    P4 --> P9[PoC-9 AI Agent]
+    P5 --> P10[PoC-10 Conflict handling + Publish]
 ```
 
-The critical path is **P0 → P2 → P4 → P5 → P6 → P7**. Images (P3) and the AI agent (P8) hang
-off the side and can slot in whenever convenient — they don't block review. **Spike‑A (auth)**
-is the first real integration risk and runs **in parallel from day one**, independent of the UI.
+The critical path is **P0 → P2 → P4 → P5 → P6 → P8**. Comparison (P7) and inline comments (P8)
+both hang off the diff engine (P6); comparison is the cheaper of the two because it reuses that
+engine on different inputs. Images (P3) and the AI agent (P9) hang off the side and can slot in
+whenever convenient — they don't block review. **Spike‑A (auth)** is the first real integration
+risk and runs **in parallel from day one**, independent of the UI.
 
 ---
 
@@ -98,7 +103,8 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 - **Effort:** **L** · **Depends on:** PoC‑0 (PoC‑1 nice-to-have for inline images).
 
 > ⭐ This is the most important PoC. The `lineMap` and the single shared Markdig configuration
-> built here are reused by the diff (PoC‑6) and comments (PoC‑7). Do not rush it.
+> built here are reused by the diff (PoC‑6), the comparison view (PoC‑7), and comments (PoC‑8).
+> Do not rush it.
 
 > **Planned upgrade — height-synced scroll (PoC‑2 follow-up).** Today sync is *anchor-based*, so
 > the panes drift between anchors when a rendered block is taller than its source (an image,
@@ -121,29 +127,46 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 - **Demo / acceptance:** paste a screenshot → file written to `images/{docSlug}/…-{hash8}.png`, link inserted, preview resolves it via `app://`; pasting the same image twice reuses one file.
 - **Effort:** **M** · **Depends on:** PoC‑1, PoC‑2.
 
-## PoC‑4 — Local git layer + document lifecycle
+## PoC‑4 — Local versioning + document lifecycle (explicit "Save a version")
 
-- **Goal:** edits are versioned in git, entirely local, with **zero git vocabulary** on screen.
-- **Retires risk:** LibGit2Sharp integration and the F# lifecycle state machine (the spine of the whole workflow), proven without any GitHub dependency.
+> **Partly built — needs rework.** An earlier pass shipped this PoC with **autosave‑commits**
+> (every idle produced a commit). We are deliberately replacing that model: autosave writes the
+> **working copy** only, and committing becomes an **explicit "Save a version"** action. The
+> LibGit2Sharp wrapper, the lifecycle state machine, and the `.spectool.toml` reader from that
+> pass are reused; the autosave‑commit timer and its status cycle are removed.
+
+- **Goal:** edits are versioned in git **on the author's explicit "Save a version"**, entirely
+  local, with **zero git vocabulary** on screen (the version *note* is plain language, not a
+  git term).
+- **Retires risk:** LibGit2Sharp integration and the F# lifecycle state machine (the spine of the whole workflow), proven without any GitHub dependency — now with the corrected explicit‑commit lifecycle.
 - **Build:**
   - Repo registration; background auto-fetch (`Sync`).
-  - F# document lifecycle state machine: **Edit** → silent working branch from latest → autosave **commits** on idle ([design/04-git-workflow.md](design/04-git-workflow.md)).
-  - Deterministic commit-message template (agent comes later).
-  - Status surface: **Draft / Saving… / Saved** via the `status` message.
+  - F# document lifecycle state machine: **Edit** → silent working branch from latest →
+    **autosave to the working copy** (no commit) → **Save a version** = commit
+    ([design/04-git-workflow.md](design/04-git-workflow.md)).
+  - **Save a version** action: deterministic generated **note** (commit message), editable by the
+    author before confirm; commits the document **and** any pasted image assets.
+  - Status surface: **Editing / Unsaved changes / Version saved** via the `status` message.
+  - After a version is saved, surface (but do **not** auto-trigger) the "Send for review" next
+    step — wired for real in PoC‑5.
 - **Out of scope:** push, PR, GitHub of any kind.
-- **Demo / acceptance:** click **Edit** → a branch is created under the hood (verifiable with raw git, invisible in UI); typing produces autosave commits; status cycles Saving→Saved; `git log` shows sensible commits. State machine unit-tested in `SpecDesk.Core.Tests`.
+- **Demo / acceptance:** click **Edit** → a branch is created under the hood (verifiable with raw git, invisible in UI); typing autosaves to disk with **no** new commits and status shows **Unsaved changes**; clicking **Save a version** with an editable note produces exactly one commit; `git log` shows one sensible commit per saved version (not per keystroke‑idle). State machine unit-tested in `SpecDesk.Core.Tests`.
 - **Effort:** **L** · **Depends on:** PoC‑2.
 
 ## PoC‑5 — Send for review (GitHub round-trip)
 
-- **Goal:** one button takes a local Draft to an open PR on GitHub; status reflects review state.
+- **Goal:** one button takes a saved version to an open PR on GitHub; status reflects review state.
 - **Retires risk:** wiring Spike‑A's auth into the app and the full author round-trip; the first time real GitHub state drives the UI.
 - **Build:**
   - Fold the Spike‑A auth decision into `SpecDesk.GitHub` (Octokit) as production code.
-  - **Send for review**: push branch + open PR with a generated, editable title/description (deterministic template).
+  - **Send for review** (offered right after the first **Save a version**, and always available as
+    a button): push branch + open PR with a generated, editable title/description assembled from
+    the saved version notes (deterministic template).
   - Reviewer assignment (`.spectool.toml` `reviewers` / CODEOWNERS).
-  - PR list (author/reviewer/by-URL); status: **In review / Changes requested / Approved**; autosave-while-in-review pushes an **Update**.
-- **Demo / acceptance:** edit a spec, click **Send for review**, a real PR opens with sensible title/body and reviewers; editing afterward pushes more commits and the status updates from GitHub.
+  - **Update review**: after saving a further version while in review, offer to push it to the PR
+    (explicit, never silent).
+  - PR list (author/reviewer/by-URL); status: **In review / Changes requested / Approved**.
+- **Demo / acceptance:** edit a spec, **Save a version**, click **Send for review** → a real PR opens with sensible title/body and reviewers; save another version and **Update review** → the PR gains the new commit and status updates from GitHub.
 - **Effort:** **L** · **Depends on:** PoC‑4, Spike‑A.
 
 ## PoC‑6 — Rendered semantic diff
@@ -153,11 +176,28 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 - **Build:**
   - Fetch base + head versions of changed `.md` files.
   - `SpecDesk.Diff`: AST diff over the shared DU → annotated tree → HTML (side-by-side + unified).
+    Keep the engine's inputs a **generic `(base, head)` text pair** — PoC‑7 reuses it with
+    different bases (working copy / `main`), so don't hard-wire it to "a PR's own base/head".
   - Mandatory **toggle**: rendered ↔ raw source diff.
 - **Demo / acceptance:** a PR that changes a heading level and moves a paragraph renders as *one* structural edit + a "moved here", not as line-noise; toggling shows the literal source diff. Diff cases unit-tested in `SpecDesk.Diff.Tests`.
 - **Effort:** **L** · **Depends on:** PoC‑5 (for PR content), PoC‑2 (shared AST/render).
 
-## PoC‑7 — Inline comments + GitHub sync
+## PoC‑7 — In-flight PR awareness & comparison
+
+- **Goal:** while editing a spec, see the open PRs that touch the same file and compare any of them — rendered or raw — against the local working copy or against `main`.
+- **Retires risk:** the "PRs touching this file" query and the base‑selection plumbing; proving the PoC‑6 diff engine is genuinely input‑agnostic. Turns soft‑lock awareness from a one‑line warning into something actionable ([design/07-review-experience.md](design/07-review-experience.md) Part C).
+- **Build:**
+  - Query open PRs whose changed‑file set includes the current path (Octokit; cache per `Sync`).
+  - **Two comparison bases:** *vs my working copy* (current on‑disk content, including unsaved
+    changes) and *vs `main`* (the published baseline); each diffs `(chosen base, PR head)` through
+    the PoC‑6 engine.
+  - **Both representations** via the PoC‑6 toggle: rendered structural diff and raw source diff.
+  - Surface this from the edit‑start soft‑lock warning as its entry point.
+- **Out of scope:** pulling another PR's changes in, or resolving across PRs (that is conflict handling, PoC‑10); read‑only comparison only.
+- **Demo / acceptance:** open a spec that another open PR also edits → that PR is listed; pick it → see its version diffed against the working copy, toggle to `main`, toggle rendered↔raw, all reusing the PoC‑6 engine with no new diff algorithm.
+- **Effort:** **M** · **Depends on:** PoC‑6 (diff engine), PoC‑5 (PR list + PR head content).
+
+## PoC‑8 — Inline comments + GitHub sync
 
 - **Goal:** comment on the rendered document inside the app; comments synchronize with the PR.
 - **Retires risk:** anchoring comments through `lineMap` to GitHub's `(path, commit_id, line, side)` diff-position model, including the "comment outside the diff hunk" edge case.
@@ -168,25 +208,24 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 - **Demo / acceptance:** leave a comment in-app → it appears on the GitHub PR; a comment left on GitHub appears inline in-app; a comment on an unchanged line stays local with the "not yet on GitHub" label instead of failing.
 - **Effort:** **L** · **Depends on:** PoC‑6, PoC‑5.
 
-## PoC‑8 — AI agent (parallel, slots in any time after PoC‑4)
+## PoC‑9 — AI agent (parallel, slots in any time after PoC‑4)
 
-- **Goal:** an in-app assistant that drafts commit/PR text and answers questions about the document — every mutating action gated.
+- **Goal:** an in-app assistant that drafts version notes / PR text and answers questions about the document — every mutating action gated.
 - **Retires risk:** Microsoft Agent Framework integration, streaming chat over IPC, and the **confirmation-gate** safety model.
 - **Build:**
   - `SpecDesk.Ai` on Microsoft Agent Framework (Claude connector) with non-mutating tools (`getCurrentDoc`, `getDiff`, `searchSpec`, `suggest*`) and gated `proposeEdit` ([design/08-ai-agent.md](design/08-ai-agent.md)).
-  - Swap deterministic commit/PR templates for `suggestCommitMessage` / `suggestPrDescription`, keeping templates as fallback.
+  - Swap deterministic version-note / PR templates for `suggestVersionNote` / `suggestPrDescription`, keeping templates as fallback (these feed the **Save a version** and **Send for review** dialogs).
   - Streaming chat panel (`chat.delta` / `chat.done`).
   - Enforce: every mutating action routes through `confirm.request` ([design/09-ipc-protocol.md](design/09-ipc-protocol.md)); document/tool output treated as data, not instructions.
 - **Demo / acceptance:** ask the agent to draft a PR description → it streams a proposal → the author edits and confirms → only then is it applied; with no provider configured, the deterministic template still works.
 - **Effort:** **L** · **Depends on:** PoC‑4 (to have something to draft for); richer with PoC‑6.
 
-## PoC‑9 — Conflict handling, publish & polish
+## PoC‑10 — Conflict handling, publish & polish
 
 - **Goal:** the production-ready manager workflow, including the gentle conflict path and Publish.
 - **Retires risk:** the genuinely dangerous part — never showing `<<<<<<<` markers to an author — plus the merge/publish gate.
 - **Build:**
   - Rebase-on-send/update; on conflict, the **"Someone else changed this too"** reconciliation dialog (Keep mine / Keep theirs / Combine / Ask for help) — no git markers ever ([design/04-git-workflow.md](design/04-git-workflow.md)).
-  - Soft-lock warning when another open PR touches the same file.
   - **Publish** (merge) gated by `allow-author-publish`; auto-delete branch after.
   - New-spec creation; rename/delete as reviewable changes with link fix-ups.
 - **Demo / acceptance:** force a conflicting concurrent edit → the author resolves it through the plain-language dialog without ever seeing a conflict marker; an approved PR publishes via the button when permitted.
@@ -203,26 +242,27 @@ is the first real integration risk and runs **in parallel from day one**, indepe
 | 1 | `app://` assets | local files in webview | S | image renders, traversal blocked |
 | 2 | **Editor + preview + lineMap** ⭐ | useful local MD editor | L | live preview + scroll-sync, no stale renders |
 | 3 | Images | auto image insertion | M | paste → correct folder/name/link |
-| 4 | Local git + lifecycle | versioned edits, no git words | L | Edit→autosave commits, status cycles |
-| 5 | Send for review | full author round-trip to PR | L | real PR opens & updates |
+| 4 | Local versioning + lifecycle | explicit versioned edits, no git words | L | type→Unsaved; **Save a version**→one commit |
+| 5 | Send for review | full author round-trip to PR | L | real PR opens & updates (explicit) |
 | 6 | Rendered semantic diff | structural review GitHub can't do | L | heading-level/move read as structure |
-| 7 | Inline comments | in-app commenting synced to PR | L | round-trip both directions |
-| 8 | AI agent *(parallel)* | gated assistant | L | streamed proposal, confirm-then-apply |
-| 9 | Conflict + publish + polish | production manager workflow | L | conflict resolved with no markers |
+| 7 | In-flight PR comparison | see/compare overlapping work | M | PR-by-file listed; diff vs working copy / `main`, rendered+raw |
+| 8 | Inline comments | in-app commenting synced to PR | L | round-trip both directions |
+| 9 | AI agent *(parallel)* | gated assistant | L | streamed proposal, confirm-then-apply |
+| 10 | Conflict + publish + polish | production manager workflow | L | conflict resolved with no markers |
 
 **First dogfood checkpoint:** after **PoC‑3** (editor + images, fully local, no network) — give it to one or two managers.
-**First end-to-end review checkpoint:** after **PoC‑7**.
+**First end-to-end review checkpoint:** after **PoC‑8**.
 
 ## Decisions to lock as we go (don't let these drift)
 
 These are called out across the design docs; resolve each in the PoC noted, and record the decision in the relevant `docs/design/` file:
 
 - **Auth model** — GitHub App vs device flow vs PAT → **Spike‑A / PoC‑5** ([design/04-git-workflow.md](design/04-git-workflow.md)).
-- **Squash on publish?** → PoC‑9 ([design/10-repo-config.md](design/10-repo-config.md) `commit.squash-on-publish`).
-- **Who merges** (`allow-author-publish`) → PoC‑9.
+- **Squash on publish?** → PoC‑10 ([design/10-repo-config.md](design/10-repo-config.md) `commit.squash-on-publish`).
+- **Who merges** (`allow-author-publish`) → PoC‑10.
 - **Draft PRs first?** (`draft-first`) → PoC‑5.
 - **Name `SpecDesk`** is a placeholder — rename before any registry/namespace work ([design/README.md](design/README.md)).
-- **AI provider/model** default → PoC‑8 ([design/08-ai-agent.md](design/08-ai-agent.md)).
+- **AI provider/model** default → PoC‑9 ([design/08-ai-agent.md](design/08-ai-agent.md)).
 
 ## Relationship to the design docs
 

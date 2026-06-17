@@ -23,10 +23,13 @@ hidden-globs = ["node_modules/**", ".github/**"]   # never shown in the tree
 pattern = "spec/{docSlug}-{date:yyyyMMdd}"
 
 # ---------------------------------------------------------------------------
-# commit: generated commit message style
+# commit: how the "Save a version" note is seeded
 # ---------------------------------------------------------------------------
 [commit]
-template       = "{summary}"        # {summary} filled by template or agent
+# Seeds the editable version note shown when the author clicks "Save a version".
+# {summary} is filled by the deterministic template (or the agent later); the author
+# can always edit the result before the version is committed.
+template       = "{summary}"
 squash-on-publish = false           # squash the branch into one commit on merge
 
 # ---------------------------------------------------------------------------

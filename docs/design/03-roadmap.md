@@ -33,20 +33,24 @@ phases deliver value with no GitHub dependency at all.
 ## Phase 3 — Git layer (local)
 
 - Repo registration; background auto-fetch.
-- Document lifecycle state machine: edit → branch (silent) → autosave commits.
-- Auto-generated commit messages (deterministic template first; agent later).
-- Plain-language status: Draft / Saved.
+- Document lifecycle state machine: edit → branch (silent) → autosave to the **working copy**
+  (no commit) → explicit **Save a version** (commit).
+- The version note (commit message) is generated (deterministic template first; agent later)
+  and editable by the author before the version is saved.
+- Plain-language status: Editing / Unsaved changes / Version saved.
 
-**Ships:** edits are versioned in git, still entirely local, with zero git vocabulary shown.
+**Ships:** edits are versioned in git on the author's explicit "save a version", still entirely
+local, with zero git vocabulary shown.
 
 ## Phase 4 — GitHub: send for review
 
 - Octokit auth (device flow / PAT / GitHub App — decide in this phase).
-- "Send for review": push branch + open PR; generated title/description (editable).
+- "Send for review" (offered after the first saved version): push branch + open PR; generated
+  title/description (editable). "Update review" pushes later saved versions.
 - PR list: documents where the user is author, reviewer, or by URL.
 - Status: In review / Changes requested / Approved.
 
-**Ships:** the full author round-trip up to an open PR.
+**Ships:** the full author round-trip up to an open PR, all via explicit actions.
 
 ## Phase 5 — Rendered semantic diff
 
@@ -56,7 +60,16 @@ phases deliver value with no GitHub dependency at all.
 
 **Ships:** the review experience that raw GitHub cannot provide (problem 3).
 
-## Phase 6 — Inline comments
+## Phase 6 — In-flight PR awareness & comparison
+
+- List the open PRs that touch the file being edited.
+- Compare a chosen PR's version against either the local working copy or `main`, in both the
+  rendered and raw representations — reusing the Phase 5 diff engine on different inputs.
+- Promote the soft-lock "someone else is editing this" warning into this comparison entry point.
+
+**Ships:** an author can see and understand overlapping in-flight work before colliding (problem 4).
+
+## Phase 7 — Inline comments
 
 - Local comment model anchored via `lineMap`.
 - GitHub sync: map ranges to PR review-comment positions; pull existing comments; post new
@@ -64,21 +77,20 @@ phases deliver value with no GitHub dependency at all.
 
 **Ships:** in-app commenting synchronized with GitHub (problem 2).
 
-## Phase 7 — AI agent
+## Phase 8 — AI agent
 
 - Microsoft Agent Framework agent with tools over app operations.
-- Agent-generated commit/PR text (replaces the deterministic templates).
+- Agent-generated version-note / PR text (replaces the deterministic templates).
 - Chat panel with streaming.
 - Strict confirmation gate on every mutating action.
 
-**Ships:** assistant in the loop (problem 5).
+**Ships:** assistant in the loop (problem 6).
 
-## Phase 8 — Conflict handling & polish
+## Phase 9 — Conflict handling & polish
 
 - Rebase-on-send; friendly "someone else changed this too" reconciliation; maintainer escape
   hatch.
 - New-spec creation, rename/delete as reviewable changes.
-- Soft-lock awareness (warn when another open PR touches the same file).
 - Publish (merge) path, gated by `allow-author-publish`.
 
 **Ships:** production-ready manager workflow.
@@ -88,4 +100,6 @@ phases deliver value with no GitHub dependency at all.
 - Phases 1 and 2 give a genuinely useful local tool with no network or GitHub risk — good for
   early dogfooding with one or two managers.
 - Auth (Phase 4) is the first real integration risk; spike it early even if the UI lags.
-- The `lineMap` built in Phase 1 is reused by Phases 5 and 6 — get it right early.
+- The `lineMap` built in Phase 1 is reused by Phases 5, 6, and 7 — get it right early.
+- Phase 6 (comparison) is the Phase 5 diff engine pointed at new inputs; it adds a PR-by-file
+  query and a base selector, not a new algorithm.

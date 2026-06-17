@@ -25,7 +25,7 @@ Tools are thin functions over existing app operations (same operations the butto
 | `getCurrentDoc` | current document text + metadata | no |
 | `getDiff` | structural diff of the working change | no |
 | `searchSpec` | search across the repo's specs | no |
-| `suggestCommitMessage` | draft a commit message from the diff | no (proposes) |
+| `suggestVersionNote` | draft a version note (commit message) from the diff | no (proposes) |
 | `suggestPrDescription` | draft PR title + body from the branch diff | no (proposes) |
 | `suggestImageDescription` | draft alt text / `{slug:DESC}` for a pasted image | no (proposes) |
 | `proposeEdit` | propose a document edit as a reviewable change | **yes — gated** |
@@ -58,8 +58,8 @@ section" have context without the author pasting anything.
 
 ## Where the agent replaces deterministic logic
 
-Early phases generate commit/PR text from deterministic templates (no AI dependency). Phase 7
-swaps those for `suggestCommitMessage` / `suggestPrDescription`. The templates remain as a
+Early phases generate version-note / PR text from deterministic templates (no AI dependency).
+Phase 8 swaps those for `suggestVersionNote` / `suggestPrDescription`. The templates remain as a
 fallback when no provider is configured or the call fails, so the core workflow never depends
 on the agent being available.
 

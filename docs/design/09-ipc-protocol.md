@@ -27,17 +27,20 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `editor.selection` | `{ from, to }` | current selection/cursor |
 | `scroll.sync` | `{ side, sourceLine }` | a pane scrolled (throttled) |
 | `image.paste` | `{ base64, originalName?, mime }` | image dropped/pasted |
-| `action.save` | `{}` | explicit save (also happens automatically) |
+| `action.autosave` | `{ text, version }` | autosave the working copy to disk — **no commit** (also happens automatically on idle) |
+| `action.saveVersion` | `{ note }` | **explicit commit** of the working copy with the author's (generated, edited) version note |
 | `action.sendForReview` | `{}` | push + open PR |
-| `action.update` | `{}` | push more commits to the open PR |
+| `action.update` | `{}` | push the newly-saved versions to the open PR |
 | `action.publish` | `{}` | merge the PR (if permitted) |
 | `action.discard` | `{}` | abandon the draft |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
 | `comment.resolve` | `{ id }` | resolve a thread |
 | `pr.list` | `{}` | request PRs (author / reviewer) |
+| `pr.forFile` | `{ path }` | request the open PRs touching a given file (comparison) |
 | `pr.open` | `{ refOrUrl }` | open a PR by selection or URL |
-| `diff.request` | `{ path, mode }` | request rendered/raw diff |
+| `diff.request` | `{ path, mode }` | request rendered/raw diff of the open PR (base↔head) |
+| `compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
 | `chat.send` | `{ text }` | message to the agent |
 | `tree.request` | `{ path? }` | request the spec file tree |
 | `doc.open` | `{ path }` | open a spec for editing |
@@ -48,12 +51,14 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 |--------|---------|---------|
 | `preview.html` | `{ html, lineMap, version }` | rendered preview to inject |
 | `diff.rendered` | `{ html, mode }` | rendered/raw diff to display |
-| `commit.suggested` | `{ message }` | editable generated commit message |
+| `compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
+| `version.note.suggested` | `{ note }` | editable generated version note (the commit message in plain words) |
 | `pr.suggested` | `{ title, body }` | editable generated PR text |
 | `pr.list` | `{ items }` | PRs where the user is author/reviewer |
+| `pr.forFile` | `{ path, items }` | open PRs touching the given file |
 | `comments.synced` | `{ list }` | current comment set for the doc |
 | `image.inserted` | `{ markdown, cursorHint }` | link to insert at the cursor |
-| `status` | `{ state, branch?, ahead?, behind?, dirty? }` | plain-language status (`state` ∈ Draft, Saving, Saved, InReview, ChangesRequested, Approved, Published) |
+| `status` | `{ state, branch?, ahead?, behind?, dirty? }` | plain-language status (`state` ∈ Published, Editing, VersionSaved, InReview, ChangesRequested, Approved; `dirty` = unsaved changes since the last saved version) |
 | `conflict.detected` | `{ sections }` | "someone else changed this too" data |
 | `chat.delta` | `{ text }` | streaming agent output chunk |
 | `chat.done` | `{ id }` | agent turn complete |

@@ -18,12 +18,17 @@ diffs.
 3. **PR review is only available as raw Markdown diff.** → The app compares both the raw
    source and a rendered view, using a semantic (AST-level) diff so structural changes read
    as structure, not line noise.
-4. **Inserting images is fiddly.** Spec repos have rules about where image files live and how
+4. **Overlapping edits are invisible until they collide.** In a shared spec repo, several
+   people may be changing the same document at once, and an author has no easy way to see
+   other in-flight proposals or how they differ from their own work. → The app shows the open
+   reviews (PRs) that touch the file being edited and lets the author compare any of them —
+   rendered or raw — against either their own working copy or the published `main`.
+5. **Inserting images is fiddly.** Spec repos have rules about where image files live and how
    they must be named. → Images are inserted by drag-and-drop or paste; the app saves the
    file to the correct folder, generates a compliant name, stages it, and inserts the link
    automatically.
-5. **No assistant in the loop.** → An embedded AI agent automates the tedious bits
-   (commit/PR text, search, drafting) under explicit user confirmation.
+6. **No assistant in the loop.** → An embedded AI agent automates the tedious bits
+   (version notes / PR text, search, drafting) under explicit user confirmation.
 
 ## Target users
 
@@ -41,8 +46,12 @@ diffs.
 - **One spec, one editing session, one review.** The default unit of work is "I am editing
   this document." That maps to one branch and one PR. Multi-file changes are a power-user
   feature, not the default.
-- **Autosave-like saving, explicit send gate.** Saving is frequent and quiet (like Office
-  autosave). Making the change visible to others is one deliberate button.
+- **Continuous autosave, explicit versioning, explicit sharing.** Three distinct levels: typing
+  autosaves to disk continuously and silently (never lose work, no commit); the author then
+  **saves a version** when a state is worth keeping (an explicit commit, with a short editable
+  note); and **sending for review / updating** is a further deliberate button. We do *not*
+  auto-commit on idle — committing is the author's decision, because only they know when a change
+  is a real version, and their note is what makes the history legible.
 - **Never show merge-conflict markers to an author.** Conflicts are surfaced as "someone
   else changed this too" with a simple reconciliation choice, or escalated to a maintainer.
 - **Native owns logic; webview stays thin.** See [02-architecture.md](02-architecture.md).
@@ -64,9 +73,11 @@ diffs.
 
 ## Success criteria
 
-- An author who has never used git can open a spec, edit it, add an image, send it for
-  review, respond to inline comments, and get it published — without learning a single git
-  term.
+- An author who has never used git can open a spec, edit it, save versions with plain-language
+  notes, add an image, send it for review, respond to inline comments, and get it published —
+  without learning a single git term.
+- Before colliding, an author can see the other open reviews touching the file they are editing
+  and compare them — rendered or raw — against their own working copy or against `main`.
 - A reviewer can review the change as a rendered, structural diff, not as raw `.md` lines.
 - The resulting git history is clean enough that a developer reviewing the same PR sees
   sensible commits and minimal formatting noise.

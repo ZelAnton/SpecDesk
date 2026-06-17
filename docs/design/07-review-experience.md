@@ -116,3 +116,62 @@ line for GitHub posting.
   perfect detection.
 - Large diffs: render top-level changed blocks first, fill in unchanged context lazily, so the
   view appears progressively rather than blocking.
+
+---
+
+## Part C — In-flight PR awareness & comparison
+
+Part B diffs the **two ends of one PR** (its own base vs head). Part C answers a different
+question the author has *while they are editing*: **"what else is in flight on this file, and how
+does it differ from what I have?"** Spec repos are shared; two people editing the same document is
+common, and the author needs to see overlapping work before they collide — not after.
+
+### What the author sees
+
+While a document is open for editing, SpecDesk shows the **open PRs that touch the current file**
+(this generalizes the soft-lock warning in [04-git-workflow.md](04-git-workflow.md) from a one-line
+"someone else is editing this" into something actionable). Selecting one opens a comparison of
+**that PR's proposed version** of the file against a chosen base.
+
+### Two comparison bases (modes)
+
+The author picks what to compare the PR's version against:
+
+1. **vs my working copy** — the author's current local content, *including unsaved changes* (the
+   working copy on disk, not necessarily the last saved version). Answers "how does their proposal
+   differ from exactly what I'm looking at right now?"
+2. **vs `main`** — the published baseline. Answers "what does their PR actually change about the
+   current published spec?" — i.e. it shows the PR as a reviewer on `main` would see it,
+   independent of the author's own in-progress edits.
+
+These are the only two modes. Mode 1 is the collision-avoidance lens (mine vs theirs); mode 2 is
+the published-truth lens (theirs vs the shared baseline).
+
+### Both representations
+
+Each comparison is available in **both** representations, reusing the Part B engine:
+
+- **Rendered** structural diff (side-by-side or unified) — the default, for reading.
+- **Raw source** diff — the literal `.md` line diff, via the same mandatory toggle as Part B.
+
+So Part C is, mechanically, **Part B's diff engine pointed at a different pair of inputs**: instead
+of `(PR base, PR head)` it diffs `(chosen base, PR head)` where the chosen base is the working copy
+or `main`. No new diff algorithm — only new input selection and a PR-list/affected-file query.
+
+### Inputs
+
+- **PR list for a file:** query open PRs whose changed-file set includes the current path (Octokit;
+  filter the repo's open PRs by changed files, cache per Sync). Cheap to keep fresh in the
+  background.
+- **PR head content:** the file's blob at the PR head SHA (as in Part B).
+- **Bases:** the working copy is already in memory (the editor buffer / disk file); `main` is the
+  file's blob at the base branch tip from the local fetched clone.
+
+### Boundaries (v1)
+
+- **Read-only.** Part C is for *seeing* overlapping work, not merging it. Pulling another PR's
+  changes into the author's draft, or resolving across PRs, is conflict-handling territory
+  ([04-git-workflow.md](04-git-workflow.md)) and out of scope here.
+- **Open PRs only**, touching **this one file** — not a general cross-repo PR browser.
+- Comparison is **per file**; a PR touching several specs is compared one file at a time (the file
+  currently open).

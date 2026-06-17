@@ -120,7 +120,7 @@ to the existing file. This prevents the same screenshot being committed five tim
 
 ## Staging & links
 
-- The new file is `git add`-ed immediately so it travels with the next autosave commit.
+- The new file is `git add`-ed immediately so it travels with the next saved version (commit).
 - The inserted Markdown link is **relative to the document**, computed natively, so it renders
   correctly both in the app (via `app://`) and on GitHub.
 - On document **rename/move**, the app can offer to fix image links and move the

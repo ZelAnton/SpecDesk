@@ -9,25 +9,39 @@ of decisions** are reduced.
 
 In Office, an author:
 1. opens a document,
-2. types — it autosaves,
-3. optionally sends it for review / turns on track changes,
-4. sees comments, responds, edits,
-5. it gets finalized.
+2. types — it **autosaves to disk continuously** (nothing is ever lost),
+3. occasionally marks a **named version** in Version History worth coming back to,
+4. optionally sends it for review / turns on track changes,
+5. sees comments, responds, edits,
+6. it gets finalized.
 
 There is no branch, commit, push, pull, merge, or conflict marker in that world. We preserve
-the *feel* of those five steps and map them onto git/GitHub.
+the *feel* of those steps and map them onto git/GitHub.
+
+Two distinct ideas from Office matter here and we keep them separate:
+
+- **Autosave** is continuous, silent, and to the local file only — its only job is "never lose
+  the author's typing". In our world it writes the working copy to disk; it does **not** commit.
+- **Save a version** is a deliberate, occasional act — "this state is worth a name". In our
+  world *this* is the commit, and it is the only place a commit ever happens. The author writes
+  (or accepts a generated) short note describing the version — that note is the commit message.
+
+This is the core correction to the earlier model: we do **not** auto-commit on every idle.
+Auto-committing produced noisy, meaningless history and took the "when is this a real version?"
+decision away from the author. Committing is now an **explicit** action.
 
 ## Vocabulary mapping
 
 | Author sees | Git / GitHub reality | Visible? |
 |-------------|----------------------|----------|
 | **Edit** | fetch latest, create working branch from published version | action button |
-| **Saved** (automatic) | local commit | status text |
-| **Send for review** | push branch + open PR (title/description generated) | action button |
+| **Saved** (automatic, continuous) | write working copy to disk — **no commit** | status text |
+| **Save a version** (+ a short note) | `git commit` with the note as the message | action button |
+| **Send for review** | push branch + open PR (title/description generated, editable) | action button (offered after the first version is saved) |
 | **In review** | PR open, awaiting reviewers | status |
 | inline **comment** | PR review comment | inline UI |
 | **Changes requested** | PR review state = changes requested | status |
-| **Update** (automatic on save while in review) | push more commits to the PR | implicit |
+| **Update review** | push the newly-saved versions to the PR | action button (offered after saving a version while in review) |
 | **Approved** | PR approved | status |
 | **Publish** | merge PR | action button (if permitted) |
 | **Published** | PR merged | status |
@@ -35,23 +49,51 @@ the *feel* of those five steps and map them onto git/GitHub.
 | "Someone else changed this too" | rebase/merge conflict | reconciliation dialog |
 
 What stays **completely invisible**: branch names, commit SHAs, push, fetch, rebase, the word
-"pull request" itself (it is "review").
+"pull request" itself (it is "review"). What is now **deliberately visible** (a considered
+departure from "hide everything"): the act of saving a version and its one-line note. The author
+never sees the word *commit*, but they do choose *when* a version exists and *what it says* —
+because only the author knows when a change is meaningful, and that note is what makes the history
+and the eventual review legible.
+
+### The explicit chain (Save a version → Send / Update)
+
+Saving a version is one button. Once a version exists the app **offers the next step inline**,
+it never performs it silently:
+
+1. **Save a version** — commit the working copy with the (generated, editable) note.
+2. Immediately after, offer **Send for review** if no review exists yet (push + open PR), or
+   **Update review** if one does (push the new versions). The author can decline and keep saving
+   local versions; nothing leaves the machine until they choose to share.
+
+So the progression is **autosave (disk) → Save a version (commit) → Send for review / Update
+(push + PR)** — three levels, each more deliberate than the last, each an explicit author choice
+except the first.
 
 ## Document lifecycle
 
 ```mermaid
 stateDiagram-v2
 	[*] --> Published: existing spec
-	Published --> Draft: Edit  (branch from latest)
-	Draft --> Draft: type → Saved (commit)
-	Draft --> InReview: Send for review (push + open PR)
+	Published --> Editing: Edit  (branch from latest)
+	Editing --> Editing: type → Saved to disk (no commit)
+	Editing --> VersionSaved: Save a version (commit)
+	VersionSaved --> Editing: type again (unsaved changes)
+	VersionSaved --> InReview: Send for review (push + open PR)
 	InReview --> ChangesRequested: reviewer requests changes
-	ChangesRequested --> InReview: Saved → Update (push)
+	ChangesRequested --> InReview: Save a version → Update review (push)
+	InReview --> InReview: Save a version → Update review (push)
 	InReview --> Approved: reviewer approves
 	Approved --> Published: Publish (merge)  [if allowed]
-	Approved --> InReview: further edits (re-opens review)
-	Draft --> Published: Discard (delete branch)  [author abandons]
+	Approved --> InReview: further versions (re-opens review)
+	Editing --> Published: Discard (delete branch)  [author abandons]
+	VersionSaved --> Published: Discard (delete branch)  [author abandons]
 ```
+
+**Editing** vs **Version saved** is the local distinction the status surface must show: *Editing*
+means there are unsaved changes on disk (a commit would capture something); *Version saved* means
+the working copy matches the last saved version. This is the same "you have unsaved changes" dot
+every editor shows — here it tracks the working-tree-vs-HEAD state, not a file-vs-disk state
+(the file is always flushed to disk by autosave).
 
 ### 1. Browse & open
 
@@ -69,30 +111,50 @@ Clicking **Edit**:
 
 The author never names or sees the branch.
 
-### 3. Write (autosave-like saving)
+### 3. Write (continuous autosave to disk)
 
-Edits commit locally on idle/debounce, exactly like Office autosave. Status cycles
-**Saving… → Saved just now**. Commit messages are auto-generated (deterministic template
-early, agent later) and are *not* shown unless the author opens an optional "history" panel.
-Multiple small commits are fine; they can be squashed at publish if the repo prefers.
+Edits autosave to the working copy on idle/debounce — exactly like Office autosave, and like
+Office it is purely a "never lose typing" mechanism. Status shows **Saving… → Saved** and, once
+there are changes beyond the last saved version, **Unsaved changes** (the dirty indicator). **No
+commit happens here.** The author can type for an hour across many sittings and there is still
+just one working copy on disk and (at most) the versions they chose to save.
 
-### 4. Send for review
+### 4. Save a version (explicit commit)
 
-A single button. The app:
+A button the author presses when a state is worth keeping. The app:
+- proposes a short **note** describing the change (deterministic template early — e.g. derived
+  from the doc slug and the sections touched; the agent drafts a better one later),
+- lets the author **edit the note** before confirming (this is the author's commit message, in
+  plain words),
+- commits the working copy (document **and** any pasted image assets — see
+  [06-images.md](06-images.md)) on the working branch,
+- status becomes **Version saved**,
+- then **offers** the sharing step inline (see below) — never taking it automatically.
+
+Saving several versions before sharing is normal and encouraged; they read as an honest history
+of how the change developed, and can be squashed at publish if the repo prefers
+(`commit.squash-on-publish`).
+
+### 5. Send for review
+
+Offered right after the first **Save a version**, and always available as a button. The app:
 - pushes the working branch,
-- opens a PR with a generated **title + description** (editable before submit — this is the
-  one place the author confirms text),
+- opens a PR with a generated **title + description** (editable before submit — assembled from
+  the saved version notes; this is where the author confirms the outward-facing text),
 - assigns reviewers (default from `.spectool.toml` `reviewers`, or CODEOWNERS, or author
   picks from a list),
 - status becomes **In review**.
 
-### 5. Respond to feedback
+### 6. Respond to feedback
 
 Reviewers leave inline comments (see [07-review-experience.md](07-review-experience.md)). The
-author sees them in the same editor, replies, and edits. Saving while In review automatically
-**Update**s the PR (pushes). Status flips **Changes requested → In review** on update.
+author sees them in the same editor, replies, and edits. After saving a new version while In
+review, the app offers **Update review** (push the new versions to the PR). Status flips
+**Changes requested → In review** on update. While editing, the author can also see and compare
+against other open reviews touching the same file — see
+[07-review-experience.md](07-review-experience.md) Part C.
 
-### 6. Publish
+### 7. Publish
 
 When approved:
 - if `allow-author-publish = true`, the author sees a **Publish** button (merge),
@@ -117,7 +179,10 @@ Authors must never see `<<<<<<<` markers. Strategy, in order of prevention:
 
 Soft-lock awareness: if another **open PR** already touches the same file, warn at edit-start
 ("X is already editing this spec — your changes may overlap"). GitHub cannot hard-lock, so
-this is advisory only, to reduce collisions rather than prevent them.
+this is advisory only, to reduce collisions rather than prevent them. This warning is the entry
+point to **comparing against the in-flight PR** — the author can open its proposed version side
+by side with their own work before deciding how to proceed (see
+[07-review-experience.md](07-review-experience.md) Part C).
 
 ## New / rename / delete
 
