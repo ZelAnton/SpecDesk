@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scrolled into a block, not just which line), and the preview interpolates within the matching
   rendered block. When scrolling stops the preview re-snaps exactly to the editor's top — the code
   pane is the reference — removing the small residual drift that remained after a momentum scroll.
+  Echo suppression now uses a **direction lock** (the actively-scrolled pane stays authoritative for
+  a short rolling window) instead of a single "ignore the next event" flag, eliminating the brief
+  two-way fight that made the preview visibly judder mid-scroll. The follow itself is now a pure
+  **pixel→pixel map**: height-sync publishes the aligned per-block anchors and scroll-sync
+  interpolates between them, so a scroll position maps straight to the other pane's `scrollTop` with
+  no `posAtCoords`, no per-frame layout reads, and a fractional (device-pixel-snapped) result —
+  removing the residual stutter that the line-based remap left behind.
 - Editor highlights and optional wrapping: the source line under the caret is highlighted in both
   panes (prominent), the line under the mouse is highlighted faintly (auxiliary, suppressed when it
   is the caret line), and a toolbar button toggles soft wrapping of long source lines.

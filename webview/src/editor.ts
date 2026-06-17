@@ -85,8 +85,8 @@ const hoverLineField = StateField.define<DecorationSet>({
 export interface EditorCallbacks {
   /** Fired ~120 ms after the last keystroke, with the full text and its new version. */
   onChange: (text: string, version: number) => void;
-  /** Fired as the editor scrolls, with the fractional 0-based source line at the viewport top. */
-  onScroll: (topLine: number) => void;
+  /** Fired as the editor scrolls; scroll-sync reads the scroll position directly off the editor. */
+  onScroll: () => void;
   /** Fired ~120 ms after scrolling stops — used to re-snap the preview precisely to the editor. */
   onScrollSettle: () => void;
   /** Fired when the cursor moves, with the 0-based line it is on (for active-line highlighting). */
@@ -102,7 +102,7 @@ export interface EditorCallbacks {
 export class MarkdownEditor {
   private readonly view: EditorView;
   private readonly onChange: (text: string, version: number) => void;
-  private readonly onScroll: (topLine: number) => void;
+  private readonly onScroll: () => void;
   private readonly onScrollSettle: () => void;
   private readonly onCursor: (line: number) => void;
   private readonly onHover: (line: number | null) => void;
@@ -167,7 +167,7 @@ export class MarkdownEditor {
     // Live sync runs every frame (sub-line precise). When scrolling stops, fire a settle callback
     // so the preview can be re-snapped exactly to the editor's top — the live frames can lag a
     // momentum scroll's final resting position by a frame.
-    const reportScroll = rafThrottle(() => this.onScroll(this.topVisibleLineExact()));
+    const reportScroll = rafThrottle(() => this.onScroll());
     let scrollSettleTimer: ReturnType<typeof setTimeout> | undefined;
     this.view.scrollDOM.addEventListener("scroll", () => {
       reportScroll();
@@ -258,6 +258,20 @@ export class MarkdownEditor {
   scrollToSourceLine(line: number): void {
     const target = this.view.state.doc.line(this.clampLine(line)).from;
     this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "start" }) });
+  }
+
+  /** Current vertical scroll offset (pixels from content top) — the scroll-map's editor coordinate. */
+  scrollTopValue(): number {
+    return this.view.scrollDOM.scrollTop;
+  }
+
+  /**
+   * Set the vertical scroll offset directly (pixels). A fractional value is kept (not rounded): the
+   * scroll map is deterministic so there is no shimmer, and letting the browser snap to device
+   * pixels is smoother than quantizing to whole CSS pixels on HiDPI displays.
+   */
+  setScrollTop(px: number): void {
+    this.view.scrollDOM.scrollTop = px;
   }
 
   /**

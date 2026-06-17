@@ -154,6 +154,20 @@ export class Preview {
       this.blockTop(block.el) + fraction * block.el.getBoundingClientRect().height;
   }
 
+  /** Current vertical scroll offset (pixels from content top) — the scroll-map's preview coordinate. */
+  scrollTopValue(): number {
+    return this.el.scrollTop;
+  }
+
+  /**
+   * Set the vertical scroll offset directly (pixels). A fractional value is kept (not rounded): the
+   * scroll map is deterministic so there is no shimmer, and letting the browser snap to device
+   * pixels is smoother than quantizing to whole CSS pixels on HiDPI displays.
+   */
+  setScrollTop(px: number): void {
+    this.el.scrollTop = px;
+  }
+
   /** The 0-based source line at the top of the preview viewport (the inverse of the above). */
   topVisibleSourceLine(): number {
     const scrollTop = this.el.scrollTop;

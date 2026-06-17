@@ -181,7 +181,7 @@ function wire(): void {
     onChange: (text, version) => {
       ipc.send(Kinds.editorChanged, { text }, { version });
     },
-    onScroll: (topLine) => sync?.fromEditor(topLine),
+    onScroll: () => sync?.fromEditor(),
     onScrollSettle: () => sync?.snapPreviewToEditor(),
     onCursor: (line) => {
       activeLine = line;
@@ -204,9 +204,15 @@ function wire(): void {
   const reportPreviewScroll = rafThrottle(() => sync?.fromPreview());
   previewEl.addEventListener("scroll", reportPreviewScroll);
 
-  // Height-sync: equalize editor/preview block heights so the panes align pixel-for-pixel.
+  // Height-sync: equalize editor/preview block heights so the panes align pixel-for-pixel, and feed
+  // the resulting aligned anchors to scroll-sync (which maps pane→pane by interpolating between them).
   // The per-reconcile summary goes to the structured log (file), not the status bar.
-  const heightSync = new HeightSync(editor, preview, (summary) => log.debug(summary));
+  const heightSync = new HeightSync(
+    editor,
+    preview,
+    (summary) => log.debug(summary),
+    (anchors) => sync?.setAnchors(anchors),
+  );
   const reconcile = rafThrottle(() => {
     sync?.suppress();
     heightSync.reconcile();
@@ -226,8 +232,8 @@ function wire(): void {
     }
     resizeSettle = setTimeout(() => {
       heightSync.reconcile();
-      sync?.suppress();
-      preview.scrollToSourceLine(editor.topVisibleLineExact());
+      // reconcile() refreshed the anchors; realign the preview to the editor through them.
+      sync?.snapPreviewToEditor();
     }, 150);
   });
 

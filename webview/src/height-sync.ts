@@ -31,6 +31,48 @@ export interface GapAdjustments {
 }
 
 /**
+ * One aligned anchor: a block's top in each pane's own scroll coordinate AFTER the editor spacers
+ * are applied. `editorTop` is spacer-INCLUSIVE (the value of `scrollDOM.scrollTop` at which that
+ * block reaches the viewport top); `previewTop` is the preview block's natural top. Scroll-sync
+ * interpolates between consecutive anchors to map one pane's scroll position to the other's.
+ */
+export interface ScrollAnchor {
+  editorTop: number;
+  previewTop: number;
+}
+
+/**
+ * The aligned (editorTop, previewTop) anchors for the scroll map, derived from the same per-gap
+ * lead/pad as {@link computeGapAdjustments} so the anchors exactly match the applied spacers:
+ * `editorTop` accumulates each gap plus its spacer; `previewTop` is the measured preview top. Pure.
+ * Keep in lockstep with computeGapAdjustments — both encode the same padding scheme.
+ */
+export function computeScrollAnchors(anchors: AnchorMetrics[]): ScrollAnchor[] {
+  const first = anchors[0];
+  if (!first) {
+    return [];
+  }
+  const lead = Math.max(0, Math.round(first.previewTop - first.editorTop));
+  const result: ScrollAnchor[] = [
+    { editorTop: first.editorTop + lead, previewTop: first.previewTop },
+  ];
+  let inclusive = first.editorTop + lead;
+  for (let i = 1; i < anchors.length; i++) {
+    const current = anchors[i];
+    const previous = anchors[i - 1];
+    if (!current || !previous) {
+      continue;
+    }
+    const editorGap = current.editorTop - previous.editorTop;
+    const previewGap = current.previewTop - previous.previewTop;
+    const pad = Math.max(0, Math.round(previewGap - editorGap));
+    inclusive += editorGap + pad;
+    result.push({ editorTop: inclusive, previewTop: current.previewTop });
+  }
+  return result;
+}
+
+/**
  * Pad only the editor so each block lines up with the (fixed) preview. This is computed **per gap**,
  * not cumulatively: each block's spacer depends only on its own two anchor tops. That keeps a
  * block's spacer stable as long as that block's anchors are measured stably (e.g. the visible
@@ -66,11 +108,18 @@ export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly preview: Preview;
   private readonly onDebug: ((summary: string) => void) | undefined;
+  private readonly onAnchors: ((anchors: ScrollAnchor[]) => void) | undefined;
 
-  constructor(editor: MarkdownEditor, preview: Preview, onDebug?: (summary: string) => void) {
+  constructor(
+    editor: MarkdownEditor,
+    preview: Preview,
+    onDebug?: (summary: string) => void,
+    onAnchors?: (anchors: ScrollAnchor[]) => void,
+  ) {
     this.editor = editor;
     this.preview = preview;
     this.onDebug = onDebug;
+    this.onAnchors = onAnchors;
   }
 
   /**
@@ -82,6 +131,7 @@ export class HeightSync {
     const geometry = this.preview.blockGeometry();
     if (geometry.length === 0) {
       this.editor.setSpacers([], 0);
+      this.onAnchors?.([]);
       this.onDebug?.("height-sync: 0 blocks");
       return;
     }
@@ -95,6 +145,8 @@ export class HeightSync {
 
     const { editorLead, editorSpacers } = computeGapAdjustments(anchors);
     this.editor.setSpacers(editorSpacers, editorLead);
+    // Publish the aligned anchors so scroll-sync can map pane→pane by interpolating between them.
+    this.onAnchors?.(computeScrollAnchors(anchors));
 
     const last = anchors[anchors.length - 1];
     const round = (value: number) => Math.round(value);
