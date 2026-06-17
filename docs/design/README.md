@@ -4,9 +4,10 @@
 
 SpecDesk is a Windows desktop application that lets non-technical authors (managers) edit
 Markdown specifications stored in GitHub **without ever touching git, branches, or pull
-requests directly**. It wraps a source + live-preview Markdown editor, automated git/GitHub
-operations, inline review comments, a rendered (semantic) PR diff, automated image handling,
-and an embedded AI agent — all behind plain-language UI.
+requests directly**. It wraps a Markdown editor usable in three modes — source, split, and a
+formatted (WYSIWYG) view the author types into directly (Markdown stays the source of truth) —
+automated git/GitHub operations, inline review comments, a rendered (semantic) PR diff, automated
+image handling, and an embedded AI agent — all behind plain-language UI.
 
 ## How these documents are organized
 
@@ -16,7 +17,7 @@ and an embedded AI agent — all behind plain-language UI.
 | [02-architecture.md](02-architecture.md) | Stack, process model, module layout (C#/F#), native↔webview split, data flow. |
 | [03-roadmap.md](03-roadmap.md) | Phased build plan; every phase ships usable value. |
 | [04-git-workflow.md](04-git-workflow.md) | The manager-friendly git/GitHub workflow and its vocabulary mapping. |
-| [05-live-preview.md](05-live-preview.md) | Markdown pipeline, AST model, line mapping, scroll-sync. |
+| [05-live-preview.md](05-live-preview.md) | Markdown pipeline, AST model, line mapping, scroll-sync, the three editor view modes, and WYSIWYG formatted editing. |
 | [06-images.md](06-images.md) | Drag-and-drop, paste, auto-save, folder + naming rules. |
 | [07-review-experience.md](07-review-experience.md) | Inline comments (local + GitHub sync), the rendered semantic diff, and comparing against in-flight PRs. |
 | [08-ai-agent.md](08-ai-agent.md) | Microsoft Agent Framework integration, tools, safety rules. |

@@ -57,6 +57,8 @@ local, with zero git vocabulary shown.
 - Fetch base + head versions of changed `.md` files.
 - AST diff (F#) → rendered side-by-side / unified HTML.
 - Toggle: raw source diff ↔ rendered diff.
+- The diff must render in **both** the source and the formatted editor views (the lineMap anchors
+  it either way) — see the editor-modes track below.
 
 **Ships:** the review experience that raw GitHub cannot provide (problem 3).
 
@@ -74,6 +76,8 @@ local, with zero git vocabulary shown.
 - Local comment model anchored via `lineMap`.
 - GitHub sync: map ranges to PR review-comment positions; pull existing comments; post new
   ones; replies; resolve.
+- Comments render and anchor in **both** the source and formatted editor views; switching modes
+  preserves them — see the editor-modes track below.
 
 **Ships:** in-app commenting synchronized with GitHub (problem 2).
 
@@ -94,6 +98,22 @@ local, with zero git vocabulary shown.
 - Publish (merge) path, gated by `allow-author-publish`.
 
 **Ships:** production-ready manager workflow.
+
+## Editor view modes & WYSIWYG (foundational editor track)
+
+A foundational track that extends the Phase 1 editor and parallels the GitHub track. Two steps:
+
+- **Editor view modes** — code / split / formatted, switchable (the HedgeDoc-style shell). The
+  formatted view starts as the existing read-only render. Reuses the Phase 1 pipeline + lineMap.
+- **WYSIWYG editing in the formatted view** — the formatted view becomes editable; edits serialize
+  straight back to Markdown (the source of truth) with a minimal, lossless round-trip. Needs a real
+  editor engine (ProseMirror dual-mode is the leading candidate); the round-trip fidelity is the
+  central risk and is **spiked first** on real specs. See [05-live-preview.md](05-live-preview.md)
+  and the reference editors in [../../AGENTS.md](../../AGENTS.md).
+
+**Ships:** the author can edit the rendered document directly, in any of three modes, with Markdown
+kept clean. This track is a prerequisite for the *formatted-view* side of Phases 5 (diff) and 7
+(comments).
 
 ## Sequencing notes
 

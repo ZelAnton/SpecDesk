@@ -3,6 +3,23 @@
 This covers problems 2 and 3 together because both serve the review workflow and both rely on
 the `lineMap` from [05-live-preview.md](05-live-preview.md).
 
+## Core requirement: review works in both representations
+
+Because the editor has both a **source** view and a **formatted (WYSIWYG)** view
+([05-live-preview.md](05-live-preview.md)), **diff highlighting and inline comments must render and
+anchor in both** — the reviewer sees the same review state whichever mode they are in, and switching
+modes preserves it. This is a defining requirement, not a nice-to-have: a manager reviews in the
+formatted view, a developer may prefer the source/raw view, and they are looking at *the same*
+comments and the same change.
+
+The bridge is the `lineMap` (source line range ↔ rendered/editor node). Everything below — the
+comment model (Part A) and the rendered diff (Part B) — is defined against source lines, then
+projected into whichever view is active:
+- **Source view:** CodeMirror line/range decorations (gutter comment markers, changed-line styling)
+  and the raw source diff.
+- **Formatted view:** overlays anchored to editor-document positions via each node's source-line
+  provenance (editor decorations / `data-line` markers).
+
 ---
 
 ## Part A — Inline comments

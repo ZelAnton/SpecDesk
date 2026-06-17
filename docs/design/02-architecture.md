@@ -12,8 +12,8 @@
 | Git | **LibGit2Sharp** (+ git CLI shell-out for tricky ops) | — |
 | GitHub API | **Octokit.NET** | PRs, review comments, reviewers, file contents/blobs. |
 | AI agent | **Microsoft Agent Framework** | GA since 2026-04-03; first-party Anthropic Claude connector; native MCP. |
-| Editor (webview) | **CodeMirror 6** | Source editing + selection/cursor; the only substantial TS. |
-| Preview (webview) | plain DOM | Renders HTML computed natively; no Markdown logic in JS. |
+| Editor (webview) | **CodeMirror 6** (source / split modes) + a **WYSIWYG engine** for the formatted mode | Three view modes (code / split / formatted). The WYSIWYG engine is chosen by a spike — ProseMirror dual-mode is the leading candidate (see [05-live-preview.md](05-live-preview.md), [ROADMAP.md](../ROADMAP.md)). The substantial TS surface. |
+| Preview / read render (webview) | plain DOM | Renders HTML computed natively; no Markdown logic in JS on this path. |
 | Webview build | **esbuild** (or Vite) | Bundles the small TS surface. |
 
 ### Why Photino over WPF / WinForms
@@ -57,8 +57,13 @@ flowchart LR
 	Host --- AI
 ```
 
-The webview never parses Markdown, never talks to git or GitHub, never calls the AI. It
-emits intents (text changed, image pasted, button clicked) and renders what it is told.
+The webview never talks to git or GitHub, never calls the AI. It emits intents (text changed,
+image pasted, button clicked) and renders what it is told. The **one deliberate exception** is the
+formatted (WYSIWYG) editor: editing the rendered document inherently requires parsing and
+serializing Markdown in the webview. Even then Markdig stays the **canonical** parser for
+preview/diff/comments; the WYSIWYG editor's output is just Markdown *text* fed back through the same
+native pipeline, so there is still one source of truth for review (see
+[05-live-preview.md](05-live-preview.md)).
 
 ## Module layout
 

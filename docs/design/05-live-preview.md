@@ -1,8 +1,12 @@
 # 05 — Live Preview & Markdown Pipeline
 
-The editor shows Markdown **source** (CodeMirror 6) with a **rendered preview** beside it.
-All Markdown logic is native (Markdig); the webview only injects HTML and reports
-scroll/selection.
+The editor offers three view modes — **source** (Markdown in CodeMirror 6), **split**
+(source + rendered side by side), and **formatted** (a WYSIWYG view the author types into
+directly). Markdown text on disk is always the single source of truth: an edit made in the
+formatted view is serialized straight back to Markdown (see "Editor view modes & WYSIWYG editing"
+below). The **read/preview** rendering path is native (Markdig) and one-way — it is the canonical
+render used by diff, comment anchoring, and image-link rewriting; the webview injects that HTML and
+reports scroll/selection. The **formatted-editing** path adds a two-way editor surface on top.
 
 ## Pipeline
 
@@ -30,6 +34,13 @@ queue stale work.
   two slightly different Markdown interpretations — a bug factory.
 - Keeps TypeScript minimal (the project goal).
 - Markdig exposes precise source spans, which the whole line-mapping story depends on.
+- **The WYSIWYG editor is the one principled exception.** A formatted-editing surface must parse
+  and serialize Markdown *in the webview* (that is intrinsic to a contenteditable/ProseMirror
+  editor — see below). We contain the risk by keeping Markdig **canonical**: the WYSIWYG editor's
+  job is only to turn formatted edits into Markdown *text*, which then flows back through the same
+  native pipeline as everything else. Diff, comments, and the read-only render are always computed
+  from Markdig, never from the editor's internal model — so there is still exactly one source of
+  truth for review.
 
 ## The F# AST model
 
@@ -81,6 +92,68 @@ Used by:
 - **Diff highlighting** — changed AST nodes map back to source lines and rendered nodes.
 
 Get this right in Phase 1; Phases 5 and 6 both depend on it.
+
+## Editor view modes & WYSIWYG editing
+
+The editor exposes three modes the author switches between freely (the model proven by HedgeDoc's
+splitter and vditor's mode switch — see [AGENTS.md](../../AGENTS.md) "Reference implementations"):
+
+| Mode | Left | Right | Edits where |
+|------|------|-------|-------------|
+| **Source** | Markdown (CodeMirror) | — | the source text |
+| **Split** | Markdown (CodeMirror) | rendered preview | the source text; preview follows |
+| **Formatted** | — | WYSIWYG document | **the rendered document directly** |
+
+In every mode the file on disk is **Markdown**, and it is the single source of truth. The novel
+part is the **Formatted** mode: the author types into the rendered document, and each edit is
+serialized straight back to the Markdown source. Conceptually:
+
+```
+Formatted edit ─► editor document model ─► serialize ─► Markdown text (source of truth)
+                                                          │
+                                                          ▼  (same path as a source edit)
+                                              Markdig parse ─► canonical render / lineMap / diff
+```
+
+### The hard requirement: minimal, lossless round-trip
+
+A formatted edit must produce the **smallest local change** to the Markdown that expresses it — it
+must **not** reformat unrelated parts of the document. If editing one paragraph rewrote bullet
+markers, re-wrapped lines, or reordered attributes elsewhere, every such edit would explode the git
+diff and destroy the review experience that is the product's whole point ([01-concept.md](01-concept.md)
+design principles; [07-review-experience.md](07-review-experience.md)). This round-trip fidelity is
+the **central technical risk** of the WYSIWYG mode and must be proven on real specs before the
+pipeline is committed (a spike — see [ROADMAP.md](../ROADMAP.md)).
+
+### Engine
+
+Formatted editing needs a real editor component (a `contenteditable` surface with a structured
+document model and a Markdown serializer) — the existing one-way "inject HTML" preview cannot be
+typed into. Candidate families, studied as references in [AGENTS.md](../../AGENTS.md):
+
+- **ProseMirror dual-mode** (e.g. `@gravity-ui/markdown-editor`, or Tiptap as in zenmark): a
+  ProseMirror document for the formatted view + CodeMirror for source, with markdown-it→PM parse and
+  PM→Markdown serialize, and a **decoration** system for anchored overlays. *Leading candidate* — it
+  matches our dual-representation and overlay needs most directly.
+- **Self-contained engines** — `muya` (MarkText) or Lute (vditor): more independent, but a much
+  larger surface to own and (vditor) an opaque wasm engine.
+
+Decision deferred to a spike; recorded under "Decisions to lock" in the roadmap. Whatever is chosen
+runs in the webview (it is the editor surface); native Markdig stays canonical for review.
+
+### Overlays in both representations (the core requirement)
+
+Diff highlighting and inline comments must appear in **both** the source and formatted views, driven
+by the same review data ([07-review-experience.md](07-review-experience.md)). The anchor that bridges
+them is the source line range (the `lineMap`):
+
+- **Source view:** anchor to CodeMirror line/range decorations.
+- **Formatted view:** anchor to editor-document positions. Each rendered/editor block keeps its
+  source-line provenance (the `data-line-start`/`data-line-end` idea, as HedgeDoc's line markers do,
+  or a ProseMirror position↔source-line map), so a comment or a changed-node highlight lands on the
+  right place whichever mode is showing.
+
+Switching modes must preserve the active comments/diff overlay and the caret/scroll position.
 
 ## Scroll-sync algorithm (sketch)
 

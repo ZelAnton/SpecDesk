@@ -41,13 +41,20 @@ flowchart TD
     P5 --> P8
     P4 --> P9[PoC-9 AI Agent]
     P5 --> P10[PoC-10 Conflict handling + Publish]
+    P2 --> P11[PoC-11 Editor view modes: code/split/formatted]
+    P11 --> P12[PoC-12 WYSIWYG formatted editing]
+    P11 -.feeds.-> P6
+    P11 -.feeds.-> P8
 ```
 
 The critical path is **P0 → P2 → P4 → P5 → P6 → P8**. Comparison (P7) and inline comments (P8)
 both hang off the diff engine (P6); comparison is the cheaper of the two because it reuses that
 engine on different inputs. Images (P3) and the AI agent (P9) hang off the side and can slot in
-whenever convenient — they don't block review. **Spike‑A (auth)** is the first real integration
-risk and runs **in parallel from day one**, independent of the UI.
+whenever convenient — they don't block review. The **editor track (P11 → P12)** is foundational —
+it depends only on PoC‑2 and parallels the GitHub track; the *formatted-view* side of the diff (P6)
+and comments (P8) depends on the view-modes shell (P11), so P11 is best built early (it can precede
+or run alongside the GitHub work). **Spike‑A (auth)** is the first real integration risk and runs
+**in parallel from day one**, independent of the UI.
 
 ---
 
@@ -171,7 +178,7 @@ risk and runs **in parallel from day one**, independent of the UI.
 
 ## PoC‑6 — Rendered semantic diff
 
-- **Goal:** review a change as a **structural, rendered** diff — not raw `.md` lines — with a raw toggle.
+- **Goal:** review a change as a **structural, rendered** diff — not raw `.md` lines — with a raw toggle, surfaced in **both** the source and formatted editor views.
 - **Retires risk:** the F# AST tree-diff (match/added/removed/changed/moved) and rendering it the same way the preview renders. This is the experience GitHub cannot provide ([design/07-review-experience.md](design/07-review-experience.md) Part B).
 - **Build:**
   - Fetch base + head versions of changed `.md` files.
@@ -179,6 +186,10 @@ risk and runs **in parallel from day one**, independent of the UI.
     Keep the engine's inputs a **generic `(base, head)` text pair** — PoC‑7 reuses it with
     different bases (working copy / `main`), so don't hard-wire it to "a PR's own base/head".
   - Mandatory **toggle**: rendered ↔ raw source diff.
+  - Anchor changed nodes via the `lineMap` so the diff renders in **both** representations: source
+    (CodeMirror line styling) and the formatted view (editor decorations). The formatted-view side
+    depends on the editor-modes shell (PoC‑11); if that hasn't landed, ship the source/raw side
+    first and add the formatted overlay once PoC‑11 exists.
 - **Demo / acceptance:** a PR that changes a heading level and moves a paragraph renders as *one* structural edit + a "moved here", not as line-noise; toggling shows the literal source diff. Diff cases unit-tested in `SpecDesk.Diff.Tests`.
 - **Effort:** **L** · **Depends on:** PoC‑5 (for PR content), PoC‑2 (shared AST/render).
 
@@ -199,10 +210,13 @@ risk and runs **in parallel from day one**, independent of the UI.
 
 ## PoC‑8 — Inline comments + GitHub sync
 
-- **Goal:** comment on the rendered document inside the app; comments synchronize with the PR.
+- **Goal:** comment on the document inside the app — in **both** the source and formatted editor views — with comments synchronized with the PR.
 - **Retires risk:** anchoring comments through `lineMap` to GitHub's `(path, commit_id, line, side)` diff-position model, including the "comment outside the diff hunk" edge case.
 - **Build:**
   - Local comment model (source of truth) anchored via `lineMap` ([design/07-review-experience.md](design/07-review-experience.md) Part A).
+  - Render comment markers in both representations from the same anchors: source gutter (CodeMirror)
+    and formatted-view overlays (editor decorations / `data-line`); switching modes preserves them.
+    The formatted-view side depends on the editor-modes shell (PoC‑11).
   - GitHub sync: pull existing PR review comments → map to rendered nodes; post new ones when inside a diff hunk; keep out-of-hunk ones local and clearly labelled; replies + resolve mirrored when synced.
   - Re-anchor on head-commit change.
 - **Demo / acceptance:** leave a comment in-app → it appears on the GitHub PR; a comment left on GitHub appears inline in-app; a comment on an unchanged line stays local with the "not yet on GitHub" label instead of failing.
@@ -233,6 +247,60 @@ risk and runs **in parallel from day one**, independent of the UI.
 
 ---
 
+## Editor track (foundational, parallel to GitHub) — PoC‑11, PoC‑12
+
+A foundational editor track extending PoC‑2. It is independent of the GitHub track (depends only on
+PoC‑2) and **best built early**: the formatted-view side of the diff (PoC‑6) and comments (PoC‑8)
+depends on the view-modes shell (PoC‑11). Markdown stays the single source of truth throughout
+([design/05-live-preview.md](design/05-live-preview.md)); reference editors are catalogued in
+[AGENTS.md](../AGENTS.md) "Reference implementations".
+
+## PoC‑11 — Editor view modes (code / split / formatted)
+
+- **Goal:** the author switches the editor between three modes — **source** (code), **split**
+  (code + rendered), and **formatted** — like HedgeDoc's splitter; the formatted view is, for now, the
+  existing read-only render.
+- **Retires risk:** the mode-switch UX shell and keeping caret/scroll/overlay state consistent across
+  modes — cheaply, before the harder WYSIWYG editing lands. No new Markdown machinery: reuses the
+  PoC‑2 render, `lineMap`, height-sync, and scroll-sync.
+- **Build:**
+  - Three-mode toggle (reuse height-sync/scroll-sync for split); formatted = full-width render.
+  - Preserve caret line, scroll position, and any active diff/comment overlay across switches.
+  - Make the rendered view the surface that diff (PoC‑6) and comments (PoC‑8) overlay onto.
+- **Out of scope:** typing into the formatted view (that is PoC‑12) — here it is still read-only.
+- **Demo / acceptance:** toggle code → split → formatted; the document, scroll position, and any
+  overlay stay put; in formatted mode the full rendered document is shown.
+- **Effort:** **M** · **Depends on:** PoC‑2.
+
+## PoC‑12 — WYSIWYG editing in the formatted view
+
+- **Goal:** the author edits the **formatted** view directly (type, bold/italic, headings, lists,
+  links, tables) and every edit is written straight back to the Markdown source — Markdown stays the
+  single source of truth.
+- **Retires risk:** the **central bet** of the whole feature — that formatted edits serialize to a
+  **minimal, lossless** Markdown change that does not reformat unrelated text (otherwise git diffs
+  and review break). Also: which editor engine to adopt.
+- **Build:**
+  - **Spike first** (gate before committing): on real spec files, exercise a candidate engine's
+    Markdown→model→Markdown round-trip and **measure the diff noise** of representative edits. Lead
+    candidate: ProseMirror dual-mode (`@gravity-ui/markdown-editor` / Tiptap); alternatives muya,
+    vditor/Lute — see [AGENTS.md](../AGENTS.md). Pick the engine here.
+  - Integrate the chosen engine as the formatted-mode surface; serialize edits to Markdown and feed
+    them through the **same** native pipeline as source edits (Markdig stays canonical for
+    render/diff/comments — [design/05-live-preview.md](design/05-live-preview.md)).
+  - Map editor-document positions ↔ source lines so diff/comment overlays (PoC‑6/PoC‑8) anchor in the
+    formatted view too.
+  - A later, optional **formatting toolbar** (bold/italic/heading/list/link/quote) issues the same
+    edits; in source/split modes it edits the Markdown text directly.
+- **Out of scope (v1):** rich content that cannot round-trip to clean Markdown
+  ([01-concept.md](design/01-concept.md) non-goals); real-time co-editing.
+- **Demo / acceptance:** in formatted mode, make a paragraph bold and add a list item; the Markdown
+  file changes **only** in those spots (a tight, reviewable diff), and the source/split views reflect
+  it immediately.
+- **Effort:** **L** · **Depends on:** PoC‑11; spike gates the engine choice.
+
+---
+
 ## Sequencing summary
 
 | Order | PoC | Ships | Effort | Gate |
@@ -249,9 +317,12 @@ risk and runs **in parallel from day one**, independent of the UI.
 | 8 | Inline comments | in-app commenting synced to PR | L | round-trip both directions |
 | 9 | AI agent *(parallel)* | gated assistant | L | streamed proposal, confirm-then-apply |
 | 10 | Conflict + publish + polish | production manager workflow | L | conflict resolved with no markers |
+| 11 | **Editor view modes** *(editor track, build early)* | code / split / formatted toggle | M | modes switch, state preserved |
+| 12 | **WYSIWYG formatted editing** *(editor track)* | type into the rendered doc → Markdown | L | spike proves lossless round-trip; tight diffs |
 
 **First dogfood checkpoint:** after **PoC‑3** (editor + images, fully local, no network) — give it to one or two managers.
 **First end-to-end review checkpoint:** after **PoC‑8**.
+**Editor track (PoC‑11/12)** is foundational and best slotted in early — likely alongside or before the GitHub track — since PoC‑6/PoC‑8 render in the formatted view it provides.
 
 ## Decisions to lock as we go (don't let these drift)
 
@@ -263,6 +334,12 @@ These are called out across the design docs; resolve each in the PoC noted, and 
 - **Draft PRs first?** (`draft-first`) → PoC‑5.
 - **Name `SpecDesk`** is a placeholder — rename before any registry/namespace work ([design/README.md](design/README.md)).
 - **AI provider/model** default → PoC‑9 ([design/08-ai-agent.md](design/08-ai-agent.md)).
+- **WYSIWYG editor engine** — ProseMirror dual-mode (`@gravity-ui/markdown-editor` / Tiptap) vs a
+  self-contained engine (muya, vditor/Lute) → **spike in PoC‑12**, decided on round-trip fidelity
+  ([design/05-live-preview.md](design/05-live-preview.md); references in [AGENTS.md](../AGENTS.md)).
+- **Markdown round-trip fidelity** — the formatted editor must serialize edits to minimal, diff-stable
+  Markdown; the acceptance bar (allowed diff noise) is set and proven in the PoC‑12 spike before the
+  engine is committed.
 
 ## Relationship to the design docs
 

@@ -5,8 +5,10 @@
 A desktop application that makes editing Markdown specifications stored in GitHub feel as
 approachable as editing a document in Office 365, while preserving the full git/GitHub
 model underneath (real branches, commits, pull requests, reviews). Authors get a friendly
-editor and a single "send for review" gate; reviewers and maintainers get genuine PRs and
-diffs.
+editor — usable as Markdown source, as a split source+preview, or as a **formatted (WYSIWYG)
+view they can type into directly** — and a single "send for review" gate; reviewers and
+maintainers get genuine PRs and diffs. Whichever view the author edits, the file on disk stays
+ordinary Markdown.
 
 ## Problems being solved
 
@@ -46,6 +48,14 @@ diffs.
 - **One spec, one editing session, one review.** The default unit of work is "I am editing
   this document." That maps to one branch and one PR. Multi-file changes are a power-user
   feature, not the default.
+- **Markdown is the single source of truth; the formatted view is an editable projection.** The
+  author edits in whichever representation they prefer — Markdown source, split source+preview, or
+  the formatted (WYSIWYG) view — and **every edit, including one made in the formatted view, is
+  written straight back to the Markdown file.** The rendered side is never a second document; it is
+  a live, two-way projection of the source. A formatted edit must produce a *minimal, local* change
+  to the Markdown (it must not reformat unrelated parts), so git history and review stay anchored to
+  clean text. This is the central technical bet of the WYSIWYG experience — see
+  [05-live-preview.md](05-live-preview.md).
 - **Continuous autosave, explicit versioning, explicit sharing.** Three distinct levels: typing
   autosaves to disk continuously and silently (never lose work, no commit); the author then
   **saves a version** when a state is worth keeping (an explicit commit, with a short editable
@@ -68,14 +78,20 @@ diffs.
 - Not cross-platform yet. Windows-only; the stack choice merely keeps the door open.
 - Not a replacement for developer git tooling. Developers keep using their normal tools; this
   serves the non-developer path into the same repos.
-- No WYSIWYG. Authors see Markdown source with a live rendered preview beside it
-  (explicit product decision — keeps diffs clean and round-tripping lossless).
+- No lossy rich text. WYSIWYG editing *is* a goal (formatted edits write back to Markdown), but
+  anything the author can produce must serialize to clean, diff-stable Markdown. Content that
+  cannot be represented that way is out of scope — the Markdown source, not the rendered DOM, is
+  always the document. *(This supersedes the earlier "No WYSIWYG" non-goal: we now allow editing the
+  formatted view, constrained by lossless round-trip.)*
 
 ## Success criteria
 
 - An author who has never used git can open a spec, edit it, save versions with plain-language
   notes, add an image, send it for review, respond to inline comments, and get it published —
   without learning a single git term.
+- An author can edit the document in a formatted (WYSIWYG) view as comfortably as in Word — or
+  switch to source or split view — while the underlying Markdown, and thus the diff a reviewer
+  sees, stays clean.
 - Before colliding, an author can see the other open reviews touching the file they are editing
   and compare them — rendered or raw — against their own working copy or against `main`.
 - A reviewer can review the change as a rendered, structural diff, not as raw `.md` lines.
