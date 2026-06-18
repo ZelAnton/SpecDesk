@@ -29,6 +29,18 @@
       #toolbar button {
         padding: 0.3rem 0.8rem;
       }
+      /* The three-mode segmented control (code / split / formatted). The active mode's button is
+         filled; the group reads as one control with shared borders. */
+      #view-modes {
+        display: inline-flex;
+      }
+      #view-modes button + button {
+        border-left: none;
+      }
+      #view-modes button[aria-pressed="true"] {
+        background: #1a1a1a;
+        color: #fff;
+      }
       /* Inline prompts shown below the toolbar: naming a draft (on Edit) and the version note (on
          Save version). The `display` is scoped to :not([hidden]) so each bar is genuinely hidden
          until revealed — an unscoped `#id { display: flex }` would out-specify the user-agent
@@ -102,6 +114,20 @@
         scrollbar-gutter: stable;
         padding: 0 1.5rem;
       }
+      /* View modes. Split (default) shows both panes; code hides the preview and drops the editor's
+         divider; formatted hides the editor. These id-scoped rules out-specify the base pane rules
+         above (the same specificity lesson as the inline-prompt bars) and are placed after them so
+         specificity ascends in source order. The panes are only hidden, never destroyed, so each
+         keeps its caret/scroll/DOM across switches. */
+      #panes[data-mode="code"] #preview {
+        display: none;
+      }
+      #panes[data-mode="code"] #editor {
+        border-right: none;
+      }
+      #panes[data-mode="formatted"] #editor {
+        display: none;
+      }
       .cm-editor {
         height: 100%;
       }
@@ -171,6 +197,11 @@
       <button id="discard-btn" type="button" hidden>Discard</button>
       <button id="save-btn" type="button">Save</button>
       <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
+      <span id="view-modes">
+        <button id="mode-code" type="button" aria-pressed="false">Code</button>
+        <button id="mode-split" type="button" aria-pressed="true">Split</button>
+        <button id="mode-formatted" type="button" aria-pressed="false">Formatted</button>
+      </span>
       <button id="export-log-btn" type="button">Export log…</button>
       <span id="status">(no document)</span>
     </div>
@@ -194,7 +225,7 @@
       <button id="version-note-confirm" type="button">Save</button>
       <button id="version-note-cancel" type="button">Cancel</button>
     </div>
-    <div id="panes">
+    <div id="panes" data-mode="split">
       <div id="editor"></div>
       <div id="preview"></div>
     </div>

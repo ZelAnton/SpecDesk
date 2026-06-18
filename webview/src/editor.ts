@@ -341,6 +341,15 @@ export class MarkdownEditor {
     return this.view.scrollDOM.clientWidth;
   }
 
+  /**
+   * Force CodeMirror to re-measure its geometry. Needed after the editor returns from `display:none`
+   * to a new width (a view-mode switch): wrapping must reflow before `topVisibleLineExact()` and
+   * `scrollToSourceLine()` are read against fresh layout.
+   */
+  refresh(): void {
+    this.view.requestMeasure();
+  }
+
   /** Toggle soft line wrapping. Off = long lines stay on one row (horizontal scroll). */
   setLineWrapping(enabled: boolean): void {
     this.view.dispatch({

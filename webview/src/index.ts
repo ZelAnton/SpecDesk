@@ -22,6 +22,7 @@ import {
 } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
 import { ScrollSync } from "./scroll-sync.js";
+import { isSplit, scrollAuthority, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
   const editorEl = document.querySelector<HTMLElement>("#editor");
@@ -34,6 +35,10 @@ function wire(): void {
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
   const exportLogBtn = document.querySelector<HTMLButtonElement>("#export-log-btn");
+  const panesEl = document.querySelector<HTMLElement>("#panes");
+  const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
+  const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
+  const modeFormattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
   const versionNoteBar = document.querySelector<HTMLElement>("#version-note-bar");
   const versionNoteInput = document.querySelector<HTMLInputElement>("#version-note-input");
   const versionNoteTextarea = document.querySelector<HTMLTextAreaElement>("#version-note-textarea");
@@ -162,6 +167,10 @@ function wire(): void {
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
   // "start typing → offer to begin a draft" behaviour below.
   let editing = false;
+  // The active view mode (code / split / formatted). Split is the default and the only mode where
+  // both panes are visible, so height-sync and scroll-sync run only then. Declared before the editor
+  // callbacks and `reconcile` below so their closures read the live value.
+  let mode: ViewMode = "split";
 
   // Two cross-pane highlights: the caret line (prominent) and the mouse-hover line (faint,
   // auxiliary). Hover is suppressed when it coincides with the caret line so they don't fight.
@@ -181,8 +190,16 @@ function wire(): void {
     onChange: (text, version) => {
       ipc.send(Kinds.editorChanged, { text }, { version });
     },
-    onScroll: () => sync?.fromEditor(),
-    onScrollSettle: () => sync?.snapPreviewToEditor(),
+    onScroll: () => {
+      if (isSplit(mode)) {
+        sync?.fromEditor();
+      }
+    },
+    onScrollSettle: () => {
+      if (isSplit(mode)) {
+        sync?.snapPreviewToEditor();
+      }
+    },
     onCursor: (line) => {
       activeLine = line;
       preview.highlightSourceLine(line);
@@ -201,7 +218,11 @@ function wire(): void {
   preview.setOnHover(setHover);
 
   sync = new ScrollSync(editor, preview);
-  const reportPreviewScroll = rafThrottle(() => sync?.fromPreview());
+  const reportPreviewScroll = rafThrottle(() => {
+    if (isSplit(mode)) {
+      sync?.fromPreview();
+    }
+  });
   previewEl.addEventListener("scroll", reportPreviewScroll);
 
   // Height-sync: equalize editor/preview block heights so the panes align pixel-for-pixel, and feed
@@ -213,12 +234,78 @@ function wire(): void {
     (summary) => log.debug(summary),
     (anchors) => sync?.setAnchors(anchors),
   );
+  // Height-sync equalizes two visible panes, so it only runs in split. In code/formatted one pane is
+  // hidden (zero geometry); switching back to split re-runs it (see applyMode). The preview still
+  // re-renders in every mode — only this equalization step is gated.
   const reconcile = rafThrottle(() => {
+    if (!isSplit(mode)) {
+      return;
+    }
     sync?.suppress();
     heightSync.reconcile();
   });
   preview.setOnContentResize(reconcile);
   void document.fonts.ready.then(reconcile);
+
+  // Switch the editor between code / split / formatted. The panes are only shown/hidden (CSS keyed
+  // off #panes[data-mode]), never destroyed, so each keeps its caret/scroll/DOM. We carry the
+  // reading position across in the stable source-line coordinate so it survives the width reflow of
+  // a pane going full-width, and re-run height-sync on return to split.
+  function applyMode(next: ViewMode): void {
+    if (next === mode) {
+      return;
+    }
+    // Capture the reading position from the pane that currently owns scroll, as a (possibly
+    // fractional) source line — stable across the width reflow a pane undergoes when it goes
+    // full-width or is un-hidden.
+    const line =
+      scrollAuthority(mode) === "editor"
+        ? editor.topVisibleLineExact()
+        : preview.topVisibleSourceLine();
+
+    mode = next;
+    if (panesEl) {
+      panesEl.dataset.mode = next;
+    }
+    modeCodeBtn?.setAttribute("aria-pressed", String(next === "code"));
+    modeSplitBtn?.setAttribute("aria-pressed", String(next === "split"));
+    modeFormattedBtn?.setAttribute("aria-pressed", String(next === "formatted"));
+
+    // Mute the echo window for the whole transition: the panes resize over the next couple of frames
+    // and CodeMirror may nudge its scroll, which (with `mode` already switched) would otherwise drive
+    // the preview off now-stale anchors before the restore below runs.
+    sync?.suppress();
+
+    // The visible pane(s) just changed width (or were un-hidden), so CodeMirror must re-measure
+    // before we read/set its scroll geometry. That re-measure is asynchronous: a ResizeObserver
+    // notification is delivered after this frame's rAF callbacks, and CodeMirror runs its measure
+    // the frame after that. So we restore on the SECOND frame — restoring one frame earlier can read
+    // stale geometry, and because a bare re-measure fires no transaction nothing would re-run
+    // height-sync, leaving the split panes misaligned until the next edit/scroll.
+    editor.refresh();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (isSplit(next)) {
+          // Re-equalize for the new widths, then position BOTH panes at the captured line. The
+          // editor's scrollIntoView is applied asynchronously, so we must not drive the preview off
+          // its (still stale) scrollTop here — instead scroll the preview to the same source line
+          // directly. `suppress()` mutes the echo window so these two programmatic scrolls don't
+          // drive each other; once the editor's scroll lands, the normal scroll/settle handlers
+          // pixel-align the preview.
+          sync?.suppress();
+          heightSync.reconcile();
+          editor.scrollToSourceLine(Math.floor(line));
+          preview.scrollToSourceLine(line);
+          preview.highlightSourceLine(activeLine);
+        } else if (next === "code") {
+          editor.scrollToSourceLine(Math.floor(line));
+        } else {
+          preview.scrollToSourceLine(line);
+          preview.highlightSourceLine(activeLine);
+        }
+      });
+    });
+  }
 
   // On window resize both panes rewrap independently and height-sync must re-run. CodeMirror keeps
   // its pixel scroll position (so the editor's top line shifts), while the preview keeps its own —
@@ -401,6 +488,10 @@ function wire(): void {
   exportLogBtn?.addEventListener("click", () => {
     ipc.send(Kinds.exportLog);
   });
+
+  modeCodeBtn?.addEventListener("click", () => applyMode("code"));
+  modeSplitBtn?.addEventListener("click", () => applyMode("split"));
+  modeFormattedBtn?.addEventListener("click", () => applyMode("formatted"));
 
   ipc.start();
   postReady();

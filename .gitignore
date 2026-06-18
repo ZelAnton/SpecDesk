@@ -148,3 +148,6 @@ coverage/
 ## tracked; the binary .7z that produced them is not.
 ## -------
 /docs/design/design.7z
+
+# Local dev launcher (personal, not shared).
+run.cmd

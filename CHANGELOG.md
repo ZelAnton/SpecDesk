@@ -72,5 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Native call sites log routed messages, key parameters, and exceptions (including native file-dialog
   failures that were previously swallowed); the webview logs to the same file over a `log` IPC
   channel; and an "Export log…" toolbar button writes the current log to a chosen path.
+- PoC-11 — editor view modes: a toolbar control switches the editor between **Code** (source only),
+  **Split** (source + rendered preview, the default), and **Formatted** (rendered preview only,
+  read-only for now). Switching preserves the reading position (carried across in the source-line
+  coordinate so it survives the width reflow) and the active-line highlight; height-sync and
+  scroll-sync run only in split and re-align automatically on return to it. Typing into the formatted
+  view (WYSIWYG) comes in PoC-12.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main
