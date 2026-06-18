@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin: 0; background: #e7e5df; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  * { box-sizing: border-box; }
+</style>
+</helmet>
+
+<div style="width:max-content; min-width:100%; min-height:100vh; padding:48px; background:#e7e5df; font-family:system-ui,'Segoe UI',-apple-system,sans-serif;">
+
+  <!-- ===== Studio header ===== -->
+  <div style="max-width:1180px; margin-bottom:40px;">
+    <div style="font:600 12px/1.4 system-ui; letter-spacing:.12em; text-transform:uppercase; color:#9a968b;">SpecDesk &middot; UI Concept</div>
+    <h1 style="font:600 32px/1.15 system-ui; margin:8px 0 12px; color:#23211c; letter-spacing:-.01em;">Three directions for the editor</h1>
+    <p style="max-width:780px; font:15px/1.65 system-ui; color:#5c594f; margin:0 0 20px;">A calm, document-first Markdown editor that hides git entirely. All three share the same foundations &mdash; light Notion-quiet base (dark mode planned), <strong style="color:#3a382f;">system UI font</strong>, a <strong style="color:#3a382f;">serif headings + sans body</strong> reading surface, one blue accent, Office-balanced density. They differ in how the chrome behaves and how the document sits. Each frame also previews a different live moment so you can judge the full lifecycle.</p>
+
+    <!-- shared foundations chips -->
+    <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+      <span style="display:inline-flex; align-items:center; gap:7px; padding:5px 11px; background:#fff; border:1px solid #e2dfd6; border-radius:20px; font:500 12px system-ui; color:#5c594f;"><span style="width:11px;height:11px;border-radius:3px;background:#2f6db5;"></span>Accent #2F6DB5</span>
+      <span style="display:inline-flex; align-items:center; gap:7px; padding:5px 11px; background:#fff; border:1px solid #e2dfd6; border-radius:20px; font:500 12px system-ui; color:#5c594f;"><span style="font-family:Constantia,Georgia,serif; font-weight:600;">Aa</span> Serif headings</span>
+      <span style="display:inline-flex; align-items:center; gap:7px; padding:5px 11px; background:#fff; border:1px solid #e2dfd6; border-radius:20px; font:500 12px system-ui; color:#5c594f;">Aa Sans body</span>
+      <span style="display:inline-flex; align-items:center; gap:7px; padding:5px 11px; background:#fff; border:1px solid #e2dfd6; border-radius:20px; font:500 12px ui-monospace,Consolas; color:#5c594f;">{ } Mono editor</span>
+    </div>
+  </div>
+
+  <!-- ===== Frames row ===== -->
+  <div style="display:flex; gap:56px; align-items:flex-start;">
+
+    <!-- ============================================================ -->
+    <!-- DIRECTION A — PAPER -->
+    <!-- ============================================================ -->
+    <div style="flex:none; width:1240px;">
+      <div style="margin-bottom:14px;">
+        <div style="font:600 13px/1.3 system-ui; color:#23211c;">Direction A &mdash; <span style="color:#2f6db5;">Paper</span></div>
+        <div style="font:13px/1.4 system-ui; color:#7a766b;">Quietest. No toolbar fill, hairline dividers, text buttons. Split mode &middot; writing a version note &middot; <em>Unsaved changes</em>.</div>
+      </div>
+
+      <!-- window -->
+      <div style="height:780px; background:#ffffff; border:1px solid #e4e1d8; border-radius:10px; box-shadow:0 18px 44px -20px rgba(40,36,28,.28); overflow:hidden; display:flex; flex-direction:column;">
+
+        <!-- toolbar -->
+        <div style="display:flex; align-items:center; gap:4px; padding:9px 14px; border-bottom:1px solid #efece4; background:#fffefb; flex:none;">
+          <button style="padding:5px 10px;border-radius:6px;border:1px solid transparent;background:transparent;color:#3a382f;font:500 13px system-ui;cursor:default;">Open&hellip;</button>
+          <span style="width:1px;height:18px;background:#ececdf;margin:0 4px;"></span>
+          <button style="padding:5px 10px;border-radius:6px;border:1px solid transparent;background:#f3efe6;color:#3a382f;font:500 13px system-ui;cursor:default;">Save a version</button>
+          <button style="padding:5px 10px;border-radius:6px;border:1px solid transparent;background:transparent;color:#8a857a;font:500 13px system-ui;cursor:default;">Discard</button>
+          <span style="width:1px;height:18px;background:#ececdf;margin:0 4px;"></span>
+          <!-- segmented underline -->
+          <div style="display:flex; align-items:center; gap:2px; margin-left:2px;">
+            <span style="padding:5px 9px;border-bottom:2px solid transparent;color:#8a857a;font:500 13px system-ui;">Code</span>
+            <span style="padding:5px 9px;border-bottom:2px solid #2f6db5;color:#2f6db5;font:600 13px system-ui;">Split</span>
+            <span style="padding:5px 9px;border-bottom:2px solid transparent;color:#8a857a;font:500 13px system-ui;">Formatted</span>
+          </div>
+          <span style="width:1px;height:18px;background:#ececdf;margin:0 6px;"></span>
+          <button style="padding:5px 10px;border-radius:6px;border:1px solid transparent;background:transparent;color:#8a857a;font:500 13px system-ui;cursor:default;">Wrap</button>
+          <div style="flex:1;"></div>
+          <!-- status -->
+          <span style="display:inline-flex;align-items:center;gap:7px;font:500 12.5px system-ui;color:#a17d1e;"><span style="width:7px;height:7px;border-radius:50%;background:#d6a72e;"></span>Unsaved changes</span>
+        </div>
+
+        <!-- version-note bar (redesigned) -->
+        <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;background:#fcf8ec;border-bottom:1px solid #f0e6c8;flex:none;">
+          <span style="font:600 12px system-ui;letter-spacing:.04em;text-transform:uppercase;color:#a17d1e;white-space:nowrap;">Describe your changes</span>
+          <div style="flex:1;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #ecdca6;border-radius:7px;padding:7px 10px;">
+            <span style="font:14px system-ui;color:#3a382f;">Rewrote the order-states table and added the refund-timing note&hellip;</span>
+            <div style="flex:1;"></div>
+            <span style="font:13px system-ui;color:#b8b1a0;">&#9662;</span>
+          </div>
+          <button style="padding:7px 14px;border-radius:7px;border:1px solid #2f6db5;background:#2f6db5;color:#fff;font:600 13px system-ui;cursor:default;">Save version</button>
+          <button style="padding:7px 12px;border-radius:7px;border:1px solid transparent;background:transparent;color:#8a857a;font:500 13px system-ui;cursor:default;">Cancel</button>
+        </div>
+
+        <!-- split content -->
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- source -->
+          <div style="flex:1;min-width:0;border-right:1px solid #efece4;padding:14px 0;overflow:hidden;font-family:'Cascadia Code',Consolas,ui-monospace,monospace;font-size:13px;line-height:1.85;">
+            <div style="display:flex;background:#f7f3e9;"><span style="width:42px;text-align:right;padding-right:14px;color:#c9c2b0;user-select:none;">1</span><span style="white-space:pre;color:#2f6db5;font-weight:600;"># Checkout v2 &mdash; Functional Specification</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">2</span><span style="white-space:pre;color:#3c3a33;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">3</span><span style="white-space:pre;color:#3c3a33;">Checkout v2 replaces the legacy single-page flow with</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">4</span><span style="white-space:pre;color:#3c3a33;">a guided three-step checkout. This document is the</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">5</span><span style="white-space:pre;color:#3c3a33;">source of truth for behaviour, copy, and edge cases.</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">6</span><span style="white-space:pre;color:#3c3a33;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c9c2b0;user-select:none;">7</span><span style="white-space:pre;color:#2f6db5;font-weight:600;">## Overview</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">8</span><span style="white-space:pre;color:#3c3a33;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">9</span><span style="white-space:pre;color:#3c3a33;">The new flow reduces drop-off by deferring account</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">10</span><span style="white-space:pre;color:#3c3a33;">creation until after payment.</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">11</span><span style="white-space:pre;color:#3c3a33;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c9c2b0;user-select:none;">12</span><span style="white-space:pre;color:#2f6db5;font-weight:600;">## In scope</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">13</span><span style="white-space:pre;color:#3c3a33;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">14</span><span style="white-space:pre;color:#3c3a33;"><span style="color:#b89b4a;">- </span>Guest and signed-in checkout</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">15</span><span style="white-space:pre;color:#3c3a33;"><span style="color:#b89b4a;">- </span>Saved addresses and cards</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#cfc8b6;user-select:none;">16</span><span style="white-space:pre;color:#3c3a33;"><span style="color:#b89b4a;">- </span>Promo codes and store credit</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c9c2b0;user-select:none;">17</span><span style="white-space:pre;color:#2f6db5;font-weight:600;">## Order states</span></div>
+          </div>
+          <!-- rendered preview -->
+          <div style="flex:1;min-width:0;padding:30px 40px;overflow:hidden;">
+            <h1 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:28px;line-height:1.2;margin:0 0 14px;color:#23211c;letter-spacing:-.01em;">Checkout v2 &mdash; Functional Specification</h1>
+            <p style="font:15px/1.7 system-ui;color:#3a382f;margin:0 0 20px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout. This document is the source of truth for behaviour, copy, and edge cases.</p>
+            <h2 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:20px;margin:0 0 10px;color:#23211c;">Overview</h2>
+            <p style="font:15px/1.7 system-ui;color:#3a382f;margin:0 0 20px;">The new flow reduces drop-off by deferring account creation until after payment. Guests can complete a purchase with an email address alone.</p>
+            <h2 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:20px;margin:0 0 10px;color:#23211c;">In scope</h2>
+            <ul style="margin:0 0 22px;padding-left:22px;">
+              <li style="font:15px/1.7 system-ui;color:#3a382f;margin-bottom:4px;">Guest and signed-in checkout</li>
+              <li style="font:15px/1.7 system-ui;color:#3a382f;margin-bottom:4px;">Saved addresses and cards</li>
+              <li style="font:15px/1.7 system-ui;color:#3a382f;margin-bottom:4px;">Promo codes and store credit</li>
+            </ul>
+            <h2 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:20px;margin:0 0 12px;color:#23211c;">Order states</h2>
+            <table style="border-collapse:collapse;width:100%;font:14px/1.5 system-ui;">
+              <thead><tr>
+                <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e4e1d8;color:#23211c;font-weight:600;">State</th>
+                <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e4e1d8;color:#23211c;font-weight:600;">Trigger</th>
+                <th style="text-align:left;padding:8px 12px;border-bottom:2px solid #e4e1d8;color:#23211c;font-weight:600;">Customer sees</th>
+              </tr></thead>
+              <tbody>
+                <tr><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">Pending</td><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">Payment authorised</td><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">&ldquo;Confirming&hellip;&rdquo;</td></tr>
+                <tr><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">Confirmed</td><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">Funds captured</td><td style="padding:8px 12px;border-bottom:1px solid #efece4;color:#3a382f;">Receipt</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- lifecycle strip -->
+      <div style="margin-top:18px;">
+        <div style="font:600 11px/1.3 system-ui;letter-spacing:.08em;text-transform:uppercase;color:#9a968b;margin-bottom:9px;">Lifecycle states</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#f2efe8;color:#7a766b;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#a8a292;"></span>Read-only</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#eaf1f9;color:#2f6db5;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#2f6db5;"></span>Editing</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#fbf3df;color:#a17d1e;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#d6a72e;"></span>Unsaved changes</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#e9f3ec;color:#2f7d54;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#3a9d68;"></span>Version saved</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#eeecfa;color:#4f56c5;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#5a61d6;"></span>In review</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#fbeee6;color:#bd5a2e;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#d4703f;"></span>Changes requested</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#e9f3ec;color:#2f7d54;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#3a9d68;"></span>Approved</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;background:#23211c;color:#f4f1e8;font:500 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#9fd6b4;"></span>Published</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- DIRECTION B — DESK -->
+    <!-- ============================================================ -->
+    <div style="flex:none; width:1240px;">
+      <div style="margin-bottom:14px;">
+        <div style="font:600 13px/1.3 system-ui; color:#23211c;">Direction B &mdash; <span style="color:#2f6db5;">Desk</span></div>
+        <div style="font:13px/1.4 system-ui; color:#7a766b;">Structured app feel. Tinted toolbar, filled segmented control, docked panels. Source + Review panel &middot; <em>In review</em> with a rendered diff.</div>
+      </div>
+
+      <div style="height:780px; background:#ffffff; border:1px solid #e1e4e7; border-radius:10px; box-shadow:0 18px 44px -20px rgba(28,32,40,.3); overflow:hidden; display:flex; flex-direction:column;">
+
+        <!-- toolbar -->
+        <div style="display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid #e6e9ec; background:#f7f8fa; flex:none;">
+          <button style="padding:5px 11px;border-radius:6px;border:1px solid #dce0e4;background:#fff;color:#272b30;font:500 13px system-ui;cursor:default;">Open&hellip;</button>
+          <button style="padding:5px 11px;border-radius:6px;border:1px solid #dce0e4;background:#fff;color:#272b30;font:500 13px system-ui;cursor:default;">Save a version</button>
+          <!-- segmented filled -->
+          <div style="display:flex; align-items:center; gap:2px; background:#eceef1; border-radius:8px; padding:2px; margin-left:2px;">
+            <span style="padding:4px 12px;border-radius:6px;background:#fff;box-shadow:0 1px 2px rgba(20,24,30,.14);color:#1c1f23;font:600 13px system-ui;">Code</span>
+            <span style="padding:4px 12px;border-radius:6px;color:#6a7077;font:500 13px system-ui;">Split</span>
+            <span style="padding:4px 12px;border-radius:6px;color:#6a7077;font:500 13px system-ui;">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:20px;background:#eeecfa;color:#4f56c5;font:600 12px system-ui;margin-right:4px;"><span style="width:7px;height:7px;border-radius:50%;background:#5a61d6;"></span>In review</span>
+          <button style="padding:6px 13px;border-radius:7px;border:1px solid #2f6db5;background:#2f6db5;color:#fff;font:600 13px system-ui;cursor:default;">Update review</button>
+        </div>
+
+        <!-- content: source + review panel -->
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- source -->
+          <div style="flex:1;min-width:0;border-right:1px solid #e9ecef;padding:14px 0;overflow:hidden;font-family:'Cascadia Code',Consolas,ui-monospace,monospace;font-size:13px;line-height:1.85;background:#fff;">
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#b9c0c8;user-select:none;">1</span><span style="white-space:pre;color:#2f6db5;font-weight:600;"># Checkout v2 &mdash; Functional Specification</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">2</span><span style="white-space:pre;color:#2b2f34;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">3</span><span style="white-space:pre;color:#2b2f34;">Checkout v2 replaces the legacy single-page flow with</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">4</span><span style="white-space:pre;color:#2b2f34;">a guided three-step checkout. This document is the</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">5</span><span style="white-space:pre;color:#2b2f34;">source of truth for behaviour, copy, and edge cases.</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">6</span><span style="white-space:pre;color:#2b2f34;"> </span></div>
+            <div style="display:flex;background:#eef4fb;"><span style="width:42px;text-align:right;padding-right:14px;color:#9bb6d6;user-select:none;">7</span><span style="white-space:pre;color:#2f6db5;font-weight:600;">## Overview</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">8</span><span style="white-space:pre;color:#2b2f34;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">9</span><span style="white-space:pre;color:#2b2f34;">The new flow reduces drop-off by deferring account</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">10</span><span style="white-space:pre;color:#2b2f34;">creation until after payment. Guests can complete a</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">11</span><span style="white-space:pre;color:#2b2f34;">purchase with an email address alone.</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">12</span><span style="white-space:pre;color:#2b2f34;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#b9c0c8;user-select:none;">13</span><span style="white-space:pre;color:#2f6db5;font-weight:600;">## In scope</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">14</span><span style="white-space:pre;color:#2b2f34;"><span style="color:#7a8794;">- </span>Guest and signed-in checkout</span></div>
+            <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:#c5ccd3;user-select:none;">15</span><span style="white-space:pre;color:#2b2f34;"><span style="color:#7a8794;">- </span>Saved addresses and cards</span></div>
+          </div>
+
+          <!-- review panel docked -->
+          <div style="width:380px;flex:none;background:#fafbfc;display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:16px 18px 14px;border-bottom:1px solid #e9ecef;">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font:600 15px system-ui;color:#1c1f23;">Review</span>
+                <span style="font:500 12px system-ui;color:#8a9099;">Sent 14 min ago</span>
+              </div>
+              <p style="font:13px/1.5 system-ui;color:#6a7077;margin:8px 0 0;">Update the order-states table and refund-timing note before the payments review.</p>
+            </div>
+            <!-- reviewers -->
+            <div style="padding:14px 18px;border-bottom:1px solid #e9ecef;">
+              <div style="font:600 11px/1.3 system-ui;letter-spacing:.07em;text-transform:uppercase;color:#9a9fa6;margin-bottom:10px;">Reviewers</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
+                <span style="width:26px;height:26px;border-radius:50%;background:#cfe0d6;color:#2f7d54;font:600 11px system-ui;display:flex;align-items:center;justify-content:center;">PK</span>
+                <span style="font:500 13px system-ui;color:#2b2f34;flex:1;">Priya Kaur</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font:600 12px system-ui;color:#2f7d54;"><span style="width:6px;height:6px;border-radius:50%;background:#3a9d68;"></span>Approved</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <span style="width:26px;height:26px;border-radius:50%;background:#d9dde2;color:#5a616a;font:600 11px system-ui;display:flex;align-items:center;justify-content:center;">TM</span>
+                <span style="font:500 13px system-ui;color:#2b2f34;flex:1;">Tom Mara</span>
+                <span style="display:inline-flex;align-items:center;gap:5px;font:600 12px system-ui;color:#8a9099;"><span style="width:6px;height:6px;border-radius:50%;background:#b6bcc4;"></span>Pending</span>
+              </div>
+            </div>
+            <!-- rendered diff -->
+            <div style="padding:14px 18px;flex:1;min-height:0;overflow:hidden;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;">
+                <span style="font:600 11px/1.3 system-ui;letter-spacing:.07em;text-transform:uppercase;color:#9a9fa6;">Changes</span>
+                <div style="display:flex;gap:2px;background:#eceef1;border-radius:6px;padding:2px;">
+                  <span style="padding:2px 9px;border-radius:4px;background:#fff;box-shadow:0 1px 2px rgba(20,24,30,.12);font:600 11px system-ui;color:#1c1f23;">Rendered</span>
+                  <span style="padding:2px 9px;border-radius:4px;font:500 11px system-ui;color:#8a9099;">Source</span>
+                </div>
+              </div>
+              <div style="border:1px solid #e6e9ec;border-radius:8px;overflow:hidden;background:#fff;">
+                <div style="padding:9px 12px;background:#fbeef0;border-left:3px solid #d6586f;">
+                  <div style="font-family:Constantia,Georgia,serif;font-weight:600;font-size:14px;color:#8f3146;text-decoration:line-through;text-decoration-color:#d6586f80;">Order states (draft)</div>
+                </div>
+                <div style="padding:9px 12px;background:#e9f4ee;border-left:3px solid #3a9d68;">
+                  <div style="font-family:Constantia,Georgia,serif;font-weight:600;font-size:14px;color:#1f6b43;">Order states</div>
+                </div>
+                <div style="padding:9px 12px;border-left:3px solid #e6e9ec;">
+                  <div style="font:13px/1.55 system-ui;color:#3a3f45;"><span style="background:#dff0e6;border-radius:3px;padding:0 2px;">Added a refund-timing note</span> after the table.</div>
+                </div>
+                <div style="padding:9px 12px;border-top:1px solid #eef1f3;border-left:3px solid #c8b3e0;background:#f6f1fb;">
+                  <div style="display:flex;align-items:center;gap:7px;font:600 12px system-ui;color:#7a4fb0;"><span style="font-size:13px;">&#8645;</span>Moved &ldquo;Cancelled&rdquo; row up</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:14px;">
+                <button style="flex:1;padding:8px 12px;border-radius:7px;border:1px solid #dce0e4;background:#fff;color:#272b30;font:600 13px system-ui;cursor:default;">View full diff</button>
+                <button style="padding:8px 12px;border-radius:7px;border:1px solid #e2e5e8;background:#f3f4f6;color:#a3a8ae;font:600 13px system-ui;cursor:default;">Publish</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- lifecycle strip B (pill/badge treatment) -->
+      <div style="margin-top:18px;">
+        <div style="font:600 11px/1.3 system-ui;letter-spacing:.08em;text-transform:uppercase;color:#9a968b;margin-bottom:9px;">Lifecycle states</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#fff;border:1px solid #e2e5e8;color:#6a7077;font:600 12px system-ui;">Read-only</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#eaf1f9;border:1px solid #cfe0f3;color:#2f6db5;font:600 12px system-ui;">Editing</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#fbf3df;border:1px solid #f0e2bb;color:#a17d1e;font:600 12px system-ui;">Unsaved changes</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#e9f3ec;border:1px solid #c8e6d3;color:#2f7d54;font:600 12px system-ui;">Version saved</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#eeecfa;border:1px solid #d4d2f3;color:#4f56c5;font:600 12px system-ui;">In review</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#fbeee6;border:1px solid #f2d6c4;color:#bd5a2e;font:600 12px system-ui;">Changes requested</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#e9f3ec;border:1px solid #c8e6d3;color:#2f7d54;font:600 12px system-ui;">Approved</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:6px;background:#23272e;border:1px solid #23272e;color:#e8eaed;font:600 12px system-ui;">Published</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- DIRECTION C — MARGIN -->
+    <!-- ============================================================ -->
+    <div style="flex:none; width:1240px;">
+      <div style="margin-bottom:14px;">
+        <div style="font:600 13px/1.3 system-ui; color:#23211c;">Direction C &mdash; <span style="color:#2f6db5;">Margin</span></div>
+        <div style="font:13px/1.4 system-ui; color:#7a766b;">Document is a floating page. Chrome collapses to a slim bar; comments &amp; AI live in the margins. Formatted mode &middot; inline comment + AI gate &middot; <em>Changes requested</em>.</div>
+      </div>
+
+      <div style="height:780px; background:#f4f3f0; border:1px solid #e3e1da; border-radius:10px; box-shadow:0 18px 44px -20px rgba(40,36,28,.28); overflow:hidden; display:flex; flex-direction:column;">
+
+        <!-- slim top bar -->
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 18px;background:#fbfaf7;border-bottom:1px solid #ebe8e0;flex:none;">
+          <span style="font:600 13px system-ui;color:#3a382f;">checkout-v2.md</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;background:#fbeee6;color:#bd5a2e;font:600 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#d4703f;"></span>Changes requested</span>
+          <div style="flex:1;"></div>
+          <div style="display:flex; align-items:center; gap:2px;">
+            <span style="padding:4px 10px;border-radius:6px;color:#8a857a;font:500 13px system-ui;">Code</span>
+            <span style="padding:4px 10px;border-radius:6px;color:#8a857a;font:500 13px system-ui;">Split</span>
+            <span style="padding:4px 10px;border-radius:6px;background:#ece7da;color:#3a382f;font:600 13px system-ui;">Formatted</span>
+          </div>
+        </div>
+
+        <!-- canvas: page + margin -->
+        <div style="flex:1;display:flex;min-height:0;overflow:hidden;">
+          <!-- page area -->
+          <div style="flex:1;min-width:0;padding:34px 30px;display:flex;justify-content:center;overflow:hidden;">
+            <div style="width:600px;max-width:100%;background:#fff;border:1px solid #ebe8e0;border-radius:6px;box-shadow:0 10px 30px -16px rgba(40,36,28,.25);padding:44px 52px;">
+              <h1 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:27px;line-height:1.2;margin:0 0 16px;color:#23211c;letter-spacing:-.01em;">Checkout v2 &mdash; Functional Specification</h1>
+              <p style="font:15px/1.75 system-ui;color:#3a382f;margin:0 0 20px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout. This document is the source of truth for behaviour, copy, and edge cases.</p>
+              <h2 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:20px;margin:0 0 11px;color:#23211c;">Overview</h2>
+              <p style="font:15px/1.75 system-ui;color:#3a382f;margin:0 0 8px;">The new flow reduces drop-off by deferring account creation until after payment. <span style="background:#fdf2cf;box-shadow:0 0 0 1px #f0dd9a;border-radius:2px;padding:0 1px;">Guests can complete a purchase with an email address alone.</span></p>
+              <p style="font:15px/1.75 system-ui;color:#3a382f;margin:0 0 22px;">Signed-in customers keep saved addresses, cards, and store credit.</p>
+              <h2 style="font-family:Constantia,'Iowan Old Style',Georgia,serif;font-weight:600;font-size:20px;margin:0 0 11px;color:#23211c;">Order states</h2>
+              <blockquote style="margin:0;padding:4px 0 4px 18px;border-left:3px solid #d8d3c4;">
+                <p style="font-family:Constantia,Georgia,serif;font-style:italic;font-size:15px;line-height:1.7;color:#6a665b;margin:0;">Refund timing depends on the card network and is shown as an estimate, never a guarantee.</p>
+              </blockquote>
+            </div>
+          </div>
+
+          <!-- margin rail: comment -->
+          <div style="width:300px;flex:none;padding:34px 22px 0 0;overflow:hidden;">
+            <div style="background:#fff;border:1px solid #ece8df;border-radius:9px;box-shadow:0 6px 18px -12px rgba(40,36,28,.3);padding:13px 14px;">
+              <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;">
+                <span style="width:24px;height:24px;border-radius:50%;background:#d9d3e8;color:#6a4fa0;font:600 10px system-ui;display:flex;align-items:center;justify-content:center;">TM</span>
+                <span style="font:600 13px system-ui;color:#3a382f;flex:1;">Tom Mara</span>
+                <span style="font:500 11px system-ui;color:#a8a292;">2h</span>
+              </div>
+              <p style="font:13px/1.55 system-ui;color:#4a473e;margin:0 0 10px;">Can we say what counts as a valid email here? Edge case for plus-addressing.</p>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <input placeholder="Reply&hellip;" style="flex:1;border:1px solid #e6e2d8;border-radius:6px;padding:6px 9px;font:13px system-ui;color:#3a382f;background:#fcfbf8;" />
+                <span style="font:600 12px system-ui;color:#2f7d54;white-space:nowrap;">Resolve</span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;margin:12px 4px 0;font:500 11.5px system-ui;color:#a8a292;">
+              <span style="width:6px;height:6px;border-radius:50%;background:#d4703f;"></span>1 comment &middot; synced with review
+            </div>
+          </div>
+        </div>
+
+        <!-- AI assistant dock -->
+        <div style="flex:none;border-top:1px solid #ebe8e0;background:#fbfaf7;padding:13px 18px;">
+          <div style="display:flex;align-items:flex-start;gap:11px;">
+            <span style="width:26px;height:26px;border-radius:7px;background:#2f6db5;color:#fff;font:600 12px system-ui;display:flex;align-items:center;justify-content:center;flex:none;">AI</span>
+            <div style="flex:1;min-width:0;">
+              <p style="font:13.5px/1.55 system-ui;color:#3a382f;margin:0 0 9px;">I drafted a version note for these edits. Review before saving:</p>
+              <!-- confirmation gate -->
+              <div style="background:#fff;border:1px solid #e6e2d8;border-radius:9px;padding:11px 13px;max-width:560px;">
+                <div style="font:600 11px/1.3 system-ui;letter-spacing:.06em;text-transform:uppercase;color:#9a968b;margin-bottom:6px;">Proposed version note</div>
+                <p style="font:14px/1.55 system-ui;color:#3a382f;margin:0 0 11px;">Clarify guest checkout email rule and reorder the order-states table; add refund-timing caveat.</p>
+                <div style="display:flex;gap:8px;">
+                  <button style="padding:6px 14px;border-radius:7px;border:1px solid #2f6db5;background:#2f6db5;color:#fff;font:600 13px system-ui;cursor:default;">Save this version</button>
+                  <button style="padding:6px 12px;border-radius:7px;border:1px solid #ddd8cc;background:#fff;color:#5c594f;font:500 13px system-ui;cursor:default;">Edit</button>
+                  <button style="padding:6px 12px;border-radius:7px;border:1px solid transparent;background:transparent;color:#8a857a;font:500 13px system-ui;cursor:default;">Dismiss</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- lifecycle strip C (dot + label, current = filled) -->
+      <div style="margin-top:18px;">
+        <div style="font:600 11px/1.3 system-ui;letter-spacing:.08em;text-transform:uppercase;color:#9a968b;margin-bottom:9px;">Lifecycle &mdash; as a quiet progress trail</div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:0;">
+          <span style="font:500 12px system-ui;color:#a8a292;">Read-only</span>
+          <span style="width:22px;height:1px;background:#d8d3c4;margin:0 9px;"></span>
+          <span style="font:500 12px system-ui;color:#a8a292;">Editing</span>
+          <span style="width:22px;height:1px;background:#d8d3c4;margin:0 9px;"></span>
+          <span style="font:500 12px system-ui;color:#a8a292;">Version saved</span>
+          <span style="width:22px;height:1px;background:#d8d3c4;margin:0 9px;"></span>
+          <span style="font:500 12px system-ui;color:#a8a292;">In review</span>
+          <span style="width:22px;height:1px;background:#d4703f;margin:0 9px;"></span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:20px;background:#fbeee6;color:#bd5a2e;font:600 12px system-ui;"><span style="width:6px;height:6px;border-radius:50%;background:#d4703f;"></span>Changes requested</span>
+          <span style="width:22px;height:1px;background:#e3e1da;margin:0 9px;"></span>
+          <span style="font:500 12px system-ui;color:#cbc6b9;">Approved</span>
+          <span style="width:22px;height:1px;background:#e3e1da;margin:0 9px;"></span>
+          <span style="font:500 12px system-ui;color:#cbc6b9;">Published</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- footer note -->
+  <div style="max-width:1180px;margin-top:44px;padding-top:20px;border-top:1px solid #d8d4ca;">
+    <p style="font:13.5px/1.6 system-ui;color:#7a766b;margin:0;">Pick a direction (or mix &mdash; e.g. Paper&rsquo;s quiet toolbar with Desk&rsquo;s docked review panel). Once you approve, I&rsquo;ll build the remaining surfaces in that language and write the Design Guide the coding agent follows: tokens (light + dark), the rendered-document stylesheet, CodeMirror theme, components, lifecycle states, and layout patterns.</p>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

@@ -24,6 +24,16 @@ image handling, and an embedded AI agent — all behind plain-language UI.
 | [09-ipc-protocol.md](09-ipc-protocol.md) | The full native↔webview message protocol reference. |
 | [10-repo-config.md](10-repo-config.md) | `.spectool.toml` — per-repository configuration reference. |
 
+## Visual design system
+
+[`SpecDesk-Design-Concept.md`](SpecDesk-Design-Concept.md) is the **agreed UI design concept and the
+visual source of truth** — design tokens (light / warm / dark), the rendered-document stylesheet, the
+CodeMirror editor theme, components, lifecycle colours, and the screens. It is accompanied by the
+live, themeable mockups (`*.dc.html`), their static renders in [`pages/`](pages/) + [`img/`](img/),
+and the [`ui-design-brief.md`](ui-design-brief.md) that produced it. When the concept text and a
+mockup disagree, the text wins. How we apply it (and the rule that new surfaces may extend it but
+must stay within its intent) is in [AGENTS.md](../../AGENTS.md) → "Design system (UI source of truth)".
+
 ## The one idea behind everything
 
 > The **native side (C#/F#) is the brain and owns all logic and all UI chrome.**

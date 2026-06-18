@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body { margin:0; background:#e7e5df; -webkit-font-smoothing:antialiased; }
+* { box-sizing:border-box; }
+:root {
+  --font-ui: system-ui,"Segoe UI",-apple-system,sans-serif;
+  --font-doc-head: Constantia,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono: "Cascadia Code","Cascadia Mono",Consolas,ui-monospace,monospace;
+  --canvas:#f7f8fa; --surface:#fff; --surface-raised:#fafbfc; --surface-sunken:#eceef1;
+  --border:#e6e9ec; --border-strong:#dce0e4;
+  --text-strong:#1c1f23; --text:#2b2f34; --text-muted:#6a7077; --text-faint:#9a9fa6;
+  --accent:#2f6db5; --accent-hover:#2a619f; --accent-active:#245488;
+  --accent-soft:#eaf1f9; --accent-soft-border:#cfe0f3; --on-accent:#fff; --focus-ring:#2f6db5;
+  --ok-fg:#2f7d54; --ok-dot:#3a9d68; --ok-bg:#e9f3ec; --ok-border:#c8e6d3;
+  --warn-fg:#a17d1e; --warn-dot:#d6a72e; --warn-bg:#fbf3df; --warn-border:#f0e2bb;
+  --info-fg:#4f56c5; --info-dot:#5a61d6; --info-bg:#eeecfa; --info-border:#d4d2f3;
+  --danger-fg:#bd5a2e; --danger-dot:#d4703f; --danger-bg:#fbeee6; --danger-border:#f2d6c4;
+  --edit-fg:#2f6db5; --edit-bg:#eaf1f9; --edit-border:#cfe0f3;
+  --neutral-fg:#6a7077; --neutral-bg:#fff; --neutral-border:#e2e5e8;
+  --ink-fg:#e8eaed; --ink-bg:#23272e;
+  --add-bg:#e9f4ee; --add-border:#3a9d68; --add-text:#1f6b43; --add-hl:#dff0e6;
+  --del-bg:#fbeef0; --del-border:#d6586f; --del-text:#8f3146;
+  --mov-bg:#f6f1fb; --mov-border:#c8b3e0; --mov-text:#7a4fb0;
+  --ed-gutter:#b9c0c8; --ed-text:#2b2f34; --ed-heading:#2f6db5; --ed-marker:#7a8794; --ed-active:#eef4fb;
+  --shadow-panel:0 18px 44px -20px rgba(28,32,40,.30); --shadow-card:0 1px 2px rgba(20,24,30,.12); --shadow-pop:0 10px 30px -12px rgba(28,32,40,.32);
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-pill:20px;
+  --studio:#e7e5df;
+}
+:root[data-theme="warm"]{
+  --canvas:#faf8f2; --surface:#fff; --surface-raised:#fcfbf7; --surface-sunken:#f3efe6;
+  --border:#efece4; --border-strong:#e4e1d8;
+  --text-strong:#23211c; --text:#3a382f; --text-muted:#7a766b; --text-faint:#9a968b;
+  --accent-soft:#eef3f9; --accent-soft-border:#d6e3f1;
+  --neutral-bg:#f2efe8; --neutral-fg:#7a766b; --neutral-border:#e6e2d6;
+  --ed-gutter:#cfc8b6; --ed-text:#3c3a33; --ed-marker:#b89b4a; --ed-active:#f7f3e9;
+  --shadow-panel:0 18px 44px -20px rgba(40,36,28,.28); --shadow-pop:0 10px 30px -12px rgba(40,36,28,.28);
+  --studio:#e7e5df;
+}
+:root[data-theme="dark"]{
+  --canvas:#15171b; --surface:#1c1f24; --surface-raised:#22262c; --surface-sunken:#2a2f36;
+  --border:#2c313a; --border-strong:#3a404a;
+  --text-strong:#ecedef; --text:#c9cdd3; --text-muted:#8b9098; --text-faint:#5f656d;
+  --accent:#5b9bd9; --accent-hover:#6fa9e0; --accent-active:#4f8cc9; --accent-soft:#1e2c3a; --accent-soft-border:#2f4a66; --on-accent:#0e1419; --focus-ring:#5b9bd9;
+  --ok-fg:#6fc394; --ok-dot:#46a572; --ok-bg:#16291f; --ok-border:#27412f;
+  --warn-fg:#d8b25a; --warn-dot:#c79a3a; --warn-bg:#2a2410; --warn-border:#433a1c;
+  --info-fg:#a9adf0; --info-dot:#7b81e0; --info-bg:#21233a; --info-border:#363a5c;
+  --danger-fg:#e09063; --danger-dot:#cf7544; --danger-bg:#2c1d15; --danger-border:#48301f;
+  --edit-fg:#5b9bd9; --edit-bg:#1e2c3a; --edit-border:#2f4a66;
+  --neutral-fg:#8b9098; --neutral-bg:#22262c; --neutral-border:#343a43;
+  --ink-fg:#0e1419; --ink-bg:#cfd3d8;
+  --add-bg:#16291f; --add-border:#46a572; --add-text:#7fce9f; --add-hl:#1e3a29;
+  --del-bg:#2c1820; --del-border:#cf5a74; --del-text:#e89bac;
+  --mov-bg:#241c30; --mov-border:#8a6fb8; --mov-text:#c2a8e6;
+  --ed-gutter:#4d535c; --ed-text:#c9cdd3; --ed-heading:#5b9bd9; --ed-marker:#6d7a86; --ed-active:#22303d;
+  --shadow-panel:0 18px 44px -20px rgba(0,0,0,.6); --shadow-card:0 1px 2px rgba(0,0,0,.4); --shadow-pop:0 10px 30px -12px rgba(0,0,0,.55);
+  --studio:#0c0d10;
+}
+@page { size: landscape; margin: 0.4in; }
+@media print {
+  html, body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .noprint { display:none !important; }
+  #dc-root, .sc-host { height:auto !important; }
+  .studio { zoom:0.6; padding:0 !important; background:#fff !important; min-height:0 !important; min-width:0 !important; width:auto !important; }
+  .studio [style*="flex:none; width:"] { break-inside:avoid; }
+}
+</style>
+</helmet>
+
+<!-- theme switcher -->
+<div class="noprint" style="position:fixed; top:16px; right:16px; z-index:80; display:flex; gap:4px; padding:4px; background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:var(--r-md); box-shadow:var(--shadow-card);">
+  <button onClick="{{ setCool }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Cool</button>
+  <button onClick="{{ setWarm }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Warm</button>
+  <button onClick="{{ setDark }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Dark</button>
+</div>
+
+<div class="studio" style="width:max-content; min-width:100%; min-height:100vh; padding:48px; background:var(--studio); font-family:var(--font-ui);">
+
+  <div style="margin-bottom:36px; max-width:900px;">
+    <div style="font:600 12px/1.4 var(--font-ui); letter-spacing:.12em; text-transform:uppercase; color:#9a968b;">SpecDesk &middot; Screen mockups</div>
+    <h1 style="font:600 30px/1.15 var(--font-ui); margin:8px 0 8px; color:#23211c; letter-spacing:-.01em;">Key surfaces, Direction B</h1>
+    <p style="font:15px/1.6 var(--font-ui); color:#5c594f; margin:0;">Current screens made beautiful plus the priority future surfaces, all built from the Design Guide tokens. Switch Cool/Warm/Dark (top-right) to see every screen re-theme.</p>
+  </div>
+
+  <!-- ============ ROW 1 — EDITOR MODES ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Editor &mdash; three view modes</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <!-- 1A CODE -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Code</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Source only. Comment marker in the gutter &middot; <em>Editing</em>.</div>
+      <div style="height:660px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <!-- toolbar -->
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Save a version</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;margin-left:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--edit-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--edit-fg);"></span>Editing</span>
+        </div>
+        <!-- source -->
+        <div style="flex:1;min-height:0;overflow:hidden;padding:14px 0;font-family:var(--font-mono);font-size:13.5px;line-height:1.55;background:var(--surface);">
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">1</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;"># Checkout v2 &mdash; Functional Specification</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">2</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">3</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">Checkout v2 replaces the legacy single-page flow with</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">4</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">a guided three-step checkout. This document is the</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">5</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">source of truth for behaviour, copy, and edge cases.</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">6</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;background:var(--ed-active);"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--accent);user-select:none;">7</span><span style="width:14px;flex:none;display:flex;align-items:center;justify-content:center;"><span style="width:8px;height:8px;border-radius:50%;background:var(--info-dot);"></span></span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Overview</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">8</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">9</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">The new flow reduces drop-off by deferring account</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">10</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">creation until after payment. Guests can complete a</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">11</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;">purchase with an email address alone.</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">12</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">13</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## In scope</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">14</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"><span style="color:var(--ed-marker);">- </span>Guest and signed-in checkout</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">15</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"><span style="color:var(--ed-marker);">- </span>Saved addresses and cards</span></div>
+          <div style="display:flex;"><span style="width:46px;flex:none;text-align:right;padding-right:8px;color:var(--ed-gutter);user-select:none;">16</span><span style="width:14px;flex:none;"></span><span style="color:var(--ed-text);white-space:pre;"><span style="color:var(--ed-marker);">- </span>Promo codes and store credit</span></div>
+        </div>
+        <!-- status bar bottom -->
+        <div style="flex:none;border-top:1px solid var(--border);background:var(--surface-raised);padding:6px 14px;display:flex;align-items:center;gap:14px;font:12px var(--font-ui);color:var(--text-muted);">
+          <span>checkout-v2.md</span><span style="color:var(--text-faint);">Ln 7, Col 1</span><div style="flex:1;"></div><span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>Saved</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1B SPLIT -->
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Split</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Source + rendered, scroll-synced. Version-note bar &middot; <em>Unsaved changes</em>.</div>
+      <div style="height:660px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Save a version</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;margin-left:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--warn-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-dot);"></span>Unsaved changes</span>
+        </div>
+        <!-- version note bar -->
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:var(--warn-bg);border-bottom:1px solid var(--warn-border);flex:none;">
+          <span style="font:600 11.5px var(--font-ui);letter-spacing:.04em;text-transform:uppercase;color:var(--warn-fg);white-space:nowrap;">Describe your changes</span>
+          <div style="flex:1;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--warn-border);border-radius:var(--r-sm);padding:7px 10px;"><span style="font:14px var(--font-ui);color:var(--text);flex:1;">Reordered order-states and added the refund-timing note</span><span style="font:13px var(--font-ui);color:var(--text-faint);">&#9662;</span></div>
+          <button style="padding:7px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Save version</button>
+          <button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);">Cancel</button>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- source -->
+          <div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:14px 0;overflow:hidden;font-family:var(--font-mono);font-size:13px;line-height:1.85;background:var(--surface);">
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-heading);user-select:none;font-weight:600;">1</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;"># Checkout v2 — Functional Specification</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">2</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">3</span><span style="color:var(--ed-text);white-space:pre;">Checkout v2 replaces the legacy single-page</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">4</span><span style="color:var(--ed-text);white-space:pre;">flow with a guided three-step checkout.</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">5</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+            <!-- spacer rows (height sync) -->
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;"> </span><span style="flex:1;height:48px;background:repeating-linear-gradient(45deg,transparent,transparent 6px,var(--border) 6px,var(--border) 7px);opacity:.5;"></span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-heading);user-select:none;font-weight:600;">7</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Overview</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">8</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">9</span><span style="color:var(--ed-text);white-space:pre;">The new flow reduces drop-off by deferring</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">10</span><span style="color:var(--ed-text);white-space:pre;">account creation until after payment.</span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">11</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;"> </span><span style="flex:1;height:24px;background:repeating-linear-gradient(45deg,transparent,transparent 6px,var(--border) 6px,var(--border) 7px);opacity:.5;"></span></div>
+            <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-heading);user-select:none;font-weight:600;">13</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## In scope</span></div>
+          </div>
+          <!-- rendered -->
+          <div style="flex:1;min-width:0;padding:26px 34px;overflow:hidden;background:var(--surface);">
+            <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:26px;line-height:1.2;letter-spacing:-.01em;color:var(--text-strong);margin:0 0 12px;">Checkout v2 &mdash; Functional Specification</h1>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">Overview</h2>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;background:var(--accent-soft);box-shadow:0 0 0 2px var(--accent-soft);border-radius:3px;">The new flow reduces drop-off by deferring account creation until after payment.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">In scope</h2>
+            <ul style="margin:0;padding-left:22px;"><li style="font:15px/1.7 var(--font-ui);color:var(--text);">Guest and signed-in checkout</li><li style="font:15px/1.7 var(--font-ui);color:var(--text);">Saved addresses and cards</li></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1C FORMATTED -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Formatted (WYSIWYG)</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Edit the typeset document directly. Formatting toolbar appears &middot; <em>Editing</em>.</div>
+      <div style="height:660px; background:var(--canvas); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Save a version</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;margin-left:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--edit-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--edit-fg);"></span>Editing</span>
+        </div>
+        <!-- formatting toolbar -->
+        <div style="display:flex;align-items:center;gap:2px;padding:6px 14px;border-bottom:1px solid var(--border);background:var(--surface);flex:none;">
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:700 13px var(--font-ui);color:var(--text-strong);">B</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:italic 500 13px var(--font-ui);color:var(--text);">I</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);text-decoration:line-through;">S</span>
+          <span style="width:1px;height:18px;background:var(--border);margin:0 5px;"></span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:600 13px var(--font-ui);color:var(--text);">H1</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:600 13px var(--font-ui);background:var(--accent-soft);color:var(--accent);">H2</span>
+          <span style="width:1px;height:18px;background:var(--border);margin:0 5px;"></span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);">&bull; List</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);">1. List</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 14px var(--font-ui);color:var(--text);">&laquo;&raquo;</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-mono);color:var(--text);">&lt;/&gt;</span>
+          <span style="width:1px;height:18px;background:var(--border);margin:0 5px;"></span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);">Link</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);">Table</span>
+          <span style="padding:5px 9px;border-radius:var(--r-sm);font:500 13px var(--font-ui);color:var(--text);">Image</span>
+        </div>
+        <!-- page -->
+        <div style="flex:1;min-height:0;overflow:hidden;padding:28px 24px;display:flex;justify-content:center;">
+          <div style="width:600px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-card);padding:40px 48px;">
+            <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:27px;line-height:1.2;letter-spacing:-.01em;color:var(--text-strong);margin:0 0 14px;">Checkout v2 &mdash; Functional Specification</h1>
+            <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+            <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0 0 4px;">The new flow reduces drop-off by deferring account creation until after payment.<span style="display:inline-block;width:1.5px;height:18px;background:var(--accent);vertical-align:-3px;margin-left:1px;"></span></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ ROW 2 — REVIEW & DIFF ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Review &amp; rendered diff</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <!-- 2A REVIEW / PR PANEL -->
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Review panel</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Docked right. Reviewers, activity, plain-language actions &middot; <em>In review</em>.</div>
+      <div style="height:720px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:var(--r-sm);background:var(--info-bg);border:1px solid var(--info-border);color:var(--info-fg);font:600 12px var(--font-ui);">In review</span>
+          <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Update review</button>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- doc preview -->
+          <div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:30px 38px;overflow:hidden;background:var(--surface);">
+            <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:26px;line-height:1.2;color:var(--text-strong);margin:0 0 12px;">Checkout v2 &mdash; Functional Specification</h1>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout. This document is the source of truth for behaviour, copy, and edge cases.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">Overview</h2>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">The new flow reduces drop-off by deferring account creation until after payment. Guests can complete a purchase with an email address alone.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">Order states</h2>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0;">Each order moves through Pending, Confirmed, or Cancelled depending on the payment result.</p>
+          </div>
+          <!-- review panel -->
+          <div style="width:380px;flex:none;background:var(--surface-raised);display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);">
+              <div style="display:flex;align-items:center;justify-content:space-between;"><span style="font:600 15px var(--font-ui);color:var(--text-strong);">Review</span><span style="font:500 12px var(--font-ui);color:var(--text-faint);">Sent 14 min ago</span></div>
+              <p style="font:13px/1.5 var(--font-ui);color:var(--text-muted);margin:8px 0 0;">Update the order-states table and refund-timing note before the payments review.</p>
+            </div>
+            <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+              <div style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px;">Reviewers</div>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;"><span style="width:26px;height:26px;border-radius:50%;background:var(--ok-bg);color:var(--ok-fg);font:600 11px var(--font-ui);display:flex;align-items:center;justify-content:center;">PK</span><span style="font:500 13px var(--font-ui);color:var(--text);flex:1;">Priya Kaur</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 12px var(--font-ui);color:var(--ok-fg);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>Approved</span></div>
+              <div style="display:flex;align-items:center;gap:10px;"><span style="width:26px;height:26px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 11px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span><span style="font:500 13px var(--font-ui);color:var(--text);flex:1;">Tom Mara</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 12px var(--font-ui);color:var(--text-muted);"><span style="width:6px;height:6px;border-radius:50%;background:var(--text-faint);"></span>Pending</span></div>
+            </div>
+            <!-- activity -->
+            <div style="padding:14px 18px;flex:1;min-height:0;overflow:hidden;">
+              <div style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);margin-bottom:12px;">Activity</div>
+              <div style="display:flex;gap:10px;margin-bottom:13px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--ok-dot);margin-top:5px;flex:none;"></span><div><div style="font:13px var(--font-ui);color:var(--text);"><strong style="color:var(--text-strong);">Priya</strong> approved your changes</div><div style="font:12px var(--font-ui);color:var(--text-faint);">8 min ago</div></div></div>
+              <div style="display:flex;gap:10px;margin-bottom:13px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--info-dot);margin-top:5px;flex:none;"></span><div><div style="font:13px var(--font-ui);color:var(--text);"><strong style="color:var(--text-strong);">Tom</strong> left a comment on &ldquo;Overview&rdquo;</div><div style="font:12px var(--font-ui);color:var(--text-faint);">2h ago</div></div></div>
+              <div style="display:flex;gap:10px;"><span style="width:8px;height:8px;border-radius:50%;background:var(--text-faint);margin-top:5px;flex:none;"></span><div><div style="font:13px var(--font-ui);color:var(--text);">You sent this for review</div><div style="font:12px var(--font-ui);color:var(--text-faint);">14 min ago</div></div></div>
+            </div>
+            <div style="padding:14px 18px;border-top:1px solid var(--border);display:flex;gap:8px;">
+              <button style="flex:1;padding:8px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 13px var(--font-ui);">View changes</button>
+              <button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--surface-sunken);color:var(--text-faint);font:600 13px var(--font-ui);cursor:not-allowed;">Publish</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2B SEMANTIC DIFF -->
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Rendered semantic diff</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Structural, typeset changes. Compare picker + base selector + Rendered/Source toggle.</div>
+      <div style="height:720px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <!-- compare bar -->
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">Reviewing changes</span>
+          <div style="display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:5px 10px;font:13px var(--font-ui);color:var(--text);">My working copy <span style="color:var(--text-faint);">&#9662;</span></div>
+          <span style="font:13px var(--font-ui);color:var(--text-faint);">vs</span>
+          <div style="display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:5px 10px;font:13px var(--font-ui);color:var(--text);">Published <span style="color:var(--text-faint);">&#9662;</span></div>
+          <div style="flex:1;"></div>
+          <span style="font:12px var(--font-ui);color:var(--text-muted);"><span style="color:var(--add-text);font-weight:600;">+2</span> &middot; <span style="color:var(--del-text);font-weight:600;">&minus;1</span> &middot; <span style="color:var(--mov-text);font-weight:600;">1 moved</span></span>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-sm);padding:2px;"><span style="padding:3px 10px;border-radius:4px;background:var(--surface);box-shadow:var(--shadow-card);font:600 12px var(--font-ui);color:var(--text-strong);">Rendered</span><span style="padding:3px 10px;border-radius:4px;font:500 12px var(--font-ui);color:var(--text-muted);">Source</span></div>
+        </div>
+        <!-- compare tabs (in-flight) -->
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--surface);flex:none;">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);">Also open on this file</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--accent-soft);border:1px solid var(--accent-soft-border);color:var(--accent);font:600 12px var(--font-ui);">Refund edits (mine)</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--border-strong);color:var(--text-muted);font:500 12px var(--font-ui);">Tax rules &middot; Dana</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--border-strong);color:var(--text-muted);font:500 12px var(--font-ui);">Copy pass &middot; Lee</span>
+        </div>
+        <!-- side by side -->
+        <div style="flex:1;display:flex;min-height:0;">
+          <div style="flex:1;min-width:0;border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:8px 18px;border-bottom:1px solid var(--border);background:var(--surface-raised);font:600 12px var(--font-ui);color:var(--text-muted);">Published</div>
+            <div style="flex:1;padding:24px 30px;overflow:hidden;">
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:19px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+              <p style="font:14.5px/1.7 var(--font-ui);color:var(--text);margin:0 0 16px;">The new flow reduces drop-off by deferring account creation until after payment.</p>
+              <div style="background:var(--del-bg);border-left:3px solid var(--del-border);border-radius:0 4px 4px 0;padding:8px 12px;margin:0 0 16px;"><span style="font-family:var(--font-doc-head);font-weight:600;font-size:16px;color:var(--del-text);text-decoration:line-through;">Order states (draft)</span></div>
+              <div style="background:var(--mov-bg);border-left:3px solid var(--mov-border);border-radius:0 4px 4px 0;padding:8px 12px;"><span style="font:14px var(--font-ui);color:var(--mov-text);">Cancelled &mdash; Authorisation failed</span></div>
+            </div>
+          </div>
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:8px 18px;border-bottom:1px solid var(--border);background:var(--surface-raised);font:600 12px var(--font-ui);color:var(--text-muted);">My working copy</div>
+            <div style="flex:1;padding:24px 30px;overflow:hidden;">
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:19px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+              <p style="font:14.5px/1.7 var(--font-ui);color:var(--text);margin:0 0 16px;">The new flow reduces drop-off by deferring account creation until after payment. <span style="background:var(--add-hl);border-radius:3px;padding:0 2px;">Guests can complete a purchase with an email address alone.</span></p>
+              <div style="background:var(--add-bg);border-left:3px solid var(--add-border);border-radius:0 4px 4px 0;padding:8px 12px;margin:0 0 16px;"><span style="font-family:var(--font-doc-head);font-weight:600;font-size:16px;color:var(--add-text);">Order states</span></div>
+              <div style="background:var(--mov-bg);border-left:3px solid var(--mov-border);border-radius:0 4px 4px 0;padding:8px 12px;display:flex;align-items:center;gap:8px;"><span style="font:600 12px var(--font-ui);color:var(--mov-text);">&#8645; moved up</span><span style="font:14px var(--font-ui);color:var(--mov-text);">Cancelled &mdash; Authorisation failed</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ ROW 3 — COMMENTS & AI ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Inline comments &amp; AI assistant</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <!-- 3A INLINE COMMENTS -->
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Inline comments</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Formatted mode. Highlighted span + margin thread, GitHub-synced &middot; <em>Changes requested</em>.</div>
+      <div style="height:720px; background:var(--canvas); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">checkout-v2.md</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:var(--r-pill);background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger-fg);font:600 12px var(--font-ui);"><span style="width:6px;height:6px;border-radius:50%;background:var(--danger-dot);"></span>Changes requested</span>
+          <div style="flex:1;"></div>
+          <span style="font:12px var(--font-ui);color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>2 comments synced</span>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;overflow:hidden;">
+          <div style="flex:1;min-width:0;padding:32px 24px;display:flex;justify-content:center;overflow:hidden;">
+            <div style="width:560px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-card);padding:40px 48px;">
+              <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:26px;line-height:1.2;color:var(--text-strong);margin:0 0 14px;">Checkout v2 &mdash; Functional Specification</h1>
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0 0 18px;">The new flow reduces drop-off by deferring account creation until after payment. <span style="background:var(--warn-bg);box-shadow:0 0 0 1px var(--warn-border);border-radius:2px;padding:0 2px;">Guests can complete a purchase with an email address alone.</span></p>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0;">Signed-in customers keep saved addresses, cards, and store credit.</p>
+            </div>
+          </div>
+          <!-- margin rail -->
+          <div style="width:320px;flex:none;padding:32px 22px 0 0;overflow:hidden;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:13px 14px;margin-bottom:12px;">
+              <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--info-bg);color:var(--info-fg);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span><span style="font:600 13px var(--font-ui);color:var(--text-strong);flex:1;">Tom Mara</span><span style="font:500 11px var(--font-ui);color:var(--text-faint);">2h</span></div>
+              <p style="font:13px/1.55 var(--font-ui);color:var(--text);margin:0 0 9px;">Can we define a valid email here? Edge case for plus-addressing.</p>
+              <div style="background:var(--surface-sunken);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:10px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);margin-bottom:2px;">You</div><div style="font:13px/1.5 var(--font-ui);color:var(--text);">Good catch &mdash; adding a note.</div></div>
+              <div style="display:flex;align-items:center;gap:8px;"><input placeholder="Reply&hellip;" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:6px 9px;font:13px var(--font-ui);color:var(--text);background:var(--surface);" /><span style="font:600 12px var(--font-ui);color:var(--ok-fg);white-space:nowrap;cursor:pointer;">Resolve</span></div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:11px 13px;opacity:.85;">
+              <div style="display:flex;align-items:center;gap:9px;"><span style="width:22px;height:22px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">PK</span><span style="font:600 12.5px var(--font-ui);color:var(--text-strong);flex:1;">Priya Kaur</span><span style="font:500 11px var(--font-ui);color:var(--text-faint);">1d</span></div>
+              <p style="font:12.5px/1.5 var(--font-ui);color:var(--text-muted);margin:7px 0 0;">Resolved &middot; &ldquo;Looks good now.&rdquo;</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3B AI ASSISTANT -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">AI assistant</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Docked chat. Streaming reply + a confirmation gate before any change &middot; <em>Editing</em>.</div>
+      <div style="height:720px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">checkout-v2.md</span>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--edit-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--edit-fg);"></span>Editing</span>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- doc -->
+          <div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:28px 32px;overflow:hidden;background:var(--surface);">
+            <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:24px;line-height:1.2;color:var(--text-strong);margin:0 0 12px;">Checkout v2</h1>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:18px;color:var(--text-strong);margin:0 0 9px;">Overview</h2>
+            <p style="font:14.5px/1.7 var(--font-ui);color:var(--text);margin:0 0 16px;">The new flow reduces drop-off by deferring account creation until after payment.</p>
+            <p style="font:14.5px/1.7 var(--font-ui);color:var(--text);margin:0;">Guests can complete a purchase with an email address alone.</p>
+          </div>
+          <!-- AI panel -->
+          <div style="width:380px;flex:none;background:var(--surface-raised);display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;"><span style="width:24px;height:24px;border-radius:7px;background:var(--accent);color:var(--on-accent);font:600 11px var(--font-ui);display:flex;align-items:center;justify-content:center;">AI</span><span style="font:600 14px var(--font-ui);color:var(--text-strong);">Assistant</span></div>
+            <div style="flex:1;min-height:0;overflow:hidden;padding:16px;">
+              <!-- user bubble -->
+              <div style="display:flex;justify-content:flex-end;margin-bottom:14px;"><div style="max-width:80%;background:var(--surface-sunken);border-radius:12px 12px 3px 12px;padding:9px 12px;font:13.5px/1.5 var(--font-ui);color:var(--text);">Tighten the Overview and note the email rule.</div></div>
+              <!-- assistant -->
+              <div style="margin-bottom:12px;"><p style="font:13.5px/1.6 var(--font-ui);color:var(--text);margin:0;">Here&rsquo;s a tighter Overview that states the guest-email rule explicitly. Apply it?<span style="display:inline-block;width:2px;height:15px;background:var(--accent);vertical-align:-2px;margin-left:2px;"></span></p></div>
+              <!-- confirm gate -->
+              <div style="background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);overflow:hidden;">
+                <div style="padding:9px 12px;border-bottom:1px solid var(--border);font:600 11px var(--font-ui);letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);">Proposed edit &middot; Overview</div>
+                <div style="padding:10px 12px;"><div style="background:var(--del-bg);border-left:3px solid var(--del-border);border-radius:0 4px 4px 0;padding:6px 10px;margin-bottom:6px;font:12.5px/1.5 var(--font-ui);color:var(--del-text);text-decoration:line-through;">Guests can complete a purchase with an email.</div><div style="background:var(--add-bg);border-left:3px solid var(--add-border);border-radius:0 4px 4px 0;padding:6px 10px;font:12.5px/1.5 var(--font-ui);color:var(--add-text);">Guests check out with a valid email address &mdash; no account required.</div></div>
+                <div style="padding:0 12px 12px;display:flex;gap:8px;"><button style="flex:1;padding:7px 12px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 12.5px var(--font-ui);">Apply edit</button><button style="padding:7px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:500 12.5px var(--font-ui);">Edit</button><button style="padding:7px 11px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-faint);font:500 12.5px var(--font-ui);">Dismiss</button></div>
+              </div>
+            </div>
+            <div style="padding:12px 16px;border-top:1px solid var(--border);"><div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:8px 11px;"><span style="flex:1;font:13.5px var(--font-ui);color:var(--text-faint);">Ask about this document&hellip;</span><span style="width:26px;height:26px;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font:600 14px var(--font-ui);display:flex;align-items:center;justify-content:center;">&uarr;</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ ROW 4 — DIALOGS & STATES ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Dialogs &amp; states</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start;">
+
+    <!-- 4A CONFLICT -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Conflict reconciliation</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">&ldquo;Someone else changed this too&rdquo; &mdash; understandable differences, never markers.</div>
+      <div style="height:680px; position:relative; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden;">
+        <!-- dimmed bg -->
+        <div style="position:absolute;inset:0;padding:28px 34px;filter:blur(1px);opacity:.5;"><h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:24px;color:var(--text-strong);">Checkout v2</h1><p style="font:14.5px/1.7 var(--font-ui);color:var(--text);">The new flow reduces drop-off&hellip;</p></div>
+        <div style="position:absolute;inset:0;background:rgba(15,18,24,.34);"></div>
+        <!-- dialog -->
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:660px;max-width:90%;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);overflow:hidden;">
+          <div style="padding:20px 24px 14px;">
+            <h2 style="font:600 19px var(--font-ui);color:var(--text-strong);margin:0 0 6px;">Someone else changed this too</h2>
+            <p style="font:14px/1.6 var(--font-ui);color:var(--text-muted);margin:0;">Dana edited the <strong style="color:var(--text);">Overview</strong> section while you were writing. Choose how to combine the two.</p>
+          </div>
+          <div style="display:flex;gap:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+            <div style="flex:1;padding:16px 20px;border-right:1px solid var(--border);"><div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:9px;">Your version</div><p style="font:14px/1.6 var(--font-ui);color:var(--text);margin:0;">Guests check out with a valid email address &mdash; no account required.</p></div>
+            <div style="flex:1;padding:16px 20px;"><div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);margin-bottom:9px;">Dana&rsquo;s version</div><p style="font:14px/1.6 var(--font-ui);color:var(--text);margin:0;">Guests can complete checkout without creating an account.</p></div>
+          </div>
+          <div style="padding:16px 24px;display:flex;gap:8px;align-items:center;">
+            <button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Keep mine</button>
+            <button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Keep theirs</button>
+            <button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Combine both</button>
+            <div style="flex:1;"></div>
+            <button style="padding:8px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);">Ask for help</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4B PUBLISH -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Publish confirmation</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">The gated &ldquo;merge&rdquo; action &middot; <em>Approved &rarr; Publish</em>.</div>
+      <div style="height:680px; position:relative; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden;">
+        <div style="position:absolute;inset:0;background:rgba(15,18,24,.34);"></div>
+        <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:480px;max-width:90%;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);overflow:hidden;">
+          <div style="padding:22px 24px 8px;display:flex;align-items:center;gap:10px;"><span style="width:34px;height:34px;border-radius:50%;background:var(--ok-bg);color:var(--ok-fg);font:600 16px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10003;</span><h2 style="font:600 18px var(--font-ui);color:var(--text-strong);margin:0;">Publish these changes?</h2></div>
+          <div style="padding:8px 24px 4px;"><p style="font:14px/1.6 var(--font-ui);color:var(--text-muted);margin:0 0 14px;">Approved by Priya Kaur. Publishing makes &ldquo;Checkout v2 &mdash; Functional Specification&rdquo; the live version everyone sees.</p>
+            <div style="background:var(--surface-sunken);border-radius:var(--r-md);padding:12px 14px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);margin-bottom:4px;">Refund edits</div><div style="font:13px/1.5 var(--font-ui);color:var(--text-muted);">3 versions &middot; reordered order-states, refund-timing note, guest-email rule</div></div>
+          </div>
+          <div style="padding:18px 24px;display:flex;gap:8px;justify-content:flex-end;"><button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);">Cancel</button><button style="padding:8px 16px;border-radius:var(--r-sm);border:1px solid var(--ok-fg);background:var(--ok-fg);color:#fff;font:600 13px var(--font-ui);">Publish</button></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4C EMPTY / FIRST RUN -->
+    <div style="flex:none; width:1080px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Empty state / first run</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">No document open. Calm, one primary action + recents.</div>
+      <div style="height:680px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;"><button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button><div style="flex:1;"></div><span style="font:12.5px var(--font-ui);color:var(--text-faint);">No document open</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;">
+          <div style="width:56px;height:56px;border-radius:14px;background:var(--accent-soft);border:1px solid var(--accent-soft-border);display:flex;align-items:center;justify-content:center;margin-bottom:20px;"><span style="font-family:var(--font-doc-head);font-weight:600;font-size:26px;color:var(--accent);">S</span></div>
+          <h2 style="font:600 20px var(--font-ui);color:var(--text-strong);margin:0 0 8px;">Open a spec to get started</h2>
+          <p style="font:14px/1.6 var(--font-ui);color:var(--text-muted);margin:0 0 22px;max-width:42ch;text-align:center;">Pick a Markdown file from a connected repository, or open one from disk. SpecDesk handles the rest.</p>
+          <div style="display:flex;gap:10px;margin-bottom:32px;"><button style="padding:9px 18px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Open a spec</button><button style="padding:9px 16px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Connect a repository</button></div>
+          <div style="width:380px;border-top:1px solid var(--border);padding-top:18px;"><div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin-bottom:10px;">Recent</div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);"><span style="font:13.5px var(--font-ui);color:var(--text);flex:1;">checkout-v2.md</span><span style="font:12px var(--font-ui);color:var(--text-faint);">2h ago</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);"><span style="font:13.5px var(--font-ui);color:var(--text);flex:1;">refunds-policy.md</span><span style="font:12px var(--font-ui);color:var(--text-faint);">yesterday</span></div>
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 0;"><span style="font:13.5px var(--font-ui);color:var(--text);flex:1;">tax-rules.md</span><span style="font:12px var(--font-ui);color:var(--text-faint);">3 days ago</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="max-width:900px; margin-top:40px; padding-top:18px; border-top:1px solid #d8d4ca;">
+    <p style="font:13px/1.6 var(--font-ui); color:#7a766b; margin:0;">All screens read from the same tokens as the Design Guide &mdash; Cool / Warm / Dark switch the whole set. Tell me which to refine further or add (Settings, send-for-review composer, toasts, onboarding).</p>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'cool' };
+  setTheme(t){
+    if (t === 'cool') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    this.setState({ theme: t });
+  }
+  renderVals(){
+    return {
+      setCool: () => this.setTheme('cool'),
+      setWarm: () => this.setTheme('warm'),
+      setDark: () => this.setTheme('dark'),
+    };
+  }
+}
+</script>
+</body>
+</html>

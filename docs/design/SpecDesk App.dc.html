@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body { margin:0; background:#e7e5df; -webkit-font-smoothing:antialiased; }
+* { box-sizing:border-box; }
+:root {
+  --font-ui: system-ui,"Segoe UI",-apple-system,sans-serif;
+  --font-doc-head: Constantia,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono: "Cascadia Code","Cascadia Mono",Consolas,ui-monospace,monospace;
+  --canvas:#f7f8fa; --surface:#fff; --surface-raised:#fafbfc; --surface-sunken:#eceef1;
+  --border:#e6e9ec; --border-strong:#dce0e4;
+  --text-strong:#1c1f23; --text:#2b2f34; --text-muted:#6a7077; --text-faint:#9a9fa6;
+  --accent:#2f6db5; --accent-hover:#2a619f; --accent-active:#245488;
+  --accent-soft:#eaf1f9; --accent-soft-border:#cfe0f3; --on-accent:#fff; --focus-ring:#2f6db5;
+  --ok-fg:#2f7d54; --ok-dot:#3a9d68; --ok-bg:#e9f3ec; --ok-border:#c8e6d3;
+  --warn-fg:#a17d1e; --warn-dot:#d6a72e; --warn-bg:#fbf3df; --warn-border:#f0e2bb;
+  --info-fg:#4f56c5; --info-dot:#5a61d6; --info-bg:#eeecfa; --info-border:#d4d2f3;
+  --danger-fg:#bd5a2e; --danger-dot:#d4703f; --danger-bg:#fbeee6; --danger-border:#f2d6c4;
+  --edit-fg:#2f6db5; --edit-bg:#eaf1f9; --edit-border:#cfe0f3;
+  --neutral-fg:#6a7077; --neutral-bg:#fff; --neutral-border:#e2e5e8;
+  --ink-fg:#e8eaed; --ink-bg:#23272e;
+  --add-bg:#e9f4ee; --add-border:#3a9d68; --add-text:#1f6b43; --add-hl:#bfe6cd; --add-gutter:#eef7f1;
+  --del-bg:#fbeef0; --del-border:#d6586f; --del-text:#8f3146; --del-hl:#f4c4cf; --del-gutter:#fcf0f2;
+  --mov-bg:#f6f1fb; --mov-border:#c8b3e0; --mov-text:#7a4fb0;
+  --ed-gutter:#b9c0c8; --ed-text:#2b2f34; --ed-heading:#2f6db5; --ed-marker:#7a8794; --ed-active:#eef4fb;
+  --shadow-panel:0 18px 44px -20px rgba(28,32,40,.30); --shadow-card:0 1px 2px rgba(20,24,30,.12); --shadow-pop:0 10px 30px -12px rgba(28,32,40,.32);
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-pill:20px;
+  --studio:#e7e5df;
+}
+:root[data-theme="warm"]{
+  --canvas:#faf8f2; --surface:#fff; --surface-raised:#fcfbf7; --surface-sunken:#f3efe6;
+  --border:#efece4; --border-strong:#e4e1d8;
+  --text-strong:#23211c; --text:#3a382f; --text-muted:#7a766b; --text-faint:#9a968b;
+  --accent-soft:#eef3f9; --accent-soft-border:#d6e3f1;
+  --neutral-bg:#f2efe8; --neutral-fg:#7a766b; --neutral-border:#e6e2d6;
+  --ed-gutter:#cfc8b6; --ed-text:#3c3a33; --ed-marker:#b89b4a; --ed-active:#f7f3e9;
+  --add-gutter:#eef5ef; --del-gutter:#f8eee9;
+  --shadow-panel:0 18px 44px -20px rgba(40,36,28,.28); --shadow-pop:0 10px 30px -12px rgba(40,36,28,.28);
+  --studio:#e7e5df;
+}
+:root[data-theme="dark"]{
+  --canvas:#15171b; --surface:#1c1f24; --surface-raised:#22262c; --surface-sunken:#2a2f36;
+  --border:#2c313a; --border-strong:#3a404a;
+  --text-strong:#ecedef; --text:#c9cdd3; --text-muted:#8b9098; --text-faint:#5f656d;
+  --accent:#5b9bd9; --accent-hover:#6fa9e0; --accent-active:#4f8cc9; --accent-soft:#1e2c3a; --accent-soft-border:#2f4a66; --on-accent:#0e1419; --focus-ring:#5b9bd9;
+  --ok-fg:#6fc394; --ok-dot:#46a572; --ok-bg:#16291f; --ok-border:#27412f;
+  --warn-fg:#d8b25a; --warn-dot:#c79a3a; --warn-bg:#2a2410; --warn-border:#433a1c;
+  --info-fg:#a9adf0; --info-dot:#7b81e0; --info-bg:#21233a; --info-border:#363a5c;
+  --danger-fg:#e09063; --danger-dot:#cf7544; --danger-bg:#2c1d15; --danger-border:#48301f;
+  --edit-fg:#5b9bd9; --edit-bg:#1e2c3a; --edit-border:#2f4a66;
+  --neutral-fg:#8b9098; --neutral-bg:#22262c; --neutral-border:#343a43;
+  --ink-fg:#0e1419; --ink-bg:#cfd3d8;
+  --add-bg:#16291f; --add-border:#46a572; --add-text:#7fce9f; --add-hl:#2c5a3e; --add-gutter:#13231a;
+  --del-bg:#2c1820; --del-border:#cf5a74; --del-text:#e89bac; --del-hl:#5e2d3a; --del-gutter:#241419;
+  --mov-bg:#241c30; --mov-border:#8a6fb8; --mov-text:#c2a8e6;
+  --ed-gutter:#4d535c; --ed-text:#c9cdd3; --ed-heading:#5b9bd9; --ed-marker:#6d7a86; --ed-active:#22303d;
+  --shadow-panel:0 18px 44px -20px rgba(0,0,0,.6); --shadow-card:0 1px 2px rgba(0,0,0,.4); --shadow-pop:0 10px 30px -12px rgba(0,0,0,.55);
+  --studio:#0c0d10;
+}
+@page { size: landscape; margin: 0.4in; }
+@media print {
+  html, body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .noprint { display:none !important; }
+  #dc-root, .sc-host { height:auto !important; }
+  .studio { zoom:0.6; padding:0 !important; background:#fff !important; min-height:0 !important; min-width:0 !important; width:auto !important; }
+  .studio [style*="flex:none; width:"] { break-inside:avoid; }
+}
+</style>
+</helmet>
+
+<div class="noprint" style="position:fixed; top:16px; right:16px; z-index:80; display:flex; gap:4px; padding:4px; background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:var(--r-md); box-shadow:var(--shadow-card);">
+  <button onClick="{{ setCool }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Cool</button>
+  <button onClick="{{ setWarm }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Warm</button>
+  <button onClick="{{ setDark }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Dark</button>
+</div>
+
+<div class="studio" style="width:max-content; min-width:100%; min-height:100vh; padding:48px; background:var(--studio); font-family:var(--font-ui);">
+
+  <div style="margin-bottom:36px; max-width:920px;">
+    <div style="font:600 12px/1.4 var(--font-ui); letter-spacing:.12em; text-transform:uppercase; color:#9a968b;">SpecDesk &middot; Full workspace</div>
+    <h1 style="font:600 30px/1.15 var(--font-ui); margin:8px 0 8px; color:#23211c; letter-spacing:-.01em;">One window, collapsible panels</h1>
+    <p style="font:15px/1.6 var(--font-ui); color:#5c594f; margin:0;">Files &amp; document outline live in a collapsible left rail; the AI assistant in a collapsible right rail. Everything else &mdash; review, checks, diff, comments &mdash; opens in place. Rich capability, but only what you need is on screen.</p>
+  </div>
+
+  <!-- ============ A1 — WORKSPACE, EVERYTHING OPEN ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Workspace &mdash; all panels open</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <div style="flex:none; width:1480px;">
+      <div style="height:880px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+
+        <!-- toolbar -->
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--accent-soft-border);background:var(--accent-soft);color:var(--accent);font:600 15px var(--font-ui);display:flex;align-items:center;justify-content:center;" title="Toggle left panel">&#9776;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Save a version</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;margin-left:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--warn-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-dot);"></span>Unsaved changes</span>
+          <button style="padding:6px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);display:inline-flex;align-items:center;gap:6px;">&#8635; Check for updates</button>
+          <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Send for review</button>
+          <button style="width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--accent-soft-border);background:var(--accent-soft);color:var(--accent);font:600 14px var(--font-ui);display:flex;align-items:center;justify-content:center;" title="Toggle assistant">&#10022;</button>
+        </div>
+
+        <!-- body -->
+        <div style="flex:1;display:flex;min-height:0;">
+
+          <!-- LEFT RAIL -->
+          <div style="width:268px;flex:none;border-right:1px solid var(--border);background:var(--surface-raised);display:flex;flex-direction:column;min-height:0;">
+            <!-- Files section -->
+            <div style="display:flex;flex-direction:column;min-height:0;flex:1;">
+              <div style="display:flex;align-items:center;gap:7px;padding:11px 14px 8px;">
+                <span style="color:var(--text-faint);font:11px var(--font-ui);">&#9662;</span>
+                <span style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);flex:1;">Files</span>
+                <span style="color:var(--text-faint);font:13px var(--font-ui);">&#9906;</span>
+              </div>
+              <div style="padding:0 8px 10px;overflow:hidden;font:13px var(--font-ui);color:var(--text);">
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:var(--r-sm);"><span style="color:var(--text-faint);font-size:10px;">&#9662;</span><span style="color:var(--text-faint);font-size:11px;">&#9646;</span>docs</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 4px 22px;border-radius:var(--r-sm);"><span style="color:var(--text-faint);font-size:10px;">&#9662;</span><span style="color:var(--text-faint);font-size:11px;">&#9646;</span>specs</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 4px 44px;border-radius:var(--r-sm);background:var(--accent-soft);color:var(--accent);font-weight:600;"><span style="opacity:.6;">&#9643;</span>checkout-v2.md</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 4px 44px;border-radius:var(--r-sm);"><span style="color:var(--text-faint);">&#9643;</span>refunds-policy.md</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 4px 44px;border-radius:var(--r-sm);"><span style="color:var(--text-faint);">&#9643;</span>tax-rules.md</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px 4px 22px;border-radius:var(--r-sm);"><span style="color:var(--text-faint);font-size:10px;">&#9656;</span><span style="color:var(--text-faint);font-size:11px;">&#9646;</span>design</div>
+                <div style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:var(--r-sm);"><span style="width:10px;"></span><span style="color:var(--text-faint);">&#9643;</span>ROADMAP.md</div>
+              </div>
+            </div>
+            <!-- Outline section -->
+            <div style="border-top:1px solid var(--border);display:flex;flex-direction:column;min-height:0;flex:1;">
+              <div style="display:flex;align-items:center;gap:7px;padding:11px 14px 8px;">
+                <span style="color:var(--text-faint);font:11px var(--font-ui);">&#9662;</span>
+                <span style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);flex:1;">Outline</span>
+              </div>
+              <div style="padding:0 8px 10px;overflow:hidden;font:13px/1.5 var(--font-ui);">
+                <div style="padding:4px 10px;border-radius:var(--r-sm);color:var(--text-strong);font-weight:600;">Checkout v2 &mdash; Functional Spec</div>
+                <div style="padding:4px 10px 4px 22px;border-radius:var(--r-sm);color:var(--text-muted);">Overview</div>
+                <div style="padding:4px 10px 4px 22px;border-radius:var(--r-sm);color:var(--text-muted);">In scope</div>
+                <div style="padding:4px 10px 4px 22px;border-radius:var(--r-sm);background:var(--accent-soft);color:var(--accent);font-weight:600;">Order states</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CENTER — split editor -->
+          <div style="flex:1;display:flex;min-width:0;">
+            <!-- source -->
+            <div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:14px 0;overflow:hidden;font-family:var(--font-mono);font-size:13px;line-height:1.7;background:var(--surface);">
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-heading);font-weight:600;user-select:none;">1</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;"># Checkout v2</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;">2</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-heading);font-weight:600;user-select:none;">3</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Overview</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;">4</span><span style="color:var(--ed-text);white-space:pre;">The new flow reduces drop-off by</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;">5</span><span style="color:var(--ed-text);white-space:pre;">deferring account creation.</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;"> </span><span style="flex:1;height:30px;background:repeating-linear-gradient(45deg,transparent,transparent 6px,var(--border) 6px,var(--border) 7px);opacity:.5;"></span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-heading);font-weight:600;user-select:none;">7</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Order states</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;">8</span><span style="color:var(--ed-text);white-space:pre;"><span style="color:var(--ed-marker);">- </span>Pending</span></div>
+              <div style="display:flex;"><span style="width:38px;flex:none;text-align:right;padding-right:12px;color:var(--ed-gutter);user-select:none;">9</span><span style="color:var(--ed-text);white-space:pre;"><span style="color:var(--ed-marker);">- </span>Confirmed</span></div>
+            </div>
+            <!-- rendered -->
+            <div style="flex:1;min-width:0;padding:24px 30px;overflow:hidden;background:var(--surface);">
+              <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:24px;line-height:1.2;color:var(--text-strong);margin:0 0 14px;">Checkout v2</h1>
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:19px;color:var(--text-strong);margin:0 0 9px;">Overview</h2>
+              <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">The new flow reduces drop-off by deferring account creation.</p>
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:19px;color:var(--text-strong);margin:0 0 9px;">Order states</h2>
+              <ul style="margin:0;padding-left:22px;"><li style="font:15px/1.7 var(--font-ui);color:var(--text);">Pending</li><li style="font:15px/1.7 var(--font-ui);color:var(--text);">Confirmed</li></ul>
+            </div>
+          </div>
+
+          <!-- RIGHT RAIL — AI -->
+          <div style="width:322px;flex:none;border-left:1px solid var(--border);background:var(--surface-raised);display:flex;flex-direction:column;min-height:0;">
+            <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;flex:none;"><span style="width:24px;height:24px;border-radius:7px;background:var(--accent);color:var(--on-accent);font:600 12px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10022;</span><span style="font:600 14px var(--font-ui);color:var(--text-strong);flex:1;">Assistant</span><span style="color:var(--text-faint);font:14px var(--font-ui);">&#8250;</span></div>
+            <div style="flex:1;min-height:0;overflow:hidden;padding:16px;">
+              <div style="display:flex;justify-content:flex-end;margin-bottom:14px;"><div style="max-width:84%;background:var(--surface-sunken);border-radius:12px 12px 3px 12px;padding:9px 12px;font:13px/1.5 var(--font-ui);color:var(--text);">Summarise the order-states section.</div></div>
+              <div style="margin-bottom:14px;"><p style="font:13px/1.6 var(--font-ui);color:var(--text);margin:0;">Orders move through three states &mdash; Pending, Confirmed, and Cancelled &mdash; set by the payment result. Want me to draft a one-line summary for the intro?</p></div>
+              <div style="display:flex;gap:8px;"><button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 12.5px var(--font-ui);">Draft it</button><button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:500 12.5px var(--font-ui);">No thanks</button></div>
+            </div>
+            <div style="padding:12px 16px;border-top:1px solid var(--border);flex:none;"><div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:8px 11px;"><span style="flex:1;font:13px var(--font-ui);color:var(--text-faint);">Ask about this document&hellip;</span><span style="width:24px;height:24px;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);display:flex;align-items:center;justify-content:center;">&uarr;</span></div></div>
+          </div>
+
+        </div>
+
+        <!-- status bar -->
+        <div style="flex:none;border-top:1px solid var(--border);background:var(--surface-raised);padding:6px 14px;display:flex;align-items:center;gap:16px;font:12px var(--font-ui);color:var(--text-muted);">
+          <span style="color:var(--text);">checkout-v2.md</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:1px 8px;border-radius:var(--r-pill);background:var(--neutral-bg);border:1px solid var(--neutral-border);color:var(--neutral-fg);font-weight:600;">Refund edits &middot; draft</span>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--warn-dot);"></span>Checks 2/3 running</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>&#8635; Synced 2 min ago</span>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- A2 — FOCUSED (rails collapsed) -->
+    <div style="flex:none; width:980px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Focused &mdash; rails collapsed</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Both rails drop to slim icon strips; the document takes the room. One click brings a panel back.</div>
+      <div style="height:740px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:600 15px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#9776;</button>
+          <button style="padding:5px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Open&hellip;</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;font:600 12.5px var(--font-ui);color:var(--edit-fg);"><span style="width:7px;height:7px;border-radius:50%;background:var(--edit-fg);"></span>Editing</span>
+          <button style="width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:600 14px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10022;</button>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- collapsed left strip -->
+          <div style="width:46px;flex:none;border-right:1px solid var(--border);background:var(--surface-raised);display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:6px;">
+            <span style="width:30px;height:30px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font:16px var(--font-ui);" title="Files">&#9776;</span>
+            <span style="width:30px;height:30px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font:16px var(--font-ui);" title="Outline">&#8801;</span>
+            <span style="width:30px;height:30px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font:15px var(--font-ui);" title="Search">&#9906;</span>
+          </div>
+          <!-- formatted page -->
+          <div style="flex:1;min-width:0;padding:30px 24px;display:flex;justify-content:center;overflow:hidden;background:var(--canvas);">
+            <div style="width:620px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-card);padding:44px 56px;">
+              <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:27px;line-height:1.2;color:var(--text-strong);margin:0 0 16px;">Checkout v2 &mdash; Functional Specification</h1>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout. This document is the source of truth for behaviour, copy, and edge cases.</p>
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0;">The new flow reduces drop-off by deferring account creation until after payment. Guests can complete a purchase with an email address alone.</p>
+            </div>
+          </div>
+          <!-- collapsed right strip -->
+          <div style="width:46px;flex:none;border-left:1px solid var(--border);background:var(--surface-raised);display:flex;flex-direction:column;align-items:center;padding:12px 0;">
+            <span style="width:30px;height:30px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;color:var(--accent);font:16px var(--font-ui);" title="Assistant">&#10022;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ B — REVIEW HUB & STATUS TRANSITIONS ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Review hub, status transitions &amp; checks</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <!-- B1 — STATUS TRANSITIONS -->
+    <div style="flex:none; width:560px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">How a change moves</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Three stages with explicit, reversible transitions. Plain words; git underneath.</div>
+      <div style="background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); padding:22px 22px 18px;">
+        <!-- flow -->
+        <div style="display:flex;align-items:stretch;gap:0;margin-bottom:18px;">
+          <div style="flex:1;text-align:center;padding:12px 8px;border:1px solid var(--neutral-border);background:var(--neutral-bg);border-radius:var(--r-md);">
+            <div style="font:600 13px var(--font-ui);color:var(--text-strong);">Draft</div>
+            <div style="font:11px var(--font-ui);color:var(--text-faint);margin-top:2px;">on your machine</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:96px;flex:none;"><span style="font:11px var(--font-ui);color:var(--accent);font-weight:600;">Share draft</span><span style="color:var(--text-faint);font-size:15px;line-height:1;">&rarr;</span></div>
+          <div style="flex:1;text-align:center;padding:12px 8px;border:1px solid var(--border-strong);background:var(--surface-sunken);border-radius:var(--r-md);">
+            <div style="font:600 13px var(--font-ui);color:var(--text-strong);">Draft review</div>
+            <div style="font:11px var(--font-ui);color:var(--text-faint);margin-top:2px;">visible, not assigned</div>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:96px;flex:none;"><span style="font:11px var(--font-ui);color:var(--accent);font-weight:600;">Send for review</span><span style="color:var(--text-faint);font-size:15px;line-height:1;">&rarr;</span></div>
+          <div style="flex:1;text-align:center;padding:12px 8px;border:1px solid var(--info-border);background:var(--info-bg);border-radius:var(--r-md);">
+            <div style="font:600 13px var(--font-ui);color:var(--info-fg);">In review</div>
+            <div style="font:11px var(--font-ui);color:var(--text-faint);margin-top:2px;">reviewers assigned</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border);">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);margin-right:2px;">Also</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--border-strong);font:500 12px var(--font-ui);color:var(--text);">&larr; Back to draft</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--ok-bg);border:1px solid var(--ok-border);font:600 12px var(--font-ui);color:var(--ok-fg);">Approved &rarr; Publish</span>
+          <span style="padding:3px 10px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--border-strong);font:500 12px var(--font-ui);color:var(--text-muted);">Close review</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- B2 — REVIEW HUB (my change) -->
+    <div style="flex:none; width:1320px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Review hub (your change)</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Right panel collects everything for this review &mdash; description, reviewers, labels, checks, history &mdash; in collapsible sections.</div>
+      <div style="height:780px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <button style="width:30px;height:30px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:600 15px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#9776;</button>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-md);padding:2px;">
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Code</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Split</span>
+            <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+          </div>
+          <div style="flex:1;"></div>
+          <span style="display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:var(--r-sm);background:var(--info-bg);border:1px solid var(--info-border);color:var(--info-fg);font:600 12px var(--font-ui);">In review</span>
+          <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Update review</button>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;">
+          <!-- doc -->
+          <div style="flex:1;min-width:0;border-right:1px solid var(--border);padding:30px 38px;overflow:hidden;background:var(--surface);">
+            <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:25px;line-height:1.2;color:var(--text-strong);margin:0 0 12px;">Checkout v2 &mdash; Functional Specification</h1>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">Overview</h2>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0 0 18px;">The new flow reduces drop-off by deferring account creation until after payment. Guests can complete a purchase with an email address alone.</p>
+            <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 9px;">Order states</h2>
+            <p style="font:15px/1.7 var(--font-ui);color:var(--text);margin:0;">Each order moves through Pending, Confirmed, or Cancelled depending on the payment result.</p>
+          </div>
+          <!-- review panel -->
+          <div style="width:420px;flex:none;background:var(--surface-raised);display:flex;flex-direction:column;min-height:0;overflow:hidden;">
+            <div style="flex:1;min-height:0;overflow:hidden;">
+              <!-- header / status transition -->
+              <div style="padding:16px 18px 14px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;"><span style="font:600 15px var(--font-ui);color:var(--text-strong);flex:1;">Refund edits</span><span style="font:500 12px var(--font-ui);color:var(--text-faint);">#48</span></div>
+                <!-- stepper -->
+                <div style="display:flex;align-items:center;gap:0;margin-bottom:12px;">
+                  <div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:16px;border-radius:50%;background:var(--ok-dot);color:#fff;font:700 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10003;</span><span style="font:12px var(--font-ui);color:var(--text-muted);">Draft</span></div>
+                  <span style="flex:1;height:1.5px;background:var(--ok-dot);margin:0 7px;"></span>
+                  <div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:16px;border-radius:50%;background:var(--ok-dot);color:#fff;font:700 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10003;</span><span style="font:12px var(--font-ui);color:var(--text-muted);">Draft review</span></div>
+                  <span style="flex:1;height:1.5px;background:var(--info-dot);margin:0 7px;"></span>
+                  <div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:16px;border-radius:50%;background:var(--info-dot);box-shadow:0 0 0 3px var(--info-bg);"></span><span style="font:600 12px var(--font-ui);color:var(--info-fg);">In review</span></div>
+                </div>
+                <div style="display:flex;gap:7px;">
+                  <button style="padding:6px 11px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:500 12.5px var(--font-ui);">Back to draft</button>
+                  <button style="padding:6px 11px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--surface-sunken);color:var(--text-faint);font:600 12.5px var(--font-ui);cursor:not-allowed;">Publish</button>
+                  <div style="flex:1;"></div>
+                  <button style="padding:6px 11px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--danger-fg);font:500 12.5px var(--font-ui);">Close</button>
+                </div>
+              </div>
+              <!-- reviewers -->
+              <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;margin-bottom:10px;"><span style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);flex:1;">Reviewers</span><span style="font:600 12px var(--font-ui);color:var(--accent);">+ Request review</span></div>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--ok-bg);color:var(--ok-fg);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">PK</span><span style="font:500 13px var(--font-ui);color:var(--text);flex:1;">Priya Kaur</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 12px var(--font-ui);color:var(--ok-fg);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>Approved</span></div>
+                <div style="display:flex;align-items:center;gap:10px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span><span style="font:500 13px var(--font-ui);color:var(--text);flex:1;">Tom Mara</span><span style="display:inline-flex;align-items:center;gap:5px;font:600 12px var(--font-ui);color:var(--text-muted);"><span style="width:6px;height:6px;border-radius:50%;background:var(--text-faint);"></span>Pending</span></div>
+              </div>
+              <!-- labels -->
+              <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;margin-bottom:10px;"><span style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);flex:1;">Labels</span><span style="font:600 12px var(--font-ui);color:var(--accent);">+ Add</span></div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:var(--r-pill);background:var(--info-bg);color:var(--info-fg);font:600 12px var(--font-ui);"><span style="width:7px;height:7px;border-radius:50%;background:var(--info-dot);"></span>spec</span>
+                  <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:var(--r-pill);background:var(--warn-bg);color:var(--warn-fg);font:600 12px var(--font-ui);"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-dot);"></span>needs-legal</span>
+                  <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:var(--r-pill);background:var(--surface-sunken);color:var(--text-muted);font:600 12px var(--font-ui);"><span style="width:7px;height:7px;border-radius:50%;background:var(--text-faint);"></span>payments</span>
+                </div>
+              </div>
+              <!-- checks / CI -->
+              <div style="padding:14px 18px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;margin-bottom:11px;"><span style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);flex:1;">Checks</span><span style="font:500 12px var(--font-ui);color:var(--text-muted);">2 of 3 passed &middot; 1 running</span></div>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;"><span style="width:18px;height:18px;border-radius:50%;background:var(--ok-bg);color:var(--ok-fg);font:700 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10003;</span><span style="font:13px var(--font-ui);color:var(--text);flex:1;">Markdown &amp; link check</span><span style="font:12px var(--font-mono);color:var(--text-faint);">1m 12s</span></div>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;"><span style="width:18px;height:18px;border-radius:50%;border:2px solid var(--warn-border);border-top-color:var(--warn-dot);display:inline-block;"></span><span style="font:13px var(--font-ui);color:var(--text);flex:1;">Spell check <span style="color:var(--warn-fg);font-size:11px;">running</span></span><span style="font:12px var(--font-mono);color:var(--text-faint);">0:24</span></div>
+                <div style="display:flex;align-items:center;gap:10px;"><span style="width:18px;height:18px;border-radius:50%;background:var(--ok-bg);color:var(--ok-fg);font:700 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#10003;</span><span style="font:13px var(--font-ui);color:var(--text);flex:1;">Build preview</span><span style="font:12px var(--font-mono);color:var(--text-faint);">38s</span></div>
+              </div>
+              <!-- activity -->
+              <div style="padding:14px 18px;">
+                <div style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);margin-bottom:11px;">Activity</div>
+                <div style="display:flex;gap:10px;margin-bottom:11px;"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-dot);margin-top:5px;flex:none;"></span><div style="font:13px/1.45 var(--font-ui);color:var(--text);"><strong style="color:var(--text-strong);">Priya</strong> approved <span style="color:var(--text-faint);">&middot; 8 min ago</span></div></div>
+                <div style="display:flex;gap:10px;"><span style="width:7px;height:7px;border-radius:50%;background:var(--info-dot);margin-top:5px;flex:none;"></span><div style="font:13px/1.45 var(--font-ui);color:var(--text);"><strong style="color:var(--text-strong);">Tom</strong> commented on &ldquo;Overview&rdquo; <span style="color:var(--text-faint);">&middot; 2h ago</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ C — DIFF (source) & COMPARE WITH PUBLISHED ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Source diff &mdash; insert, delete &amp; intra-line change</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Compare with published (main)</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Added &amp; removed lines, plus word-level changes shown <em>inline in one line</em> &mdash; not as a delete + re-insert.</div>
+      <div style="height:600px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <!-- compare header -->
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">Comparing</span>
+          <div style="display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:5px 10px;font:13px var(--font-ui);color:var(--text);">My working copy <span style="color:var(--text-faint);">&#9662;</span></div>
+          <span style="font:13px var(--font-ui);color:var(--text-faint);">with</span>
+          <div style="display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:5px 10px;font:13px var(--font-ui);color:var(--text);">Published (main) <span style="color:var(--text-faint);">&#9662;</span></div>
+          <div style="flex:1;"></div>
+          <span style="font:12px var(--font-ui);color:var(--text-muted);"><span style="color:var(--add-text);font-weight:600;">+3</span> &middot; <span style="color:var(--del-text);font-weight:600;">&minus;1</span></span>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-sm);padding:2px;"><span style="padding:3px 10px;border-radius:4px;background:var(--surface);box-shadow:var(--shadow-card);font:600 12px var(--font-ui);color:var(--text-strong);">Inline</span><span style="padding:3px 10px;border-radius:4px;font:500 12px var(--font-ui);color:var(--text-muted);">Split lines</span></div>
+          <div style="display:flex;gap:2px;background:var(--surface-sunken);border-radius:var(--r-sm);padding:2px;"><span style="padding:3px 10px;border-radius:4px;font:500 12px var(--font-ui);color:var(--text-muted);">Rendered</span><span style="padding:3px 10px;border-radius:4px;background:var(--surface);box-shadow:var(--shadow-card);font:600 12px var(--font-ui);color:var(--text-strong);">Source</span></div>
+        </div>
+        <!-- diff body -->
+        <div style="flex:1;min-height:0;overflow:hidden;font-family:var(--font-mono);font-size:13px;line-height:1.85;padding:8px 0;">
+          <!-- file header -->
+          <div style="padding:5px 16px;color:var(--text-muted);font:12px var(--font-mono);background:var(--surface-raised);border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:6px;">specs/checkout-v2.md</div>
+          <!-- context -->
+          <div style="display:flex;"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">3</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">3</span><span style="width:22px;flex:none;text-align:center;color:var(--ed-gutter);"> </span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Overview</span></div>
+          <div style="display:flex;"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">4</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">4</span><span style="width:22px;flex:none;text-align:center;color:var(--ed-gutter);"> </span><span style="color:var(--ed-text);white-space:pre;">The new flow reduces drop-off by deferring</span></div>
+          <div style="display:flex;"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">5</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">5</span><span style="width:22px;flex:none;text-align:center;color:var(--ed-gutter);"> </span><span style="color:var(--ed-text);white-space:pre;">account creation until after payment.</span></div>
+          <!-- deleted line -->
+          <div style="display:flex;background:var(--del-bg);"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--del-text);user-select:none;background:var(--del-gutter);">6</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--del-text);user-select:none;background:var(--del-gutter);"> </span><span style="width:22px;flex:none;text-align:center;color:var(--del-text);font-weight:700;background:var(--del-gutter);">&minus;</span><span style="color:var(--del-text);white-space:pre;">Guests can complete a purchase with an email.</span></div>
+          <!-- inserted lines -->
+          <div style="display:flex;background:var(--add-bg);"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--add-text);user-select:none;background:var(--add-gutter);"> </span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--add-text);user-select:none;background:var(--add-gutter);">6</span><span style="width:22px;flex:none;text-align:center;color:var(--add-text);font-weight:700;background:var(--add-gutter);">+</span><span style="color:var(--add-text);white-space:pre;">Guests check out with a valid email address &mdash; no</span></div>
+          <div style="display:flex;background:var(--add-bg);"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--add-text);user-select:none;background:var(--add-gutter);"> </span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--add-text);user-select:none;background:var(--add-gutter);">7</span><span style="width:22px;flex:none;text-align:center;color:var(--add-text);font-weight:700;background:var(--add-gutter);">+</span><span style="color:var(--add-text);white-space:pre;">account required.</span></div>
+          <!-- context -->
+          <div style="display:flex;"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">7</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">8</span><span style="width:22px;flex:none;text-align:center;color:var(--ed-gutter);"> </span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">8</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--ed-gutter);user-select:none;">9</span><span style="width:22px;flex:none;text-align:center;color:var(--ed-gutter);"> </span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;">## Refunds</span></div>
+          <!-- intra-line change (inline, one row) -->
+          <div style="display:flex;background:var(--mov-bg);"><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--mov-text);user-select:none;">9</span><span style="width:40px;flex:none;text-align:right;padding-right:10px;color:var(--mov-text);user-select:none;">10</span><span style="width:22px;flex:none;text-align:center;color:var(--mov-text);font-weight:700;">~</span><span style="white-space:pre-wrap;color:var(--ed-text);">Refunds go to the <span style="background:var(--del-hl);color:var(--del-text);text-decoration:line-through;border-radius:2px;padding:0 2px;">original payment method</span><span style="background:var(--add-hl);color:var(--add-text);border-radius:2px;padding:0 2px;">card the customer used</span>, shown as an estimate.</span></div>
+        </div>
+        <!-- footnote -->
+        <div style="flex:none;border-top:1px solid var(--border);background:var(--surface-raised);padding:7px 16px;display:flex;align-items:center;gap:8px;font:12px var(--font-ui);color:var(--text-muted);">
+          <span style="width:13px;height:13px;border-radius:3px;background:var(--add-hl);display:inline-block;"></span>added word<span style="width:13px;height:13px;border-radius:3px;background:var(--del-hl);display:inline-block;margin-left:8px;"></span>removed word<span style="color:var(--text-faint);">&middot; the &ldquo;~&rdquo; row marks an in-place edit &mdash; toggle <strong style="color:var(--text);">Split lines</strong> to see it as a removed + added pair instead.</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ D — PER-LINE COMMENTS & REVIEWER ACTIONS ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Per-line comments &amp; reviewer actions</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:52px;">
+
+    <div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Reviewing someone else&rsquo;s change</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Comment on any line; threads chain like GitHub. Submit the whole review as Approve, Request changes, or Comment.</div>
+      <div style="height:700px; background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <!-- reviewer bar -->
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);">Reviewing</span>
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">Tax rules update</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;font:13px var(--font-ui);color:var(--text-muted);"><span style="width:22px;height:22px;border-radius:50%;background:var(--mov-bg);color:var(--mov-text);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">DA</span>Dana</span>
+          <div style="flex:1;"></div>
+          <span style="font:12px var(--font-ui);color:var(--text-muted);">2 pending comments</span>
+          <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Comment</button>
+          <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger-fg);font:600 13px var(--font-ui);">Request changes</button>
+          <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--ok-fg);background:var(--ok-fg);color:#fff;font:600 13px var(--font-ui);display:inline-flex;align-items:center;gap:6px;">&#10003; Approve</button>
+        </div>
+        <!-- source with inline thread -->
+        <div style="flex:1;min-height:0;overflow:hidden;padding:10px 0;font-family:var(--font-mono);font-size:13px;line-height:1.85;">
+          <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-heading);font-weight:600;user-select:none;">1</span><span style="color:var(--ed-heading);font-weight:600;white-space:pre;"># Tax rules</span></div>
+          <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">2</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">3</span><span style="color:var(--ed-text);white-space:pre;">VAT is charged at the destination rate for</span></div>
+          <!-- commented line (highlighted) -->
+          <div style="display:flex;background:var(--warn-bg);"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--warn-fg);user-select:none;font-weight:600;">4</span><span style="color:var(--ed-text);white-space:pre;flex:1;">physical goods shipped within the EU.</span><span style="font-family:var(--font-ui);font-size:11px;color:var(--warn-fg);padding-right:14px;">&#128172; 2</span></div>
+          <!-- inline comment thread -->
+          <div style="font-family:var(--font-ui);padding:10px 16px 12px 56px;background:var(--surface-raised);border-top:1px solid var(--border);border-bottom:1px solid var(--border);">
+            <div style="max-width:760px;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;background:var(--surface);">
+              <!-- comment 1 -->
+              <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--info-bg);color:var(--info-fg);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span><span style="font:600 13px var(--font-ui);color:var(--text-strong);">Tom Mara</span><span style="font:12px var(--font-ui);color:var(--text-faint);">2h ago</span><div style="flex:1;"></div><span style="font:12px var(--font-ui);color:var(--text-faint);">&#8943;</span></div>
+                <p style="font:13.5px/1.55 var(--font-ui);color:var(--text);margin:0;">Does this cover digital goods too, or only physical? Worth being explicit.</p>
+              </div>
+              <!-- comment 2 (reply) -->
+              <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:9px;margin-bottom:7px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--mov-bg);color:var(--mov-text);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">DA</span><span style="font:600 13px var(--font-ui);color:var(--text-strong);">Dana</span><span style="font:12px var(--font-ui);color:var(--text-faint);">1h ago</span></div>
+                <p style="font:13.5px/1.55 var(--font-ui);color:var(--text);margin:0;">Good point &mdash; digital goods follow a different rule. I&rsquo;ll add a sentence.</p>
+              </div>
+              <!-- reply composer -->
+              <div style="padding:11px 14px;display:flex;align-items:center;gap:10px;background:var(--surface-raised);">
+                <span style="width:24px;height:24px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">You</span>
+                <input placeholder="Reply&hellip;" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:7px 10px;font:13px var(--font-ui);color:var(--text);background:var(--surface);" />
+                <button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12.5px var(--font-ui);">Add to review</button>
+                <span style="font:12px var(--font-ui);color:var(--ok-fg);font-weight:600;cursor:pointer;">Resolve</span>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">5</span><span style="color:var(--ed-text);white-space:pre;"> </span></div>
+          <div style="display:flex;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">6</span><span style="color:var(--ed-text);white-space:pre;">Reduced rates may apply to specific</span></div>
+          <!-- add-comment affordance on hover line -->
+          <div style="display:flex;align-items:center;"><span style="width:42px;flex:none;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;position:relative;">7</span><span style="width:18px;height:18px;flex:none;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font:700 13px var(--font-ui);display:flex;align-items:center;justify-content:center;margin-right:8px;">+</span><span style="color:var(--ed-text);white-space:pre;">categories &mdash; see the published schedule.</span></div>
+        </div>
+        <div style="flex:none;border-top:1px solid var(--border);background:var(--surface-raised);padding:7px 16px;font:12px var(--font-ui);color:var(--text-muted);">Hover any line to add a comment &middot; comments collect into your review until you submit with one of the actions above.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ============ E — REVIEWS NAVIGATOR & UPDATES ============ -->
+  <div style="font:600 13px/1.3 var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:#9a968b; margin:0 0 16px;">Reviews navigator &amp; remote updates</div>
+  <div style="display:flex; flex-direction:column; gap:36px; align-items:flex-start; margin-bottom:8px;">
+
+    <!-- E1 — REVIEWS NAVIGATOR -->
+    <div style="flex:none; width:380px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Reviews navigator</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Mine, assigned to me, or open any by link. A collapsible left-rail panel.</div>
+      <div style="height:600px; background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex:none;"><span style="font:600 14px var(--font-ui);color:var(--text-strong);flex:1;">Reviews</span><span style="width:26px;height:26px;border-radius:var(--r-sm);background:var(--surface);border:1px solid var(--border-strong);color:var(--text-muted);font:15px var(--font-ui);display:flex;align-items:center;justify-content:center;">&#9906;</span></div>
+        <div style="flex:1;min-height:0;overflow:hidden;">
+          <!-- mine -->
+          <div style="padding:12px 16px 4px;font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);">My reviews</div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Refund edits</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--info-bg);color:var(--info-fg);font:600 11px var(--font-ui);">In review</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span>checkout-v2.md</span><span style="color:var(--text-faint);">&middot;</span><span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--warn-dot);"></span>checks running</span></div>
+          </div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Pricing tweaks</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--neutral-bg);border:1px solid var(--neutral-border);color:var(--neutral-fg);font:600 11px var(--font-ui);">Draft</span></div>
+            <div style="margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);">pricing.md</div>
+          </div>
+          <!-- assigned -->
+          <div style="padding:12px 16px 4px;font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);">Assigned to me</div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--danger-bg);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Tax rules update</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--danger-border);color:var(--danger-fg);font:600 11px var(--font-ui);">Needs you</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span style="width:18px;height:18px;border-radius:50%;background:var(--mov-bg);color:var(--mov-text);font:600 9px var(--font-ui);display:flex;align-items:center;justify-content:center;">DA</span>Dana &middot; tax-rules.md</div>
+          </div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Copy pass</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--info-bg);color:var(--info-fg);font:600 11px var(--font-ui);">In review</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span style="width:18px;height:18px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 9px var(--font-ui);display:flex;align-items:center;justify-content:center;">LE</span>Lee &middot; multiple files</div>
+          </div>
+          <!-- by link -->
+          <div style="padding:14px 16px;">
+            <div style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);margin-bottom:9px;">Open by link</div>
+            <div style="display:flex;gap:8px;"><input placeholder="Paste a review link&hellip;" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:7px 10px;font:12.5px var(--font-ui);color:var(--text);background:var(--surface);" /><button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12.5px var(--font-ui);">Open</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E2 — REMOTE UPDATES -->
+    <div style="flex:none; width:600px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Updates from others</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">A quiet background check; pull in changes when you choose. Your draft is never overwritten silently.</div>
+
+      <!-- updates available card -->
+      <div style="background:var(--surface); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; margin-bottom:16px;">
+        <div style="padding:16px 18px;display:flex;align-items:flex-start;gap:12px;">
+          <span style="width:30px;height:30px;border-radius:50%;background:var(--info-bg);color:var(--info-fg);font:700 14px var(--font-ui);display:flex;align-items:center;justify-content:center;flex:none;">&#8635;</span>
+          <div style="flex:1;">
+            <div style="font:600 14px var(--font-ui);color:var(--text-strong);margin-bottom:3px;">Updates available</div>
+            <p style="font:13.5px/1.55 var(--font-ui);color:var(--text-muted);margin:0;">Dana published 2 new versions of <strong style="color:var(--text);">checkout-v2.md</strong> since you started editing. Your draft is safe.</p>
+          </div>
+        </div>
+        <div style="padding:0 18px 16px 60px;display:flex;gap:8px;">
+          <button style="padding:8px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);">Pull in updates</button>
+          <button style="padding:8px 13px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);">Compare first</button>
+          <button style="padding:8px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);">Later</button>
+        </div>
+      </div>
+
+      <!-- synced state (toolbar control) -->
+      <div style="display:flex;align-items:center;gap:10px;background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--r-md);padding:11px 14px;margin-bottom:12px;">
+        <span style="display:inline-flex;align-items:center;gap:7px;font:13px var(--font-ui);color:var(--ok-fg);font-weight:600;"><span style="width:7px;height:7px;border-radius:50%;background:var(--ok-dot);"></span>Up to date</span>
+        <span style="font:12.5px var(--font-ui);color:var(--text-faint);">Checked 2 min ago</span>
+        <div style="flex:1;"></div>
+        <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 12.5px var(--font-ui);display:inline-flex;align-items:center;gap:6px;">&#8635; Check for updates</button>
+      </div>
+
+      <!-- co-editing hint -->
+      <div style="display:flex;align-items:center;gap:9px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--r-md);padding:11px 14px;">
+        <span style="width:7px;height:7px;border-radius:50%;background:var(--warn-dot);flex:none;"></span>
+        <span style="font:13px/1.5 var(--font-ui);color:var(--warn-fg);"><strong>Lee is editing this spec too.</strong> <span style="color:var(--text-muted);">If your changes overlap, SpecDesk will help you combine them &mdash; no merge markers.</span></span>
+      </div>
+    </div>
+
+  </div>
+
+  <!--APPEND-->
+
+  <div style="max-width:920px; margin-top:8px; padding-top:18px; border-top:1px solid #d8d4ca;">
+    <p style="font:13px/1.6 var(--font-ui); color:#7a766b; margin:0;">Building the rest sequentially &mdash; review/PR hub, checks, diff variants, per-line comments, navigator, status transitions, compare &amp; sync.</p>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'cool' };
+  setTheme(t){
+    if (t === 'cool') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    this.setState({ theme: t });
+  }
+  renderVals(){
+    return {
+      setCool: () => this.setTheme('cool'),
+      setWarm: () => this.setTheme('warm'),
+      setDark: () => this.setTheme('dark'),
+    };
+  }
+}
+</script>
+</body>
+</html>

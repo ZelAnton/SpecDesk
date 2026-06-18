@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpecDesk — Inline comments (formatted)</title>
+<style>
+
+body { margin:0; background:#e7e5df; -webkit-font-smoothing:antialiased; }
+* { box-sizing:border-box; }
+:root {
+  --font-ui: system-ui,"Segoe UI",-apple-system,sans-serif;
+  --font-doc-head: Constantia,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono: "Cascadia Code","Cascadia Mono",Consolas,ui-monospace,monospace;
+  --canvas:#f7f8fa; --surface:#fff; --surface-raised:#fafbfc; --surface-sunken:#eceef1;
+  --border:#e6e9ec; --border-strong:#dce0e4;
+  --text-strong:#1c1f23; --text:#2b2f34; --text-muted:#6a7077; --text-faint:#9a9fa6;
+  --accent:#2f6db5; --accent-hover:#2a619f; --accent-active:#245488;
+  --accent-soft:#eaf1f9; --accent-soft-border:#cfe0f3; --on-accent:#fff; --focus-ring:#2f6db5;
+  --ok-fg:#2f7d54; --ok-dot:#3a9d68; --ok-bg:#e9f3ec; --ok-border:#c8e6d3;
+  --warn-fg:#a17d1e; --warn-dot:#d6a72e; --warn-bg:#fbf3df; --warn-border:#f0e2bb;
+  --info-fg:#4f56c5; --info-dot:#5a61d6; --info-bg:#eeecfa; --info-border:#d4d2f3;
+  --danger-fg:#bd5a2e; --danger-dot:#d4703f; --danger-bg:#fbeee6; --danger-border:#f2d6c4;
+  --edit-fg:#2f6db5; --edit-bg:#eaf1f9; --edit-border:#cfe0f3;
+  --neutral-fg:#6a7077; --neutral-bg:#fff; --neutral-border:#e2e5e8;
+  --ink-fg:#e8eaed; --ink-bg:#23272e;
+  --add-bg:#e9f4ee; --add-border:#3a9d68; --add-text:#1f6b43; --add-hl:#dff0e6;
+  --del-bg:#fbeef0; --del-border:#d6586f; --del-text:#8f3146;
+  --mov-bg:#f6f1fb; --mov-border:#c8b3e0; --mov-text:#7a4fb0;
+  --ed-gutter:#b9c0c8; --ed-text:#2b2f34; --ed-heading:#2f6db5; --ed-marker:#7a8794; --ed-active:#eef4fb;
+  --shadow-panel:0 18px 44px -20px rgba(28,32,40,.30); --shadow-card:0 1px 2px rgba(20,24,30,.12); --shadow-pop:0 10px 30px -12px rgba(28,32,40,.32);
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-pill:20px;
+  --studio:#e7e5df;
+}
+:root[data-theme="warm"]{
+  --canvas:#faf8f2; --surface:#fff; --surface-raised:#fcfbf7; --surface-sunken:#f3efe6;
+  --border:#efece4; --border-strong:#e4e1d8;
+  --text-strong:#23211c; --text:#3a382f; --text-muted:#7a766b; --text-faint:#9a968b;
+  --accent-soft:#eef3f9; --accent-soft-border:#d6e3f1;
+  --neutral-bg:#f2efe8; --neutral-fg:#7a766b; --neutral-border:#e6e2d6;
+  --ed-gutter:#cfc8b6; --ed-text:#3c3a33; --ed-marker:#b89b4a; --ed-active:#f7f3e9;
+  --shadow-panel:0 18px 44px -20px rgba(40,36,28,.28); --shadow-pop:0 10px 30px -12px rgba(40,36,28,.28);
+  --studio:#e7e5df;
+}
+:root[data-theme="dark"]{
+  --canvas:#15171b; --surface:#1c1f24; --surface-raised:#22262c; --surface-sunken:#2a2f36;
+  --border:#2c313a; --border-strong:#3a404a;
+  --text-strong:#ecedef; --text:#c9cdd3; --text-muted:#8b9098; --text-faint:#5f656d;
+  --accent:#5b9bd9; --accent-hover:#6fa9e0; --accent-active:#4f8cc9; --accent-soft:#1e2c3a; --accent-soft-border:#2f4a66; --on-accent:#0e1419; --focus-ring:#5b9bd9;
+  --ok-fg:#6fc394; --ok-dot:#46a572; --ok-bg:#16291f; --ok-border:#27412f;
+  --warn-fg:#d8b25a; --warn-dot:#c79a3a; --warn-bg:#2a2410; --warn-border:#433a1c;
+  --info-fg:#a9adf0; --info-dot:#7b81e0; --info-bg:#21233a; --info-border:#363a5c;
+  --danger-fg:#e09063; --danger-dot:#cf7544; --danger-bg:#2c1d15; --danger-border:#48301f;
+  --edit-fg:#5b9bd9; --edit-bg:#1e2c3a; --edit-border:#2f4a66;
+  --neutral-fg:#8b9098; --neutral-bg:#22262c; --neutral-border:#343a43;
+  --ink-fg:#0e1419; --ink-bg:#cfd3d8;
+  --add-bg:#16291f; --add-border:#46a572; --add-text:#7fce9f; --add-hl:#1e3a29;
+  --del-bg:#2c1820; --del-border:#cf5a74; --del-text:#e89bac;
+  --mov-bg:#241c30; --mov-border:#8a6fb8; --mov-text:#c2a8e6;
+  --ed-gutter:#4d535c; --ed-text:#c9cdd3; --ed-heading:#5b9bd9; --ed-marker:#6d7a86; --ed-active:#22303d;
+  --shadow-panel:0 18px 44px -20px rgba(0,0,0,.6); --shadow-card:0 1px 2px rgba(0,0,0,.4); --shadow-pop:0 10px 30px -12px rgba(0,0,0,.55);
+  --studio:#0c0d10;
+}
+@page { size: landscape; margin: 0.4in; }
+@media print {
+  html, body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .noprint { display:none !important; }
+  #dc-root, .sc-host { height:auto !important; }
+  .studio { zoom:0.6; padding:0 !important; background:#fff !important; min-height:0 !important; min-width:0 !important; width:auto !important; }
+  .studio [style*="flex:none; width:"] { break-inside:avoid; }
+}
+
+body{ margin:0; background:var(--studio); }
+.page-wrap{ width:max-content; min-width:100%; box-sizing:border-box; padding:40px; display:flex; flex-direction:column; gap:14px; align-items:flex-start; }
+.page-cap{ font:600 12px/1.4 system-ui,"Segoe UI",sans-serif; letter-spacing:.04em; color:#6a665b; }
+.page-cap b{ color:#23211c; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+  <div class="page-cap"><b>SpecDesk</b> &nbsp;·&nbsp; Inline comments (formatted)</div>
+  <div class="frame">
+<div style="flex:none; width:1240px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Inline comments</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Formatted mode. Highlighted span + margin thread, GitHub-synced · <em>Changes requested</em>.</div>
+      <div style="height:720px; background:var(--canvas); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);background:var(--surface-raised);flex:none;">
+          <span style="font:600 13px var(--font-ui);color:var(--text-strong);">checkout-v2.md</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:var(--r-pill);background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger-fg);font:600 12px var(--font-ui);"><span style="width:6px;height:6px;border-radius:50%;background:var(--danger-dot);"></span>Changes requested</span>
+          <div style="flex:1;"></div>
+          <span style="font:12px var(--font-ui);color:var(--text-muted);display:inline-flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>2 comments synced</span>
+        </div>
+        <div style="flex:1;display:flex;min-height:0;overflow:hidden;">
+          <div style="flex:1;min-width:0;padding:32px 24px;display:flex;justify-content:center;overflow:hidden;">
+            <div style="width:560px;max-width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-card);padding:40px 48px;">
+              <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:26px;line-height:1.2;color:var(--text-strong);margin:0 0 14px;">Checkout v2 — Functional Specification</h1>
+              <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 10px;">Overview</h2>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0 0 18px;">The new flow reduces drop-off by deferring account creation until after payment. <span style="background:var(--warn-bg);box-shadow:0 0 0 1px var(--warn-border);border-radius:2px;padding:0 2px;">Guests can complete a purchase with an email address alone.</span></p>
+              <p style="font:15px/1.75 var(--font-ui);color:var(--text);margin:0;">Signed-in customers keep saved addresses, cards, and store credit.</p>
+            </div>
+          </div>
+          <!-- margin rail -->
+          <div style="width:320px;flex:none;padding:32px 22px 0 0;overflow:hidden;">
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:13px 14px;margin-bottom:12px;">
+              <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;"><span style="width:24px;height:24px;border-radius:50%;background:var(--info-bg);color:var(--info-fg);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span><span style="font:600 13px var(--font-ui);color:var(--text-strong);flex:1;">Tom Mara</span><span style="font:500 11px var(--font-ui);color:var(--text-faint);">2h</span></div>
+              <p style="font:13px/1.55 var(--font-ui);color:var(--text);margin:0 0 9px;">Can we define a valid email here? Edge case for plus-addressing.</p>
+              <div style="background:var(--surface-sunken);border-radius:var(--r-sm);padding:8px 10px;margin-bottom:10px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);margin-bottom:2px;">You</div><div style="font:13px/1.5 var(--font-ui);color:var(--text);">Good catch — adding a note.</div></div>
+              <div style="display:flex;align-items:center;gap:8px;"><input placeholder="Reply…" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:6px 9px;font:13px var(--font-ui);color:var(--text);background:var(--surface);"><span style="font:600 12px var(--font-ui);color:var(--ok-fg);white-space:nowrap;cursor:pointer;">Resolve</span></div>
+            </div>
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-card);padding:11px 13px;opacity:.85;">
+              <div style="display:flex;align-items:center;gap:9px;"><span style="width:22px;height:22px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">PK</span><span style="font:600 12.5px var(--font-ui);color:var(--text-strong);flex:1;">Priya Kaur</span><span style="font:500 11px var(--font-ui);color:var(--text-faint);">1d</span></div>
+              <p style="font:12.5px/1.5 var(--font-ui);color:var(--text-muted);margin:7px 0 0;">Resolved · “Looks good now.”</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

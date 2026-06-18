@@ -142,3 +142,9 @@ coverage/
 /CLAUDE.md
 /AGENTS.md
 .claude/
+
+## -------
+## Design — raw Claude Design export archive. The extracted, reviewable docs/design/ files are
+## tracked; the binary .7z that produced them is not.
+## -------
+/docs/design/design.7z

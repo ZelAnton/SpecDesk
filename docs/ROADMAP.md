@@ -21,6 +21,12 @@ Rules we hold ourselves to:
 3. **Committing is explicit, not automatic.** Autosave writes the working copy to disk; a commit only happens when the author chooses **Save a version**. No auto-commit-on-idle (see [design/04-git-workflow.md](design/04-git-workflow.md)).
 4. **Native is the brain, webview is thin.** Every PoC keeps Markdown/git/GitHub/AI logic in C#/F#; TypeScript stays minimal (see [design/02-architecture.md](design/02-architecture.md)).
 5. **`lineMap` is sacred.** Built in PoC‑2, reused by PoCs 6, 7, and 8. Getting it right early is cheaper than retrofitting.
+6. **The UI follows the design concept.** Every visual surface conforms to the agreed concept in
+   [`docs/design/`](design/) ([`SpecDesk-Design-Concept.md`](design/SpecDesk-Design-Concept.md) is
+   authoritative) — its design tokens, one shared rendered-document stylesheet, CodeMirror editor
+   theme, and component specs. A PoC may **extend** the concept with the panels/controls it needs, but
+   must stay within its intent (reuse tokens and component language; no one-off styles). See
+   [AGENTS.md](../AGENTS.md) → "Design system (UI source of truth)".
 
 ## Dependency graph
 
@@ -45,6 +51,11 @@ flowchart TD
     P11 --> P12[PoC-12 WYSIWYG formatted editing]
     P11 -.feeds.-> P6
     P11 -.feeds.-> P8
+    P2 --> DESIGN[Design foundation: adopt the concept · tokens/theme/components]
+    P11 --> DESIGN
+    DESIGN -.styles.-> P6
+    DESIGN -.styles.-> P8
+    DESIGN -.styles.-> P12
 ```
 
 The critical path is **P0 → P2 → P4 → P5 → P6 → P8**. Comparison (P7) and inline comments (P8)
@@ -67,6 +78,45 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 - **Effort:** **M** · **Depends on:** nothing.
 
 > Output of this spike is consumed by PoC‑5. Keep it as a throwaway harness, not production code.
+
+---
+
+## Design foundation — adopt the design concept *(do this next)*
+
+> **The immediate next step.** Claude Design delivered an agreed UI concept (in
+> [`docs/design/`](design/); authoritative file
+> [`SpecDesk-Design-Concept.md`](design/SpecDesk-Design-Concept.md)). This milestone brings the
+> **existing** webview UI — today's ad-hoc toolbar, panes, inline bars, preview and editor styling —
+> in line with that concept and lays the token/theme groundwork every later UI surface builds on. It
+> restyles what PoC‑2 and PoC‑11 already shipped; it adds no new feature behaviour.
+
+- **Goal:** the running app looks like the design concept — surfaces are built from its design tokens,
+  the rendered document uses the one shared stylesheet (§5), the editor uses the concept's CodeMirror
+  theme (§6), and the existing controls (toolbar buttons, the Code/Split/Formatted segmented control,
+  the draft-name and version-note inline bars, the status badge) match the §7 component specs. Light
+  **and** dark themes both work.
+- **Retires risk:** can the current webview DOM adopt the token system and a dark theme cleanly — by
+  **restyling, not rewriting structure** — and does the one rendered-document stylesheet genuinely
+  cover preview/formatted today without forking? Prove it once, cheaply, before more UI is built on
+  divergent ad-hoc styling that would have to be unwound later.
+- **Build:**
+  - Add the §4 CSS custom properties to a global stylesheet; theme by `data-theme` on `<html>`.
+    Replace the current hard-coded values (`#1a1a1a`, `#fafafa`, `#ddd`, `#fff7d6`, `#f3f3f3`, …) with
+    tokens — colour, type (UI sans / serif doc headings / mono editor), spacing, radii, elevation, motion.
+  - Apply the §5 rendered-document stylesheet to the preview pane (reused wherever the rendered
+    surface later appears); apply the §6 editor theme to CodeMirror.
+  - Rebuild the existing components from tokens per §7; swap the caret-matched **yellow** block
+    highlight for the `--accent-soft` inset wash; keep the height-sync spacer hatch, token-tinted.
+  - A minimal light/dark theme toggle that honours the OS preference (warm theme optional).
+  - Accessibility pass per §11 (visible focus ring, `aria-*`, AA contrast, no colour-only state).
+- **Out of scope:** new feature surfaces (review hub, comments, AI panel, diff chrome, navigator,
+  conflict/empty-state dialogs). They are designed in the concept but land with their own PoCs and
+  simply reuse these tokens/components when they do.
+- **Demo / acceptance:** launch the app — it visually matches the concept's editor screens
+  (Code / Split / Formatted) using only tokenised styles; setting `data-theme="dark"` reskins the
+  whole UI with no broken contrast; preview and the formatted view share one stylesheet.
+- **Effort:** **M** · **Depends on:** PoC‑2 and PoC‑11 (the surfaces it restyles); foundational for
+  every later UI surface.
 
 ---
 
@@ -307,6 +357,7 @@ depends on the view-modes shell (PoC‑11). Markdown stays the single source of 
 |------:|-----|-------|:------:|------|
 | 0 | Shell & IPC | runnable shell, proven contract | M | echo round-trip |
 | — | **Spike‑A auth** *(parallel)* | auth decision + real PR from console | M | PR opened from console |
+| — | **Design foundation** *(do this next)* | existing UI matches the concept; tokens + light/dark | M | app matches concept; `data-theme="dark"` reskins cleanly |
 | 1 | `app://` assets | local files in webview | S | image renders, traversal blocked |
 | 2 | **Editor + preview + lineMap** ⭐ | useful local MD editor | L | live preview + scroll-sync, no stale renders |
 | 3 | Images | auto image insertion | M | paste → correct folder/name/link |
@@ -323,6 +374,7 @@ depends on the view-modes shell (PoC‑11). Markdown stays the single source of 
 **First dogfood checkpoint:** after **PoC‑3** (editor + images, fully local, no network) — give it to one or two managers.
 **First end-to-end review checkpoint:** after **PoC‑8**.
 **Editor track (PoC‑11/12)** is foundational and best slotted in early — likely alongside or before the GitHub track — since PoC‑6/PoC‑8 render in the formatted view it provides.
+**Design foundation** is the immediate next concrete step: adopt the design concept (tokens, themes, the shared rendered-document stylesheet, components) across the UI PoC‑2/PoC‑11 already shipped, before more surfaces are built on ad-hoc styling.
 
 ## Decisions to lock as we go (don't let these drift)
 

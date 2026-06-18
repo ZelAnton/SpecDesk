@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+/* ============================================================
+   SpecDesk Design Guide — print framework + design tokens
+   The :root token blocks below ARE the system. Copy them into
+   the app's global stylesheet. Themes switch via
+   document.documentElement[data-theme="warm"|"dark"]; default
+   (no attribute) = "cool" (Direction B).
+   ============================================================ */
+
+body { margin: 0; background: var(--canvas); color: var(--text);
+       font-family: var(--font-ui); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+
+/* ---- TOKENS · LIGHT COOL (default · Direction B "Desk") ---- */
+:root {
+  --font-ui: system-ui, "Segoe UI", -apple-system, sans-serif;
+  --font-doc-head: Constantia, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-doc-body: system-ui, "Segoe UI", -apple-system, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --canvas: #f7f8fa;            /* app background behind panes */
+  --surface: #ffffff;          /* editor / document */
+  --surface-raised: #fafbfc;   /* docked panels, cards */
+  --surface-sunken: #eceef1;   /* segmented track, code block */
+
+  --border: #e6e9ec;           /* hairline dividers */
+  --border-strong: #dce0e4;    /* control borders, table head */
+
+  --text-strong: #1c1f23;      /* headings, primary UI text */
+  --text: #2b2f34;             /* body */
+  --text-muted: #6a7077;       /* secondary */
+  --text-faint: #9a9fa6;       /* labels, placeholders, gutter */
+
+  --accent: #2f6db5;
+  --accent-hover: #2a619f;
+  --accent-active: #245488;
+  --accent-soft: #eaf1f9;
+  --accent-soft-border: #cfe0f3;
+  --on-accent: #ffffff;
+  --focus-ring: #2f6db5;
+
+  --ok-fg:#2f7d54; --ok-dot:#3a9d68; --ok-bg:#e9f3ec; --ok-border:#c8e6d3;
+  --warn-fg:#a17d1e; --warn-dot:#d6a72e; --warn-bg:#fbf3df; --warn-border:#f0e2bb;
+  --info-fg:#4f56c5; --info-dot:#5a61d6; --info-bg:#eeecfa; --info-border:#d4d2f3;
+  --danger-fg:#bd5a2e; --danger-dot:#d4703f; --danger-bg:#fbeee6; --danger-border:#f2d6c4;
+  --edit-fg:#2f6db5; --edit-bg:#eaf1f9; --edit-border:#cfe0f3;
+  --neutral-fg:#6a7077; --neutral-bg:#ffffff; --neutral-border:#e2e5e8;
+  --ink-fg:#e8eaed; --ink-bg:#23272e;
+
+  --add-bg:#e9f4ee; --add-border:#3a9d68; --add-text:#1f6b43; --add-hl:#dff0e6;
+  --del-bg:#fbeef0; --del-border:#d6586f; --del-text:#8f3146;
+  --mov-bg:#f6f1fb; --mov-border:#c8b3e0; --mov-text:#7a4fb0;
+
+  --ed-gutter:#b9c0c8; --ed-text:#2b2f34; --ed-heading:#2f6db5;
+  --ed-marker:#7a8794; --ed-active:#eef4fb; --ed-selection:#cfe0f388;
+
+  --shadow-panel: 0 18px 44px -20px rgba(28,32,40,.30);
+  --shadow-card: 0 1px 2px rgba(20,24,30,.12);
+  --shadow-pop: 0 10px 30px -12px rgba(28,32,40,.32);
+
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-pill:20px;
+  --dur-fast:120ms; --dur:160ms; --dur-slow:220ms;
+  --ease:cubic-bezier(.4,0,.2,1); --ease-out:cubic-bezier(.2,0,0,1);
+}
+
+/* ---- TOKENS · LIGHT WARM (alternate · Direction A "Paper") ----
+   Same accent + semantic hues; neutrals shift warm. Approved as
+   an acceptable light theme. ---- */
+:root[data-theme="warm"] {
+  --font-doc-head: Constantia, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --canvas: #faf8f2;
+  --surface: #ffffff;
+  --surface-raised: #fcfbf7;
+  --surface-sunken: #f3efe6;
+  --border: #efece4;
+  --border-strong: #e4e1d8;
+  --text-strong: #23211c;
+  --text: #3a382f;
+  --text-muted: #7a766b;
+  --text-faint: #9a968b;
+  --accent-soft: #eef3f9;
+  --accent-soft-border: #d6e3f1;
+  --neutral-bg:#f2efe8; --neutral-fg:#7a766b; --neutral-border:#e6e2d6;
+  --ed-gutter:#cfc8b6; --ed-text:#3c3a33; --ed-marker:#b89b4a; --ed-active:#f7f3e9;
+  --ed-selection:#e7dcb988;
+  --shadow-panel: 0 18px 44px -20px rgba(40,36,28,.28);
+  --shadow-pop: 0 10px 30px -12px rgba(40,36,28,.28);
+}
+
+/* ---- TOKENS · DARK ---- */
+:root[data-theme="dark"] {
+  --canvas: #15171b;
+  --surface: #1c1f24;
+  --surface-raised: #22262c;
+  --surface-sunken: #2a2f36;
+  --border: #2c313a;
+  --border-strong: #3a404a;
+  --text-strong: #ecedef;
+  --text: #c9cdd3;
+  --text-muted: #8b9098;
+  --text-faint: #5f656d;
+  --accent: #5b9bd9;
+  --accent-hover: #6fa9e0;
+  --accent-active: #4f8cc9;
+  --accent-soft: #1e2c3a;
+  --accent-soft-border: #2f4a66;
+  --on-accent: #0e1419;
+  --focus-ring: #5b9bd9;
+  --ok-fg:#6fc394; --ok-dot:#46a572; --ok-bg:#16291f; --ok-border:#27412f;
+  --warn-fg:#d8b25a; --warn-dot:#c79a3a; --warn-bg:#2a2410; --warn-border:#433a1c;
+  --info-fg:#a9adf0; --info-dot:#7b81e0; --info-bg:#21233a; --info-border:#363a5c;
+  --danger-fg:#e09063; --danger-dot:#cf7544; --danger-bg:#2c1d15; --danger-border:#48301f;
+  --edit-fg:#5b9bd9; --edit-bg:#1e2c3a; --edit-border:#2f4a66;
+  --neutral-fg:#8b9098; --neutral-bg:#22262c; --neutral-border:#343a43;
+  --ink-fg:#0e1419; --ink-bg:#cfd3d8;
+  --add-bg:#16291f; --add-border:#46a572; --add-text:#7fce9f; --add-hl:#1e3a29;
+  --del-bg:#2c1820; --del-border:#cf5a74; --del-text:#e89bac;
+  --mov-bg:#241c30; --mov-border:#8a6fb8; --mov-text:#c2a8e6;
+  --ed-gutter:#4d535c; --ed-text:#c9cdd3; --ed-heading:#5b9bd9;
+  --ed-marker:#6d7a86; --ed-active:#22303d; --ed-selection:#2f4a6680;
+  --shadow-panel: 0 18px 44px -20px rgba(0,0,0,.6);
+  --shadow-card: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-pop: 0 10px 30px -12px rgba(0,0,0,.55);
+}
+
+/* ---- doc print framework (load-bearing) ---- */
+.doc { box-sizing: border-box; max-width: 8.5in; margin: 0 auto;
+       background: var(--surface); padding: 56px clamp(24px,5vw,0.85in) 96px; }
+.doc-frame { width: 100%; border-collapse: collapse; }
+.doc-frame td { padding: 0; }
+.running-hdr, .running-ftr, .hdr-space, .ftr-space { display: none; }
+h1,h2,h3 { text-wrap: balance; }
+p, li { text-wrap: pretty; }
+@page { size: letter; margin: 0; }
+@media print {
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { margin: 0; padding: 0; background:#fff; }
+  .doc { max-width:none !important; margin:0 !important; padding:0 0.75in !important; box-shadow:none !important; border:none !important; }
+  #dc-root, .sc-host { height: auto !important; }
+  .hdr-space, .ftr-space { display: table-cell; height: 0.75in !important; }
+  .running-hdr, .running-ftr { display:flex !important; justify-content:space-between; align-items:baseline; position:fixed !important; left:0; right:0; margin:0 !important; font-size:10px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-muted); }
+  .running-hdr { top:0; padding:.35in .75in 0 !important; }
+  .running-ftr { bottom:0; padding:0 .75in .35in !important; }
+  h1,h2,h3,h4,h5,h6 { break-after: avoid; }
+  figure, pre, blockquote, img, svg, tr { break-inside: avoid; }
+  p, li { orphans: 3; widows: 3; }
+  .screen-only { display: none !important; }
+}
+</style>
+</helmet>
+
+<!-- theme switcher (screen only) -->
+<div class="screen-only" style="position:fixed; top:18px; right:18px; z-index:50; display:flex; gap:4px; padding:4px; background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:var(--r-md); box-shadow:var(--shadow-card);">
+  <button onClick="{{ setCool }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Cool</button>
+  <button onClick="{{ setWarm }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Warm</button>
+  <button onClick="{{ setDark }}" style="padding:5px 12px;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12px var(--font-ui);border-radius:var(--r-sm);cursor:pointer;">Dark</button>
+</div>
+
+<main class="doc">
+  <header class="running-hdr"><span>SpecDesk Design Guide</span><span>v1 &middot; for implementation</span></header>
+  <table class="doc-frame" role="presentation">
+  <thead><tr><td class="hdr-space"></td></tr></thead>
+  <tbody><tr><td>
+
+  <!-- ===== TITLE ===== -->
+  <div style="font:600 12px/1.4 var(--font-ui); letter-spacing:.12em; text-transform:uppercase; color:var(--text-faint);">Design System &middot; Source of truth</div>
+  <h1 style="font:600 34px/1.15 var(--font-ui); letter-spacing:-.015em; color:var(--text-strong); margin:8px 0 14px;">SpecDesk Design Guide</h1>
+  <p style="font:16px/1.65 var(--font-ui); color:var(--text-muted); max-width:62ch; margin:0 0 8px;">The implementable design system for SpecDesk &mdash; a calm, document-first Markdown editor that hides git behind plain language. Built on <strong style="color:var(--text);">Direction B (&ldquo;Desk&rdquo;)</strong>: a structured, lightly-tinted app with docked panels. <strong style="color:var(--text);">Direction A (&ldquo;Paper&rdquo;)</strong> ships as an approved alternate warm light theme. A dark theme is defined alongside.</p>
+  <p class="screen-only" style="font:13.5px/1.6 var(--font-ui); color:var(--text-faint); max-width:62ch; margin:0;">Use the <strong>Cool / Warm / Dark</strong> switch (top-right) to preview every token live on this page. Print or Save&nbsp;as&nbsp;PDF for a static copy.</p>
+
+  <!-- ===== 1. PRINCIPLES ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:44px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">1 &middot; Principles that shape the visuals</h2>
+  <ol style="margin:0; padding-left:22px;">
+    <li style="font:15px/1.7 var(--font-ui); color:var(--text); margin-bottom:7px;"><strong style="color:var(--text-strong);">No git vocabulary, ever.</strong> Authors see <em>Edit, Saved, Save a version, Send for review, In review, Approved, Publish</em> &mdash; never branch/commit/push/PR/merge/conflict. The lone exception is the plain-language <em>version note</em>.</li>
+    <li style="font:15px/1.7 var(--font-ui); color:var(--text); margin-bottom:7px;"><strong style="color:var(--text-strong);">Document-first.</strong> The content is the hero; chrome is quiet and recedes. Tint and shadow are used sparingly to separate panels, never to decorate.</li>
+    <li style="font:15px/1.7 var(--font-ui); color:var(--text); margin-bottom:7px;"><strong style="color:var(--text-strong);">Markdown is the single source of truth.</strong> The rendered surface looks like a well-typeset document, not a web page. It is reused across preview, formatted mode, diff and comparison &mdash; style it once, beautifully.</li>
+    <li style="font:15px/1.7 var(--font-ui); color:var(--text); margin-bottom:7px;"><strong style="color:var(--text-strong);">Calm lifecycle.</strong> State changes are legible at a glance and never alarming. Errors are plain language, never stack traces.</li>
+    <li style="font:15px/1.7 var(--font-ui); color:var(--text); margin-bottom:0;"><strong style="color:var(--text-strong);">Office-familiar, not IDE.</strong> A clear toolbar, version history, margin comments, a review mode &mdash; patterns a Word/Docs user recognises.</li>
+  </ol>
+
+  <!-- ===== 2. FOUNDATIONS ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:44px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">2 &middot; Foundations &mdash; tokens</h2>
+  <p style="font:15px/1.7 var(--font-ui); color:var(--text-muted); margin:0 0 18px;">Everything below is driven by CSS custom properties. The default <code style="font-family:var(--font-mono);font-size:.9em;background:var(--surface-sunken);padding:1px 5px;border-radius:4px;">:root</code> is the cool theme; <code style="font-family:var(--font-mono);font-size:.9em;background:var(--surface-sunken);padding:1px 5px;border-radius:4px;">[data-theme="warm"]</code> and <code style="font-family:var(--font-mono);font-size:.9em;background:var(--surface-sunken);padding:1px 5px;border-radius:4px;">[data-theme="dark"]</code> override only what changes. The accent and all semantic/lifecycle hues are shared across the two light themes.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:24px 0 12px;">2.1 &nbsp;Colour roles</h3>
+  <!-- swatch grid: surfaces & text -->
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px;">
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden;"><div style="height:46px;background:var(--canvas);border-bottom:1px solid var(--border);"></div><div style="padding:7px 9px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);">canvas</div><div style="font:11px var(--font-mono);color:var(--text-faint);">app bg</div></div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden;"><div style="height:46px;background:var(--surface);border-bottom:1px solid var(--border);"></div><div style="padding:7px 9px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);">surface</div><div style="font:11px var(--font-mono);color:var(--text-faint);">editor/doc</div></div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden;"><div style="height:46px;background:var(--surface-raised);border-bottom:1px solid var(--border);"></div><div style="padding:7px 9px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);">surface-raised</div><div style="font:11px var(--font-mono);color:var(--text-faint);">panels</div></div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden;"><div style="height:46px;background:var(--surface-sunken);border-bottom:1px solid var(--border);"></div><div style="padding:7px 9px;"><div style="font:600 12px var(--font-ui);color:var(--text-strong);">surface-sunken</div><div style="font:11px var(--font-mono);color:var(--text-faint);">tracks/code</div></div></div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:14px;">
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); padding:11px 12px;"><div style="font:600 15px var(--font-ui); color:var(--text-strong);">text-strong Aa</div><div style="font:11px var(--font-mono);color:var(--text-faint);">headings/UI</div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); padding:11px 12px;"><div style="font:600 15px var(--font-ui); color:var(--text);">text Aa</div><div style="font:11px var(--font-mono);color:var(--text-faint);">body</div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); padding:11px 12px;"><div style="font:600 15px var(--font-ui); color:var(--text-muted);">text-muted Aa</div><div style="font:11px var(--font-mono);color:var(--text-faint);">secondary</div></div>
+    <div style="border:1px solid var(--border); border-radius:var(--r-md); padding:11px 12px;"><div style="font:600 15px var(--font-ui); color:var(--text-faint);">text-faint Aa</div><div style="font:11px var(--font-mono);color:var(--text-faint);">labels</div></div>
+  </div>
+  <!-- accent + semantic -->
+  <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:16px;">
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--accent);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">accent</div></div>
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--info-dot);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">in&nbsp;review</div></div>
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--ok-dot);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">success</div></div>
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--warn-dot);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">warning</div></div>
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--danger-dot);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">danger</div></div>
+    <div style="border-radius:var(--r-md); overflow:hidden; border:1px solid var(--border);"><div style="height:40px;background:var(--ink-bg);"></div><div style="padding:6px 8px;font:600 11px var(--font-ui);color:var(--text-strong);">ink</div></div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0 0 12px;">Each semantic colour has four roles: <code style="font-family:var(--font-mono);font-size:.9em;">-fg</code> (text), <code style="font-family:var(--font-mono);font-size:.9em;">-dot</code> (indicator), <code style="font-family:var(--font-mono);font-size:.9em;">-bg</code> (soft fill), <code style="font-family:var(--font-mono);font-size:.9em;">-border</code>. The literal values for all three themes live in the stylesheet block at the head of this file &mdash; copy them verbatim.</p>
+
+  <!-- token reference pre -->
+  <figure style="margin:0 0 8px;">
+  <pre style="background:var(--surface-sunken); border:1px solid var(--border); border-radius:var(--r-md); padding:14px 16px; overflow:auto; font:12.5px/1.65 var(--font-mono); color:var(--text); margin:0;">/* light · cool (default) — paste as :root */
+--canvas:#f7f8fa;  --surface:#fff;  --surface-raised:#fafbfc;  --surface-sunken:#eceef1;
+--border:#e6e9ec;  --border-strong:#dce0e4;
+--text-strong:#1c1f23;  --text:#2b2f34;  --text-muted:#6a7077;  --text-faint:#9a9fa6;
+--accent:#2f6db5;  --accent-hover:#2a619f;  --accent-active:#245488;
+--accent-soft:#eaf1f9;  --accent-soft-border:#cfe0f3;
+--ok-fg:#2f7d54;  --warn-fg:#a17d1e;  --info-fg:#4f56c5;  --danger-fg:#bd5a2e;</pre>
+  <figcaption style="font:12px var(--font-ui); color:var(--text-faint); margin-top:6px;">Abbreviated — full token set (warm + dark + diff + editor) is in the <code style="font-family:var(--font-mono);">&lt;style&gt;</code> at the top of this document.</figcaption>
+  </figure>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:28px 0 12px;">2.2 &nbsp;Typography</h3>
+  <p style="font:15px/1.7 var(--font-ui); color:var(--text-muted); margin:0 0 14px;">Three families, all bundled or system &mdash; no runtime web fonts. <strong style="color:var(--text);">UI</strong>: <code style="font-family:var(--font-mono);font-size:.9em;">system-ui, "Segoe UI"</code>. <strong style="color:var(--text);">Document headings</strong>: <code style="font-family:var(--font-mono);font-size:.9em;">Constantia</code> (a screen-tuned Windows serif) &rarr; Georgia. <strong style="color:var(--text);">Document body</strong>: same sans as UI. <strong style="color:var(--text);">Editor / code</strong>: <code style="font-family:var(--font-mono);font-size:.9em;">Cascadia Code</code> &rarr; Consolas.</p>
+  <!-- type scale samples -->
+  <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:8px;">
+    <div style="display:flex; align-items:baseline; gap:16px; padding:12px 16px; border-bottom:1px solid var(--border);"><span style="width:120px; font:11px var(--font-mono); color:var(--text-faint); flex:none;">doc h1 / 28 serif</span><span style="font-family:var(--font-doc-head); font-weight:600; font-size:28px; color:var(--text-strong);">Functional spec</span></div>
+    <div style="display:flex; align-items:baseline; gap:16px; padding:12px 16px; border-bottom:1px solid var(--border);"><span style="width:120px; font:11px var(--font-mono); color:var(--text-faint); flex:none;">doc h2 / 20 serif</span><span style="font-family:var(--font-doc-head); font-weight:600; font-size:20px; color:var(--text-strong);">Order states</span></div>
+    <div style="display:flex; align-items:baseline; gap:16px; padding:12px 16px; border-bottom:1px solid var(--border);"><span style="width:120px; font:11px var(--font-mono); color:var(--text-faint); flex:none;">doc body / 15 sans</span><span style="font:15px/1.7 var(--font-doc-body); color:var(--text);">Guests can complete a purchase with an email address alone.</span></div>
+    <div style="display:flex; align-items:baseline; gap:16px; padding:12px 16px; border-bottom:1px solid var(--border);"><span style="width:120px; font:11px var(--font-mono); color:var(--text-faint); flex:none;">ui base / 13 sans</span><span style="font:500 13px var(--font-ui); color:var(--text);">Save a version &middot; Send for review</span></div>
+    <div style="display:flex; align-items:baseline; gap:16px; padding:12px 16px;"><span style="width:120px; font:11px var(--font-mono); color:var(--text-faint); flex:none;">mono / 13</span><span style="font:13px var(--font-mono); color:var(--ed-text);">## Overview</span></div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0 0 4px;"><strong style="color:var(--text);">UI scale:</strong> 11 (labels, +.07em uppercase) &middot; 12&ndash;12.5 (status/badge) &middot; 13 (controls) &middot; 14 (inputs) &middot; 15 (panel title) &middot; 18&ndash;22 (section). <strong style="color:var(--text);">Doc scale:</strong> h1 28 &middot; h2 20 &middot; h3 17 &middot; body 15/1.7 &middot; small 13. Line-height 1.7 for prose, 1.85 for the editor.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:28px 0 12px;">2.3 &nbsp;Spacing, radii, elevation, motion</h3>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:8px;">
+    <div>
+      <div style="font:600 11px var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); margin-bottom:9px;">Spacing &middot; 4px base</div>
+      <div style="display:flex; align-items:flex-end; gap:8px;">
+        <div style="width:4px;height:4px;background:var(--accent);"></div><div style="width:8px;height:8px;background:var(--accent);"></div><div style="width:12px;height:12px;background:var(--accent);"></div><div style="width:16px;height:16px;background:var(--accent);"></div><div style="width:24px;height:24px;background:var(--accent);"></div><div style="width:32px;height:32px;background:var(--accent);"></div>
+      </div>
+      <div style="font:11px var(--font-mono); color:var(--text-faint); margin-top:7px;">4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48</div>
+    </div>
+    <div>
+      <div style="font:600 11px var(--font-ui); letter-spacing:.06em; text-transform:uppercase; color:var(--text-faint); margin-bottom:9px;">Radii</div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="width:42px;height:42px;background:var(--surface-sunken);border:1px solid var(--border-strong);border-radius:6px;"></div>
+        <div style="width:42px;height:42px;background:var(--surface-sunken);border:1px solid var(--border-strong);border-radius:8px;"></div>
+        <div style="width:42px;height:42px;background:var(--surface-sunken);border:1px solid var(--border-strong);border-radius:10px;"></div>
+        <div style="height:28px;padding:0 16px;display:flex;align-items:center;background:var(--surface-sunken);border:1px solid var(--border-strong);border-radius:20px;font:11px var(--font-mono);color:var(--text-faint);">pill</div>
+      </div>
+      <div style="font:11px var(--font-mono); color:var(--text-faint); margin-top:7px;">sm 6 · md 8 · lg 10 · pill 20</div>
+    </div>
+  </div>
+  <div style="display:flex; gap:24px; align-items:flex-end; margin-top:18px; padding:18px; background:var(--canvas); border-radius:var(--r-md);">
+    <div style="text-align:center;"><div style="width:90px;height:54px;background:var(--surface);border-radius:var(--r-md);box-shadow:var(--shadow-card);"></div><div style="font:11px var(--font-mono);color:var(--text-faint);margin-top:8px;">shadow-card</div></div>
+    <div style="text-align:center;"><div style="width:90px;height:54px;background:var(--surface);border-radius:var(--r-md);box-shadow:var(--shadow-pop);"></div><div style="font:11px var(--font-mono);color:var(--text-faint);margin-top:8px;">shadow-pop</div></div>
+    <div style="text-align:center;"><div style="width:90px;height:54px;background:var(--surface);border-radius:var(--r-md);box-shadow:var(--shadow-panel);"></div><div style="font:11px var(--font-mono);color:var(--text-faint);margin-top:8px;">shadow-panel</div></div>
+    <div style="font:13px/1.6 var(--font-ui); color:var(--text-muted); max-width:34ch;"><strong style="color:var(--text);">Motion:</strong> fast 120ms (hover), 160ms (controls), slow 220ms (panels). Ease <code style="font-family:var(--font-mono);font-size:.85em;">cubic-bezier(.4,0,.2,1)</code>; entrances ease-out. Keep it calm &mdash; no bounce, nothing over 240ms.</div>
+  </div>
+
+  <!-- ===== 3. RENDERED DOCUMENT ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">3 &middot; Rendered-document stylesheet</h2>
+  <p style="font:15px/1.7 var(--font-ui); color:var(--text-muted); margin:0 0 16px;">The product&rsquo;s core reading surface &mdash; reused in preview, formatted mode, diff and comparison. A CSS stylesheet over standard Markdown HTML (h1&ndash;h6, p, ul/ol, blockquote, table, pre/code, img, hr, a). Serif headings, sans body, generous measure (max ~68ch in formatted page mode).</p>
+  <!-- live sample -->
+  <div style="border:1px solid var(--border); border-radius:var(--r-md); padding:32px 38px; background:var(--surface); margin-bottom:14px;">
+    <h1 style="font-family:var(--font-doc-head);font-weight:600;font-size:28px;line-height:1.2;letter-spacing:-.01em;color:var(--text-strong);margin:0 0 14px;">Checkout v2 &mdash; Functional Specification</h1>
+    <p style="font:15px/1.7 var(--font-doc-body);color:var(--text);margin:0 0 18px;">Checkout v2 replaces the legacy single-page flow with a guided three-step checkout. Inline styles render too: <strong style="color:var(--text-strong);font-weight:600;">strong</strong>, <em>emphasis</em>, <code style="font-family:var(--font-mono);font-size:.88em;background:var(--surface-sunken);padding:1px 5px;border-radius:4px;color:var(--text);">inline code</code>, and a <a href="#" style="color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-soft-border);">link</a>.</p>
+    <h2 style="font-family:var(--font-doc-head);font-weight:600;font-size:20px;color:var(--text-strong);margin:0 0 10px;">Order states</h2>
+    <ul style="margin:0 0 18px;padding-left:22px;">
+      <li style="font:15px/1.7 var(--font-doc-body);color:var(--text);margin-bottom:3px;">Guest and signed-in checkout</li>
+      <li style="font:15px/1.7 var(--font-doc-body);color:var(--text);margin-bottom:3px;">Refunds to the original payment method</li>
+    </ul>
+    <table style="border-collapse:collapse;width:100%;font:14px/1.5 var(--font-doc-body);margin:0 0 18px;">
+      <thead><tr><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-strong);font-weight:600;">State</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-strong);font-weight:600;">Trigger</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-strong);font-weight:600;">Customer sees</th></tr></thead>
+      <tbody>
+        <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">Pending</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">Payment authorised</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">&ldquo;Confirming&hellip;&rdquo;</td></tr>
+        <tr><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">Confirmed</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">Funds captured</td><td style="padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text);">Receipt</td></tr>
+      </tbody>
+    </table>
+    <blockquote style="margin:0 0 18px;padding:2px 0 2px 18px;border-left:3px solid var(--border-strong);"><p style="font-family:var(--font-doc-head);font-style:italic;font-size:15px;line-height:1.7;color:var(--text-muted);margin:0;">Refund timing depends on the card network and is shown as an estimate, never a guarantee.</p></blockquote>
+    <pre style="background:var(--surface-sunken);border:1px solid var(--border);border-radius:var(--r-md);padding:13px 15px;overflow:auto;font:13px/1.6 var(--font-mono);color:var(--text);margin:0;">let render (text: string) : RenderResult =
+    let doc = Markdown.Parse(text, Pipeline.shared)
+    { Html = html; LineMap = spans }</pre>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Rules:</strong> headings serif 600 with tight tracking; body 15/1.7; lists 22px indent; tables get a 2px header underline and 1px row hairlines (no vertical rules, no zebra); blockquotes are serif-italic muted with a 3px left rule; code blocks sit on <code style="font-family:var(--font-mono);font-size:.9em;">surface-sunken</code> with an 8px radius; images are <code style="font-family:var(--font-mono);font-size:.9em;">max-width:100%</code>, centred, 6px radius; links are accent with a hairline underline. Caret-matched block highlight = a 2px-inset <code style="font-family:var(--font-mono);font-size:.9em;">accent-soft</code> wash (replaces today&rsquo;s yellow); hover block = <code style="font-family:var(--font-mono);font-size:.9em;">surface-raised</code>.</p>
+
+  <!-- ===== 4. EDITOR THEME ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">4 &middot; Editor theme (CodeMirror 6)</h2>
+  <p style="font:15px/1.7 var(--font-ui); color:var(--text-muted); margin:0 0 14px;">A quiet Markdown theme on <code style="font-family:var(--font-mono);font-size:.9em;">surface</code>. Headings take the accent at weight 600; list/quote markers are muted; everything else is body ink. Active line is a faint <code style="font-family:var(--font-mono);font-size:.9em;">accent-soft</code>; selection is accent at low alpha.</p>
+  <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:14px; font-family:var(--font-mono); font-size:13px; line-height:1.85; background:var(--surface);">
+    <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">1</span><span style="color:var(--ed-heading);font-weight:600;"># Checkout v2 — Functional Specification</span></div>
+    <div style="display:flex;background:var(--ed-active);"><span style="width:42px;text-align:right;padding-right:14px;color:var(--accent);user-select:none;">2</span><span style="color:var(--ed-heading);font-weight:600;">## Overview</span></div>
+    <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">3</span><span style="color:var(--ed-text);">The new flow defers account creation until after payment.</span></div>
+    <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">4</span><span style="color:var(--ed-text);"><span style="color:var(--ed-marker);">- </span>Guest and signed-in checkout</span></div>
+    <!-- height-sync spacer -->
+    <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">&nbsp;</span><span style="flex:1;height:34px;background:repeating-linear-gradient(45deg,transparent,transparent 6px,var(--border) 6px,var(--border) 7px);opacity:.5;"></span></div>
+    <div style="display:flex;"><span style="width:42px;text-align:right;padding-right:14px;color:var(--ed-gutter);user-select:none;">5</span><span style="color:var(--ed-text);"><span style="color:var(--ed-marker);">&gt; </span>Refund timing is an estimate.</span></div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Height-sync spacer rows</strong> (split mode, the diagonal hatch above): replace today&rsquo;s heavy checkerboard with a low-contrast 45&deg; hairline hatch at ~50% opacity using <code style="font-family:var(--font-mono);font-size:.9em;">--border</code> &mdash; clearly &ldquo;service padding,&rdquo; never mistaken for content, and near-invisible in dark mode. Gutter numbers use <code style="font-family:var(--font-mono);font-size:.9em;">--ed-gutter</code>; the active line&rsquo;s number lifts to <code style="font-family:var(--font-mono);font-size:.9em;">--accent</code>.</p>
+
+  <!-- ===== 5. COMPONENTS ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 14px; padding-bottom:8px; border-bottom:1px solid var(--border);">5 &middot; Components</h2>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:8px 0 12px;">5.1 &nbsp;Buttons</h3>
+  <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:18px; background:var(--canvas); border-radius:var(--r-md); margin-bottom:8px;">
+    <button style="padding:6px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);cursor:pointer;">Save a version</button>
+    <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:500 13px var(--font-ui);cursor:pointer;">Send for review</button>
+    <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);cursor:pointer;">Discard</button>
+    <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger-fg);font:600 13px var(--font-ui);cursor:pointer;">Delete draft</button>
+    <button style="padding:6px 13px;border-radius:var(--r-sm);border:1px solid var(--border);background:var(--surface-sunken);color:var(--text-faint);font:600 13px var(--font-ui);cursor:not-allowed;">Publish</button>
+    <span style="font:13px var(--font-ui); color:var(--text-muted);">primary &middot; secondary &middot; ghost &middot; danger &middot; disabled</span>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0 0 4px;">Height 30px (6px&times;13&ndash;14px padding), radius 6. <strong style="color:var(--text);">Primary</strong> = accent fill, one per context. <strong style="color:var(--text);">Secondary</strong> = surface + strong border. <strong style="color:var(--text);">Ghost</strong> = muted text, transparent. Hover deepens fill/adds <code style="font-family:var(--font-mono);font-size:.9em;">surface-raised</code>; active uses <code style="font-family:var(--font-mono);font-size:.9em;">accent-active</code>; focus shows a 2px <code style="font-family:var(--font-mono);font-size:.9em;">--focus-ring</code> outline at 2px offset.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:26px 0 12px;">5.2 &nbsp;Segmented control &amp; toggle</h3>
+  <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; padding:18px; background:var(--canvas); border-radius:var(--r-md); margin-bottom:8px;">
+    <div style="display:flex; gap:2px; background:var(--surface-sunken); border-radius:var(--r-md); padding:2px;">
+      <span style="padding:4px 12px;border-radius:var(--r-sm);background:var(--surface);box-shadow:var(--shadow-card);color:var(--text-strong);font:600 13px var(--font-ui);">Code</span>
+      <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Split</span>
+      <span style="padding:4px 12px;border-radius:var(--r-sm);color:var(--text-muted);font:500 13px var(--font-ui);">Formatted</span>
+    </div>
+    <div style="display:inline-flex;align-items:center;gap:8px;font:13px var(--font-ui);color:var(--text);"><span style="width:34px;height:18px;border-radius:9px;background:var(--accent);position:relative;display:inline-block;"><span style="position:absolute;top:2px;right:2px;width:14px;height:14px;border-radius:50%;background:#fff;"></span></span>Wrap</div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;">View-mode switch is the filled segmented control (Direction B): sunken track, active segment a white card with <code style="font-family:var(--font-mono);font-size:.9em;">shadow-card</code>. Carries <code style="font-family:var(--font-mono);font-size:.9em;">role="radiogroup"</code> / <code style="font-family:var(--font-mono);font-size:.9em;">aria-checked</code>. Binary options (Wrap) use a switch.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:26px 0 12px;">5.3 &nbsp;Inputs &amp; the inline prompt bars</h3>
+  <p style="font:14px/1.6 var(--font-ui); color:var(--text-muted); margin:0 0 12px;">Two tinted strips appear directly under the toolbar. Both use a soft semantic tint, a clear label, an input, and a primary + ghost action. They are the only places a &ldquo;commit-like&rdquo; idea surfaces &mdash; always in plain words.</p>
+  <!-- draft name bar -->
+  <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;background:var(--accent-soft);border:1px solid var(--accent-soft-border);border-radius:var(--r-md);margin-bottom:10px;">
+    <span style="font:600 12px var(--font-ui);letter-spacing:.04em;text-transform:uppercase;color:var(--accent);white-space:nowrap;">Name this draft</span>
+    <input value="Checkout v2 — refund edits" style="flex:1;background:var(--surface);border:1px solid var(--accent-soft-border);border-radius:var(--r-sm);padding:7px 10px;font:14px var(--font-ui);color:var(--text);" />
+    <button style="padding:7px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);cursor:pointer;">Start editing</button>
+    <button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);cursor:pointer;">Cancel</button>
+  </div>
+  <!-- version note bar -->
+  <div style="display:flex;align-items:center;gap:12px;padding:11px 16px;background:var(--warn-bg);border:1px solid var(--warn-border);border-radius:var(--r-md);">
+    <span style="font:600 12px var(--font-ui);letter-spacing:.04em;text-transform:uppercase;color:var(--warn-fg);white-space:nowrap;">Describe your changes</span>
+    <div style="flex:1;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--warn-border);border-radius:var(--r-sm);padding:7px 10px;">
+      <span style="font:14px var(--font-ui);color:var(--text);flex:1;">Reordered order-states and added the refund-timing note</span>
+      <span style="font:13px var(--font-ui);color:var(--text-faint);">&#9662;</span>
+    </div>
+    <button style="padding:7px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);cursor:pointer;">Save version</button>
+    <button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-muted);font:500 13px var(--font-ui);cursor:pointer;">Cancel</button>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:10px 0 0;">Draft-name bar = <code style="font-family:var(--font-mono);font-size:.9em;">accent-soft</code> (it&rsquo;s a beginning); version-note bar = <code style="font-family:var(--font-mono);font-size:.9em;">warn</code> tint (a deliberate checkpoint). The <code style="font-family:var(--font-mono);font-size:.9em;">&#9662;</code> expands the note to a multi-line textarea.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:26px 0 12px;">5.4 &nbsp;Status &amp; lifecycle badges</h3>
+  <div style="display:flex; flex-wrap:wrap; gap:8px; padding:18px; background:var(--canvas); border-radius:var(--r-md); margin-bottom:8px;">
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--neutral-bg);border:1px solid var(--neutral-border);color:var(--neutral-fg);font:600 12px var(--font-ui);">Read-only</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--edit-bg);border:1px solid var(--edit-border);color:var(--edit-fg);font:600 12px var(--font-ui);">Editing</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn-fg);font:600 12px var(--font-ui);">Unsaved changes</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--ok-bg);border:1px solid var(--ok-border);color:var(--ok-fg);font:600 12px var(--font-ui);">Version saved</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--info-bg);border:1px solid var(--info-border);color:var(--info-fg);font:600 12px var(--font-ui);">In review</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--danger-bg);border:1px solid var(--danger-border);color:var(--danger-fg);font:600 12px var(--font-ui);">Changes requested</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--ok-bg);border:1px solid var(--ok-border);color:var(--ok-fg);font:600 12px var(--font-ui);">Approved</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-sm);background:var(--ink-bg);border:1px solid var(--ink-bg);color:var(--ink-fg);font:600 12px var(--font-ui);">Published</span>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;">The toolbar status uses a dot + label form (no border) for an in-progress feel; standalone badges (lists, panels) use the bordered chip above. See &sect;6 for the full state language.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:26px 0 12px;">5.5 &nbsp;Side-panel chrome, comments &amp; diff</h3>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:8px;">
+    <!-- comment thread -->
+    <div style="background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--r-lg);padding:13px 14px;">
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;">
+        <span style="width:24px;height:24px;border-radius:50%;background:var(--info-bg);color:var(--info-fg);font:600 10px var(--font-ui);display:flex;align-items:center;justify-content:center;">TM</span>
+        <span style="font:600 13px var(--font-ui);color:var(--text-strong);flex:1;">Tom Mara</span>
+        <span style="font:500 11px var(--font-ui);color:var(--text-faint);">2h</span>
+      </div>
+      <p style="font:13px/1.55 var(--font-ui);color:var(--text);margin:0 0 10px;">Can we define a valid email here? Edge case for plus-addressing.</p>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input placeholder="Reply…" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:6px 9px;font:13px var(--font-ui);color:var(--text);background:var(--surface);" />
+        <span style="font:600 12px var(--font-ui);color:var(--ok-fg);white-space:nowrap;cursor:pointer;">Resolve</span>
+      </div>
+      <div style="font:11px var(--font-ui);color:var(--text-faint);margin-top:9px;display:flex;align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-dot);"></span>Synced with review</div>
+    </div>
+    <!-- diff chrome -->
+    <div style="border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;background:var(--surface);">
+      <div style="padding:9px 12px;background:var(--del-bg);border-left:3px solid var(--del-border);"><span style="font-family:var(--font-doc-head);font-weight:600;font-size:14px;color:var(--del-text);text-decoration:line-through;">Order states (draft)</span></div>
+      <div style="padding:9px 12px;background:var(--add-bg);border-left:3px solid var(--add-border);"><span style="font-family:var(--font-doc-head);font-weight:600;font-size:14px;color:var(--add-text);">Order states</span></div>
+      <div style="padding:9px 12px;border-left:3px solid var(--border);"><span style="font:13px/1.55 var(--font-ui);color:var(--text);"><span style="background:var(--add-hl);border-radius:3px;padding:0 2px;">Added a refund-timing note</span> after the table.</span></div>
+      <div style="padding:9px 12px;border-top:1px solid var(--border);border-left:3px solid var(--mov-border);background:var(--mov-bg);"><span style="display:inline-flex;align-items:center;gap:7px;font:600 12px var(--font-ui);color:var(--mov-text);">&#8645; Moved &ldquo;Cancelled&rdquo; row up</span></div>
+    </div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Panels</strong> dock on <code style="font-family:var(--font-mono);font-size:.9em;">surface-raised</code> with a 1px divider and an uppercase section label. <strong style="color:var(--text);">Comments</strong> are cards (in-margin in formatted mode, in a gutter rail in source) with avatar, name, relative time, reply, resolve, and a sync dot. <strong style="color:var(--text);">Diff</strong> is typeset like the document &mdash; added = green left rule + <code style="font-family:var(--font-mono);font-size:.9em;">add-bg</code>, removed = red + strike, changed = inline <code style="font-family:var(--font-mono);font-size:.9em;">add-hl</code> highlight, moved = violet with a &#8645; glyph. Never raw line noise; a Rendered/Source toggle sits in the panel header.</p>
+
+  <h3 style="font:600 16px var(--font-ui); color:var(--text-strong); margin:26px 0 12px;">5.6 &nbsp;AI assistant &amp; the confirmation gate</h3>
+  <div style="background:var(--surface-raised);border:1px solid var(--border);border-radius:var(--r-lg);padding:14px 16px;margin-bottom:8px;">
+    <div style="display:flex;align-items:flex-start;gap:11px;">
+      <span style="width:26px;height:26px;border-radius:7px;background:var(--accent);color:var(--on-accent);font:600 12px var(--font-ui);display:flex;align-items:center;justify-content:center;flex:none;">AI</span>
+      <div style="flex:1;min-width:0;">
+        <p style="font:13.5px/1.55 var(--font-ui);color:var(--text);margin:0 0 10px;">I drafted a version note for these edits. Review before saving:</p>
+        <div style="background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);padding:11px 13px;">
+          <div style="font:600 11px var(--font-ui);letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;">Proposed version note</div>
+          <p style="font:14px/1.55 var(--font-ui);color:var(--text);margin:0 0 11px;">Clarify guest-checkout email rule; reorder order-states table; add refund-timing caveat.</p>
+          <div style="display:flex;gap:8px;">
+            <button style="padding:6px 14px;border-radius:var(--r-sm);border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);font:600 13px var(--font-ui);cursor:pointer;">Save this version</button>
+            <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-muted);font:500 13px var(--font-ui);cursor:pointer;">Edit</button>
+            <button style="padding:6px 12px;border-radius:var(--r-sm);border:1px solid transparent;background:transparent;color:var(--text-faint);font:500 13px var(--font-ui);cursor:pointer;">Dismiss</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Every mutating action the assistant proposes is gated:</strong> it renders a preview card (the change, in plain language), the author can <em>Edit</em>, and nothing happens until <em>Confirm</em>. Assistant messages are quiet (no bubble fill); user messages get a subtle <code style="font-family:var(--font-mono);font-size:.9em;">surface-sunken</code> bubble. Streaming text uses a soft caret, no spinner.</p>
+
+  <!-- ===== 6. LIFECYCLE ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">6 &middot; Lifecycle &amp; vocabulary</h2>
+  <p style="font:14px/1.7 var(--font-ui); color:var(--danger-fg); margin:0 0 12px; padding:9px 12px; background:var(--danger-bg); border:1px solid var(--danger-border); border-radius:var(--r-md);"><strong>Never surface the right column to users.</strong> It is internal-only. The UI speaks exclusively in the left column&rsquo;s words.</p>
+  <table style="border-collapse:collapse;width:100%;font:13.5px/1.5 var(--font-ui);margin:0 0 16px;">
+    <thead><tr><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-strong);font-weight:600;">Author sees</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-strong);font-weight:600;">Colour role</th><th style="text-align:left;padding:8px 12px;border-bottom:2px solid var(--border-strong);color:var(--text-muted);font-weight:600;">Internal (hidden)</th></tr></thead>
+    <tbody>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Edit</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--edit-fg);">edit / accent</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">branch from published</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Saved (continuous)</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-muted);">neutral</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">write to disk, no commit</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Unsaved changes</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--warn-fg);">warning</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">dirty working copy</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Save a version (+ note)</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--ok-fg);">success</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">commit; note = message</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Send for review</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--info-fg);">info</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">push + open PR</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">In review</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--info-fg);">info</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">PR open</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Changes requested</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--danger-fg);">danger (soft)</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">review: changes requested</td></tr>
+      <tr><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text);">Approved</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--ok-fg);">success</td><td style="padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text-faint);">PR approved</td></tr>
+      <tr><td style="padding:7px 12px;color:var(--text);">Publish &rarr; Published</td><td style="padding:7px 12px;color:var(--text-strong);">ink</td><td style="padding:7px 12px;color:var(--text-faint);">merge PR</td></tr>
+    </tbody>
+  </table>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;">Conflicts (&ldquo;Someone else changed this too&rdquo;) are shown as a gentle dialog with <em>Keep mine / Keep theirs / Combine / Ask for help</em> &mdash; understandable document differences, never raw markers.</p>
+
+  <!-- ===== 7. LAYOUT ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">7 &middot; Layout patterns</h2>
+  <p style="font:15px/1.7 var(--font-ui); color:var(--text-muted); margin:0 0 14px;">Single resizable window, target &ge; 1024&times;700. Vertically: <strong style="color:var(--text);">toolbar</strong> &rarr; optional <strong style="color:var(--text);">inline prompt bar</strong> &rarr; <strong style="color:var(--text);">content area</strong> (1&ndash;2 panes) &rarr; optional <strong style="color:var(--text);">docked side panel</strong>.</p>
+  <!-- layout diagram -->
+  <div style="border:1px solid var(--border); border-radius:var(--r-md); overflow:hidden; margin-bottom:10px;">
+    <div style="height:34px;background:var(--surface-raised);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font:600 11px var(--font-ui);color:var(--text-muted);">Toolbar &mdash; actions left, status + primary action right</div>
+    <div style="display:flex;height:150px;">
+      <div style="flex:1;border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center;font:12px var(--font-mono);color:var(--text-faint);background:var(--surface);">editor / document</div>
+      <div style="flex:1;border-right:1px solid var(--border);display:flex;align-items:center;justify-content:center;font:12px var(--font-mono);color:var(--text-faint);background:var(--surface);">rendered &middot; resizable splitter</div>
+      <div style="width:150px;display:flex;align-items:center;justify-content:center;font:12px var(--font-mono);color:var(--text-faint);background:var(--surface-raised);">docked panel<br>(review / AI)</div>
+    </div>
+  </div>
+  <p style="font:13px/1.6 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Splitters</strong> are 1px <code style="font-family:var(--font-mono);font-size:.9em;">--border</code>, widening to a 4px grab zone with an <code style="font-family:var(--font-mono);font-size:.9em;">--accent-soft</code> hover. <strong style="color:var(--text);">Docked vs overlay:</strong> Review &amp; AI dock as a right column (380px, resizable) on wide windows; below ~1200px they become a right overlay drawer with a scrim. Comments live in the document margin (formatted) or a gutter rail (source), not the dock. Only one heavy panel docked at a time.</p>
+
+  <!-- ===== 8. STATES ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">8 &middot; Interaction states</h2>
+  <ul style="margin:0; padding-left:22px;">
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;"><strong style="color:var(--text-strong);">Hover</strong> &mdash; surfaces lift to <code style="font-family:var(--font-mono);font-size:.9em;">--surface-raised</code>; primary deepens to <code style="font-family:var(--font-mono);font-size:.9em;">--accent-hover</code> (120ms).</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;"><strong style="color:var(--text-strong);">Focus</strong> &mdash; always visible: 2px <code style="font-family:var(--font-mono);font-size:.9em;">--focus-ring</code> outline, 2px offset. Never remove outlines.</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;"><strong style="color:var(--text-strong);">Active / disabled</strong> &mdash; active = <code style="font-family:var(--font-mono);font-size:.9em;">--accent-active</code>; disabled = sunken fill, faint text, <code style="font-family:var(--font-mono);font-size:.9em;">not-allowed</code>, 100% opacity (no ghosting).</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;"><strong style="color:var(--text-strong);">Loading</strong> &mdash; skeleton blocks in <code style="font-family:var(--font-mono);font-size:.9em;">--surface-sunken</code> with a slow shimmer; background sync = a quiet text label (&ldquo;Syncing&hellip;&rdquo;), never a modal.</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;"><strong style="color:var(--text-strong);">Empty</strong> &mdash; centred, calm: a one-line prompt + a single primary action (&ldquo;Open a spec&rdquo;). No illustrations-as-noise.</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:0;"><strong style="color:var(--text-strong);">Error / notice</strong> &mdash; plain language, inline where possible; toasts bottom-right on <code style="font-family:var(--font-mono);font-size:.9em;">--surface</code> with a left semantic rule, auto-dismiss for info, manual for errors.</li>
+  </ul>
+
+  <!-- ===== 9. A11Y + ICONS ===== -->
+  <h2 style="font:600 22px/1.25 var(--font-ui); color:var(--text-strong); margin:48px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border);">9 &middot; Accessibility &amp; iconography</h2>
+  <ul style="margin:0 0 14px; padding-left:22px;">
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;">Body and UI text meet <strong style="color:var(--text-strong);">WCAG AA</strong> (4.5:1); large text and chips &ge; 3:1. The soft semantic fills are paired only with their darker <code style="font-family:var(--font-mono);font-size:.9em;">-fg</code> token, which is AA on that fill.</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:5px;">Full keyboard reach; logical focus order; <code style="font-family:var(--font-mono);font-size:.9em;">aria-pressed</code> on toggles, <code style="font-family:var(--font-mono);font-size:.9em;">role="radiogroup"</code> on the segmented control, <code style="font-family:var(--font-mono);font-size:.9em;">aria-live="polite"</code> on the status region.</li>
+    <li style="font:14px/1.7 var(--font-ui); color:var(--text); margin-bottom:0;">Never encode state by colour alone &mdash; every lifecycle chip pairs colour with a word (and a dot).</li>
+  </ul>
+  <p style="font:14px/1.7 var(--font-ui); color:var(--text-muted); margin:0;"><strong style="color:var(--text);">Icons:</strong> use <strong style="color:var(--text);">Lucide</strong> (MIT, bundled SVG sprite) &mdash; 1.5px stroke, 16/18/20px, <code style="font-family:var(--font-mono);font-size:.9em;">currentColor</code>. It is calm, complete, and matches the line weight of the UI. Toolbar actions may be icon+label or label-only; never icon-only without a tooltip + <code style="font-family:var(--font-mono);font-size:.9em;">aria-label</code>.</p>
+
+  <div style="margin-top:40px; padding-top:16px; border-top:1px solid var(--border);">
+    <p style="font:13px/1.6 var(--font-ui); color:var(--text-faint); margin:0;">SpecDesk Design Guide &middot; v1 &middot; Direction B base, Direction A (warm) approved alternate, dark defined. Wordmark intentionally absent from chrome &mdash; keep swappable. This document themes live; what you implement should read from the same tokens.</p>
+  </div>
+
+  </td></tr></tbody>
+  <tfoot><tr><td class="ftr-space"></td></tr></tfoot>
+  </table>
+  <footer class="running-ftr"><span>SpecDesk &mdash; internal design system</span><span>Confidential</span></footer>
+</main>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { theme: 'cool' };
+  setTheme(t){
+    if (t === 'cool') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+    this.setState({ theme: t });
+  }
+  renderVals(){
+    return {
+      setCool: () => this.setTheme('cool'),
+      setWarm: () => this.setTheme('warm'),
+      setDark: () => this.setTheme('dark'),
+    };
+  }
+}
+</script>
+</body>
+</html>

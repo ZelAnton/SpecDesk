@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpecDesk — Reviews navigator</title>
+<style>
+
+body { margin:0; background:#e7e5df; -webkit-font-smoothing:antialiased; }
+* { box-sizing:border-box; }
+:root {
+  --font-ui: system-ui,"Segoe UI",-apple-system,sans-serif;
+  --font-doc-head: Constantia,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --font-mono: "Cascadia Code","Cascadia Mono",Consolas,ui-monospace,monospace;
+  --canvas:#f7f8fa; --surface:#fff; --surface-raised:#fafbfc; --surface-sunken:#eceef1;
+  --border:#e6e9ec; --border-strong:#dce0e4;
+  --text-strong:#1c1f23; --text:#2b2f34; --text-muted:#6a7077; --text-faint:#9a9fa6;
+  --accent:#2f6db5; --accent-hover:#2a619f; --accent-active:#245488;
+  --accent-soft:#eaf1f9; --accent-soft-border:#cfe0f3; --on-accent:#fff; --focus-ring:#2f6db5;
+  --ok-fg:#2f7d54; --ok-dot:#3a9d68; --ok-bg:#e9f3ec; --ok-border:#c8e6d3;
+  --warn-fg:#a17d1e; --warn-dot:#d6a72e; --warn-bg:#fbf3df; --warn-border:#f0e2bb;
+  --info-fg:#4f56c5; --info-dot:#5a61d6; --info-bg:#eeecfa; --info-border:#d4d2f3;
+  --danger-fg:#bd5a2e; --danger-dot:#d4703f; --danger-bg:#fbeee6; --danger-border:#f2d6c4;
+  --edit-fg:#2f6db5; --edit-bg:#eaf1f9; --edit-border:#cfe0f3;
+  --neutral-fg:#6a7077; --neutral-bg:#fff; --neutral-border:#e2e5e8;
+  --ink-fg:#e8eaed; --ink-bg:#23272e;
+  --add-bg:#e9f4ee; --add-border:#3a9d68; --add-text:#1f6b43; --add-hl:#bfe6cd; --add-gutter:#eef7f1;
+  --del-bg:#fbeef0; --del-border:#d6586f; --del-text:#8f3146; --del-hl:#f4c4cf; --del-gutter:#fcf0f2;
+  --mov-bg:#f6f1fb; --mov-border:#c8b3e0; --mov-text:#7a4fb0;
+  --ed-gutter:#b9c0c8; --ed-text:#2b2f34; --ed-heading:#2f6db5; --ed-marker:#7a8794; --ed-active:#eef4fb;
+  --shadow-panel:0 18px 44px -20px rgba(28,32,40,.30); --shadow-card:0 1px 2px rgba(20,24,30,.12); --shadow-pop:0 10px 30px -12px rgba(28,32,40,.32);
+  --r-sm:6px; --r-md:8px; --r-lg:10px; --r-pill:20px;
+  --studio:#e7e5df;
+}
+:root[data-theme="warm"]{
+  --canvas:#faf8f2; --surface:#fff; --surface-raised:#fcfbf7; --surface-sunken:#f3efe6;
+  --border:#efece4; --border-strong:#e4e1d8;
+  --text-strong:#23211c; --text:#3a382f; --text-muted:#7a766b; --text-faint:#9a968b;
+  --accent-soft:#eef3f9; --accent-soft-border:#d6e3f1;
+  --neutral-bg:#f2efe8; --neutral-fg:#7a766b; --neutral-border:#e6e2d6;
+  --ed-gutter:#cfc8b6; --ed-text:#3c3a33; --ed-marker:#b89b4a; --ed-active:#f7f3e9;
+  --add-gutter:#eef5ef; --del-gutter:#f8eee9;
+  --shadow-panel:0 18px 44px -20px rgba(40,36,28,.28); --shadow-pop:0 10px 30px -12px rgba(40,36,28,.28);
+  --studio:#e7e5df;
+}
+:root[data-theme="dark"]{
+  --canvas:#15171b; --surface:#1c1f24; --surface-raised:#22262c; --surface-sunken:#2a2f36;
+  --border:#2c313a; --border-strong:#3a404a;
+  --text-strong:#ecedef; --text:#c9cdd3; --text-muted:#8b9098; --text-faint:#5f656d;
+  --accent:#5b9bd9; --accent-hover:#6fa9e0; --accent-active:#4f8cc9; --accent-soft:#1e2c3a; --accent-soft-border:#2f4a66; --on-accent:#0e1419; --focus-ring:#5b9bd9;
+  --ok-fg:#6fc394; --ok-dot:#46a572; --ok-bg:#16291f; --ok-border:#27412f;
+  --warn-fg:#d8b25a; --warn-dot:#c79a3a; --warn-bg:#2a2410; --warn-border:#433a1c;
+  --info-fg:#a9adf0; --info-dot:#7b81e0; --info-bg:#21233a; --info-border:#363a5c;
+  --danger-fg:#e09063; --danger-dot:#cf7544; --danger-bg:#2c1d15; --danger-border:#48301f;
+  --edit-fg:#5b9bd9; --edit-bg:#1e2c3a; --edit-border:#2f4a66;
+  --neutral-fg:#8b9098; --neutral-bg:#22262c; --neutral-border:#343a43;
+  --ink-fg:#0e1419; --ink-bg:#cfd3d8;
+  --add-bg:#16291f; --add-border:#46a572; --add-text:#7fce9f; --add-hl:#2c5a3e; --add-gutter:#13231a;
+  --del-bg:#2c1820; --del-border:#cf5a74; --del-text:#e89bac; --del-hl:#5e2d3a; --del-gutter:#241419;
+  --mov-bg:#241c30; --mov-border:#8a6fb8; --mov-text:#c2a8e6;
+  --ed-gutter:#4d535c; --ed-text:#c9cdd3; --ed-heading:#5b9bd9; --ed-marker:#6d7a86; --ed-active:#22303d;
+  --shadow-panel:0 18px 44px -20px rgba(0,0,0,.6); --shadow-card:0 1px 2px rgba(0,0,0,.4); --shadow-pop:0 10px 30px -12px rgba(0,0,0,.55);
+  --studio:#0c0d10;
+}
+@page { size: landscape; margin: 0.4in; }
+@media print {
+  html, body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .noprint { display:none !important; }
+  #dc-root, .sc-host { height:auto !important; }
+  .studio { zoom:0.6; padding:0 !important; background:#fff !important; min-height:0 !important; min-width:0 !important; width:auto !important; }
+  .studio [style*="flex:none; width:"] { break-inside:avoid; }
+}
+
+body{ margin:0; background:var(--studio); }
+.page-wrap{ width:max-content; min-width:100%; box-sizing:border-box; padding:40px; display:flex; flex-direction:column; gap:14px; align-items:flex-start; }
+.page-cap{ font:600 12px/1.4 system-ui,"Segoe UI",sans-serif; letter-spacing:.04em; color:#6a665b; }
+.page-cap b{ color:#23211c; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="page-wrap">
+  <div class="page-cap"><b>SpecDesk</b> &nbsp;·&nbsp; Reviews navigator</div>
+  <div class="frame">
+<div style="flex:none; width:380px;">
+      <div style="font:600 13px var(--font-ui); color:#23211c; margin-bottom:3px;">Reviews navigator</div>
+      <div style="font:12.5px var(--font-ui); color:#7a766b; margin-bottom:12px;">Mine, assigned to me, or open any by link. A collapsible left-rail panel.</div>
+      <div style="height:600px; background:var(--surface-raised); border:1px solid var(--border-strong); border-radius:var(--r-lg); box-shadow:var(--shadow-panel); overflow:hidden; display:flex; flex-direction:column;">
+        <div style="padding:13px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex:none;"><span style="font:600 14px var(--font-ui);color:var(--text-strong);flex:1;">Reviews</span><span style="width:26px;height:26px;border-radius:var(--r-sm);background:var(--surface);border:1px solid var(--border-strong);color:var(--text-muted);font:15px var(--font-ui);display:flex;align-items:center;justify-content:center;">⚲</span></div>
+        <div style="flex:1;min-height:0;overflow:hidden;">
+          <!-- mine -->
+          <div style="padding:12px 16px 4px;font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);">My reviews</div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Refund edits</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--info-bg);color:var(--info-fg);font:600 11px var(--font-ui);">In review</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span>checkout-v2.md</span><span style="color:var(--text-faint);">·</span><span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--warn-dot);"></span>checks running</span></div>
+          </div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Pricing tweaks</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--neutral-bg);border:1px solid var(--neutral-border);color:var(--neutral-fg);font:600 11px var(--font-ui);">Draft</span></div>
+            <div style="margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);">pricing.md</div>
+          </div>
+          <!-- assigned -->
+          <div style="padding:12px 16px 4px;font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);">Assigned to me</div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);background:var(--danger-bg);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Tax rules update</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--danger-border);color:var(--danger-fg);font:600 11px var(--font-ui);">Needs you</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span style="width:18px;height:18px;border-radius:50%;background:var(--mov-bg);color:var(--mov-text);font:600 9px var(--font-ui);display:flex;align-items:center;justify-content:center;">DA</span>Dana · tax-rules.md</div>
+          </div>
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;gap:8px;"><span style="font:600 13.5px var(--font-ui);color:var(--text-strong);flex:1;">Copy pass</span><span style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--r-pill);background:var(--info-bg);color:var(--info-fg);font:600 11px var(--font-ui);">In review</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;font:12px var(--font-ui);color:var(--text-muted);"><span style="width:18px;height:18px;border-radius:50%;background:var(--surface-sunken);color:var(--text-muted);font:600 9px var(--font-ui);display:flex;align-items:center;justify-content:center;">LE</span>Lee · multiple files</div>
+          </div>
+          <!-- by link -->
+          <div style="padding:14px 16px;">
+            <div style="font:600 11px var(--font-ui);letter-spacing:.07em;text-transform:uppercase;color:var(--text-faint);margin-bottom:9px;">Open by link</div>
+            <div style="display:flex;gap:8px;"><input placeholder="Paste a review link…" style="flex:1;border:1px solid var(--border-strong);border-radius:var(--r-sm);padding:7px 10px;font:12.5px var(--font-ui);color:var(--text);background:var(--surface);"><button style="padding:7px 12px;border-radius:var(--r-sm);border:1px solid var(--border-strong);background:var(--surface);color:var(--text-strong);font:600 12.5px var(--font-ui);">Open</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
