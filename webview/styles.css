@@ -1,0 +1,605 @@
+/* SpecDesk global stylesheet. Adopts docs/design/SpecDesk-Design-Concept.md:
+   §4 design tokens (three themes), §5 rendered-document stylesheet, §6 editor theme (the CSS side;
+   syntax colours live in editor.ts), §7 components. Theme by toggling `data-theme` on <html>:
+   the bare :root is light/cool (Direction B); [data-theme="warm"] and [data-theme="dark"] override. */
+
+/* ---- §4 tokens · LIGHT COOL (default · Direction B) ---- */
+:root {
+  --font-ui: system-ui, "Segoe UI", -apple-system, sans-serif;
+  --font-doc-head: Constantia, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  --canvas: #f7f8fa;
+  --surface: #fff;
+  --surface-raised: #fafbfc;
+  --surface-sunken: #eceef1;
+  --border: #e6e9ec;
+  --border-strong: #dce0e4;
+  --text-strong: #1c1f23;
+  --text: #2b2f34;
+  --text-muted: #6a7077;
+  --text-faint: #9a9fa6;
+
+  --accent: #2f6db5;
+  --accent-hover: #2a619f;
+  --accent-active: #245488;
+  --accent-soft: #eaf1f9;
+  --accent-soft-border: #cfe0f3;
+  --on-accent: #fff;
+  --focus-ring: #2f6db5;
+
+  --ok-fg: #2f7d54;
+  --ok-dot: #3a9d68;
+  --ok-bg: #e9f3ec;
+  --ok-border: #c8e6d3;
+  --warn-fg: #a17d1e;
+  --warn-dot: #d6a72e;
+  --warn-bg: #fbf3df;
+  --warn-border: #f0e2bb;
+  --info-fg: #4f56c5;
+  --info-dot: #5a61d6;
+  --info-bg: #eeecfa;
+  --info-border: #d4d2f3;
+  --danger-fg: #bd5a2e;
+  --danger-dot: #d4703f;
+  --danger-bg: #fbeee6;
+  --danger-border: #f2d6c4;
+  --edit-fg: #2f6db5;
+  --edit-bg: #eaf1f9;
+  --edit-border: #cfe0f3;
+  --neutral-fg: #6a7077;
+  --neutral-bg: #fff;
+  --neutral-border: #e2e5e8;
+  --ink-fg: #e8eaed;
+  --ink-bg: #23272e;
+
+  --add-bg: #e9f4ee;
+  --add-border: #3a9d68;
+  --add-text: #1f6b43;
+  --add-hl: #bfe6cd;
+  --add-gutter: #eef7f1;
+  --del-bg: #fbeef0;
+  --del-border: #d6586f;
+  --del-text: #8f3146;
+  --del-hl: #f4c4cf;
+  --del-gutter: #fcf0f2;
+  --mov-bg: #f6f1fb;
+  --mov-border: #c8b3e0;
+  --mov-text: #7a4fb0;
+
+  --ed-gutter: #b9c0c8;
+  --ed-text: #2b2f34;
+  --ed-heading: #2f6db5;
+  --ed-marker: #7a8794;
+  --ed-active: #eef4fb;
+
+  --shadow-card: 0 1px 2px rgba(20, 24, 30, 0.12);
+  --shadow-pop: 0 10px 30px -12px rgba(28, 32, 40, 0.32);
+  --shadow-panel: 0 18px 44px -20px rgba(28, 32, 40, 0.3);
+
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 10px;
+  --r-pill: 20px;
+  --dur-fast: 120ms;
+  --dur: 160ms;
+  --dur-slow: 220ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---- §4 tokens · LIGHT WARM (alternate · Direction A) — neutrals shift warm, hues unchanged ---- */
+:root[data-theme="warm"] {
+  --canvas: #faf8f2;
+  --surface: #fff;
+  --surface-raised: #fcfbf7;
+  --surface-sunken: #f3efe6;
+  --border: #efece4;
+  --border-strong: #e4e1d8;
+  --text-strong: #23211c;
+  --text: #3a382f;
+  --text-muted: #7a766b;
+  --text-faint: #9a968b;
+  --accent-soft: #eef3f9;
+  --accent-soft-border: #d6e3f1;
+  --neutral-bg: #f2efe8;
+  --neutral-fg: #7a766b;
+  --neutral-border: #e6e2d6;
+  --ed-gutter: #cfc8b6;
+  --ed-text: #3c3a33;
+  --ed-marker: #b89b4a;
+  --ed-active: #f7f3e9;
+}
+
+/* ---- §4 tokens · DARK ---- */
+:root[data-theme="dark"] {
+  --canvas: #15171b;
+  --surface: #1c1f24;
+  --surface-raised: #22262c;
+  --surface-sunken: #2a2f36;
+  --border: #2c313a;
+  --border-strong: #3a404a;
+  --text-strong: #ecedef;
+  --text: #c9cdd3;
+  --text-muted: #8b9098;
+  --text-faint: #5f656d;
+  --accent: #5b9bd9;
+  --accent-hover: #6fa9e0;
+  --accent-active: #4f8cc9;
+  --accent-soft: #1e2c3a;
+  --accent-soft-border: #2f4a66;
+  --on-accent: #0e1419;
+  --focus-ring: #5b9bd9;
+  --ok-fg: #6fc394;
+  --ok-dot: #46a572;
+  --ok-bg: #16291f;
+  --ok-border: #27412f;
+  --warn-fg: #d8b25a;
+  --warn-dot: #c79a3a;
+  --warn-bg: #2a2410;
+  --warn-border: #433a1c;
+  --info-fg: #a9adf0;
+  --info-dot: #7b81e0;
+  --info-bg: #21233a;
+  --info-border: #363a5c;
+  --danger-fg: #e09063;
+  --danger-dot: #cf7544;
+  --danger-bg: #2c1d15;
+  --danger-border: #48301f;
+  --edit-fg: #5b9bd9;
+  --edit-bg: #1e2c3a;
+  --edit-border: #2f4a66;
+  --neutral-fg: #8b9098;
+  --neutral-bg: #22262c;
+  --neutral-border: #343a43;
+  --ink-fg: #0e1419;
+  --ink-bg: #cfd3d8;
+  --add-bg: #16291f;
+  --add-border: #46a572;
+  --add-text: #7fce9f;
+  --add-hl: #2c5a3e;
+  --add-gutter: #13231a;
+  --del-bg: #2c1820;
+  --del-border: #cf5a74;
+  --del-text: #e89bac;
+  --del-hl: #5e2d3a;
+  --del-gutter: #241419;
+  --mov-bg: #241c30;
+  --mov-border: #8a6fb8;
+  --mov-text: #c2a8e6;
+  --ed-gutter: #4d535c;
+  --ed-text: #c9cdd3;
+  --ed-heading: #5b9bd9;
+  --ed-marker: #6d7a86;
+  --ed-active: #22303d;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  --shadow-panel: 0 18px 44px -20px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- Base / layout ---- */
+:root {
+  font-family: var(--font-ui);
+  color: var(--text);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--canvas);
+}
+
+/* An always-visible focus ring for keyboard reach (§11), scoped to interactive controls. Not applied
+   to the CodeMirror editor: its focus is shown by the caret and active-line highlight, and a box
+   around the whole `.cm-content` (which is focusable) would be noise. */
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Control labels never wrap. A button has a fixed height, so a label that wraps to two lines spills
+   out of it (e.g. "Export log…" when the toolbar is narrow). `nowrap` keeps every label on one line;
+   it also makes a flex button's automatic minimum width equal its full label, so the button can't be
+   squeezed narrower than its text either. This is the general guard — it covers every button, here
+   and in any future control. Rows that hold buttons reflow instead (see #toolbar / the inline bars). */
+button {
+  white-space: nowrap;
+}
+
+/* ---- §7 components — toolbar + buttons ---- */
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+/* Secondary button is the toolbar default: surface fill, strong border, small radius. */
+#toolbar button {
+  height: 30px;
+  padding: 0 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+#toolbar button:hover {
+  background: var(--surface-sunken);
+}
+
+/* The three-mode segmented control: a sunken track; the active mode is a raised surface card. */
+#view-modes {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-md);
+}
+
+#view-modes button {
+  height: 26px;
+  padding: 0 0.6rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+}
+
+#view-modes button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
+#view-modes button[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* Status: a dot + label (no border); the word always carries the state, never colour alone (§11). */
+#status {
+  margin-left: auto;
+  max-width: 50%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#status::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 0.4rem;
+  background: var(--text-faint);
+  border-radius: 50%;
+}
+
+/* ---- §7 components — inline prompt bars (under the toolbar) ----
+   `display` is scoped to :not([hidden]) so each bar stays hidden until revealed — an unscoped
+   `#id { display: flex }` would out-specify the user-agent `[hidden] { display: none }` and leak it. */
+#branch-name-bar:not([hidden]),
+#version-note-bar:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+/* The draft-name bar is a beginning (accent-soft); the version-note bar is a checkpoint (warn). */
+#branch-name-bar {
+  background: var(--accent-soft);
+  border-bottom-color: var(--accent-soft-border);
+}
+
+#version-note-bar {
+  background: var(--warn-bg);
+  border-bottom-color: var(--warn-border);
+}
+
+#branch-name-bar input,
+#version-note-bar input,
+#version-note-bar textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+}
+
+#version-note-bar textarea {
+  resize: vertical;
+}
+
+#branch-name-bar button,
+#version-note-bar button {
+  height: 28px;
+  padding: 0 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+/* One primary action per bar — the confirm — gets the accent fill. Scoped under the bar id so it
+   out-specifies the `#…-bar button` secondary rule above (which is id + type); a bare `#…-confirm`
+   is lower specificity and would lose the fill at rest. */
+#branch-name-bar #branch-name-confirm,
+#version-note-bar #version-note-confirm {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+#branch-name-bar #branch-name-confirm:hover,
+#version-note-bar #version-note-confirm:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* The ⌄ expand affordance is a compact square (scoped under the bar id to beat the secondary
+   `#…-bar button` padding above). */
+#version-note-bar #version-note-expand {
+  padding: 0.3rem 0.5rem;
+  line-height: 1;
+}
+
+/* ---- Panes ---- */
+#panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+#editor,
+#preview {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--surface);
+}
+
+/* CodeMirror manages its own scroller, so the outer pane must not scroll too. */
+#editor {
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+}
+
+/* The preview container is the scroll + offset parent for scroll-sync math. Reserve the scrollbar
+   gutter so its width never changes when the scrollbar appears. */
+#preview {
+  position: relative;
+  padding: 0 1.5rem;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+/* View modes. Split (default) shows both panes; code hides the preview and drops the editor's
+   divider; formatted hides the editor. These id-scoped rules out-specify the base pane rules above
+   and are placed after them so specificity ascends in source order. Panes are only hidden, never
+   destroyed, so each keeps its caret/scroll/DOM across switches. */
+#panes[data-mode="code"] #preview {
+  display: none;
+}
+
+#panes[data-mode="code"] #editor {
+  border-right: none;
+}
+
+#panes[data-mode="formatted"] #editor {
+  display: none;
+}
+
+/* ---- §6 editor theme — CSS side (background/gutter/active-line/selection live in editor.ts) ---- */
+.cm-editor {
+  height: 100%;
+}
+
+/* Reserve the editor's scrollbar gutter too. Without this, adding height-sync spacers makes the
+   scrollbar appear, which narrows the content and re-wraps lines, which changes the spacers — an
+   oscillating feedback loop while typing with wrapping on. */
+.cm-scroller {
+  scrollbar-gutter: stable;
+}
+
+/* The editor source line under the mouse pointer (faint, auxiliary). Theme-aware via the text colour
+   at low alpha, so it reads in both light and dark. */
+.cm-hover-line {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* Synthetic height-sync padding inserted between source blocks so each lines up vertically with its
+   rendered counterpart. A faint 45° cross-diagonal hairline hatch (from --border at ~50% alpha)
+   marks it as service padding, not document content. */
+.cm-sync-spacer {
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--border) 55%, transparent),
+      color-mix(in srgb, var(--border) 55%, transparent) 4px,
+      transparent 4px,
+      transparent 8px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--border) 55%, transparent),
+      color-mix(in srgb, var(--border) 55%, transparent) 4px,
+      transparent 4px,
+      transparent 8px
+    );
+}
+
+/* ---- §5 rendered-document stylesheet — the core reading surface (preview; later reused) ---- */
+#preview {
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+#preview h1,
+#preview h2,
+#preview h3,
+#preview h4,
+#preview h5,
+#preview h6 {
+  margin: 1.6em 0 0.6em;
+  color: var(--text-strong);
+  font-family: var(--font-doc-head);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+#preview h1 {
+  font-size: 1.75rem;
+  letter-spacing: -0.01em;
+}
+
+#preview h2 {
+  font-size: 1.25rem;
+}
+
+#preview h3 {
+  font-size: 1.0625rem;
+}
+
+#preview p {
+  margin: 0 0 0.9em;
+}
+
+#preview ul,
+#preview ol {
+  margin: 0 0 0.9em;
+  padding-left: 22px;
+}
+
+#preview a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+#preview img {
+  display: block;
+  max-width: 100%;
+  margin: 0.6em auto;
+  border-radius: 6px;
+}
+
+#preview hr {
+  margin: 1.4em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* Blockquote: serif-italic, muted, with a left rule. */
+#preview blockquote {
+  margin: 0 0 0.9em;
+  padding-left: 0.9em;
+  color: var(--text-muted);
+  font-family: var(--font-doc-head);
+  font-style: italic;
+  border-left: 3px solid var(--border-strong);
+}
+
+/* Inline code; code blocks share the sunken surface but add a border + larger radius. */
+#preview code {
+  padding: 0.1em 0.3em;
+  background: var(--surface-sunken);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+#preview pre {
+  padding: 0.75rem;
+  overflow: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#preview pre code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Tables: a 2px header underline + 1px row hairlines. No vertical rules, no zebra. */
+#preview table {
+  border-collapse: collapse;
+}
+
+#preview th,
+#preview td {
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+#preview th {
+  border-bottom: 2px solid var(--border-strong);
+}
+
+/* The rendered block matching the editor's caret (prominent): a soft accent wash that extends a
+   little into the gutter. Replaces the former yellow highlight. */
+#preview .sd-active-block {
+  background: var(--accent-soft);
+  box-shadow: -0.4rem 0 0 var(--accent-soft);
+}
+
+/* The rendered block under the mouse pointer (faint, auxiliary). */
+#preview .sd-hover-block {
+  background: var(--surface-raised);
+  box-shadow: -0.4rem 0 0 var(--surface-raised);
+}
+
+/* A fenced code block carries its line-anchor on the inner <code> (that is where Markdig stamps
+   `data-line-*`), and <code> hugs the text — so the wash above would paint behind the symbols and
+   leave the grey <pre> showing around them. Redirect the highlight to the whole <pre> box, and clear
+   the inner <code>'s own wash, so the active/hover state reads as a highlighted block, not
+   highlighted characters. */
+#preview pre:has(> code.sd-active-block) {
+  background: var(--accent-soft);
+  box-shadow: -0.4rem 0 0 var(--accent-soft);
+}
+
+#preview pre:has(> code.sd-hover-block) {
+  background: var(--surface-raised);
+  box-shadow: -0.4rem 0 0 var(--surface-raised);
+}
+
+#preview pre > code.sd-active-block,
+#preview pre > code.sd-hover-block {
+  background: none;
+  box-shadow: none;
+}

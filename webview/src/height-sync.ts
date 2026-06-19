@@ -156,4 +156,15 @@ export class HeightSync {
         ` · lead ${editorLead} sp ${editorSpacers.length}`,
     );
   }
+
+  /**
+   * Drop all editor spacers (and the aligned anchors). Height-sync only makes sense in split, where
+   * there are two panes to align; in a single-pane mode (code / formatted) the spacers have nothing
+   * to line up with and would just linger as meaningless gaps in the source. {@link reconcile}
+   * re-adds them on return to split.
+   */
+  clear(): void {
+    this.editor.setSpacers([], 0);
+    this.onAnchors?.([]);
+  }
 }

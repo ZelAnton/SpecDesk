@@ -24,7 +24,7 @@
   "scripts": {
     "clean": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
-    "bundle": "esbuild src/index.ts --bundle --format=esm --outfile=../src/SpecDesk.Host/wwwroot/webview.js && node -e \"fs.copyFileSync('index.html','../src/SpecDesk.Host/wwwroot/index.html')\"",
+    "bundle": "esbuild src/index.ts --bundle --format=esm --outfile=../src/SpecDesk.Host/wwwroot/webview.js && node -e \"fs.copyFileSync('index.html','../src/SpecDesk.Host/wwwroot/index.html');fs.copyFileSync('styles.css','../src/SpecDesk.Host/wwwroot/styles.css')\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "biome check .",
@@ -32,8 +32,10 @@
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.3.4",
+    "@codemirror/language": "^6.12.3",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.1",
+    "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2"
   },
   "devDependencies": {

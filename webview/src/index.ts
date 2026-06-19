@@ -35,6 +35,7 @@ function wire(): void {
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
   const exportLogBtn = document.querySelector<HTMLButtonElement>("#export-log-btn");
+  const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
@@ -297,11 +298,17 @@ function wire(): void {
           editor.scrollToSourceLine(Math.floor(line));
           preview.scrollToSourceLine(line);
           preview.highlightSourceLine(activeLine);
-        } else if (next === "code") {
-          editor.scrollToSourceLine(Math.floor(line));
         } else {
-          preview.scrollToSourceLine(line);
-          preview.highlightSourceLine(activeLine);
+          // Single-pane: there is no second pane to align with, so drop the height-sync spacers —
+          // they would otherwise linger as meaningless gaps in the source. reconcile() re-adds them
+          // on return to split.
+          heightSync.clear();
+          if (next === "code") {
+            editor.scrollToSourceLine(Math.floor(line));
+          } else {
+            preview.scrollToSourceLine(line);
+            preview.highlightSourceLine(activeLine);
+          }
         }
       });
     });
@@ -487,6 +494,25 @@ function wire(): void {
 
   exportLogBtn?.addEventListener("click", () => {
     ipc.send(Kinds.exportLog);
+  });
+
+  // Light/dark theme. The bare :root is the light (cool) theme, so "light" means no data-theme
+  // attribute and dark sets data-theme="dark" (see styles.css). Default to the OS colour scheme; the
+  // toolbar toggle flips it. Persistence across app restarts is out of scope for this pass.
+  function applyTheme(dark: boolean): void {
+    if (dark) {
+      document.documentElement.dataset.theme = "dark";
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+    if (themeBtn) {
+      themeBtn.setAttribute("aria-pressed", String(dark));
+      themeBtn.textContent = dark ? "Light" : "Dark";
+    }
+  }
+  applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches);
+  themeBtn?.addEventListener("click", () => {
+    applyTheme(document.documentElement.dataset.theme !== "dark");
   });
 
   modeCodeBtn?.addEventListener("click", () => applyMode("code"));

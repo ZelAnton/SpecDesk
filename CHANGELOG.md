@@ -78,5 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coordinate so it survives the width reflow) and the active-line highlight; height-sync and
   scroll-sync run only in split and re-align automatically on return to it. Typing into the formatted
   view (WYSIWYG) comes in PoC-12.
+- Light/dark theme: the UI follows the OS colour scheme on launch, with a toolbar toggle to switch.
+
+### Changed
+- UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS
+  design-token system now drives every surface (light, warm, and dark token sets); the rendered
+  preview reads like a typeset document (serif headings, hairline tables, a soft accent caret-block
+  highlight in place of the former yellow); the CodeMirror editor gains a token-based theme with
+  markdown syntax colours; and the toolbar buttons, the Code/Split/Formatted segmented control, the
+  inline prompt bars, and the status badge are rebuilt from the shared component styles.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

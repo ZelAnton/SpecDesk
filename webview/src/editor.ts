@@ -9,8 +9,10 @@
  */
 
 import { markdown } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import type { EditorSpacer } from "./height-sync.js";
 import { rafThrottle } from "./raf.js";
@@ -82,6 +84,54 @@ const hoverLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/**
+ * Editor theme (§6 of the design concept): structural chrome only — background, gutter, active line,
+ * cursor and selection — all reading from the design tokens, so the editor follows light/dark with
+ * the rest of the UI. Theme values are plain CSS strings, so `var(--token)` resolves against :root.
+ */
+const editorTheme = EditorView.theme({
+  "&": {
+    color: "var(--ed-text)",
+    backgroundColor: "var(--surface)",
+  },
+  ".cm-content": {
+    fontFamily: "var(--font-mono)",
+  },
+  ".cm-gutters": {
+    color: "var(--ed-gutter)",
+    backgroundColor: "var(--surface)",
+    border: "none",
+  },
+  ".cm-activeLineGutter": {
+    color: "var(--accent)",
+    backgroundColor: "transparent",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "var(--ed-active)",
+  },
+  ".cm-cursor, .cm-dropCursor": {
+    borderLeftColor: "var(--text-strong)",
+  },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "color-mix(in srgb, var(--accent) 22%, transparent)",
+  },
+});
+
+/**
+ * Markdown syntax colours (§6): headings lift to the heading token, structural marks (#, -, >, `)
+ * recede to the marker token, links use the accent. Layered after basicSetup's default highlight so
+ * these rules win for the tags they name.
+ */
+const editorHighlight = HighlightStyle.define([
+  { tag: tags.heading, color: "var(--ed-heading)", fontWeight: "600" },
+  { tag: tags.processingInstruction, color: "var(--ed-marker)" },
+  { tag: tags.quote, color: "var(--ed-marker)" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "700" },
+  { tag: [tags.link, tags.url], color: "var(--accent)" },
+  { tag: tags.monospace, color: "var(--ed-text)" },
+]);
+
 export interface EditorCallbacks {
   /** Fired ~120 ms after the last keystroke, with the full text and its new version. */
   onChange: (text: string, version: number) => void;
@@ -151,6 +201,8 @@ export class MarkdownEditor {
         extensions: [
           basicSetup,
           markdown(),
+          editorTheme,
+          syntaxHighlighting(editorHighlight),
           this.wrap.of(EditorView.lineWrapping),
           // Start read-only: a document is only editable after the author clicks Edit (which forks a
           // working branch). We use `readOnly` alone — NOT `editable: false` — so the caret, text

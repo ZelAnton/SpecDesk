@@ -407,6 +407,11 @@ spec"), and a recents list.
 - **Plain language at the boundary.** Map git operations to the §8 vocabulary in one place;
   never let a git term reach a string the author can read.
 - **Status is `aria-live`.** Lifecycle changes update a single polite live region.
+- **Resilient layout, fixed centrally.** The window resizes freely, so guard against it once in the
+  shared stylesheet, never per element: **control labels never wrap** (`white-space: nowrap` on
+  buttons, so a fixed-height control can't spill its text onto a second line) and **rows of controls
+  reflow rather than overflow** (`flex-wrap` on toolbars and inline bars). A single general rule beats
+  patching each site as it breaks.
 
 ## 13. Note on reviewer / advanced vocabulary
 
