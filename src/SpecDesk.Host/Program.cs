@@ -59,7 +59,10 @@ internal static class Program
 				(object _, string _, string url, out string contentType) =>
 					ServeAsset(controller.RepoRoot, url, out contentType))
 			.RegisterWebMessageReceivedHandler((_, message) => controller.OnMessage(message))
-			.Load("wwwroot/index.html");
+			// Resolve relative to the app base directory, not the current working directory: the CWD
+			// is wherever the user launches the exe (and a single-file build self-extracts its content
+			// to a temp dir), so a CWD-relative path would not find wwwroot/.
+			.Load(Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html"));
 
 		window.WaitForClose();
 		startup.LogInformation("SpecDesk closing");

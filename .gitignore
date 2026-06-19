@@ -151,3 +151,9 @@ coverage/
 
 # Local dev launcher (personal, not shared).
 run.cmd
+
+## -------
+## Publish profiles — the generic `*.pubxml` ignore above drops Visual Studio's machine-specific
+## profiles, but our hand-authored release profile is a deliberate, shared build config — keep it.
+## -------
+!/src/SpecDesk.Host/Properties/PublishProfiles/win-x64.pubxml

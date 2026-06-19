@@ -79,6 +79,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scroll-sync run only in split and re-align automatically on return to it. Typing into the formatted
   view (WYSIWYG) comes in PoC-12.
 - Light/dark theme: the UI follows the OS colour scheme on launch, with a toolbar toggle to switch.
+- Single-file Windows release build via a `win-x64` publish profile:
+  `dotnet publish src/SpecDesk.Host -p:PublishProfile=win-x64 -p:DebugType=none` produces one
+  self-contained `SpecDesk.Host.exe` (no .NET install needed on the target; the target still needs
+  the WebView2 runtime, pre-installed on Windows 11 and most Windows 10).
 
 ### Changed
 - UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS
@@ -87,5 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   highlight in place of the former yellow); the CodeMirror editor gains a token-based theme with
   markdown syntax colours; and the toolbar buttons, the Code/Split/Formatted segmented control, the
   inline prompt bars, and the status badge are rebuilt from the shared component styles.
+- The host loads its web (`wwwroot`) and sample assets from the application base directory rather
+  than the current working directory, so it runs correctly when launched from any folder (and as a
+  single-file exe), not only from the project/output directory.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main
