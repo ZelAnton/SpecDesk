@@ -40,8 +40,13 @@ public sealed record LineSpan(int LineStart, int LineEnd);
 /// <summary>Payload of <c>preview.html</c> (native→webview). The version rides on the envelope.</summary>
 public sealed record PreviewPayload(string Html, IReadOnlyList<LineSpan> LineMap);
 
-/// <summary>Payload of <c>doc.loaded</c> (native→webview): a file opened from disk.</summary>
-public sealed record DocLoadedPayload(string Path, string Text);
+/// <summary>
+/// Payload of <c>doc.loaded</c> (native→webview): a file opened from disk. <c>DocDir</c> is the
+/// document's directory relative to the repo root (forward slashes, "" at root) — the webview uses
+/// it to resolve relative image links to <c>app://repo/…</c> in the formatted (WYSIWYG) view, the
+/// same rewrite the native preview renderer applies.
+/// </summary>
+public sealed record DocLoadedPayload(string Path, string Text, string DocDir);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);

@@ -84,6 +84,30 @@ const hoverLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+// The prominent highlight on the active source line (the caret line). Driven externally (setActiveLine)
+// rather than by CodeMirror's built-in active-line plugin, so index.ts can keep it in step with the
+// formatted pane: in Split, the line the caret/mouse is on in one pane highlights the matching block in
+// the other. Mapped through edits so it stays put until the next caret report re-sets it.
+const setActiveLineEffect = StateEffect.define<number | null>();
+
+const activeLineField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setActiveLineEffect)) {
+        if (effect.value === null) {
+          return Decoration.none;
+        }
+        const lineNumber = Math.min(Math.max(effect.value + 1, 1), tr.state.doc.lines);
+        const line = tr.state.doc.line(lineNumber);
+        return Decoration.set([Decoration.line({ class: "cm-active-line" }).range(line.from)]);
+      }
+    }
+    return decorations.map(tr.changes);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 /**
  * Editor theme (§6 of the design concept): structural chrome only — background, gutter, active line,
  * cursor and selection — all reading from the design tokens, so the editor follows light/dark with
@@ -102,12 +126,15 @@ const editorTheme = EditorView.theme({
     backgroundColor: "var(--surface)",
     border: "none",
   },
+  // The built-in active-line highlight is neutralized here: the active line is driven externally
+  // (activeLineField / setActiveLine) so it can be synchronized with the formatted pane's active
+  // block. The visible style lives in `.cm-active-line` (styles.css). Same for the gutter accent.
   ".cm-activeLineGutter": {
-    color: "var(--accent)",
+    color: "var(--ed-gutter)",
     backgroundColor: "transparent",
   },
   ".cm-activeLine": {
-    backgroundColor: "var(--ed-active)",
+    backgroundColor: "transparent",
   },
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--text-strong)",
@@ -162,6 +189,13 @@ export class MarkdownEditor {
   private readonly editable = new Compartment();
   private version = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  // Set by a silent setText (mirror from the formatted editor) to skip the resulting change
+  // notification, so a mirrored update doesn't echo back out as an edit.
+  private suppressChange = false;
+  // The current synced active/hover source lines, remembered so a full-document setText can re-apply
+  // them in the same transaction (a whole-doc replace would otherwise collapse/clear the decorations).
+  private activeLineValue: number | null = null;
+  private hoverLineValue: number | null = null;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -172,13 +206,25 @@ export class MarkdownEditor {
     this.onGeometryChange = callbacks.onGeometryChange;
     this.onEditAttempt = callbacks.onEditAttempt;
 
+    // The caret line is reported rAF-deferred so the resulting setActiveLine dispatch (cross-pane
+    // sync) runs after this update listener, not re-entrantly within it.
+    let cursorLine = 0;
+    const reportCursor = rafThrottle(() => this.onCursor(cursorLine));
+
     const updates = EditorView.updateListener.of((update) => {
+      const silent = update.docChanged && this.suppressChange;
       if (update.docChanged) {
-        this.scheduleChange();
+        if (this.suppressChange) {
+          this.suppressChange = false;
+        } else {
+          this.scheduleChange();
+        }
       }
-      if (update.docChanged || update.selectionSet) {
-        const head = update.state.selection.main.head;
-        this.onCursor(update.state.doc.lineAt(head).number - 1);
+      // Report the caret line for highlight sync — but not for a silent mirror setText, which would
+      // otherwise override the active line the originating (formatted) pane just set.
+      if ((update.docChanged || update.selectionSet) && !silent) {
+        cursorLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
+        reportCursor();
       }
       // The editor relaid out because of a real transaction other than a content edit or our own
       // spacer dispatch (i.e. a wrap toggle) → re-equalize. We require a transaction so we ignore
@@ -211,6 +257,7 @@ export class MarkdownEditor {
           this.editable.of(EditorState.readOnly.of(true)),
           spacerField,
           hoverLineField,
+          activeLineField,
           updates,
         ],
       }),
@@ -252,11 +299,24 @@ export class MarkdownEditor {
     });
   }
 
-  /** Replace the whole document (used when a file is opened). Triggers a normal change/render. */
-  setText(text: string): void {
+  /**
+   * Replace the whole document. By default triggers a normal change/render (used when a file is
+   * opened). Pass `silent` to suppress the change notification — used when mirroring text in from the
+   * formatted editor in split, so the mirror doesn't echo back out as a new edit.
+   */
+  setText(text: string, silent = false): void {
+    this.suppressChange = silent;
+    // Re-apply the synced highlights in the same transaction: a whole-document replace would otherwise
+    // map the active-line decoration to position 0 and clear the hover one (it drops on docChanged).
     this.view.dispatch({
       changes: { from: 0, to: this.view.state.doc.length, insert: text },
+      effects: [
+        setActiveLineEffect.of(this.activeLineValue),
+        setHoverLineEffect.of(this.hoverLineValue),
+      ],
     });
+    // Clear in case the text was identical and no docChanged fired to consume the flag.
+    this.suppressChange = false;
   }
 
   getText(): string {
@@ -385,7 +445,15 @@ export class MarkdownEditor {
 
   /** Faintly highlight the source line under the mouse (null clears it). */
   setHoverLine(line: number | null): void {
+    this.hoverLineValue = line;
     this.view.dispatch({ effects: setHoverLineEffect.of(line) });
+  }
+
+  /** Highlight the active source line (the caret line); null clears it. Driven externally so the
+   *  active line can be synchronized with the formatted pane in Split. */
+  setActiveLine(line: number | null): void {
+    this.activeLineValue = line;
+    this.view.dispatch({ effects: setActiveLineEffect.of(line) });
   }
 
   /** Wrapping width of the editor (its scroller's client width) — for diagnostics. */

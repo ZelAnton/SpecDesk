@@ -703,7 +703,7 @@ public sealed class HostController : IDisposable
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, _repoRoot);
 		_send(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
-			new DocLoadedPayload(path, text)));
+			new DocLoadedPayload(path, text, DocRelativeDir())));
 	}
 
 	private void OnImagePaste(IpcMessage message)

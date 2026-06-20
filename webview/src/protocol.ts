@@ -47,6 +47,9 @@ export interface PreviewPayload {
 export interface DocLoadedPayload {
   path: string;
   text: string;
+  /** Document directory relative to the repo root (forward slashes, "" at root) — for resolving
+   *  relative image links to `app://repo/…` in the formatted view (mirrors the native preview). */
+  docDir: string;
 }
 
 /** Payload of `error` (native→webview). */

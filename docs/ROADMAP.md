@@ -386,12 +386,18 @@ These are called out across the design docs; resolve each in the PoC noted, and 
 - **Draft PRs first?** (`draft-first`) → PoC‑5.
 - **Name `SpecDesk`** is a placeholder — rename before any registry/namespace work ([design/README.md](design/README.md)).
 - **AI provider/model** default → PoC‑9 ([design/08-ai-agent.md](design/08-ai-agent.md)).
-- **WYSIWYG editor engine** — ProseMirror dual-mode (`@gravity-ui/markdown-editor` / Tiptap) vs a
-  self-contained engine (muya, vditor/Lute) → **spike in PoC‑12**, decided on round-trip fidelity
-  ([design/05-live-preview.md](design/05-live-preview.md); references in [AGENTS.md](../AGENTS.md)).
-- **Markdown round-trip fidelity** — the formatted editor must serialize edits to minimal, diff-stable
-  Markdown; the acceptance bar (allowed diff noise) is set and proven in the PoC‑12 spike before the
-  engine is committed.
+- **WYSIWYG editor engine** — **DECIDED (PoC‑12 spike):** ProseMirror (`prosemirror-markdown`
+  serializer), framework-free, fits the vanilla-TS/esbuild stack. Not `@gravity-ui` (React) or
+  vditor/Lute (opaque wasm, no source spans). ([design/05-live-preview.md](design/05-live-preview.md);
+  references in [AGENTS.md](../AGENTS.md)).
+- **Markdown round-trip fidelity** — **DECIDED (PoC‑12 spike):** a *whole-document* serialize is
+  unviable — on real specs it reflows every hard-wrapped paragraph, swaps list markers, and drops
+  GFM tables (≈41/48 lines changed on `welcome.md` with a no-op round-trip). The committed approach is
+  **block-splice**: re-serialize only the *changed* top-level blocks and splice them into the original
+  source by source-line range, so untouched content stays byte-identical. Requires a source-span-aware
+  parser, opaque verbatim nodes for constructs the schema doesn't edit (tables, footnotes, …), and
+  marker config. Acceptance bar: a no-op round-trip is **byte-identical**; a single edit's diff is
+  **local to its block**.
 
 ## Relationship to the design docs
 

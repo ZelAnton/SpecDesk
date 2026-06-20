@@ -377,7 +377,8 @@ button {
 }
 
 #editor,
-#preview {
+#preview,
+#formatted {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -391,29 +392,53 @@ button {
   border-right: 1px solid var(--border);
 }
 
-/* The preview container is the scroll + offset parent for scroll-sync math. Reserve the scrollbar
-   gutter so its width never changes when the scrollbar appears. */
-#preview {
+/* The preview and formatted panes are the scroll + offset parents. Reserve the scrollbar gutter so
+   its width never changes when the scrollbar appears. */
+#preview,
+#formatted {
   position: relative;
   padding: 0 1.5rem;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 
-/* View modes. Split (default) shows both panes; code hides the preview and drops the editor's
-   divider; formatted hides the editor. These id-scoped rules out-specify the base pane rules above
-   and are placed after them so specificity ascends in source order. Panes are only hidden, never
-   destroyed, so each keeps its caret/scroll/DOM across switches. */
-#panes[data-mode="code"] #preview {
+/* The read-only Markdig preview is no longer a visible pane — Split now pairs the source editor with
+   the editable WYSIWYG. #preview stays in the DOM (hidden) only as the native render's sink for the
+   line map / future diff. */
+#preview {
   display: none;
 }
 
+/* The formatted (WYSIWYG) pane is shown in split and formatted (see the data-mode rules below). */
+#formatted {
+  display: none;
+}
+
+/* ProseMirror content essentials (the formatted editor): no focus outline (it is a pane) and
+   pre-wrap so editing whitespace behaves. Its typography comes from the shared `.sd-doc` rules. */
+.ProseMirror {
+  outline: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* View modes (id-scoped rules, after the base pane rules so specificity ascends in source order).
+   Code shows only the source; Split shows source + the editable WYSIWYG; Formatted shows only the
+   WYSIWYG. Panes are only hidden, never destroyed, so each keeps its caret/scroll/DOM. */
 #panes[data-mode="code"] #editor {
   border-right: none;
 }
 
+#panes[data-mode="split"] #formatted {
+  display: block;
+}
+
 #panes[data-mode="formatted"] #editor {
   display: none;
+}
+
+#panes[data-mode="formatted"] #formatted {
+  display: block;
 }
 
 /* ---- §6 editor theme — CSS side (background/gutter/active-line/selection live in editor.ts) ---- */
@@ -432,6 +457,14 @@ button {
    at low alpha, so it reads in both light and dark. */
 .cm-hover-line {
   background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* The active (caret) source line. Driven externally (activeLineField) and synced with the formatted
+   pane, replacing CodeMirror's built-in active line (neutralized in editor.ts). The extra `.cm-editor
+   .cm-line` qualifiers raise specificity above the injected theme rule so this wins when a line is
+   both the caret line and the synced active line. */
+.cm-editor .cm-line.cm-active-line {
+  background: var(--ed-active);
 }
 
 /* Synthetic height-sync padding inserted between source blocks so each lines up vertically with its
@@ -455,19 +488,21 @@ button {
     );
 }
 
-/* ---- §5 rendered-document stylesheet — the core reading surface (preview; later reused) ---- */
-#preview {
+/* ---- §5 rendered-document stylesheet — the core reading surface, shared by the read-only preview
+   and the formatted editor. Both carry the `.sd-doc` class (the preview via index.html, the
+   ProseMirror content via its `attributes`), so this is written once and never forked. ---- */
+.sd-doc {
   color: var(--text);
   font-size: 15px;
   line-height: 1.7;
 }
 
-#preview h1,
-#preview h2,
-#preview h3,
-#preview h4,
-#preview h5,
-#preview h6 {
+.sd-doc h1,
+.sd-doc h2,
+.sd-doc h3,
+.sd-doc h4,
+.sd-doc h5,
+.sd-doc h6 {
   margin: 1.6em 0 0.6em;
   color: var(--text-strong);
   font-family: var(--font-doc-head);
@@ -475,51 +510,51 @@ button {
   line-height: 1.25;
 }
 
-#preview h1 {
+.sd-doc h1 {
   font-size: 1.75rem;
   letter-spacing: -0.01em;
 }
 
-#preview h2 {
+.sd-doc h2 {
   font-size: 1.25rem;
 }
 
-#preview h3 {
+.sd-doc h3 {
   font-size: 1.0625rem;
 }
 
-#preview p {
+.sd-doc p {
   margin: 0 0 0.9em;
 }
 
-#preview ul,
-#preview ol {
+.sd-doc ul,
+.sd-doc ol {
   margin: 0 0 0.9em;
   padding-left: 22px;
 }
 
-#preview a {
+.sd-doc a {
   color: var(--accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
 
-#preview img {
+.sd-doc img {
   display: block;
   max-width: 100%;
   margin: 0.6em auto;
   border-radius: 6px;
 }
 
-#preview hr {
+.sd-doc hr {
   margin: 1.4em 0;
   border: none;
   border-top: 1px solid var(--border);
 }
 
 /* Blockquote: serif-italic, muted, with a left rule. */
-#preview blockquote {
+.sd-doc blockquote {
   margin: 0 0 0.9em;
   padding-left: 0.9em;
   color: var(--text-muted);
@@ -529,7 +564,7 @@ button {
 }
 
 /* Inline code; code blocks share the sunken surface but add a border + larger radius. */
-#preview code {
+.sd-doc code {
   padding: 0.1em 0.3em;
   background: var(--surface-sunken);
   border-radius: 4px;
@@ -537,7 +572,7 @@ button {
   font-size: 0.88em;
 }
 
-#preview pre {
+.sd-doc pre {
   padding: 0.75rem;
   overflow: auto;
   background: var(--surface-sunken);
@@ -547,7 +582,7 @@ button {
   line-height: 1.6;
 }
 
-#preview pre code {
+.sd-doc pre code {
   padding: 0;
   background: none;
   border-radius: 0;
@@ -555,51 +590,31 @@ button {
 }
 
 /* Tables: a 2px header underline + 1px row hairlines. No vertical rules, no zebra. */
-#preview table {
+.sd-doc table {
   border-collapse: collapse;
 }
 
-#preview th,
-#preview td {
+.sd-doc th,
+.sd-doc td {
   padding: 0.3rem 0.6rem;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
-#preview th {
+.sd-doc th {
   border-bottom: 2px solid var(--border-strong);
 }
 
-/* The rendered block matching the editor's caret (prominent): a soft accent wash that extends a
-   little into the gutter. Replaces the former yellow highlight. */
-#preview .sd-active-block {
+/* The block holding the caret (prominent accent wash) and the block under the mouse (faint). In the
+   formatted editor these are ProseMirror node decorations on the top-level block — including a code
+   block's <pre>, so the whole block washes (the inner <code> is transparent over it). The wash
+   extends a little into the gutter. Replaces the former yellow highlight. */
+.sd-doc .sd-active-block {
   background: var(--accent-soft);
   box-shadow: -0.4rem 0 0 var(--accent-soft);
 }
 
-/* The rendered block under the mouse pointer (faint, auxiliary). */
-#preview .sd-hover-block {
+.sd-doc .sd-hover-block {
   background: var(--surface-raised);
   box-shadow: -0.4rem 0 0 var(--surface-raised);
-}
-
-/* A fenced code block carries its line-anchor on the inner <code> (that is where Markdig stamps
-   `data-line-*`), and <code> hugs the text — so the wash above would paint behind the symbols and
-   leave the grey <pre> showing around them. Redirect the highlight to the whole <pre> box, and clear
-   the inner <code>'s own wash, so the active/hover state reads as a highlighted block, not
-   highlighted characters. */
-#preview pre:has(> code.sd-active-block) {
-  background: var(--accent-soft);
-  box-shadow: -0.4rem 0 0 var(--accent-soft);
-}
-
-#preview pre:has(> code.sd-hover-block) {
-  background: var(--surface-raised);
-  box-shadow: -0.4rem 0 0 var(--surface-raised);
-}
-
-#preview pre > code.sd-active-block,
-#preview pre > code.sd-hover-block {
-  background: none;
-  box-shadow: none;
 }

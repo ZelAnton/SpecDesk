@@ -5,6 +5,7 @@
  */
 
 import { MarkdownEditor } from "./editor.js";
+import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
@@ -21,12 +22,12 @@ import {
   type VersionNoteSuggestedPayload,
 } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
-import { ScrollSync } from "./scroll-sync.js";
-import { isSplit, scrollAuthority, type ViewMode } from "./view-mode.js";
+import { isSplit, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
   const editorEl = document.querySelector<HTMLElement>("#editor");
   const previewEl = document.querySelector<HTMLElement>("#preview");
+  const formattedEl = document.querySelector<HTMLElement>("#formatted");
   const statusEl = document.querySelector<HTMLElement>("#status");
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
@@ -50,7 +51,7 @@ function wire(): void {
   const branchNameInput = document.querySelector<HTMLInputElement>("#branch-name-input");
   const branchNameConfirm = document.querySelector<HTMLButtonElement>("#branch-name-confirm");
   const branchNameCancel = document.querySelector<HTMLButtonElement>("#branch-name-cancel");
-  if (!editorEl || !previewEl) {
+  if (!editorEl || !previewEl || !formattedEl) {
     return;
   }
 
@@ -163,106 +164,165 @@ function wire(): void {
     versionNoteInput?.select();
   }
 
+  // The native Markdig render. No longer a visible pane (Split now pairs the source editor with the
+  // editable WYSIWYG); kept updated, hidden, as the canonical render for the future diff/comments.
   const preview = new Preview(previewEl);
-  let sync: ScrollSync | undefined;
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
-  // "start typing → offer to begin a draft" behaviour below.
+  // "start typing → offer to begin a draft" behaviour in both editors.
   let editing = false;
-  // The active view mode (code / split / formatted). Split is the default and the only mode where
-  // both panes are visible, so height-sync and scroll-sync run only then. Declared before the editor
-  // callbacks and `reconcile` below so their closures read the live value.
+  // The active view mode. Code = source only; Split = source editor + formatted (WYSIWYG) editor,
+  // both editable and synced live; Formatted = WYSIWYG only. Declared before the editor callbacks
+  // below so their closures read the live value.
   let mode: ViewMode = "split";
 
-  // Two cross-pane highlights: the caret line (prominent) and the mouse-hover line (faint,
-  // auxiliary). Hover is suppressed when it coincides with the caret line so they don't fight.
-  let activeLine = 0;
-  let hoverLine: number | null = null;
-  const applyHover = rafThrottle(() => {
-    const line = hoverLine === activeLine ? null : hoverLine;
-    editor.setHoverLine(line);
-    preview.highlightHoverLine(line);
-  });
-  const setHover = (line: number | null): void => {
-    hoverLine = line;
-    applyHover();
+  // One monotonic version across BOTH editors: the native side drops stale preview results by
+  // version, so the two surfaces must share a single counter.
+  let docVersion = 0;
+  const sendDoc = (text: string): void => {
+    docVersion += 1;
+    ipc.send(Kinds.editorChanged, { text }, { version: docVersion });
   };
 
-  const editor = new MarkdownEditor(editorEl, {
-    onChange: (text, version) => {
-      ipc.send(Kinds.editorChanged, { text }, { version });
-    },
-    onScroll: () => {
-      if (isSplit(mode)) {
-        sync?.fromEditor();
-      }
-    },
-    onScrollSettle: () => {
-      if (isSplit(mode)) {
-        sync?.snapPreviewToEditor();
-      }
-    },
-    onCursor: (line) => {
-      activeLine = line;
-      preview.highlightSourceLine(line);
-      applyHover();
-    },
-    onHover: setHover,
-    onGeometryChange: () => reconcile(),
-    // Trying to type in a read-only document offers to start a draft (which forks a branch).
-    onEditAttempt: () => {
-      if (!editing) {
-        void openBranchName();
-      }
-    },
-  });
+  // Block-level scroll-sync between the two editable panes in split (they couple by source line —
+  // there is no shared native render to height-equalise against any more). A "driver" lock lets the
+  // pane the user is scrolling keep driving while the other pane's programmatic echo is ignored;
+  // suppressScroll() mutes both briefly around programmatic scrolls (edit mirror / mode switch).
+  const SCROLL_SYNC_MS = 120;
+  let scrollDriver: "editor" | "formatted" | "none" = "none";
+  let scrollDriverUntil = 0;
+  const claimScroll = (who: "editor" | "formatted"): boolean => {
+    const now = Date.now();
+    if (scrollDriver !== who && now < scrollDriverUntil) {
+      return false; // the other pane is driving (or a suppress window is active) — ignore the echo
+    }
+    scrollDriver = who;
+    scrollDriverUntil = now + SCROLL_SYNC_MS;
+    return true;
+  };
+  const suppressScroll = (): void => {
+    scrollDriver = "none";
+    scrollDriverUntil = Date.now() + SCROLL_SYNC_MS;
+  };
 
-  preview.setOnHover(setHover);
+  // Forward-declared so the cross-sync callbacks below can reference both editors; assigned just after.
+  let editor: MarkdownEditor;
+  let formatted: FormattedEditor;
 
-  sync = new ScrollSync(editor, preview);
-  const reportPreviewScroll = rafThrottle(() => {
+  // Cross-pane highlight sync: a single active source line (the caret line) and a single hovered
+  // source line, shown in BOTH panes — the source editor highlights the line, the formatted view
+  // highlights the block containing it. Whichever pane the user interacts with reports its position
+  // (rAF-throttled), and both panes are updated together, so the highlights stay in step in Split.
+  const setActive = (line: number | null): void => {
+    editor.setActiveLine(line);
+    formatted.setActiveLine(line);
+  };
+  const setHover = (line: number | null): void => {
+    editor.setHoverLine(line);
+    formatted.setHoverLine(line);
+  };
+
+  // Height-sync: pad the source editor with spacers so each source block's top lines up with its
+  // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
+  // Only meaningful in Split; rAF-throttled so a burst of edits/resizes reconciles once per frame.
+  // suppressScroll() guards against the spacer change nudging the editor's scroll into a false sync.
+  let heightSync: HeightSync;
+  const reconcileHeights = rafThrottle(() => {
     if (isSplit(mode)) {
-      sync?.fromPreview();
+      suppressScroll();
+      heightSync.reconcile();
     }
   });
-  previewEl.addEventListener("scroll", reportPreviewScroll);
 
-  // Height-sync: equalize editor/preview block heights so the panes align pixel-for-pixel, and feed
-  // the resulting aligned anchors to scroll-sync (which maps pane→pane by interpolating between them).
-  // The per-reconcile summary goes to the structured log (file), not the status bar.
-  const heightSync = new HeightSync(
-    editor,
-    preview,
-    (summary) => log.debug(summary),
-    (anchors) => sync?.setAnchors(anchors),
-  );
-  // Height-sync equalizes two visible panes, so it only runs in split. In code/formatted one pane is
-  // hidden (zero geometry); switching back to split re-runs it (see applyMode). The preview still
-  // re-renders in every mode — only this equalization step is gated.
-  const reconcile = rafThrottle(() => {
-    if (!isSplit(mode)) {
-      return;
+  // Live content sync. An edit in one editor goes to the native pipeline (sendDoc) AND is mirrored
+  // into the other — guarded by content equality so the mirror never echoes back, with a silent
+  // setText so the mirror can't re-fire as an edit. After mirroring, the other pane's scroll is
+  // re-aligned so it doesn't jump.
+  const onEditorChange = (text: string): void => {
+    sendDoc(text);
+    if (formatted.getText() !== text) {
+      formatted.setText(text);
+      if (isSplit(mode)) {
+        suppressScroll();
+        formatted.scrollToSourceLine(editor.topVisibleLineExact());
+      }
     }
-    sync?.suppress();
-    heightSync.reconcile();
-  });
-  preview.setOnContentResize(reconcile);
-  void document.fonts.ready.then(reconcile);
+    reconcileHeights();
+  };
+  const onFormattedChange = (text: string): void => {
+    sendDoc(text);
+    if (editor.getText() !== text) {
+      editor.setText(text, true);
+      if (isSplit(mode)) {
+        suppressScroll();
+        editor.scrollToSourceLine(formatted.topVisibleSourceLine());
+      }
+    }
+    reconcileHeights();
+  };
 
-  // Switch the editor between code / split / formatted. The panes are only shown/hidden (CSS keyed
-  // off #panes[data-mode]), never destroyed, so each keeps its caret/scroll/DOM. We carry the
-  // reading position across in the stable source-line coordinate so it survives the width reflow of
-  // a pane going full-width, and re-run height-sync on return to split.
+  const offerDraft = (): void => {
+    if (!editing) {
+      void openBranchName();
+    }
+  };
+
+  editor = new MarkdownEditor(editorEl, {
+    onChange: onEditorChange,
+    onScroll: () => {
+      if (isSplit(mode) && claimScroll("editor")) {
+        formatted.scrollToSourceLine(editor.topVisibleLineExact());
+      }
+    },
+    onScrollSettle: () => {},
+    onCursor: (line) => setActive(line),
+    onHover: (line) => setHover(line),
+    onGeometryChange: () => reconcileHeights(),
+    onEditAttempt: offerDraft,
+  });
+
+  // The formatted (WYSIWYG) editor — a sibling view of the same Markdown. Edits serialize back via
+  // block-splice and go out through the SAME `editor.changed` channel as source edits.
+  formatted = new FormattedEditor(formattedEl, {
+    onChange: onFormattedChange,
+    onEditAttempt: offerDraft,
+    onScroll: () => {
+      if (isSplit(mode) && claimScroll("formatted")) {
+        editor.scrollToSourceLine(formatted.topVisibleSourceLine());
+      }
+    },
+    onCursor: (line) => setActive(line),
+    onHover: (line) => setHover(line),
+    onContentResize: () => reconcileHeights(),
+  });
+
+  // The source editor is padded to match the formatted view's block heights (formatted is the fixed
+  // reference). Assigned now that both panes exist; reconcileHeights() drives it.
+  heightSync = new HeightSync(editor, formatted);
+
+  // Which surfaces a mode shows. Split shows both; the (in-sync) visible one is the source of truth
+  // for the reading position and the canonical text when switching.
+  const editorVisible = (m: ViewMode): boolean => m === "code" || m === "split";
+  const formattedVisible = (m: ViewMode): boolean => m === "split" || m === "formatted";
+
+  // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
+  // #panes[data-mode]), never destroyed. A surface that becomes visible is hydrated from the current
+  // text (silently), and the reading position is carried across in the source-line coordinate.
   function applyMode(next: ViewMode): void {
     if (next === mode) {
       return;
     }
-    // Capture the reading position from the pane that currently owns scroll, as a (possibly
-    // fractional) source line — stable across the width reflow a pane undergoes when it goes
-    // full-width or is un-hidden.
-    const line =
-      scrollAuthority(mode) === "editor"
-        ? editor.topVisibleLineExact()
-        : preview.topVisibleSourceLine();
+    const prev = mode;
+    const line = editorVisible(prev)
+      ? editor.topVisibleLineExact()
+      : formatted.topVisibleSourceLine();
+    const text = editorVisible(prev) ? editor.getText() : formatted.getText();
+
+    if (editorVisible(next) && !editorVisible(prev)) {
+      editor.setText(text, true);
+    }
+    if (formattedVisible(next) && !formattedVisible(prev)) {
+      formatted.setText(text);
+    }
 
     mode = next;
     if (panesEl) {
@@ -271,64 +331,42 @@ function wire(): void {
     modeCodeBtn?.setAttribute("aria-pressed", String(next === "code"));
     modeSplitBtn?.setAttribute("aria-pressed", String(next === "split"));
     modeFormattedBtn?.setAttribute("aria-pressed", String(next === "formatted"));
+    editor.setEditable(editing);
+    formatted.setEditable(editing);
 
-    // Mute the echo window for the whole transition: the panes resize over the next couple of frames
-    // and CodeMirror may nudge its scroll, which (with `mode` already switched) would otherwise drive
-    // the preview off now-stale anchors before the restore below runs.
-    sync?.suppress();
-
-    // The visible pane(s) just changed width (or were un-hidden), so CodeMirror must re-measure
-    // before we read/set its scroll geometry. That re-measure is asynchronous: a ResizeObserver
-    // notification is delivered after this frame's rAF callbacks, and CodeMirror runs its measure
-    // the frame after that. So we restore on the SECOND frame — restoring one frame earlier can read
-    // stale geometry, and because a bare re-measure fires no transaction nothing would re-run
-    // height-sync, leaving the split panes misaligned until the next edit/scroll.
+    // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll.
+    // CodeMirror's re-measure is asynchronous, so restore on the SECOND frame (the PoC-11 timing).
+    suppressScroll();
     editor.refresh();
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        suppressScroll();
+        if (formattedVisible(next)) {
+          formatted.refresh();
+        }
+        // Re-pad the editor to the formatted heights BEFORE restoring scroll, so the scroll target
+        // accounts for the spacers. Outside Split there is nothing to align — drop the spacers so the
+        // source has no meaningless gaps.
         if (isSplit(next)) {
-          // Re-equalize for the new widths, then position BOTH panes at the captured line. The
-          // editor's scrollIntoView is applied asynchronously, so we must not drive the preview off
-          // its (still stale) scrollTop here — instead scroll the preview to the same source line
-          // directly. `suppress()` mutes the echo window so these two programmatic scrolls don't
-          // drive each other; once the editor's scroll lands, the normal scroll/settle handlers
-          // pixel-align the preview.
-          sync?.suppress();
           heightSync.reconcile();
-          editor.scrollToSourceLine(Math.floor(line));
-          preview.scrollToSourceLine(line);
-          preview.highlightSourceLine(activeLine);
         } else {
-          // Single-pane: there is no second pane to align with, so drop the height-sync spacers —
-          // they would otherwise linger as meaningless gaps in the source. reconcile() re-adds them
-          // on return to split.
           heightSync.clear();
-          if (next === "code") {
-            editor.scrollToSourceLine(Math.floor(line));
-          } else {
-            preview.scrollToSourceLine(line);
-            preview.highlightSourceLine(activeLine);
-          }
+        }
+        if (formattedVisible(next)) {
+          formatted.scrollToSourceLine(Math.floor(line));
+        }
+        if (editorVisible(next)) {
+          editor.scrollToSourceLine(Math.floor(line));
         }
       });
     });
   }
 
-  // On window resize both panes rewrap independently and height-sync must re-run. CodeMirror keeps
-  // its pixel scroll position (so the editor's top line shifts), while the preview keeps its own —
-  // so they drift apart. Re-equalize during the drag, then once it settles realign the preview to
-  // the editor's top line.
-  let resizeSettle: ReturnType<typeof setTimeout> | undefined;
+  // Re-measure CodeMirror on window resize and re-pad to the formatted heights (both panes reflow at
+  // a new width); block-level scroll-sync re-aligns on the next scroll.
   window.addEventListener("resize", () => {
-    reconcile();
-    if (resizeSettle !== undefined) {
-      clearTimeout(resizeSettle);
-    }
-    resizeSettle = setTimeout(() => {
-      heightSync.reconcile();
-      // reconcile() refreshed the anchors; realign the preview to the editor through them.
-      sync?.snapPreviewToEditor();
-    }, 150);
+    editor.refresh();
+    reconcileHeights();
   });
 
   attachImageCapture(editor, (image) => {
@@ -351,8 +389,8 @@ function wire(): void {
 
   ipc.on(Kinds.previewHtml, (message) => {
     const payload = message.payload as PreviewPayload | undefined;
-    if (payload && preview.apply(payload.html, message.version ?? 0)) {
-      reconcile();
+    if (payload) {
+      preview.apply(payload.html, message.version ?? 0);
     }
   });
 
@@ -360,9 +398,21 @@ function wire(): void {
     const payload = message.payload as DocLoadedPayload | undefined;
     if (payload) {
       editor.setText(payload.text);
+      // Resolve relative image links in the formatted view against the document's folder. Set before
+      // setText so the image node views render with the correct app://repo/… src.
+      formatted.setDocDir(payload.docDir);
+      // Hydrate the formatted view now too, so the Split pane isn't blank for one debounce interval
+      // until the editor's mirror fires. setText is silent (no onChange), so this sends nothing.
+      formatted.setText(payload.text);
+      // Seed the synced highlight at the top of the document (both panes).
+      setActive(0);
+      setHover(null);
+      // Align the source editor's line heights to the freshly rendered formatted blocks.
+      reconcileHeights();
       // Read-only until the author clicks Edit (which forks a working branch).
       editing = false;
       editor.setEditable(false);
+      formatted.setEditable(false);
       if (statusEl) {
         statusEl.textContent = payload.path;
       }
@@ -395,6 +445,7 @@ function wire(): void {
     editing = payload.state !== "published";
     // Editing is only possible once a working branch exists (draft state).
     editor.setEditable(editing);
+    formatted.setEditable(editing);
     if (editBtn) {
       editBtn.hidden = editing;
     }
@@ -489,7 +540,6 @@ function wire(): void {
     editor.setLineWrapping(wrap);
     wrapBtn.textContent = `Wrap: ${wrap ? "on" : "off"}`;
     wrapBtn.setAttribute("aria-pressed", String(wrap));
-    reconcile(); // re-equalize for the new wrap mode (rafThrottle defers it past the relayout)
   });
 
   exportLogBtn?.addEventListener("click", () => {

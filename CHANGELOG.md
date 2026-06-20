@@ -83,6 +83,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dotnet publish src/SpecDesk.Host -p:PublishProfile=win-x64 -p:DebugType=none` produces one
   self-contained `SpecDesk.Host.exe` (no .NET install needed on the target; the target still needs
   the WebView2 runtime, pre-installed on Windows 11 and most Windows 10).
+- PoC-12 — WYSIWYG editing: the **Formatted** view is an editable ProseMirror surface, and **Split**
+  now pairs the source editor with that editable WYSIWYG — both panes are editable and synced live —
+  in place of the old read-only preview pane. Edits serialize back to Markdown by **block-splice**:
+  only the top-level blocks you actually changed are re-emitted; every untouched block (including its
+  hard-wrapping and list markers) stays byte-identical, so an edit makes a tight, reviewable diff
+  instead of reflowing the file. Markdig stays canonical for the diff/comments render (computed, no
+  longer shown as a pane). GFM tables render as real tables (cell text editable; an untouched table is
+  preserved verbatim), and the active line (caret) and the line under the mouse are highlighted in
+  both panes and **synchronized** in Split — interacting in one pane highlights the matching line in
+  the source editor and the matching block in the WYSIWYG (a table row or list item rather than the
+  whole table/list when the caret is inside one). Images render in the WYSIWYG (relative links
+  resolve to the `app://repo/…` scheme against the document's folder, the same rewrite the native
+  preview applies), and the source editor is padded with spacers so each source block lines up with its
+  rendered block in the formatted pane. (v1 limits: structural table edits — add/remove rows/columns —
+  are done in the source view; height alignment and scroll-sync between the two panes are at top-level
+  block granularity; adding or removing a whole top-level block falls back to a full re-serialize.)
 
 ### Changed
 - UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS

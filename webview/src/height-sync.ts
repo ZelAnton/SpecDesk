@@ -8,7 +8,14 @@
  */
 
 import type { MarkdownEditor } from "./editor.js";
-import type { Preview } from "./preview.js";
+import type { BlockGeometry } from "./preview.js";
+
+/** Anything that can report per-block rendered geometry to align the editor against (the formatted
+ *  WYSIWYG view in Split; formerly the read-only preview). The source is never padded — the editor is. */
+export interface GeometrySource {
+  blockGeometry(): BlockGeometry[];
+  contentWidth(): number;
+}
 
 /** A spacer to insert below a block's last source line, of the given pixel height. */
 export interface EditorSpacer {
@@ -106,18 +113,18 @@ export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments 
 
 export class HeightSync {
   private readonly editor: MarkdownEditor;
-  private readonly preview: Preview;
+  private readonly source: GeometrySource;
   private readonly onDebug: ((summary: string) => void) | undefined;
   private readonly onAnchors: ((anchors: ScrollAnchor[]) => void) | undefined;
 
   constructor(
     editor: MarkdownEditor,
-    preview: Preview,
+    source: GeometrySource,
     onDebug?: (summary: string) => void,
     onAnchors?: (anchors: ScrollAnchor[]) => void,
   ) {
     this.editor = editor;
-    this.preview = preview;
+    this.source = source;
     this.onDebug = onDebug;
     this.onAnchors = onAnchors;
   }
@@ -128,7 +135,7 @@ export class HeightSync {
    * a stable fixed point with no tracked state.
    */
   reconcile(): void {
-    const geometry = this.preview.blockGeometry();
+    const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {
       this.editor.setSpacers([], 0);
       this.onAnchors?.([]);
@@ -152,7 +159,7 @@ export class HeightSync {
     const round = (value: number) => Math.round(value);
     this.onDebug?.(
       `hs: ${anchors.length} · eN=${round(last?.editorTop ?? 0)} pN=${round(last?.previewTop ?? 0)}` +
-        ` · eW=${this.editor.contentWidth()} pW=${this.preview.contentWidth()}` +
+        ` · eW=${this.editor.contentWidth()} pW=${this.source.contentWidth()}` +
         ` · lead ${editorLead} sp ${editorSpacers.length}`,
     );
   }
