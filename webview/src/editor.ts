@@ -15,6 +15,7 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import type { EditorSpacer } from "./height-sync.js";
+import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { rafThrottle } from "./raf.js";
 
 const DEBOUNCE_MS = 120;
@@ -174,6 +175,8 @@ export interface EditorCallbacks {
   onGeometryChange: () => void;
   /** Fired when the user attempts to modify the document while it is read-only (offer to start editing). */
   onEditAttempt: () => void;
+  /** Fired when the editor gains focus — lets the toolbar route formatting to the active pane in Split. */
+  onFocus: () => void;
 }
 
 export class MarkdownEditor {
@@ -185,6 +188,7 @@ export class MarkdownEditor {
   private readonly onHover: (line: number | null) => void;
   private readonly onGeometryChange: () => void;
   private readonly onEditAttempt: () => void;
+  private readonly onFocus: () => void;
   private readonly wrap = new Compartment();
   private readonly editable = new Compartment();
   private version = 0;
@@ -205,6 +209,7 @@ export class MarkdownEditor {
     this.onHover = callbacks.onHover;
     this.onGeometryChange = callbacks.onGeometryChange;
     this.onEditAttempt = callbacks.onEditAttempt;
+    this.onFocus = callbacks.onFocus;
 
     // The caret line is reported rAF-deferred so the resulting setActiveLine dispatch (cross-pane
     // sync) runs after this update listener, not re-entrantly within it.
@@ -297,6 +302,27 @@ export class MarkdownEditor {
         this.onEditAttempt();
       }
     });
+
+    // Report focus so the formatting toolbar can route to this pane when it is the active one in Split.
+    this.view.contentDOM.addEventListener("focus", () => this.onFocus());
+  }
+
+  /**
+   * Apply a formatting-toolbar command to the source selection (Markdown text transform), then refocus
+   * the editor. While read-only the change is blocked by `readOnly` and the author is offered a draft.
+   */
+  applyFormat(command: FormatCommand): void {
+    if (this.view.state.readOnly) {
+      this.onEditAttempt();
+      return;
+    }
+    const { from, to } = this.view.state.selection.main;
+    const edit = formatMarkdown(this.view.state.doc.toString(), from, to, command);
+    this.view.dispatch({
+      changes: { from: edit.from, to: edit.to, insert: edit.insert },
+      selection: { anchor: edit.selectionStart, head: edit.selectionEnd },
+    });
+    this.view.focus();
   }
 
   /**

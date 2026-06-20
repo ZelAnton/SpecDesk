@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { describe, expect, it } from "vitest";
 import { FormattedEditor } from "../src/formatted.js";
@@ -47,6 +48,8 @@ function mount(): FormattedEditor {
     onCursor: () => {},
     onHover: () => {},
     onContentResize: () => {},
+    onFocus: () => {},
+    onActiveChange: () => {},
   });
 }
 
@@ -86,6 +89,8 @@ describe("FormattedEditor (jsdom)", () => {
       onCursor: () => {},
       onHover: () => {},
       onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
     });
     // Blocks: heading (line 0), paragraph (line 2), bullet list (line 4).
     ed.setText("# H\n\npara\n\n- a\n- b\n");
@@ -113,6 +118,8 @@ describe("FormattedEditor (jsdom)", () => {
       onCursor: () => {},
       onHover: () => {},
       onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
     });
     // Rows at lines 0 (header), 2 (1|2), 3 (3|4); line 1 is the separator.
     ed.setText("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
@@ -135,6 +142,8 @@ describe("FormattedEditor (jsdom)", () => {
       onCursor: () => {},
       onHover: () => {},
       onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
     });
     ed.setText("- one\n- two\n- three\n");
 
@@ -144,6 +153,73 @@ describe("FormattedEditor (jsdom)", () => {
     expect(active[0]?.tagName.toLowerCase()).toBe("li");
     expect(active[0]?.textContent).toContain("two");
     expect(active[0]?.textContent).not.toContain("three");
+  });
+
+  it("format() applies ProseMirror commands and reports the active marks/blocks", () => {
+    const ed = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    const view = (ed as unknown as { view: EditorView }).view;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+
+    ed.format("bold");
+    expect(ed.getText()).toBe("**hello**\n");
+    expect(ed.activeFormats().has("bold")).toBe(true);
+
+    ed.format("h1");
+    expect(ed.getText().startsWith("# ")).toBe(true);
+    expect(ed.activeFormats().has("h1")).toBe(true);
+  });
+
+  it("round-trips strikethrough and applies it via format()", () => {
+    const ed = mount();
+    // parse path: ~~ becomes a strikethrough mark and round-trips byte-identical (verbatim).
+    ed.setText("~~struck~~ text\n");
+    expect(ed.getText()).toBe("~~struck~~ text\n");
+
+    // serialize path: toggling strike wraps the selection in tildes.
+    ed.setText("hi\n");
+    ed.setEditable(true);
+    const view = (ed as unknown as { view: EditorView }).view;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 3)));
+    ed.format("strike");
+    expect(ed.getText()).toBe("~~hi~~\n");
+  });
+
+  it("converts a bullet list to ordered in place (no nesting) and back", () => {
+    const ed = mount();
+    ed.setText("- one\n- two\n");
+    ed.setEditable(true);
+    const view = (ed as unknown as { view: EditorView }).view;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+
+    ed.format("ordered");
+    expect(ed.getText()).toBe("1. one\n2. two\n");
+    ed.format("bullet");
+    expect(ed.getText()).toBe("- one\n- two\n");
+  });
+
+  it("format() is blocked while read-only and offers a draft instead", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let attempts = 0;
+    const ed = new FormattedEditor(host, {
+      onChange: () => {},
+      onEditAttempt: () => {
+        attempts += 1;
+      },
+      onScroll: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+    });
+    ed.setText("hello\n");
+    ed.setEditable(false);
+    ed.format("bold");
+    expect(attempts).toBe(1);
+    expect(ed.getText()).toBe("hello\n");
   });
 
   it("read-only blocks edits and offers a draft; a draft accepts them", () => {
@@ -159,6 +235,8 @@ describe("FormattedEditor (jsdom)", () => {
       onCursor: () => {},
       onHover: () => {},
       onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
     });
     ed.setText("# H\n\npara\n");
     const view = (ed as unknown as { view: EditorView }).view;

@@ -99,6 +99,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rendered block in the formatted pane. (v1 limits: structural table edits — add/remove rows/columns —
   are done in the source view; height alignment and scroll-sync between the two panes are at top-level
   block granularity; adding or removing a whole top-level block falls back to a full re-serialize.)
+- PoC-12 — formatting toolbar: a second toolbar row, shown while a draft is being edited, with
+  **bold, italic, strikethrough, H1, H2, bullet list, numbered list, quote, and code block**. It
+  applies to the pane you last worked in — ProseMirror commands in the Formatted (WYSIWYG) view,
+  Markdown text transforms in Code/Split — and the buttons light up to show the formatting active at
+  the caret in the WYSIWYG. (Link, Table, and Image buttons are deferred.)
 
 ### Changed
 - UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS

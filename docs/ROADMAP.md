@@ -340,8 +340,9 @@ depends on the view-modes shell (PoC‑11). Markdown stays the single source of 
     render/diff/comments — [design/05-live-preview.md](design/05-live-preview.md)).
   - Map editor-document positions ↔ source lines so diff/comment overlays (PoC‑6/PoC‑8) anchor in the
     formatted view too.
-  - A later, optional **formatting toolbar** (bold/italic/heading/list/link/quote) issues the same
-    edits; in source/split modes it edits the Markdown text directly.
+  - ✅ **Formatting toolbar** (shipped): a second toolbar row shown while editing — bold, italic,
+    strikethrough, H1/H2, bullet/ordered list, quote, code. It routes to the focused pane: ProseMirror
+    commands in Formatted, Markdown text transforms in Code/Split. (Link/Table/Image deferred.)
 - **Out of scope (v1):** rich content that cannot round-trip to clean Markdown
   ([01-concept.md](design/01-concept.md) non-goals); real-time co-editing.
 - **Demo / acceptance:** in formatted mode, make a paragraph bold and add a list item; the Markdown

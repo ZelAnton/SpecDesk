@@ -369,6 +369,66 @@ button {
   line-height: 1;
 }
 
+/* ---- §8 components — formatting toolbar (under the toolbar, shown while editing) ----
+   Scoped to :not([hidden]) for the same reason as the inline bars above. A quiet second row: ghost
+   buttons that tint on hover and fill with the accent-soft wash when active (the pressed state). */
+#format-bar:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+#format-bar button {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 0.55rem;
+  font: 500 0.85rem var(--font-ui);
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+#format-bar button:hover {
+  background: var(--surface-sunken);
+}
+
+#format-bar button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* Glyph buttons echo the mark they apply (the design mockup). */
+#format-bar #fmt-bold {
+  font-weight: 700;
+}
+
+#format-bar #fmt-italic {
+  font-style: italic;
+}
+
+#format-bar #fmt-strike {
+  text-decoration: line-through;
+}
+
+#format-bar #fmt-code {
+  font-family: var(--font-mono);
+}
+
+/* A hairline divider between button groups. */
+.fmt-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
 /* ---- Panes ---- */
 #panes {
   display: flex;
@@ -465,6 +525,23 @@ button {
    both the caret line and the synced active line. */
 .cm-editor .cm-line.cm-active-line {
   background: var(--ed-active);
+}
+
+/* Keep the text selection visible over the opaque active-/hover-line backgrounds. Two things hide it
+   by default: (1) CodeMirror gives the selection layer an INLINE `z-index: -1`, painting it below the
+   content (so an opaque line background covers it) — lift it above the content (the caret layer is at
+   an inline z-index ~150, so it stays on top); the `!important` is required to beat the inline style.
+   (2) Its base theme paints a low-contrast lavender on the FOCUSED selection via a deeply-nested
+   selector — restate our accent at 30% (text stays readable through it; reads on white and the active
+   line). The selection now paints over the text, like a native selection, which the 30% keeps legible. */
+.cm-editor .cm-selectionLayer {
+  /* biome-ignore lint/complexity/noImportantStyles: beats CodeMirror's inline z-index:-1 on the selection layer */
+  z-index: 2 !important;
+}
+
+.cm-editor .cm-selectionLayer .cm-selectionBackground {
+  /* biome-ignore lint/complexity/noImportantStyles: beats CodeMirror's built-in high-specificity focused-selection colour */
+  background: color-mix(in srgb, var(--accent) 30%, transparent) !important;
 }
 
 /* Synthetic height-sync padding inserted between source blocks so each lines up vertically with its

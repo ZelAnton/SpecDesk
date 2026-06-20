@@ -46,12 +46,19 @@ export const schema = new Schema({
       ],
       toDOM: (node) => [node.attrs.header ? "th" : "td", 0],
     }),
-  marks: baseSchema.spec.marks,
+  // CommonMark marks (em/strong/code/link) plus GFM strikethrough, so the formatting toolbar's
+  // strikethrough button has a mark to toggle. Serializes back to `~~…~~`.
+  marks: baseSchema.spec.marks.addToEnd("strikethrough", {
+    parseDOM: [{ tag: "s" }, { tag: "del" }, { tag: "strike" }],
+    toDOM: () => ["s", 0],
+  }),
 });
 
-// CommonMark + the GFM table rule. Used only to find structure (the serializer round-trips); inline
-// rules match the CommonMark serializer so non-table content stays diff-stable.
-const tokenizer = new MarkdownIt("commonmark", { html: false }).enable("table");
+// CommonMark + the GFM table and strikethrough rules. Used only to find structure (the serializer
+// round-trips); inline rules match the CommonMark serializer so non-table content stays diff-stable.
+const tokenizer = new MarkdownIt("commonmark", { html: false })
+  .enable("table")
+  .enable("strikethrough");
 
 export const parser = new MarkdownParser(schema, tokenizer, {
   ...defaultMarkdownParser.tokens,
@@ -61,6 +68,7 @@ export const parser = new MarkdownParser(schema, tokenizer, {
   tr: { block: "table_row" },
   th: { block: "table_cell", getAttrs: () => ({ header: true }) },
   td: { block: "table_cell", getAttrs: () => ({ header: false }) },
+  s: { mark: "strikethrough" },
 });
 
 /** One table cell's inline content as a single line of Markdown (pipes escaped). */
@@ -104,7 +112,10 @@ export const serializer = new MarkdownSerializer(
     table_row: () => {},
     table_cell: () => {},
   },
-  defaultMarkdownSerializer.marks,
+  {
+    ...defaultMarkdownSerializer.marks,
+    strikethrough: { open: "~~", close: "~~", mixable: true, expelEnclosingWhitespace: true },
+  },
 );
 
 // Mirror of the native renderer's `rewriteImageUrl` (SpecDesk.Markdown/Renderer.fs): a relative image
