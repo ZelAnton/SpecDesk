@@ -372,20 +372,6 @@ export class MarkdownEditor {
     this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "start" }) });
   }
 
-  /** Current vertical scroll offset (pixels from content top) — the scroll-map's editor coordinate. */
-  scrollTopValue(): number {
-    return this.view.scrollDOM.scrollTop;
-  }
-
-  /**
-   * Set the vertical scroll offset directly (pixels). A fractional value is kept (not rounded): the
-   * scroll map is deterministic so there is no shimmer, and letting the browser snap to device
-   * pixels is smoother than quantizing to whole CSS pixels on HiDPI displays.
-   */
-  setScrollTop(px: number): void {
-    this.view.scrollDOM.scrollTop = px;
-  }
-
   /**
    * Natural top offset (excluding our spacer widgets) of each given 0-based source line. Computed
    * as CodeMirror's actual block top MINUS the spacers currently above that line (read live from

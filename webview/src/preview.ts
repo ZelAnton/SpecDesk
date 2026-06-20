@@ -1,7 +1,10 @@
 /**
- * The rendered-preview pane. It injects the HTML produced natively by Markdig, indexes the
- * `data-line-start`/`data-line-end` attributes into a line map, and uses that map for scroll-sync
- * (docs/design/05-live-preview.md). The container element is the scroll container.
+ * The native Markdig render sink. Since PoC-12 made Split's right pane the editable WYSIWYG, this
+ * pane is **no longer shown** (hidden via CSS); it is kept as the canonical Markdig render — `apply`
+ * injects the HTML and indexes the `data-line-*` line map — to back the upcoming diff (PoC-6) and
+ * comments (PoC-8). The geometry / scroll / highlight methods below are retained scaffolding for
+ * those overlays and are not currently wired (the live editors handle scroll-sync and highlights).
+ * (docs/design/05-live-preview.md.)
  */
 
 /** A rendered top-level block plus its 0-based, inclusive source line range. */

@@ -115,6 +115,16 @@ describe("serializeWithSplice", () => {
     expect(out).toBe("| A | B |\n| --- | --- |\n| X | 2 |\n");
   });
 
+  it("preserves a link reference definition when its adjacent block is edited", () => {
+    // The ref-def folds into the heading's source block but has no ProseMirror node; re-serializing
+    // the heading must keep it verbatim rather than dropping it.
+    const original = "# H\n\n[a]: http://x\n\nSee [a] link.\n";
+    const heading = schema.node("heading", { level: 1 }, [schema.text("H edited")]);
+    const edited = withChildReplaced(parse(original), 0, heading);
+    const out = serializeWithSplice(original, edited);
+    expect(out).toBe("# H edited\n\n[a]: http://x\n\nSee [a] link.\n");
+  });
+
   it("falls back to a whole-document serialize when a block is added (count changes)", () => {
     const doc = parse(RICH);
     const children: PmNode[] = [];

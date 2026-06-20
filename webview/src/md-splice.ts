@@ -15,8 +15,18 @@ function serializeBlock(node: PmNode): string {
   return serializer.serialize(schema.node("doc", null, [node]));
 }
 
-/** The trailing blank lines of a block's source slice (the gap before the next block). */
-function gapLines(lines: string[], block: MdBlock): string[] {
+/**
+ * The block's source AFTER its node content — kept verbatim when the block is re-serialized. This is
+ * the trailing blank-line gap PLUS any non-node source the parser dropped (link reference definitions
+ * fold into a block's slice but have no ProseMirror node, so re-serializing the node alone would lose
+ * them). `contentLineEnd` is the node's source-map end; everything from there to the block end is
+ * preserved. Falls back to scanning the trailing blank run when `contentLineEnd` is absent (the
+ * synthetic leading-blank block, which never reaches this path — it takes the whole-doc fallback).
+ */
+function tailLines(lines: string[], block: MdBlock): string[] {
+  if (block.contentLineEnd !== undefined) {
+    return lines.slice(block.contentLineEnd, block.lineEnd + 1);
+  }
   let start = block.lineEnd + 1;
   while (start - 1 >= block.lineStart && (lines[start - 1] ?? "").trim() === "") {
     start--;
@@ -54,9 +64,10 @@ export function serializeWithSplice(original: string, edited: PmNode): string {
       // Untouched block → keep its exact source (including hard wraps and list markers).
       out.push(...lines.slice(block.lineStart, block.lineEnd + 1));
     } else {
-      // Changed block → re-serialize just this block, then re-attach its original trailing gap.
+      // Changed block → re-serialize just this block, then re-attach its original tail verbatim
+      // (blank-line gap + any non-node source such as link reference definitions).
       out.push(...serializeBlock(edited.child(i)).split("\n"));
-      out.push(...gapLines(lines, block));
+      out.push(...tailLines(lines, block));
     }
   }
   return out.join("\n");

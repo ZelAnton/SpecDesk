@@ -84,8 +84,9 @@ export class FormattedEditor {
   // The open document's directory relative to the repo root, used to resolve relative image links to
   // `app://repo/…` for display (the image node keeps its original relative src for serialization).
   private docDir = "";
-  // The top-level block split of `original`, cached so the per-frame highlight/scroll sync doesn't
-  // re-parse the whole document on every caret/mouse move. Refreshed only when `original` changes.
+  // The top-level block split of the CURRENT document source (= `original` at load, then refreshed
+  // after each in-pane edit), cached so the per-frame highlight/scroll line↔node mapping doesn't
+  // re-parse on every caret/mouse move. Distinct from `original`, which stays the splice baseline.
   private blocks: MdBlock[] = [];
   private editable = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -236,6 +237,11 @@ export class FormattedEditor {
       if (block !== undefined && line >= block.lineStart) {
         index = i;
       }
+    }
+    // A line past the last block (a stale synced line from a now-shorter doc) clears the highlight
+    // rather than pinning the final block.
+    if (index !== null && line > (this.blocks[index]?.lineEnd ?? Number.POSITIVE_INFINITY)) {
+      return null;
     }
     return index;
   }
@@ -419,7 +425,14 @@ export class FormattedEditor {
     }
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      this.onChange(this.getText());
+      const text = this.getText();
+      // Refresh the block map from the edited source so the highlight + scroll line↔node mapping
+      // tracks the live document instead of drifting from the last setText after in-pane edits. Only
+      // `blocks` is refreshed — NOT `original` (the splice baseline `getText` diffs against, which must
+      // stay the loaded/mirrored source). Then re-report the caret so the highlight uses the fresh map.
+      this.blocks = splitTopLevelBlocks(text);
+      this.onChange(text);
+      this.reportCaret();
     }, DEBOUNCE_MS);
   }
 }

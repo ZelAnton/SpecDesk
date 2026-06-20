@@ -24,6 +24,15 @@ export interface MdBlock {
    * (table_row / list_item nodes). Undefined for any other block.
    */
   childLineStarts?: number[];
+  /**
+   * The line AFTER the block's own node content (the top-level token's source-map end). Lines from
+   * here to {@link lineEnd} are trailing source the block's ProseMirror node does NOT represent —
+   * blank lines, and crucially **link reference definitions** (`[id]: url`), which the parser consumes
+   * into its reference map with no node. The block-splice keeps that tail verbatim when a block is
+   * re-serialized, so editing such a block doesn't silently drop the ref-def. Undefined only for the
+   * synthetic leading-blank block (which always takes the whole-document fallback anyway).
+   */
+  contentLineEnd?: number;
 }
 
 // Used ONLY to find top-level block boundaries — never to render — so its inline rules don't matter
@@ -42,12 +51,15 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
   const starts: number[] = [];
   // The child (row/item) source lines of each top-level table/list, keyed by the container's start.
   const childStartsByLine = new Map<number, number[]>();
+  // The end of each top-level block's node content (the token's map end), keyed by its start line.
+  const contentEndByLine = new Map<number, number>();
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
     if (token === undefined || token.level !== 0 || token.map === null) {
       continue;
     }
     starts.push(token.map[0]);
+    contentEndByLine.set(token.map[0], token.map[1]);
 
     const isTable = token.type === "table_open";
     const isList = token.type === "bullet_list_open" || token.type === "ordered_list_open";
@@ -86,12 +98,14 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
     const start = boundaries[i] ?? 0;
     const end = boundaries[i + 1] ?? lines.length;
     const childLineStarts = childStartsByLine.get(start);
+    const contentLineEnd = contentEndByLine.get(start);
     blocks.push({
       text: lines.slice(start, end).join("\n"),
       lineStart: start,
       lineEnd: end - 1,
       // Only set when present — exactOptionalPropertyTypes forbids an explicit `undefined`.
       ...(childLineStarts !== undefined ? { childLineStarts } : {}),
+      ...(contentLineEnd !== undefined ? { contentLineEnd } : {}),
     });
   }
   return blocks;
