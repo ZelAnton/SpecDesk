@@ -19,7 +19,7 @@
 		<PackageVersion Include="Photino.NET" Version="4.0.16" />
 		<!-- Image processing for the paste/drop rule engine (PoC-3). ImageSharp is under the
 		     Six Labors Split License — free for this personal project. -->
-		<PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
+		<PackageVersion Include="SixLabors.ImageSharp" Version="4.0.0" />
 
 		<!-- Logging: the Microsoft.Extensions.Logging abstraction backed by Serilog (rolling file). -->
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.9" />
