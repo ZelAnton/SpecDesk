@@ -120,6 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the
   matching highlighted line when block-height drift had pushed it outside the visible area (the
   highlight was applied but off-screen). The pane you are working in is never scrolled, and a pane
-  that already shows the line stays put.
+  that already shows the line stays put. The reveal stands down while scroll-sync is already moving
+  the other pane (e.g. holding an arrow key), so the two no longer fight and judder.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

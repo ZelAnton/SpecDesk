@@ -195,6 +195,11 @@ function wire(): void {
   const SCROLL_SYNC_MS = 120;
   let scrollDriver: "editor" | "formatted" | "none" = "none";
   let scrollDriverUntil = 0;
+  // When a genuine pane scroll last drove scroll-sync (top-aligned the other pane). While this is
+  // recent, the passive pane is already being positioned by scroll-sync, so a caret-move reveal must
+  // stand down — otherwise the two fight over the passive pane's scrollTop and it judders (most visible
+  // holding an arrow key inside a tall table/list, where sub-block drift makes the two disagree).
+  let lastScrollSyncAt = 0;
   const claimScroll = (who: "editor" | "formatted"): boolean => {
     const now = Date.now();
     if (scrollDriver !== who && now < scrollDriverUntil) {
@@ -235,7 +240,15 @@ function wire(): void {
   const setActive = (line: number | null, reveal: "editor" | "formatted" | null): void => {
     editor.setActiveLine(line);
     formatted.setActiveLine(line);
-    if (reveal !== null && line !== null && isSplit(mode)) {
+    // Skip the reveal while scroll-sync is actively positioning the passive pane (a scroll drove it
+    // within the last window): the two would otherwise fight over its scrollTop and judder. A discrete
+    // caret move with no recent scroll (a click / single arrow) still reveals normally.
+    if (
+      reveal !== null &&
+      line !== null &&
+      isSplit(mode) &&
+      Date.now() - lastScrollSyncAt >= SCROLL_SYNC_MS
+    ) {
       driveScroll(reveal);
       if (reveal === "editor") {
         formatted.revealActiveBlock();
@@ -322,6 +335,7 @@ function wire(): void {
     onScroll: () => {
       if (isSplit(mode) && claimScroll("editor")) {
         formatted.scrollToSourceLine(editor.topVisibleLineExact());
+        lastScrollSyncAt = Date.now();
       }
     },
     onScrollSettle: () => {},
@@ -343,6 +357,7 @@ function wire(): void {
     onScroll: () => {
       if (isSplit(mode) && claimScroll("formatted")) {
         editor.scrollToSourceLine(formatted.topVisibleSourceLine());
+        lastScrollSyncAt = Date.now();
       }
     },
     onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
