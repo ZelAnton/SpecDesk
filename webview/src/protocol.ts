@@ -58,8 +58,9 @@ export interface ErrorPayload {
   message: string;
 }
 
-/** Payload of `action.openExternal` (webview→native): an http/https URL to open in the OS browser.
- *  The host re-validates the scheme; only absolute http/https URLs are honoured. */
+/** Payload of `action.openExternal` (webview→native): a URL to open in the OS — an http/https page in
+ *  the browser, or a mailto: address in the mail client. The host re-validates the scheme; only
+ *  absolute http/https/mailto URLs are honoured (and a mailto: query is stripped). */
 export interface OpenExternalPayload {
   url: string;
 }

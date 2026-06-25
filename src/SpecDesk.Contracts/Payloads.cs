@@ -90,6 +90,6 @@ public sealed record LogPayload(string Level, string Message, string? Data);
 
 /// <summary>Payload of <c>action.openExternal</c> (webview→native): a link the author clicked in the
 /// rendered/formatted view. The host re-validates the scheme and only ever opens absolute http/https
-/// URLs in the OS default browser — the webview is untrusted, so a javascript:/file:/data: URL cannot
-/// reach the shell.</summary>
+/// (in the browser) or mailto: (in the mail client) URLs — the webview is untrusted, so a
+/// javascript:/file:/data: URL cannot reach the shell, and a mailto: query is stripped.</summary>
 public sealed record OpenExternalPayload(string Url);

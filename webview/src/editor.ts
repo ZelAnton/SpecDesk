@@ -10,7 +10,7 @@
 
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
@@ -275,6 +275,34 @@ export class MarkdownEditor {
           hoverLineField,
           activeLineField,
           updates,
+          // Ctrl/Cmd-click a link in the source opens it in the OS browser (the host re-validates the
+          // scheme), matching the formatted view. Registered as a CodeMirror dom handler (not a
+          // bubbling DOM listener on scrollDOM) so returning true consumes the event BEFORE
+          // CodeMirror's modifier-click would add a second cursor; a modifier-click that is not on a
+          // URL returns false and is left to CodeMirror as usual. Prec.highest so it runs first.
+          Prec.highest(
+            EditorView.domEventHandlers({
+              mousedown: (event, view) => {
+                // Primary-button modifier-click only: a middle/right click (even with a modifier) is
+                // left to CodeMirror (e.g. so a right-click can raise the context menu).
+                if (event.button !== 0 || !(event.metaKey || event.ctrlKey)) {
+                  return false;
+                }
+                const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (pos === null) {
+                  return false;
+                }
+                const line = view.state.doc.lineAt(pos);
+                const url = urlAtColumn(line.text, pos - line.from);
+                if (url === null) {
+                  return false;
+                }
+                event.preventDefault();
+                this.onOpenLink(url);
+                return true;
+              },
+            }),
+          ),
         ],
       }),
     });
@@ -304,26 +332,6 @@ export class MarkdownEditor {
       reportHover();
     });
     this.view.scrollDOM.addEventListener("mouseleave", () => this.onHover(null));
-
-    // Ctrl/Cmd-click a link in the source opens it in the OS browser (the host re-validates the
-    // scheme), matching the formatted view. On mousedown so CodeMirror's modifier-click add-a-cursor
-    // is suppressed before it acts — but only when the click lands on a URL, so a modifier-click
-    // elsewhere still adds a cursor as usual.
-    this.view.scrollDOM.addEventListener("mousedown", (event) => {
-      if (!(event.metaKey || event.ctrlKey)) {
-        return;
-      }
-      const pos = this.view.posAtCoords({ x: event.clientX, y: event.clientY });
-      if (pos === null) {
-        return;
-      }
-      const line = this.view.state.doc.lineAt(pos);
-      const url = urlAtColumn(line.text, pos - line.from);
-      if (url !== null) {
-        event.preventDefault();
-        this.onOpenLink(url);
-      }
-    });
 
     // A `beforeinput` only fires for modifying actions (typing, deletion, paste) — never for caret
     // navigation. While read-only the change is blocked anyway, so we use it purely as the signal

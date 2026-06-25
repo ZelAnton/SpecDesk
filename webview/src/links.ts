@@ -21,7 +21,9 @@ export function urlAtColumn(lineText: string, col: number): string | null {
   for (let match = pattern.exec(lineText); match !== null; match = pattern.exec(lineText)) {
     const start = match.index;
     const end = start + match[0].length;
-    if (col >= start && col <= end) {
+    // Half-open [start, end): a click in the whitespace just after a line-ending URL clamps to the
+    // line-end column (== end), which must NOT count as on the URL.
+    if (col >= start && col < end) {
       return match[0].replace(/[.,;:!?]+$/, "");
     }
   }

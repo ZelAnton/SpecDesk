@@ -10,8 +10,8 @@ public static class ExternalLink
 {
 	/// <summary>
 	/// True when <paramref name="raw"/> is an absolute http/https URL or a mailto: address;
-	/// <paramref name="url"/> then holds its canonical form. Otherwise false and an empty
-	/// <paramref name="url"/>.
+	/// <paramref name="url"/> then holds its canonical form. For a mailto: link the query is dropped
+	/// (see below), so only the bare address remains. Otherwise false and an empty <paramref name="url"/>.
 	/// </summary>
 	public static bool TryGetSafeExternalUrl(string? raw, out string url)
 	{
@@ -33,7 +33,27 @@ public static class ExternalLink
 			return false;
 		}
 
-		url = uri.AbsoluteUri;
+		if (uri.Scheme == Uri.UriSchemeMailto)
+		{
+			// Drop the mailto query: its headers (subject/body, and dangerously cc/bcc) would come
+			// straight from untrusted document text, so a crafted link could silently pre-fill a hidden
+			// Bcc in the user's compose window. Open only the bare address; the user types the rest.
+			string full = uri.AbsoluteUri;
+			int query = full.IndexOf('?', StringComparison.Ordinal);
+			string stripped = query >= 0 ? full[..query] : full;
+			// Reject a mailto with no address ("mailto:?subject=x" → "mailto:") — nothing to send to.
+			if (stripped.Length <= Uri.UriSchemeMailto.Length + 1)
+			{
+				return false;
+			}
+
+			url = stripped;
+		}
+		else
+		{
+			url = uri.AbsoluteUri;
+		}
+
 		return true;
 	}
 }

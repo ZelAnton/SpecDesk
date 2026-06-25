@@ -24,6 +24,9 @@ describe("urlAtColumn", () => {
     const line = "see https://example.com now";
     expect(urlAtColumn(line, 0)).toBeNull();
     expect(urlAtColumn(line, 25)).toBeNull();
+    // The position right after the URL (the trailing space / line-end clamp) is not on the URL.
+    expect(urlAtColumn(line, 23)).toBeNull();
+    expect(urlAtColumn("https://x.com", 13)).toBeNull();
   });
 
   it("returns null when the line has no URL", () => {
