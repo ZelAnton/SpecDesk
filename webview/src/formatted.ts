@@ -83,8 +83,10 @@ export interface FormattedEditorCallbacks {
   onEditAttempt: () => void;
   /** Fired (rAF-throttled) as the pane scrolls — drives block-level scroll-sync with the source editor. */
   onScroll: () => void;
-  /** Fired (rAF-throttled) with the caret block's 0-based source line, for cross-pane highlight sync. */
-  onCursor: (line: number | null) => void;
+  /** Fired (rAF-throttled) with the caret block's 0-based source line, for cross-pane highlight sync,
+   *  and whether this was a pure navigation (caret move without a text edit) — used to gate the
+   *  cross-pane reveal scroll, which must fire on selecting a line but not on every keystroke. */
+  onCursor: (line: number | null, navigated: boolean) => void;
   /** Fired (rAF-throttled) with the 0-based source line under the mouse (null outside), for hover sync. */
   onHover: (line: number | null) => void;
   /** Fired when rendered content changes height (e.g. an image finished decoding) — re-run height-sync. */
@@ -101,7 +103,7 @@ export class FormattedEditor {
   private readonly onChange: (text: string) => void;
   private readonly onEditAttempt: () => void;
   private readonly onScroll: () => void;
-  private readonly onCursor: (line: number | null) => void;
+  private readonly onCursor: (line: number | null, navigated: boolean) => void;
   private readonly onHover: (line: number | null) => void;
   private readonly onContentResize: () => void;
   private readonly onFocus: () => void;
@@ -121,6 +123,12 @@ export class FormattedEditor {
   // after setText rebuilds the document (which resets the highlight plugin's state).
   private activeLine: number | null = null;
   private hoverLine: number | null = null;
+  // The active node range resolved by the last pushHighlights, cached so revealSourceLine reuses it
+  // instead of recomputing the line→node mapping on the caret hot path.
+  private activeNodeRange: [number, number] | null = null;
+  // Whether the latest caret report is a pure navigation (click / arrow), not a text edit. Only a
+  // navigation triggers the passive pane's reveal scroll (see index.ts setActive); typing must not.
+  private caretNavigated = false;
   // rAF-throttled caret reporter; assigned in the constructor (needs `this.view`).
   private readonly reportCaret: () => void;
 
@@ -170,6 +178,8 @@ export class FormattedEditor {
           this.scheduleChange();
         }
         if (selectionMoved) {
+          // A transaction that changed the doc is a text edit, not a navigation — gate out the reveal.
+          this.caretNavigated = !changed;
           this.reportCaret();
           this.onActiveChange();
         }
@@ -197,7 +207,7 @@ export class FormattedEditor {
     // decoration back via setActiveLine). Deferred (rAF) so the resulting dispatch runs outside the
     // originating transaction.
     this.reportCaret = rafThrottle(() => {
-      this.onCursor(this.sourceLineForPos(this.view.state.selection.$head));
+      this.onCursor(this.sourceLineForPos(this.view.state.selection.$head), this.caretNavigated);
     });
 
     // Report the block under the mouse as a source line for cross-pane hover sync (index.ts pushes the
@@ -331,6 +341,7 @@ export class FormattedEditor {
     const doc = this.view.state.doc;
     const decos: Decoration[] = [];
     const active = this.nodeRangeForLine(this.activeLine);
+    this.activeNodeRange = active;
     if (active !== null) {
       decos.push(Decoration.node(active[0], active[1], { class: "sd-active-block" }));
     }
@@ -554,6 +565,36 @@ export class FormattedEditor {
       pos += doc.child(i).nodeSize;
     }
     return this.blocks[Math.max(0, doc.childCount - 1)]?.lineStart ?? 0;
+  }
+
+  /**
+   * Scroll the formatted pane the minimum amount so the active-block highlight is visible (no-op if it
+   * already is). Mirrors {@link MarkdownEditor.revealSourceLine}: reveals the synced active-block
+   * highlight when accumulated block-height drift pushed it outside this pane's viewport while the user
+   * works in the other pane. Targets the node range {@link pushHighlights} last resolved for the active
+   * line — a table row / list item inside a container, else the whole top-level block.
+   */
+  revealActiveBlock(): void {
+    const range = this.activeNodeRange;
+    if (range === null) {
+      return;
+    }
+    const dom = this.view.nodeDOM(range[0]);
+    if (!(dom instanceof HTMLElement)) {
+      return;
+    }
+    const elRect = dom.getBoundingClientRect();
+    const viewRect = this.scrollEl.getBoundingClientRect();
+    const margin = 8; // breathing room from the pane edge when we do scroll
+    const above = elRect.top < viewRect.top;
+    const below = elRect.bottom > viewRect.bottom;
+    if (above && !below) {
+      this.scrollEl.scrollTop += elRect.top - viewRect.top - margin;
+    } else if (below && !above) {
+      this.scrollEl.scrollTop += elRect.bottom - viewRect.bottom + margin;
+    }
+    // above && below → the node spans the whole viewport (already visible) → no-op.
+    // !above && !below → fully visible → no-op.
   }
 
   /** Scroll so the block containing the given source line aligns near the top (block granularity). */

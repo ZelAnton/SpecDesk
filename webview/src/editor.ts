@@ -167,8 +167,10 @@ export interface EditorCallbacks {
   onScroll: () => void;
   /** Fired ~120 ms after scrolling stops — used to re-snap the preview precisely to the editor. */
   onScrollSettle: () => void;
-  /** Fired when the cursor moves, with the 0-based line it is on (for active-line highlighting). */
-  onCursor: (line: number) => void;
+  /** Fired when the cursor moves, with the 0-based line it is on (for active-line highlighting) and
+   *  whether this was a pure navigation (caret move without a text edit) — used to gate the cross-pane
+   *  reveal scroll, which must fire on selecting a line but not on every keystroke while typing. */
+  onCursor: (line: number, navigated: boolean) => void;
   /** Fired as the mouse moves, with the 0-based line under the pointer (null when outside). */
   onHover: (line: number | null) => void;
   /** Fired when the editor's own geometry settles (wrap toggle, resize, font load) — re-sync heights. */
@@ -184,7 +186,7 @@ export class MarkdownEditor {
   private readonly onChange: (text: string, version: number) => void;
   private readonly onScroll: () => void;
   private readonly onScrollSettle: () => void;
-  private readonly onCursor: (line: number) => void;
+  private readonly onCursor: (line: number, navigated: boolean) => void;
   private readonly onHover: (line: number | null) => void;
   private readonly onGeometryChange: () => void;
   private readonly onEditAttempt: () => void;
@@ -214,7 +216,10 @@ export class MarkdownEditor {
     // The caret line is reported rAF-deferred so the resulting setActiveLine dispatch (cross-pane
     // sync) runs after this update listener, not re-entrantly within it.
     let cursorLine = 0;
-    const reportCursor = rafThrottle(() => this.onCursor(cursorLine));
+    // Whether the latest caret report is a pure navigation (click / arrow), not a text edit. Only a
+    // navigation triggers the passive pane's reveal scroll (see index.ts setActive); typing must not.
+    let cursorNavigated = false;
+    const reportCursor = rafThrottle(() => this.onCursor(cursorLine, cursorNavigated));
 
     const updates = EditorView.updateListener.of((update) => {
       const silent = update.docChanged && this.suppressChange;
@@ -229,6 +234,7 @@ export class MarkdownEditor {
       // otherwise override the active line the originating (formatted) pane just set.
       if ((update.docChanged || update.selectionSet) && !silent) {
         cursorLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
+        cursorNavigated = !update.docChanged;
         reportCursor();
       }
       // The editor relaid out because of a real transaction other than a content edit or our own
@@ -396,6 +402,17 @@ export class MarkdownEditor {
   scrollToSourceLine(line: number): void {
     const target = this.view.state.doc.line(this.clampLine(line)).from;
     this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "start" }) });
+  }
+
+  /**
+   * Scroll the editor the minimum amount so the given 0-based source line is visible (no-op if it
+   * already is). Used in Split to reveal the synced active-line highlight when accumulated block-height
+   * drift pushed it outside this pane's viewport while the user works in the other pane. Unlike
+   * {@link scrollToSourceLine} (which snaps the line to the top) this uses "nearest" — the least move.
+   */
+  revealSourceLine(line: number): void {
+    const target = this.view.state.doc.line(this.clampLine(line)).from;
+    this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "nearest" }) });
   }
 
   /**
