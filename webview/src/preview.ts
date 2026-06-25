@@ -7,6 +7,8 @@
  * (docs/design/05-live-preview.md.)
  */
 
+import { isOpenableHref } from "./links.js";
+
 /** A rendered top-level block plus its 0-based, inclusive source line range. */
 export interface PreviewBlock {
   el: HTMLElement;
@@ -76,7 +78,7 @@ export class Preview {
       }
       event.preventDefault();
       const href = anchor.getAttribute("href")?.trim() ?? "";
-      if (/^https?:\/\//i.test(href)) {
+      if (isOpenableHref(href)) {
         this.onOpenLink?.(href);
       }
     });

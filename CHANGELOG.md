@@ -104,11 +104,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies to the pane you last worked in — ProseMirror commands in the Formatted (WYSIWYG) view,
   Markdown text transforms in Code/Split — and the buttons light up to show the formatting active at
   the caret in the WYSIWYG. (Link, Table, and Image buttons are deferred.)
-- Clicking an `http(s)` link in the formatted (WYSIWYG) view, the preview, or (with Ctrl/Cmd-click)
-  the source editor now opens it in your default web browser instead of doing nothing. While editing
-  the formatted view, use Ctrl/Cmd-click so a plain click can still place the caret; in read mode a
-  plain click opens it. Only validated http/https URLs are opened — other schemes (e.g. `javascript:`)
-  are ignored, and the webview can never navigate itself.
+- Clicking a link in the document now opens it instead of doing nothing: a web (`http(s)`) link in the
+  formatted (WYSIWYG) view, the preview, or (with Ctrl/Cmd-click) the source editor opens in your
+  default browser, and an email (`mailto:`) link in the formatted view or preview opens in your mail
+  client. While editing the formatted view, use Ctrl/Cmd-click so a plain click can still place the
+  caret; in read mode a plain click opens it. Only validated http/https/mailto links are opened —
+  other schemes (e.g. `javascript:`) are ignored, and the webview can never navigate itself.
 
 ### Changed
 - UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS

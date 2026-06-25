@@ -827,8 +827,9 @@ public sealed class HostController : IDisposable
 		}
 	}
 
-	// Open a link the author clicked in the rendered / formatted view in the OS default browser. The
-	// webview only forwards http(s) links, but it is untrusted, so the URL is re-validated here — a
+	// Open a link the author clicked in the rendered / formatted view in the OS default handler (a web
+	// page in the browser, or a mailto: link in the mail client). The webview only forwards
+	// http(s)/mailto links, but it is untrusted, so the URL is re-validated here — a
 	// javascript:/file:/data: scheme can never reach the shell.
 	private void OnOpenExternal(IpcMessage message)
 	{
@@ -838,9 +839,9 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		if (!ExternalLink.TryGetSafeHttpUrl(payload.Url, out string url))
+		if (!ExternalLink.TryGetSafeExternalUrl(payload.Url, out string url))
 		{
-			_logger.LogWarning("Refused to open a non-http(s) link");
+			_logger.LogWarning("Refused to open a link with an unsupported scheme");
 			return;
 		}
 
@@ -857,10 +858,11 @@ public sealed class HostController : IDisposable
 		}
 	}
 
-	// Launch the OS default browser for an (already validated) http(s) URL. UseShellExecute hands the
-	// URL to the Windows shell's URL handler; macOS / Linux delegate to open / xdg-open. The URL is
-	// passed as a single argument, never built into a shell command string, so there is no injection.
-	// The returned handle is disposed immediately — that releases our reference, not the browser.
+	// Launch the OS default handler for an (already validated) http(s) or mailto: URL. UseShellExecute
+	// hands the URL to the Windows shell's URL handler (browser or mail client); macOS / Linux delegate
+	// to open / xdg-open. The URL is passed as a single argument, never built into a shell command
+	// string, so there is no injection. The returned handle is disposed immediately — that releases our
+	// reference, not the launched app.
 	private static void OpenInBrowser(string url)
 	{
 		if (OperatingSystem.IsWindows())

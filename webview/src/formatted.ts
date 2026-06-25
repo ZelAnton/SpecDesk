@@ -17,6 +17,7 @@ import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirro
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { type Command, EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import { isOpenableHref } from "./links.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
@@ -205,7 +206,7 @@ export class FormattedEditor {
       event.preventDefault();
       const href = anchor.getAttribute("href")?.trim() ?? "";
       const modifier = event.metaKey || event.ctrlKey;
-      if (/^https?:\/\//i.test(href) && (!this.editable || modifier)) {
+      if (isOpenableHref(href) && (!this.editable || modifier)) {
         this.onOpenLink(href);
       }
     });
