@@ -18,6 +18,7 @@ export const Kinds = {
   imagePaste: "image.paste",
   log: "log",
   exportLog: "action.exportLog",
+  openExternal: "action.openExternal",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -55,6 +56,12 @@ export interface DocLoadedPayload {
 /** Payload of `error` (native→webview). */
 export interface ErrorPayload {
   message: string;
+}
+
+/** Payload of `action.openExternal` (webview→native): an http/https URL to open in the OS browser.
+ *  The host re-validates the scheme; only absolute http/https URLs are honoured. */
+export interface OpenExternalPayload {
+  url: string;
 }
 
 /** Payload of `image.paste` (webview→native): one captured image as base64. */

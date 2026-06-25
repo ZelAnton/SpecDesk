@@ -95,6 +95,10 @@ export interface FormattedEditorCallbacks {
   onFocus: () => void;
   /** Fired when the selection/marks change — lets the toolbar refresh its active-button state. */
   onActiveChange: () => void;
+  /** Fired with an http/https URL the author clicked, to open in the OS browser (the webview must
+   *  never navigate itself). In read mode a plain click opens it; while editing it takes Ctrl/Cmd-click
+   *  so a plain click can still place the caret. */
+  onOpenLink: (url: string) => void;
 }
 
 export class FormattedEditor {
@@ -108,6 +112,7 @@ export class FormattedEditor {
   private readonly onContentResize: () => void;
   private readonly onFocus: () => void;
   private readonly onActiveChange: () => void;
+  private readonly onOpenLink: (url: string) => void;
   // The Markdown this document was last loaded from — the baseline block-splice diffs against.
   private original = "";
   // The open document's directory relative to the repo root, used to resolve relative image links to
@@ -142,6 +147,7 @@ export class FormattedEditor {
     this.onContentResize = callbacks.onContentResize;
     this.onFocus = callbacks.onFocus;
     this.onActiveChange = callbacks.onActiveChange;
+    this.onOpenLink = callbacks.onOpenLink;
     this.view = new EditorView(parent, {
       state: this.freshState(emptyDoc()),
       // The view stays contentEditable so the caret/selection work and a typing attempt is detectable
@@ -187,12 +193,20 @@ export class FormattedEditor {
     });
 
     // Anchor clicks must never navigate the webview away (it would replace the whole app), and a
-    // `javascript:` URL must never run. Swallow them — the same guard the read-only preview uses.
-    // Essential in read-only formatted mode, where the content is not editable and a link would
-    // otherwise follow its href. (TODO: open http(s) links in the OS browser, like the preview.)
+    // `javascript:` URL must never run. Swallow the in-webview navigation; hand a real web link
+    // (http/https) to the host to open in the OS browser instead. While editing, a plain click should
+    // place the caret (for editing the link text), so opening then needs Ctrl/Cmd-click; in read mode
+    // a plain click opens. Other schemes / repo-relative links are ignored (just the navigation guard).
     this.view.dom.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement | null)?.closest("a") !== null) {
-        event.preventDefault();
+      const anchor = (event.target as HTMLElement | null)?.closest("a");
+      if (!anchor) {
+        return;
+      }
+      event.preventDefault();
+      const href = anchor.getAttribute("href")?.trim() ?? "";
+      const modifier = event.metaKey || event.ctrlKey;
+      if (/^https?:\/\//i.test(href) && (!this.editable || modifier)) {
+        this.onOpenLink(href);
       }
     });
 

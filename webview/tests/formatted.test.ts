@@ -50,6 +50,7 @@ function mount(): FormattedEditor {
     onContentResize: () => {},
     onFocus: () => {},
     onActiveChange: () => {},
+    onOpenLink: () => {},
   });
 }
 
@@ -91,6 +92,7 @@ describe("FormattedEditor (jsdom)", () => {
       onContentResize: () => {},
       onFocus: () => {},
       onActiveChange: () => {},
+      onOpenLink: () => {},
     });
     // Blocks: heading (line 0), paragraph (line 2), bullet list (line 4).
     ed.setText("# H\n\npara\n\n- a\n- b\n");
@@ -120,6 +122,7 @@ describe("FormattedEditor (jsdom)", () => {
       onContentResize: () => {},
       onFocus: () => {},
       onActiveChange: () => {},
+      onOpenLink: () => {},
     });
     // Rows at lines 0 (header), 2 (1|2), 3 (3|4); line 1 is the separator.
     ed.setText("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
@@ -144,6 +147,7 @@ describe("FormattedEditor (jsdom)", () => {
       onContentResize: () => {},
       onFocus: () => {},
       onActiveChange: () => {},
+      onOpenLink: () => {},
     });
     ed.setText("- one\n- two\n- three\n");
 
@@ -214,6 +218,7 @@ describe("FormattedEditor (jsdom)", () => {
       onContentResize: () => {},
       onFocus: () => {},
       onActiveChange: () => {},
+      onOpenLink: () => {},
     });
     ed.setText("hello\n");
     ed.setEditable(false);
@@ -237,6 +242,7 @@ describe("FormattedEditor (jsdom)", () => {
       onContentResize: () => {},
       onFocus: () => {},
       onActiveChange: () => {},
+      onOpenLink: () => {},
     });
     ed.setText("# H\n\npara\n");
     const view = (ed as unknown as { view: EditorView }).view;

@@ -54,6 +54,7 @@ export class Preview {
   private blocks: PreviewBlock[] = [];
   private onContentResize: (() => void) | undefined;
   private onHover: ((line: number | null) => void) | undefined;
+  private onOpenLink: ((url: string) => void) | undefined;
 
   constructor(el: HTMLElement) {
     this.el = el;
@@ -64,13 +65,19 @@ export class Preview {
       this.onHover?.(Number.isNaN(line) ? null : line);
     });
     this.el.addEventListener("mouseleave", () => this.onHover?.(null));
-    // Links in the preview must never navigate the app away (the whole webview would be
-    // replaced), and a `javascript:` URL must never execute. Swallow anchor clicks; opening
-    // links externally is a later concern. This also blocks the `javascript:` scheme that
-    // Markdig does not sanitize. (TODO(PoC-3+): open http(s) links in the OS browser.)
+    // Links in the preview must never navigate the app away (the whole webview would be replaced),
+    // and a `javascript:` URL must never execute. Swallow the in-webview navigation; a real web link
+    // (http/https) is instead handed to the host to open in the OS browser. Any other scheme (incl.
+    // the `javascript:` Markdig does not sanitize, or repo-relative links) is simply ignored.
     this.el.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement | null)?.closest("a") !== null) {
-        event.preventDefault();
+      const anchor = (event.target as HTMLElement | null)?.closest("a");
+      if (!anchor) {
+        return;
+      }
+      event.preventDefault();
+      const href = anchor.getAttribute("href")?.trim() ?? "";
+      if (/^https?:\/\//i.test(href)) {
+        this.onOpenLink?.(href);
       }
     });
   }
@@ -83,6 +90,11 @@ export class Preview {
   /** Register a callback fired with the 0-based source line of the block under the mouse (or null). */
   setOnHover(callback: (line: number | null) => void): void {
     this.onHover = callback;
+  }
+
+  /** Register a callback fired with an http/https URL the author clicked, to open in the OS browser. */
+  setOnOpenLink(callback: (url: string) => void): void {
+    this.onOpenLink = callback;
   }
 
   /** Inner width of the preview (its wrapping width) — for diagnostics. */

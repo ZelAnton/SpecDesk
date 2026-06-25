@@ -172,6 +172,8 @@ function wire(): void {
   // The native Markdig render. No longer a visible pane (Split now pairs the source editor with the
   // editable WYSIWYG); kept updated, hidden, as the canonical render for the future diff/comments.
   const preview = new Preview(previewEl);
+  // A web link clicked in the preview opens in the OS browser (the host re-validates the scheme).
+  preview.setOnOpenLink((url) => ipc.send(Kinds.openExternal, { url }));
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
   // "start typing → offer to begin a draft" behaviour in both editors.
   let editing = false;
@@ -368,6 +370,8 @@ function wire(): void {
       refreshFormatButtons();
     },
     onActiveChange: () => refreshFormatButtons(),
+    // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
+    onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
   });
 
   // The source editor is padded to match the formatted view's block heights (formatted is the fixed

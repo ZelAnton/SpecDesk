@@ -20,6 +20,7 @@ public static class MessageKinds
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string ExportLog = "action.exportLog";
+	public const string ActionOpenExternal = "action.openExternal";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -86,3 +87,9 @@ public sealed record VersionNoteSuggestedPayload(string Note);
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>
 public sealed record LogPayload(string Level, string Message, string? Data);
+
+/// <summary>Payload of <c>action.openExternal</c> (webview→native): a link the author clicked in the
+/// rendered/formatted view. The host re-validates the scheme and only ever opens absolute http/https
+/// URLs in the OS default browser — the webview is untrusted, so a javascript:/file:/data: URL cannot
+/// reach the shell.</summary>
+public sealed record OpenExternalPayload(string Url);

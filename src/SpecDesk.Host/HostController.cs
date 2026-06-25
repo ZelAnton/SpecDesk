@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SpecDesk.Contracts;
@@ -170,6 +172,9 @@ public sealed class HostController : IDisposable
 				break;
 			case MessageKinds.ExportLog:
 				OnExportLog();
+				break;
+			case MessageKinds.ActionOpenExternal:
+				OnOpenExternal(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
@@ -819,6 +824,56 @@ public sealed class HostController : IDisposable
 			_send(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload($"Could not export log: {ex.Message}")));
+		}
+	}
+
+	// Open a link the author clicked in the rendered / formatted view in the OS default browser. The
+	// webview only forwards http(s) links, but it is untrusted, so the URL is re-validated here — a
+	// javascript:/file:/data: scheme can never reach the shell.
+	private void OnOpenExternal(IpcMessage message)
+	{
+		OpenExternalPayload? payload = SafeGetPayload<OpenExternalPayload>(message);
+		if (payload is null)
+		{
+			return;
+		}
+
+		if (!ExternalLink.TryGetSafeHttpUrl(payload.Url, out string url))
+		{
+			_logger.LogWarning("Refused to open a non-http(s) link");
+			return;
+		}
+
+		try
+		{
+			OpenInBrowser(url);
+			_logger.LogInformation("Opened external link {Url}", url);
+		}
+		catch (Exception ex) when (
+			ex is Win32Exception or InvalidOperationException or PlatformNotSupportedException or FileNotFoundException)
+		{
+			_logger.LogError(ex, "Could not open external link {Url}", url);
+			SendError("Could not open the link.");
+		}
+	}
+
+	// Launch the OS default browser for an (already validated) http(s) URL. UseShellExecute hands the
+	// URL to the Windows shell's URL handler; macOS / Linux delegate to open / xdg-open. The URL is
+	// passed as a single argument, never built into a shell command string, so there is no injection.
+	// The returned handle is disposed immediately — that releases our reference, not the browser.
+	private static void OpenInBrowser(string url)
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
+		}
+		else if (OperatingSystem.IsMacOS())
+		{
+			Process.Start("open", url)?.Dispose();
+		}
+		else
+		{
+			Process.Start("xdg-open", url)?.Dispose();
 		}
 	}
 
