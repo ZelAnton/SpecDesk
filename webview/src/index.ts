@@ -208,6 +208,14 @@ function wire(): void {
     scrollDriver = "none";
     scrollDriverUntil = Date.now() + SCROLL_SYNC_MS;
   };
+  // Claim `who` as the authoritative scroll pane for the next sync window. Used when a deliberate caret
+  // move in `who` reveals the synced highlight in the OTHER pane: that other pane's programmatic reveal
+  // scroll must not echo back and drive `who`, yet `who`'s own caret-induced scroll must still sync
+  // normally — so we make `who` the driver rather than muting both panes (which suppressScroll does).
+  const driveScroll = (who: "editor" | "formatted"): void => {
+    scrollDriver = who;
+    scrollDriverUntil = Date.now() + SCROLL_SYNC_MS;
+  };
 
   // Forward-declared so the cross-sync callbacks below can reference both editors; assigned just after.
   let editor: MarkdownEditor;
@@ -217,9 +225,24 @@ function wire(): void {
   // source line, shown in BOTH panes — the source editor highlights the line, the formatted view
   // highlights the block containing it. Whichever pane the user interacts with reports its position
   // (rAF-throttled), and both panes are updated together, so the highlights stay in step in Split.
-  const setActive = (line: number | null): void => {
+  // `reveal` is the pane the user just navigated the caret in (null = a text edit or a programmatic
+  // set — highlight only, no reveal). After a deliberate caret move in Split, bring the synced
+  // highlight into view on the OTHER (passive) pane: accumulated block-height drift can place it
+  // outside that pane's viewport, where it would be invisible. Reveal is minimal (nearest) and only
+  // touches the passive pane — never the one the user is reading. driveScroll keeps the active pane
+  // authoritative so the passive reveal scroll doesn't echo back, while the active pane's own
+  // scroll-sync keeps working (suppressScroll would have muted that too).
+  const setActive = (line: number | null, reveal: "editor" | "formatted" | null): void => {
     editor.setActiveLine(line);
     formatted.setActiveLine(line);
+    if (reveal !== null && line !== null && isSplit(mode)) {
+      driveScroll(reveal);
+      if (reveal === "editor") {
+        formatted.revealActiveBlock();
+      } else {
+        editor.revealSourceLine(line);
+      }
+    }
   };
   const setHover = (line: number | null): void => {
     editor.setHoverLine(line);
@@ -302,7 +325,7 @@ function wire(): void {
       }
     },
     onScrollSettle: () => {},
-    onCursor: (line) => setActive(line),
+    onCursor: (line, navigated) => setActive(line, navigated ? "editor" : null),
     onHover: (line) => setHover(line),
     onGeometryChange: () => reconcileHeights(),
     onEditAttempt: offerDraft,
@@ -322,7 +345,7 @@ function wire(): void {
         editor.scrollToSourceLine(formatted.topVisibleSourceLine());
       }
     },
-    onCursor: (line) => setActive(line),
+    onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
     onHover: (line) => setHover(line),
     onContentResize: () => reconcileHeights(),
     onFocus: () => {
@@ -443,8 +466,9 @@ function wire(): void {
       // Hydrate the formatted view now too, so the Split pane isn't blank for one debounce interval
       // until the editor's mirror fires. setText is silent (no onChange), so this sends nothing.
       formatted.setText(payload.text);
-      // Seed the synced highlight at the top of the document (both panes).
-      setActive(0);
+      // Seed the synced highlight at the top of the document (both panes). No reveal: a freshly loaded
+      // doc is scrolled to the top, so line 0 is already visible — and this is not a user navigation.
+      setActive(0, null);
       setHover(null);
       // Align the source editor's line heights to the freshly rendered formatted blocks.
       reconcileHeights();
