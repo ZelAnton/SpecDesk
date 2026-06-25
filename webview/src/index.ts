@@ -349,6 +349,8 @@ function wire(): void {
       lastFocused = "editor";
       refreshFormatButtons();
     },
+    // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
+    onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
   });
 
   // The formatted (WYSIWYG) editor — a sibling view of the same Markdown. Edits serialize back via

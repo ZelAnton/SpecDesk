@@ -15,6 +15,7 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import type { EditorSpacer } from "./height-sync.js";
+import { urlAtColumn } from "./links.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { rafThrottle } from "./raf.js";
 
@@ -179,6 +180,8 @@ export interface EditorCallbacks {
   onEditAttempt: () => void;
   /** Fired when the editor gains focus — lets the toolbar route formatting to the active pane in Split. */
   onFocus: () => void;
+  /** Fired with an http/https URL the author Ctrl/Cmd-clicked in the source, to open in the OS browser. */
+  onOpenLink: (url: string) => void;
 }
 
 export class MarkdownEditor {
@@ -191,6 +194,7 @@ export class MarkdownEditor {
   private readonly onGeometryChange: () => void;
   private readonly onEditAttempt: () => void;
   private readonly onFocus: () => void;
+  private readonly onOpenLink: (url: string) => void;
   private readonly wrap = new Compartment();
   private readonly editable = new Compartment();
   private version = 0;
@@ -212,6 +216,7 @@ export class MarkdownEditor {
     this.onGeometryChange = callbacks.onGeometryChange;
     this.onEditAttempt = callbacks.onEditAttempt;
     this.onFocus = callbacks.onFocus;
+    this.onOpenLink = callbacks.onOpenLink;
 
     // The caret line is reported rAF-deferred so the resulting setActiveLine dispatch (cross-pane
     // sync) runs after this update listener, not re-entrantly within it.
@@ -299,6 +304,26 @@ export class MarkdownEditor {
       reportHover();
     });
     this.view.scrollDOM.addEventListener("mouseleave", () => this.onHover(null));
+
+    // Ctrl/Cmd-click a link in the source opens it in the OS browser (the host re-validates the
+    // scheme), matching the formatted view. On mousedown so CodeMirror's modifier-click add-a-cursor
+    // is suppressed before it acts — but only when the click lands on a URL, so a modifier-click
+    // elsewhere still adds a cursor as usual.
+    this.view.scrollDOM.addEventListener("mousedown", (event) => {
+      if (!(event.metaKey || event.ctrlKey)) {
+        return;
+      }
+      const pos = this.view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) {
+        return;
+      }
+      const line = this.view.state.doc.lineAt(pos);
+      const url = urlAtColumn(line.text, pos - line.from);
+      if (url !== null) {
+        event.preventDefault();
+        this.onOpenLink(url);
+      }
+    });
 
     // A `beforeinput` only fires for modifying actions (typing, deletion, paste) — never for caret
     // navigation. While read-only the change is blocked anyway, so we use it purely as the signal
