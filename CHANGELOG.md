@@ -125,6 +125,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tall block (a big table, long list, or wrapped paragraph) instead of snapping at block boundaries.
   The formatted pane interpolates the source editor's fractional top line across the matching block's
   height, and reports the line actually at its own viewport top rather than the block's first line.
+- PoC-6 groundwork — semantic (AST-level) diff engine (`SpecDesk.Diff`): given two versions of a
+  document it classifies each top-level block as unchanged / added / removed / changed (same kind of
+  node, edited — e.g. a heading-level change) / moved (identical content, reordered), so a review can
+  read as structure rather than line noise. Pure and input-agnostic (any base/head text pair). Not yet
+  wired to the UI — the rendered diff view and raw/rendered toggle follow.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

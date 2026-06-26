@@ -7,11 +7,13 @@
 
 	<!-- F# compile order is significant — list test files in dependency order. -->
 	<ItemGroup>
-		<Compile Include="PlaceholderTests.fs" />
+		<Compile Include="AstDiffTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\SpecDesk.Diff\SpecDesk.Diff.fsproj" />
+		<!-- For the Ast.* discriminated-union types the diff entries carry. -->
+		<ProjectReference Include="..\..\src\SpecDesk.Markdown\SpecDesk.Markdown.fsproj" />
 	</ItemGroup>
 
 	<ItemGroup>

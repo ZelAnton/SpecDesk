@@ -6,7 +6,7 @@
 
 	<!-- F# compile order is significant — list files in dependency order. -->
 	<ItemGroup>
-		<Compile Include="Placeholder.fs" />
+		<Compile Include="AstDiff.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
