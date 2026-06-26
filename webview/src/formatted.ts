@@ -563,23 +563,48 @@ export class FormattedEditor {
   }
 
   /**
-   * The 0-based source line at the top of the viewport (block granularity), for cross-mode sync.
-   * Uses block DOM geometry rather than posAtCoords: the pane has horizontal padding, so a probe near
-   * the left edge would fall outside the ProseMirror content and posAtCoords would return null (which
-   * made the formatted→source scroll-sync snap to the top). Finds the topmost still-visible block.
+   * The 0-based source line at the top of the viewport, sub-block: the topmost block straddling the
+   * viewport top, plus how far the viewport has scrolled into it (its height interpolated back across
+   * the block's source-line span). So a partly-scrolled tall block reports the line actually at the
+   * top, not the block's first line — the inverse of {@link scrollToSourceLine}. Uses block DOM
+   * geometry rather than posAtCoords: the pane has horizontal padding, so a left-edge probe would fall
+   * outside the ProseMirror content and posAtCoords would return null.
    */
   topVisibleSourceLine(): number {
-    const top = this.scrollEl.getBoundingClientRect().top + 4;
+    const containerTop = this.scrollEl.getBoundingClientRect().top;
+    const scrollTop = this.scrollEl.scrollTop;
     const doc = this.view.state.doc;
+    // `blocks` and the PM doc are parallel-indexed and normally 1:1; bound the scan by the shorter so
+    // that on a divergence we stop at the last matched block rather than skipping past a hole and
+    // pinning an earlier one. (A deeper index↔node misalignment is a pre-existing module-wide concern
+    // shared with blockGeometry/nodeRangeForLine, not specific to scroll-sync.)
+    const limit = Math.min(doc.childCount, this.blocks.length);
     let pos = 0;
-    for (let i = 0; i < doc.childCount; i++) {
+    let current: { top: number; height: number; block: MdBlock } | undefined;
+    for (let i = 0; i < limit; i++) {
       const dom = this.view.nodeDOM(pos);
-      if (dom instanceof HTMLElement && dom.getBoundingClientRect().bottom > top) {
-        return this.blocks[i]?.lineStart ?? 0;
+      const block = this.blocks[i];
+      if (dom instanceof HTMLElement && block !== undefined) {
+        const rect = dom.getBoundingClientRect();
+        const top = rect.top - containerTop + scrollTop;
+        if (top > scrollTop) {
+          break; // first block below the viewport top — the previous one straddles it
+        }
+        current = { top, height: rect.height, block };
       }
       pos += doc.child(i).nodeSize;
     }
-    return this.blocks[Math.max(0, doc.childCount - 1)]?.lineStart ?? 0;
+    if (current === undefined) {
+      return this.blocks[0]?.lineStart ?? 0;
+    }
+    // Span the CONTENT lines only (contentLineEnd = markdown-it's exclusive content end): the rendered
+    // block's pixels cover its content, while the trailing blank lines ride with the block in the source
+    // split but belong to the inter-block gap — mirrors preview.ts, which uses Markdig's blank-free
+    // data-line-end. The lineEnd clamp still lets a viewport sitting in that gap report the blank line.
+    const span =
+      (current.block.contentLineEnd ?? current.block.lineEnd + 1) - current.block.lineStart;
+    const fraction = current.height > 0 ? (scrollTop - current.top) / current.height : 0;
+    return Math.min(current.block.lineStart + Math.floor(fraction * span), current.block.lineEnd);
   }
 
   /**
@@ -612,7 +637,12 @@ export class FormattedEditor {
     // !above && !below → fully visible → no-op.
   }
 
-  /** Scroll so the block containing the given source line aligns near the top (block granularity). */
+  /**
+   * Scroll so the (possibly fractional) source line aligns at the top, the fractional part
+   * interpolated across the matching block's height — sub-block precision matching the source editor's
+   * fractional top line ({@link MarkdownEditor.topVisibleLineExact}), so scrolling tracks smoothly
+   * within a tall block instead of snapping to block tops.
+   */
   scrollToSourceLine(line: number): void {
     let index = 0;
     for (let i = 0; i < this.blocks.length; i++) {
@@ -623,17 +653,22 @@ export class FormattedEditor {
     }
     const doc = this.view.state.doc;
     const clamped = Math.max(0, Math.min(index, doc.childCount - 1));
+    const block = this.blocks[clamped];
     let pos = 0;
     for (let i = 0; i < clamped; i++) {
       pos += doc.child(i).nodeSize;
     }
     const dom = this.view.nodeDOM(pos);
-    if (dom instanceof HTMLElement) {
-      this.scrollEl.scrollTop =
-        dom.getBoundingClientRect().top -
-        this.scrollEl.getBoundingClientRect().top +
-        this.scrollEl.scrollTop;
+    if (block === undefined || !(dom instanceof HTMLElement)) {
+      return;
     }
+    const rect = dom.getBoundingClientRect();
+    const blockTop = rect.top - this.scrollEl.getBoundingClientRect().top + this.scrollEl.scrollTop;
+    // Content-line span only (see topVisibleSourceLine): the rendered block's height covers its content
+    // lines, not the trailing blank lines that ride with the block in the source split.
+    const span = (block.contentLineEnd ?? block.lineEnd + 1) - block.lineStart;
+    const fraction = Math.min(Math.max((line - block.lineStart) / span, 0), 1);
+    this.scrollEl.scrollTop = blockTop + fraction * rect.height;
   }
 
   private scheduleChange(): void {

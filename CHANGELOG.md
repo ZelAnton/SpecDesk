@@ -121,6 +121,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The host loads its web (`wwwroot`) and sample assets from the application base directory rather
   than the current working directory, so it runs correctly when launched from any folder (and as a
   single-file exe), not only from the project/output directory.
+- Split view scroll-sync is now sub-block: scrolling either pane tracks the other smoothly *within* a
+  tall block (a big table, long list, or wrapped paragraph) instead of snapping at block boundaries.
+  The formatted pane interpolates the source editor's fractional top line across the matching block's
+  height, and reports the line actually at its own viewport top rather than the block's first line.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the
