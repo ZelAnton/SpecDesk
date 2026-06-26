@@ -31,6 +31,19 @@ export const Kinds = {
   diffResult: "diff.result",
 } as const;
 
+/** A changed child (table row / list item) of a changed container (native→webview, inside a
+ *  {@link DiffEntryPayload}'s `children`). Ordinals match the container's rendered children. */
+export interface ChildDiffPayload {
+  /** "added" | "removed" | "changed" | "moved". */
+  kind: string;
+  /** 0-based HEAD child ordinal (added/changed/moved); -1 for "removed". */
+  childIndex: number;
+  /** For "removed": the head child it sat before (the marker anchors there); -1 otherwise. */
+  anchorIndex: number;
+  /** For "removed": the deleted child's flattened text; "" otherwise. */
+  removedText: string;
+}
+
 /** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted. */
 export interface DiffEntryPayload {
   /** "added" | "removed" | "changed" | "moved". */
@@ -42,6 +55,12 @@ export interface DiffEntryPayload {
   anchorLine: number;
   /** For "removed": the deleted block's base source text (for the marker); "" otherwise. */
   removedText: string;
+  /** Non-empty only for a changed list/table whose individual rows/items changed — then the UI
+   *  highlights those children rather than washing the whole container. */
+  children: ChildDiffPayload[];
+  /** The base rendered text of a changed plain block (paragraph/heading), for the webview's inline
+   *  word-diff; "" otherwise. */
+  baseText: string;
 }
 
 /** Payload of `diff.result` (native→webview): the changed blocks of the working copy vs the last

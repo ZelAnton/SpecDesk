@@ -953,7 +953,11 @@ public sealed class HostController : IDisposable
 		List<DiffEntryPayload> entries = new(wire.Length);
 		foreach (DiffWire.DiffWireEntry w in wire)
 		{
-			entries.Add(new DiffEntryPayload(w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText));
+			ChildDiffPayload[] children = w.Children.Length == 0
+				? []
+				: Array.ConvertAll(w.Children, c => new ChildDiffPayload(c.Kind, c.ChildIndex, c.AnchorIndex, c.RemovedText));
+			entries.Add(new DiffEntryPayload(
+				w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText, children, w.BaseText));
 		}
 
 		_send(IpcSerializer.SerializeEvent(

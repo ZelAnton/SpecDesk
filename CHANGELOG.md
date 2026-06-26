@@ -131,12 +131,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read as structure rather than line noise. Pure and input-agnostic (any base/head text pair).
 - PoC-6 — "Show changes" review overlay: a toolbar toggle diffs the working copy against the document's
   last saved version (fully local, no GitHub) and washes the changed content in place — added (green),
-  edited (accent), and moved (violet) blocks, with a marker standing in for removed blocks. The Code
-  (source) pane highlights the changed lines and the Formatted (WYSIWYG) pane highlights the changed
-  blocks; in Split both panes show the overlay at once, so the existing Code/Split/Formatted switch
-  doubles as the raw↔rendered diff toggle. The native host computes the structural diff (`SpecDesk.Diff`)
-  and the editors decorate the head document; a real edit clears the overlay (the snapshot is stale —
-  click again to recompute), and a stale result is dropped by document version.
+  edited (amber), and moved (violet) blocks, with a marker standing in for removed blocks. Each hue is
+  distinct from the caret block's own accent wash, a kind bar sits flush at the highlight's left edge,
+  and the Formatted pane tags each change with a small "Added/Updated/Moved/Deleted by you" pill above
+  its top-left (the local compare attributes to you; multi-author attribution follows with the review-
+  against-others flow). The Code (source) pane highlights the changed lines and the Formatted (WYSIWYG)
+  pane highlights the changed blocks; in Split both panes show the overlay at once, so the existing
+  Code/Split/Formatted switch doubles as the raw↔rendered diff toggle. The native host computes the
+  structural diff (`SpecDesk.Diff`) and the editors decorate the head document; a real edit clears the
+  overlay (the snapshot is stale — click again to recompute), and a stale result is dropped by version.
+- "Show changes" — finer granularity: a changed **list or table** now highlights the individual rows /
+  items that changed rather than washing the whole container, and a changed **paragraph / heading** in
+  the Formatted pane highlights the specific changed words inline (added/changed words washed, deleted
+  words shown struck-through) — unless too much of it changed, in which case it falls back to washing the
+  whole block as "edited". The native diff descends into a changed container's children; the webview
+  word-diffs the rendered text where positions are natural.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

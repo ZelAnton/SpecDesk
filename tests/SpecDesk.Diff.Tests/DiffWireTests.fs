@@ -49,3 +49,37 @@ let ``unchanged blocks are omitted entirely`` () =
     // Only the heading changed; the two surrounding paragraphs are unchanged and not emitted.
     let w = toWire "intro\n\n## Sec\n\nbody\n" "intro\n\n### Sec\n\nbody\n"
     Assert.That(kinds w, Is.EqualTo "changed")
+
+[<Test>]
+let ``a changed list item is one changed child, not a whole-list wash`` () =
+    let w = toWire "- one\n- two\n- three\n" "- one\n- two changed\n- three\n"
+    Assert.That(kinds w, Is.EqualTo "changed") // one top-level changed entry: the list
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.[0].ChildIndex, Is.EqualTo 1) // the second item
+
+[<Test>]
+let ``an added table row is one added child on the table entry`` () =
+    let w =
+        toWire "| A | B |\n| - | - |\n| 1 | 2 |\n" "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
+
+    Assert.That(kinds w, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "added")
+    // Child 0 is the header row, 1 the first body row, 2 the appended row.
+    Assert.That(w.[0].Children.[0].ChildIndex, Is.EqualTo 2)
+
+[<Test>]
+let ``a removed list item is a removed child anchored after the preceding item`` () =
+    let w = toWire "- one\n- two\n- three\n" "- one\n- three\n"
+    Assert.That(kinds w, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "removed")
+    Assert.That(w.[0].Children.[0].AnchorIndex, Is.EqualTo 1) // after the kept first item
+    Assert.That(w.[0].Children.[0].RemovedText, Does.Contain "two")
+
+[<Test>]
+let ``a changed paragraph carries no children (whole-block wash)`` () =
+    let w = toWire "## Overview\n\nBody.\n" "### Overview\n\nBody.\n"
+    Assert.That(kinds w, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.Length, Is.EqualTo 0)

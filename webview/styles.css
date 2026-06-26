@@ -706,10 +706,10 @@ button {
 
 /* ---- Review / compare overlay (PoC-6) — "Show changes" ----
    Washes the changed lines (Code) / blocks (Formatted) of the working copy vs the last saved version,
-   by kind: added (green), changed (accent), moved (violet); a removed-block marker (rose) stands in for
-   deleted content. All colours come from the add/del/mov diff tokens and --accent-soft, which already
-   cover every theme. The accent bar is an inset box-shadow (no layout shift); these rules follow the
-   active/hover blocks so the diff wash wins on a block that is both. */
+   by kind: added (green), edited (amber), moved (violet); a removed-block marker (rose) stands in for
+   deleted content. "Edited" deliberately uses the warn (amber) tokens, NOT --accent-soft — the active
+   block already washes accent-soft, so an edited block must read as a distinct hue, not "the caret is
+   here". The colours come from the add/del/mov/warn tokens, which cover every theme. */
 
 /* Code (CodeMirror): whole-line decorations. The bar sits inside the line so it shows even when the
    active-line background (higher specificity) wins the fill on the caret line. */
@@ -719,8 +719,8 @@ button {
 }
 
 .cm-diff-changed {
-  background: var(--accent-soft);
-  box-shadow: inset 0.18rem 0 0 var(--accent-soft-border);
+  background: var(--warn-bg);
+  box-shadow: inset 0.18rem 0 0 var(--warn-dot);
 }
 
 .cm-diff-moved {
@@ -742,27 +742,100 @@ button {
   text-overflow: ellipsis;
 }
 
-/* Formatted (ProseMirror): top-level node decorations. The first shadow extends the wash into the
-   gutter (matching the active/hover blocks); the inset shadow draws the kind's accent bar. */
+/* Formatted (ProseMirror): top-level node decorations. Two stacked OUTSET shadows render the wash and
+   its kind bar with the bar FLUSH at the wash's left edge (matching the Code pane): the lower shadow
+   (-0.4rem, bar colour) shows only in the 0.2rem the upper shadow (-0.2rem, wash colour) doesn't cover,
+   so the highlight's leftmost 0.2rem is the bar and the rest is the wash — no inset gap. */
 .sd-doc .sd-diff-added {
   background: var(--add-bg);
   box-shadow:
-    -0.4rem 0 0 var(--add-bg),
-    inset 0.2rem 0 0 var(--add-border);
+    -0.2rem 0 0 var(--add-bg),
+    -0.4rem 0 0 var(--add-border);
 }
 
 .sd-doc .sd-diff-changed {
-  background: var(--accent-soft);
+  background: var(--warn-bg);
   box-shadow:
-    -0.4rem 0 0 var(--accent-soft),
-    inset 0.2rem 0 0 var(--accent-soft-border);
+    -0.2rem 0 0 var(--warn-bg),
+    -0.4rem 0 0 var(--warn-dot);
 }
 
 .sd-doc .sd-diff-moved {
   background: var(--mov-bg);
   box-shadow:
-    -0.4rem 0 0 var(--mov-bg),
-    inset 0.2rem 0 0 var(--mov-border);
+    -0.2rem 0 0 var(--mov-bg),
+    -0.4rem 0 0 var(--mov-border);
+}
+
+/* Change annotation (PoC-6): a small pill above the top-left of each changed block naming the kind and
+   author ("Added by you" …). The text rides in on the node decoration as `data-diff-label`; the local
+   "Show changes" always attributes to "you" (it diffs the working copy against the last saved version),
+   so multi-author wording awaits the review-against-others flow (git blame / PR base). */
+.sd-doc .sd-diff-added,
+.sd-doc .sd-diff-changed,
+.sd-doc .sd-diff-moved,
+.sd-doc .sd-diff-inline {
+  position: relative;
+}
+
+.sd-doc .sd-diff-added::before,
+.sd-doc .sd-diff-changed::before,
+.sd-doc .sd-diff-moved::before,
+.sd-doc .sd-diff-inline::before {
+  content: attr(data-diff-label);
+  position: absolute;
+  top: -0.72rem;
+  left: 0;
+  font-family: var(--font-ui);
+  font-size: 0.66rem;
+  font-weight: 600;
+  line-height: 1.45;
+  padding: 0 0.34rem;
+  border: 1px solid;
+  border-radius: var(--r-pill);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.sd-doc .sd-diff-added::before {
+  color: var(--add-text);
+  background: var(--add-bg);
+  border-color: var(--add-border);
+}
+
+.sd-doc .sd-diff-changed::before {
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  border-color: var(--warn-dot);
+}
+
+.sd-doc .sd-diff-moved::before {
+  color: var(--mov-text);
+  background: var(--mov-bg);
+  border-color: var(--mov-border);
+}
+
+/* A paragraph/heading shown with inline word changes: the "Updated" pill only, no block wash (the
+   changed words carry the signal). Reuses the edited (amber) pill colours. */
+.sd-doc .sd-diff-inline::before {
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  border-color: var(--warn-dot);
+}
+
+/* Inline word-level changes inside an edited block: added/changed words wash green; deleted words show
+   as a struck rose ghost at the deletion point. */
+.sd-doc .sd-diff-word-added {
+  background: var(--add-hl);
+  border-radius: 2px;
+}
+
+.sd-doc .sd-diff-word-removed {
+  background: var(--del-hl);
+  color: var(--del-text);
+  text-decoration: line-through;
+  border-radius: 2px;
+  opacity: 0.8;
 }
 
 .sd-doc .sd-diff-removed-marker {

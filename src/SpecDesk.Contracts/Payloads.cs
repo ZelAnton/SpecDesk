@@ -97,14 +97,34 @@ public sealed record LogPayload(string Level, string Message, string? Data);
 public sealed record OpenExternalPayload(string Url);
 
 /// <summary>
+/// One changed child (table row / list item) of a changed container (native→webview, inside a
+/// <see cref="DiffEntryPayload"/>'s <c>Children</c>). Ordinals match the container's rendered children.
+/// For added/changed/moved, <paramref name="ChildIndex"/> is the 0-based HEAD child ordinal; for removed,
+/// <paramref name="AnchorIndex"/> is the head child it sat before and <paramref name="RemovedText"/> is the
+/// base child's flattened text (ChildIndex is unused).
+/// </summary>
+public sealed record ChildDiffPayload(string Kind, int ChildIndex, int AnchorIndex, string RemovedText);
+
+/// <summary>
 /// One changed top-level block in a rendered diff (native→webview, inside <see cref="DiffResultPayload"/>).
 /// Unchanged blocks are omitted. <paramref name="Kind"/> is added/removed/changed/moved.
 /// For added/changed/moved, <paramref name="LineStart"/>/<paramref name="LineEnd"/> are the 0-based,
 /// inclusive HEAD source-line range of the (after) block; the webview decorates those lines/blocks.
 /// For removed, the block is not in the head, so <paramref name="AnchorLine"/> is the head line it sat
 /// before and <paramref name="RemovedText"/> is its base source (for a marker); LineStart/LineEnd are unused.
+/// <paramref name="Children"/> is non-empty only for a changed list/table whose individual rows/items
+/// changed — then the UI highlights those children instead of washing the whole container.
+/// <paramref name="BaseText"/> is the base rendered text of a changed plain block (paragraph/heading),
+/// for the webview's inline word-diff; "" otherwise.
 /// </summary>
-public sealed record DiffEntryPayload(string Kind, int LineStart, int LineEnd, int AnchorLine, string RemovedText);
+public sealed record DiffEntryPayload(
+    string Kind,
+    int LineStart,
+    int LineEnd,
+    int AnchorLine,
+    string RemovedText,
+    IReadOnlyList<ChildDiffPayload> Children,
+    string BaseText);
 
 /// <summary>Payload of <c>diff.result</c> (native→webview): the changed blocks of the working copy vs the
 /// last committed version, in document order. The editor-content version rides on the envelope so the

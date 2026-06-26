@@ -182,6 +182,16 @@ describe("FormattedEditor (jsdom)", () => {
     expect(host.querySelector(".sd-diff-changed")?.textContent).toContain("H");
     expect(host.querySelector(".sd-diff-added")?.textContent).toContain("keep");
     expect(host.querySelector(".sd-diff-moved")?.textContent).toContain("more");
+    // Each block carries its change-annotation label (the CSS ::before pill reads it via attr()).
+    expect(host.querySelector(".sd-diff-changed")?.getAttribute("data-diff-label")).toBe(
+      "Updated by you",
+    );
+    expect(host.querySelector(".sd-diff-added")?.getAttribute("data-diff-label")).toBe(
+      "Added by you",
+    );
+    expect(host.querySelector(".sd-diff-moved")?.getAttribute("data-diff-label")).toBe(
+      "Moved by you",
+    );
 
     ed.clearDiff();
     expect(host.querySelectorAll(".sd-diff-changed, .sd-diff-added, .sd-diff-moved")).toHaveLength(
@@ -201,6 +211,7 @@ describe("FormattedEditor (jsdom)", () => {
     const marker = host.querySelector(".sd-diff-removed-marker");
     const heading = host.querySelector("h1");
     const kept = [...host.querySelectorAll("p")].find((p) => p.textContent?.includes("keep"));
+    expect(marker?.textContent).toContain("Deleted by you");
     expect(marker?.textContent).toContain("gone block");
     expect(heading && marker && follows(heading, marker)).toBe(true); // after the heading
     expect(marker && kept && follows(marker, kept)).toBe(true); // before the kept paragraph
@@ -227,6 +238,71 @@ describe("FormattedEditor (jsdom)", () => {
     marker = host.querySelector(".sd-diff-removed-marker");
     const p = kept();
     expect(marker && p && follows(p, marker)).toBe(true);
+  });
+
+  it("a sub-block mark washes the individual list item, not the whole list", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("- one\n- two\n- three\n"); // items at lines 0, 1, 2
+
+    // A changed row/item mark (sub) on the second item's line.
+    ed.setDiff([
+      { kind: "changed", lineStart: 1, lineEnd: 1, anchorLine: -1, removedText: "", sub: true },
+    ]);
+    const changed = host.querySelectorAll(".sd-diff-changed");
+    expect(changed).toHaveLength(1);
+    expect(changed[0]?.tagName.toLowerCase()).toBe("li");
+    expect(changed[0]?.textContent).toContain("two");
+    expect(changed[0]?.textContent).not.toContain("three");
+    // A sub-block mark gets no annotation pill (only whole-block changes do).
+    expect(changed[0]?.getAttribute("data-diff-label")).toBeNull();
+  });
+
+  it("highlights changed words inline inside an edited paragraph (no whole-block wash)", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("The quick brown fox jumps over the lazy dog today.\n");
+    // Same paragraph, one word different in the base — inline word-diff should mark just that word.
+    ed.setDiff([
+      {
+        kind: "changed",
+        lineStart: 0,
+        lineEnd: 0,
+        anchorLine: -1,
+        removedText: "",
+        baseText: "The quick brown fox leaps over the lazy dog today.",
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("jumps"))).toBe(true);
+    const removed = [...host.querySelectorAll(".sd-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("leaps"))).toBe(true);
+    // The whole-block "changed" wash is NOT applied — inline took over — but the pill still shows.
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    expect(host.querySelector(".sd-diff-inline")?.getAttribute("data-diff-label")).toBe(
+      "Updated by you",
+    );
+  });
+
+  it("falls back to a whole-block wash when too much of the paragraph changed", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("totally different wording here now\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        lineStart: 0,
+        lineEnd: 0,
+        anchorLine: -1,
+        removedText: "",
+        baseText: "alpha beta gamma delta",
+      },
+    ]);
+
+    // Most of the paragraph changed → no inline words; the whole block washes as "edited".
+    expect(host.querySelectorAll(".sd-diff-word-added")).toHaveLength(0);
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(1);
+    expect(host.querySelector(".sd-diff-changed")?.getAttribute("data-diff-label")).toBe(
+      "Updated by you",
+    );
   });
 
   it("format() applies ProseMirror commands and reports the active marks/blocks", () => {

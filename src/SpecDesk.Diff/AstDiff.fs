@@ -48,7 +48,7 @@ let private kindTag (block: Ast.Block) : string =
     | Ast.Table _ -> "table"
     | Ast.ThematicBreak -> "thematicBreak"
 
-let rec private inlineText (inl: Ast.Inline) : string =
+let rec inlineText (inl: Ast.Inline) : string =
     match inl with
     | Ast.Text t
     | Ast.Code t -> t
@@ -58,11 +58,11 @@ let rec private inlineText (inl: Ast.Inline) : string =
     | Ast.Image(alt, _) -> alt
     | Ast.LineBreak -> " "
 
-and private inlinesText (xs: Ast.Inline list) : string =
+and inlinesText (xs: Ast.Inline list) : string =
     xs |> List.map inlineText |> String.concat ""
 
 /// The visible text of a block, flattened — the basis for change-similarity scoring.
-let rec private blockText (block: Ast.Block) : string =
+let rec blockText (block: Ast.Block) : string =
     match block with
     | Ast.Heading(_, xs)
     | Ast.Paragraph xs -> inlinesText xs

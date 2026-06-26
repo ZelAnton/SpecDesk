@@ -296,6 +296,54 @@ public sealed class HostControllerLifecycleTests
         });
     }
 
+    [Test]
+    public void Compare_AChangedList_EmitsPerChildEntriesThroughTheWire()
+    {
+        FakeVersioning versioning = new() { HeadContent = "- one\n- two\n- three\n" };
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("- one\n- two changed\n- three\n"),
+            version: 3));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 3));
+
+        DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
+        Assert.That(payload, Is.Not.Null);
+        DiffEntryPayload entry = payload!.Entries.Single();
+        Assert.Multiple(() =>
+        {
+            // The whole list is one changed entry, but it carries the per-child (item) diff.
+            Assert.That(entry.Kind, Is.EqualTo("changed"));
+            Assert.That(entry.Children, Has.Count.EqualTo(1));
+            Assert.That(entry.Children[0].Kind, Is.EqualTo("changed"));
+            Assert.That(entry.Children[0].ChildIndex, Is.EqualTo(1)); // the second item
+        });
+    }
+
+    [Test]
+    public void Compare_AChangedParagraph_CarriesBaseTextForInlineDiff()
+    {
+        FakeVersioning versioning = new() { HeadContent = "Original wording here today.\n" };
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("Original phrasing here today.\n"),
+            version: 4));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 4));
+
+        DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
+        Assert.That(payload, Is.Not.Null);
+        DiffEntryPayload entry = payload!.Entries.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(entry.Kind, Is.EqualTo("changed"));
+            Assert.That(entry.Children, Is.Empty); // a plain block — no children
+            Assert.That(entry.BaseText, Does.Contain("wording")); // the base wording, for the webview word-diff
+        });
+    }
+
     private StatusPayload? LatestStatus()
     {
         lock (_gate)

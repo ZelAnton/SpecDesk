@@ -117,7 +117,7 @@ const activeLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-/** One changed top-level block in the review overlay (PoC-6). Mirrors the `diff.result` wire shape. */
+/** One changed block (or sub-block: a table row / list item) in the review overlay (PoC-6). */
 export interface DiffMark {
   /** "added" | "removed" | "changed" | "moved". */
   kind: string;
@@ -125,6 +125,13 @@ export interface DiffMark {
   lineEnd: number;
   anchorLine: number;
   removedText: string;
+  /** True for a row/item mark inside a changed container — the Formatted pane omits the annotation
+   *  pill for these (it would clutter a table/list and a `<tr>` can't anchor an absolute label). */
+  sub?: boolean;
+  /** For a changed paragraph/heading: the base rendered text. The Formatted pane word-diffs it against
+   *  the block's current text to highlight the changed words inline (or washes the whole block if too
+   *  much changed). The Code pane ignores it (it stays whole-line). */
+  baseText?: string;
 }
 
 /** A block widget standing in for a removed block (which is absent from the head document). */
@@ -143,10 +150,12 @@ class RemovedWidget extends WidgetType {
     element.setAttribute("aria-hidden", "true");
     const lines = this.text.split("\n");
     const first = (lines[0] ?? "").trim();
+    const preview = first || "(empty block)";
+    // Lead with the annotation ("Deleted by you") for parity with the Formatted pane's removed marker.
     element.textContent =
       lines.length > 1
-        ? `− ${first} (… ${lines.length} lines removed)`
-        : `− ${first || "(removed)"}`;
+        ? `Deleted by you — ${preview} (… ${lines.length} lines)`
+        : `Deleted by you — ${preview}`;
     return element;
   }
 }

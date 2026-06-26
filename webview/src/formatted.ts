@@ -25,8 +25,12 @@ import { serializeWithSplice } from "./md-splice.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import type { BlockGeometry } from "./preview.js";
 import { rafThrottle } from "./raf.js";
+import { wordDiff } from "./word-diff.js";
 
 const DEBOUNCE_MS = 120;
+// Above this fraction of a changed paragraph/heading differing, inline word highlighting becomes
+// confetti — fall back to washing the whole block as "edited" (the user's "too significant" case).
+const INLINE_DIFF_MAX_RATIO = 0.5;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
 
 /** Resolve a required node type from the shared schema (these are always present — strict indexing
@@ -97,15 +101,46 @@ const diffPlugin = new Plugin<DecorationSet>({
   },
 });
 
-/** The block-widget DOM standing in for a removed block (absent from the head document). */
+/** The change-annotation label for a diff kind. The local "Show changes" diffs the working copy against
+ *  the last saved version, so every change is the current author's — hence "by you". Multi-author wording
+ *  ("Updated by Max, Phil and Petr") awaits the review-against-others flow (git blame / a PR base). */
+function diffLabel(kind: string): string {
+  switch (kind) {
+    case "added":
+      return "Added by you";
+    case "changed":
+      return "Updated by you";
+    case "moved":
+      return "Moved by you";
+    case "removed":
+      return "Deleted by you";
+    default:
+      return "Changed by you";
+  }
+}
+
+/** The inline strikethrough span standing in for words deleted inside a changed paragraph/heading. */
+function removedWordDOM(text: string): HTMLElement {
+  const span = document.createElement("span");
+  span.className = "sd-diff-word-removed";
+  span.setAttribute("aria-hidden", "true");
+  span.textContent = text;
+  return span;
+}
+
+/** The block-widget DOM standing in for a removed block (absent from the head document). It is the
+ *  removed kind's own annotation, so it leads with the "Deleted by you" label then previews the text. */
 function removedMarkerDOM(text: string): HTMLElement {
   const element = document.createElement("div");
   element.className = "sd-diff-removed-marker";
   element.setAttribute("aria-hidden", "true");
   const lines = text.split("\n");
   const first = (lines[0] ?? "").trim();
+  const preview = first || "(empty block)";
   element.textContent =
-    lines.length > 1 ? `− ${first} (… ${lines.length} lines removed)` : `− ${first || "(removed)"}`;
+    lines.length > 1
+      ? `${diffLabel("removed")} — ${preview} (… ${lines.length} lines)`
+      : `${diffLabel("removed")} — ${preview}`;
   return element;
 }
 
@@ -456,16 +491,85 @@ export class FormattedEditor {
         );
         continue;
       }
-      // A changed/added/moved entry is one top-level block; wash the whole block (the source span maps
-      // into a single node, so blockIndexForLine on its first line suffices).
-      const index = this.blockIndexForLine(mark.lineStart);
-      if (index === null || index < 0 || index >= doc.childCount) {
+      // Resolve the node to wash: a whole top-level block, or — for a sub-block mark (a changed table
+      // row / list item) — the individual row/item that nodeRangeForLine narrows to inside a table/list.
+      const range = this.nodeRangeForLine(mark.lineStart);
+      if (range === null) {
         continue;
       }
-      const [from, to] = blockRange(doc, index);
-      decos.push(Decoration.node(from, to, { class: `sd-diff-${mark.kind}` }));
+      // A changed paragraph/heading with base text tries an inline word-diff first (highlight the
+      // changed words rather than wash the whole block); pushInlineWordDiff returns true when it applied.
+      if (
+        mark.kind === "changed" &&
+        mark.sub !== true &&
+        mark.baseText !== undefined &&
+        this.pushInlineWordDiff(decos, range[0], mark.baseText)
+      ) {
+        continue;
+      }
+      // Whole-block wash. `data-diff-label` drives the CSS ::before annotation pill — for whole-block
+      // changes only; a row/item (mark.sub) skips it (it would clutter, and a <tr> can't anchor a label).
+      const attrs: { class: string; "data-diff-label"?: string } = {
+        class: `sd-diff-${mark.kind}`,
+      };
+      if (mark.sub !== true) {
+        attrs["data-diff-label"] = diffLabel(mark.kind);
+      }
+      decos.push(Decoration.node(range[0], range[1], attrs));
     }
     this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.create(doc, decos)));
+  }
+
+  /**
+   * Try to highlight the changed words inside a changed paragraph/heading instead of washing the whole
+   * block. Returns false — leaving the caller to wash — when the node isn't pure text (an offset can't
+   * map to a position safely), too much changed (word confetti), or nothing word-level differs (a
+   * markup-only edit). A pure-text block's content size equals its text length (no leaf nodes between
+   * characters), so a text offset `o` maps to the document position `blockFrom + 1 + o`.
+   */
+  private pushInlineWordDiff(decos: Decoration[], blockFrom: number, baseText: string): boolean {
+    const node = this.view.state.doc.nodeAt(blockFrom);
+    if (node === null) {
+      return false;
+    }
+    const headText = node.textContent;
+    if (node.content.size !== headText.length) {
+      return false; // images / hard breaks break the offset→position identity — wash the whole block
+    }
+    // The word-LCS is O(tokens²); cap it so a pathologically long block washes whole instead of stalling.
+    if (headText.length > 4000 || baseText.length > 4000) {
+      return false;
+    }
+    const diff = wordDiff(baseText, headText);
+    if (diff.changeRatio > INLINE_DIFF_MAX_RATIO || !diff.ops.some((op) => op.type !== "equal")) {
+      return false;
+    }
+    const contentStart = blockFrom + 1;
+    let delSeq = 0;
+    for (const op of diff.ops) {
+      if (op.type === "add") {
+        decos.push(
+          Decoration.inline(contentStart + op.start, contentStart + op.end, {
+            class: "sd-diff-word-added",
+          }),
+        );
+      } else if (op.type === "del") {
+        decos.push(
+          Decoration.widget(contentStart + op.start, removedWordDOM(op.text), {
+            side: -1,
+            key: `sd-delword-${blockFrom}-${delSeq++}`,
+          }),
+        );
+      }
+    }
+    // The annotation pill only (sd-diff-inline = position:relative + ::before label), with no block wash.
+    decos.push(
+      Decoration.node(blockFrom, blockFrom + node.nodeSize, {
+        class: "sd-diff-inline",
+        "data-diff-label": diffLabel("changed"),
+      }),
+    );
+    return true;
   }
 
   /** Show the review/compare overlay: wash each changed top-level block by kind and mark removed blocks.
