@@ -8,6 +8,7 @@ open System.Collections.Generic
 open System.IO
 open System.Text.RegularExpressions
 open Markdig
+open Markdig.Extensions.Footnotes
 open Markdig.Extensions.Tables
 open Markdig.Renderers
 open Markdig.Renderers.Html
@@ -22,6 +23,31 @@ type LineSpan = { LineStart: int; LineEnd: int }
 type RenderResult = { Html: string; LineMap: LineSpan[] }
 
 let private schemeRegex = Regex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*:", RegexOptions.Compiled)
+
+/// The lowercase scheme of a URL (without the trailing colon), or "" when it has none (relative/anchor).
+let private schemeOf (url: string) : string =
+    let m = schemeRegex.Match url
+    if m.Success then url.Substring(0, m.Length - 1).ToLowerInvariant() else ""
+
+/// A clickable link href is kept only for a navigable scheme (or a relative/anchor link). Untrusted
+/// document content can otherwise carry `javascript:`/`data:` hrefs that — absent a CSP — would run in
+/// the privileged webview if ever activated; neutralize them at this single canonical render point.
+let private linkAllowed (url: string) : bool =
+    match schemeOf url with
+    | ""
+    | "http"
+    | "https"
+    | "mailto"
+    | "app" -> true
+    | _ -> false
+
+/// An image src may be web/app/relative/data (an <img> does not execute its source); reject only an
+/// explicit script scheme.
+let private imageAllowed (url: string) : bool =
+    match schemeOf url with
+    | "javascript"
+    | "vbscript" -> false
+    | _ -> true
 
 /// Collapse `.`/`..` segments in a forward-slash relative path.
 let private normalizeRelative (path: string) : string =
@@ -52,10 +78,23 @@ let render (docDir: string) (text: string) : RenderResult =
     let doc = Markdown.Parse(text, Pipeline.shared)
 
     for link in doc.Descendants<LinkInline>() do
-        if link.IsImage then
-            match link.Url with
-            | null -> ()
-            | url -> link.Url <- rewriteImageUrl docDir url
+        match link.Url with
+        | null -> ()
+        | url ->
+            if link.IsImage then
+                let rewritten = rewriteImageUrl docDir url
+                link.Url <- (if imageAllowed rewritten then rewritten else "")
+            else
+                // Block a dangerous-scheme href before it reaches the webview DOM (defense in depth
+                // alongside the click-handler guard and CSP).
+                link.Url <- (if linkAllowed url then url else "#")
+
+    // Angle-bracket autolinks (`<javascript:evil>`) parse to AutolinkInline, NOT LinkInline, so the
+    // loop above misses them — neutralize a dangerous-scheme autolink href the same way. (AutolinkInline.Url
+    // is non-nullable, unlike LinkInline.Url, so no null guard is needed.)
+    for auto in doc.Descendants<AutolinkInline>() do
+        if not (linkAllowed auto.Url) then
+            auto.Url <- "#"
 
     let lines = Lines.build text
     let spans = ResizeArray<LineSpan>()
@@ -75,6 +114,12 @@ let render (docDir: string) (text: string) : RenderResult =
     // spacer); only the leaf rendered elements (<p>, <h*>, <li>, <tr>, <hr>, <pre>) carry anchors.
     let rec tagTree (block: Block) =
         match block with
+        // No source-aligned rendered element, so no anchor / LineMap entry — tagging them desyncs the
+        // map from the DOM: link reference definitions are consumed into the parser's reference map
+        // (they render nothing), and the footnote group is relocated to the document end at render time.
+        | :? LinkReferenceDefinitionGroup -> ()
+        | :? LinkReferenceDefinition -> ()
+        | :? FootnoteGroup -> ()
         | :? Table as table ->
             for rowObject in table do
                 match rowObject with

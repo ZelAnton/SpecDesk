@@ -132,5 +132,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   highlight was applied but off-screen). The pane you are working in is never scrolled, and a pane
   that already shows the line stays put. The reveal stands down while scroll-sync is already moving
   the other pane (e.g. holding an arrow key), so the two no longer fight and judder.
+- Discarding a draft no longer deletes the published branch when the draft name collides with it;
+  starting a draft on a detached HEAD is refused cleanly, and re-initializing a repository that
+  already has commits no longer repoints HEAD at a non-existent branch.
+- Pasting an image while a save / discard / autosave runs no longer races the git working tree (which
+  could corrupt the staged asset), and an image whose insertion fails now surfaces a plain error
+  instead of leaving the paste hanging.
+- Autosave can no longer write one document's text into another document's file when documents are
+  switched quickly.
+- The rendered line map no longer over-counts on link reference definitions and footnotes (which
+  produce no source-ordered element), keeping scroll-sync and diff/comment anchoring aligned.
+
+### Security
+- Image paste/drop writes are confined to the repository: a malicious `.spectool.toml` image rule can
+  no longer use a crafted format extension, or a folder reached through a symlink/junction, to write a
+  file outside the repo. The `app://` asset server likewise refuses to follow a symlink/junction out
+  of the repo when serving a file.
+- Dangerous-scheme links and autolinks (`javascript:`, `data:`, …) in untrusted document content are
+  neutralized when the Markdown is rendered, so they cannot run in the webview. An oversized IPC frame
+  from the webview is dropped before it is parsed (a denial-of-service guard), and an unexpected
+  handler fault can no longer tear down the message pump.
 
 [Unreleased]: https://github.com/ZelAnton/SpecDesk/commits/main

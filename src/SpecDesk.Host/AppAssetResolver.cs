@@ -55,7 +55,48 @@ public static class AppAssetResolver
 			return null;
 		}
 
+		// GetFullPath does NOT resolve reparse points, so a symlink/junction committed inside the
+		// (untrusted) opened repo could textually pass the check above yet point outside the tree. A
+		// spec repo has no reason to use links under it, so refuse to serve a path that traverses one
+		// rather than follow it out of the repo and leak an arbitrary file into the webview.
+		if (TraversesReparsePoint(rootFull, candidate))
+		{
+			return null;
+		}
+
 		return new ResolvedAsset(candidate, ContentTypeFor(candidate));
+	}
+
+	// True when any existing path component between the root and the candidate is a reparse point
+	// (symlink/junction). Walks each segment and stats it; stops at the first non-existent component.
+	private static bool TraversesReparsePoint(string rootFull, string candidate)
+	{
+		string relative = Path.GetRelativePath(rootFull, candidate);
+		string current = rootFull;
+		foreach (string segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+		{
+			if (segment.Length == 0 || segment == ".")
+			{
+				continue;
+			}
+
+			current = Path.Combine(current, segment);
+			FileSystemInfo? info =
+				Directory.Exists(current) ? new DirectoryInfo(current)
+				: File.Exists(current) ? new FileInfo(current)
+				: null;
+			if (info is null)
+			{
+				break;
+			}
+
+			if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/// <summary>Map a file extension to a MIME content type, defaulting to a binary stream.</summary>

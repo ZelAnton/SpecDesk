@@ -29,6 +29,15 @@ let private toForwardSlashes (path: string) : string = path.Replace('\\', '/')
 let private nameStem (path: string) : string =
     Path.GetFileNameWithoutExtension path |> Option.ofObj |> Option.defaultValue ""
 
+/// Reduce a file extension to lowercase ASCII alphanumerics (fallback "png"). The `Preferred` format
+/// comes from an UNTRUSTED .spectool.toml and is interpolated straight into a file path; a real
+/// extension never contains separators or dots, so stripping them defeats a `preferred = "png/../.."`
+/// path-traversal write outside the repo.
+let private sanitizeExt (ext: string) : string =
+    let isAsciiAlnum c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+    let cleaned = String(ext.ToLowerInvariant() |> Seq.filter isAsciiAlnum |> Seq.toArray)
+    if cleaned = "" then "png" else cleaned
+
 /// Containment guard (same rule as the PoC-1 app:// resolver): the target must stay inside root.
 let private isInside (rootFull: string) (candidate: string) : bool =
     let candidateFull = Path.GetFullPath candidate
@@ -42,6 +51,31 @@ let private isInside (rootFull: string) (candidate: string) : bool =
 
     candidateFull.StartsWith(prefix, comparison)
     || String.Equals(candidateFull, rootFull, comparison)
+
+/// True when any existing path component below the root is a reparse point (symlink/junction). The
+/// opened repo is UNTRUSTED and Path.GetFullPath does not resolve reparse points, so a committed
+/// junction could pass the textual isInside check yet make a write land outside the repo. Reject it
+/// (a spec repo has no reason to use links under it), mirroring the app:// read-path guard.
+let private traversesReparsePoint (rootFull: string) (candidate: string) : bool =
+    let relative = Path.GetRelativePath(rootFull, Path.GetFullPath candidate)
+    let segments = relative.Split([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
+    let mutable current = rootFull
+    let mutable found = false
+
+    for segment in segments do
+        if not found && segment <> "" && segment <> "." then
+            current <- Path.Combine(current, segment)
+
+            let info: FileSystemInfo option =
+                if Directory.Exists current then Some(DirectoryInfo current)
+                elif File.Exists current then Some(FileInfo current)
+                else None
+
+            match info with
+            | Some i when i.Attributes.HasFlag FileAttributes.ReparsePoint -> found <- true
+            | _ -> ()
+
+    found
 
 let private buildResult (docDirAbs: string) (filePath: string) (alt: string) (reused: bool) : InsertResult =
     let relative = toForwardSlashes (Path.GetRelativePath(docDirAbs, filePath))
@@ -68,6 +102,7 @@ let insertImage
             if rel = "." then "" else toForwardSlashes rel
 
         let hash8 = processed.Hash.Substring(0, 8)
+        let ext = sanitizeExt processed.Ext
 
         let altText =
             match capture.OriginalName with
@@ -92,12 +127,14 @@ let insertImage
 
         if not (isInside rootFull folderAbs) then
             Error "The configured image folder is outside the repository."
+        elif traversesReparsePoint rootFull folderAbs then
+            Error "The image folder path leaves the repository through a link."
         else
             Directory.CreateDirectory(folderAbs) |> ignore
 
             let existing =
                 if Directory.Exists folderAbs then
-                    Directory.EnumerateFiles(folderAbs, $"*{hash8}.{processed.Ext}") |> Seq.tryHead
+                    Directory.EnumerateFiles(folderAbs, $"*{hash8}.{ext}") |> Seq.tryHead
                 else
                     None
 
@@ -108,16 +145,24 @@ let insertImage
                 let context = { baseContext with Seq = seq }
                 let stem = Slug.slugify config.Case (Tokens.expand context config.Naming)
                 let stem = Slug.truncatePreservingSuffix config.MaxNameLength hash8 stem
+                // A naming pattern can expand to nothing (all symbols stripped, or an empty token); never
+                // write a bare ".ext" hidden file — fall back to the content hash, which is also unique.
+                let stem = if stem = "" then hash8 else stem
 
-                let mutable target = Path.Combine(folderAbs, $"{stem}.{processed.Ext}")
+                let mutable target = Path.Combine(folderAbs, $"{stem}.{ext}")
                 let mutable disambiguator = 1
 
                 while File.Exists target do
-                    target <- Path.Combine(folderAbs, $"{stem}-{disambiguator}.{processed.Ext}")
+                    target <- Path.Combine(folderAbs, $"{stem}-{disambiguator}.{ext}")
                     disambiguator <- disambiguator + 1
 
-                File.WriteAllBytes(target, processed.Bytes)
-                Ok(buildResult docDirAbs target altText false)
+                // Durable defence (in addition to sanitizeExt and the slugified stem): the final path
+                // must still resolve inside the repo before we write.
+                if not (isInside rootFull (Path.GetFullPath target)) then
+                    Error "The resolved image path is outside the repository."
+                else
+                    File.WriteAllBytes(target, processed.Bytes)
+                    Ok(buildResult docDirAbs target altText false)
 
 /// C#-friendly entry for the host: plain inputs (nulls allowed), config parsed from raw TOML text.
 let insertForHost
@@ -135,9 +180,18 @@ let insertForHost
           OriginalName = Option.ofObj originalName
           Mime = Option.ofObj mime }
 
-    match insertImage repoRoot docPath config capture with
-    | Ok result ->
-        { Markdown = result.Markdown
-          Error = null
-          Reused = result.Reused }
-    | Error e -> { Markdown = null; Error = e; Reused = false }
+    // insertImage does filesystem I/O (CreateDirectory / WriteAllBytes) and path math that can throw on
+    // a crafted config/path (illegal chars, reserved device name, permission denied). The host runs this
+    // on a background task and awaits a reply, so a thrown exception would silently drop the paste and
+    // hang the webview — map every failure to a plain Error instead.
+    try
+        match insertImage repoRoot docPath config capture with
+        | Ok result ->
+            { Markdown = result.Markdown
+              Error = null
+              Reused = result.Reused }
+        | Error e -> { Markdown = null; Error = e; Reused = false }
+    with ex ->
+        { Markdown = null
+          Error = $"Could not save the image: {ex.Message}"
+          Reused = false }

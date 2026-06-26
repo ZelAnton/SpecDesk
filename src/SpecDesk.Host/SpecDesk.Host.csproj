@@ -44,8 +44,11 @@
 	-->
 	<Target Name="BundleWebview" BeforeTargets="AssignTargetPaths"
 	        Condition="'$(SkipWebview)' != 'true' And Exists('$(RepoRoot)webview\package.json')">
+		<!-- Reinstall when node_modules is absent (first dev build) OR on any publish/release build, so
+		     the shipped bundle is always built against the committed lockfile rather than a stale
+		     node_modules left over after a dependency bump. Dev incremental builds stay fast. -->
 		<Exec Command="npm ci" WorkingDirectory="$(RepoRoot)webview"
-		      Condition="!Exists('$(RepoRoot)webview\node_modules')" />
+		      Condition="!Exists('$(RepoRoot)webview\node_modules') Or '$(PublishProfile)' != ''" />
 		<Exec Command="npm run bundle" WorkingDirectory="$(RepoRoot)webview" />
 		<ItemGroup>
 			<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />

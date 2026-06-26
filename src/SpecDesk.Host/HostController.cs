@@ -45,6 +45,11 @@ public sealed class HostController : IDisposable
 	/// <summary>Default idle gap after the last keystroke before a draft autosaves to disk (no commit).</summary>
 	private static readonly TimeSpan DefaultAutosaveIdle = TimeSpan.FromMilliseconds(1500);
 
+	// Upper bound on an incoming wire frame (UTF-16 chars). The webview is untrusted, so a single
+	// malformed/hostile frame must not be able to exhaust memory. Generous: a large spec plus a
+	// base64 image paste fit well under this.
+	private const int MaxFrameChars = 64 * 1024 * 1024;
+
 	private readonly Func<string, string, Renderer.RenderResult> _render;
 	private readonly Action<string> _send;
 	private readonly IFileDialogs _dialogs;
@@ -56,8 +61,8 @@ public sealed class HostController : IDisposable
 	private readonly PreviewCoordinator _coordinator = new();
 
 	// Guards the lifecycle / autosave fields below, which the message thread and the autosave timer
-	// callback both touch. _text/_currentPath/_repoRoot are reference assignments (atomic) read via
-	// local snapshots, so they stay outside the lock.
+	// callback both touch. _text/_currentPath/_repoRoot are also published and snapshotted under this
+	// lock so the timer never sees a torn (path, text) pair when a document switch races a pending save.
 	private readonly object _sync = new();
 
 	// Serializes every repository-mutating call (begin edit, autosave commit, discard) so the
@@ -114,8 +119,30 @@ public sealed class HostController : IDisposable
 		}
 	}
 
-	/// <summary>Route one incoming wire envelope. Unknown or malformed frames are ignored.</summary>
+	/// <summary>Route one incoming wire envelope. Unknown or malformed frames are ignored. Runs on the
+	/// native WebView2 callback thread, so it caps the (untrusted) frame size and is the last-resort
+	/// guard so no handler exception reaches — and tears down — the message pump.</summary>
 	public void OnMessage(string json)
+	{
+		if (json.Length > MaxFrameChars)
+		{
+			_logger.LogWarning("Dropped an oversized IPC frame ({Length} chars)", json.Length);
+			return;
+		}
+
+		try
+		{
+			DispatchMessage(json);
+		}
+		catch (Exception ex)
+		{
+			// Per-handler catches cover expected failures; this catches the unexpected, because an
+			// exception escaping into the native message pump can crash the process.
+			_logger.LogError(ex, "Unhandled exception handling an IPC frame");
+		}
+	}
+
+	private void DispatchMessage(string json)
 	{
 		IpcMessage? message = IpcSerializer.TryDeserialize(json);
 		if (message is null)
@@ -204,10 +231,28 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		_text = payload.Text;
 		string text = payload.Text;
+		// Publish _text under _sync so the autosave timer's _sync snapshot sees it consistently with
+		// _currentPath (the two must stay a matched pair, or autosave could write across documents).
+		lock (_sync)
+		{
+			_text = text;
+		}
+
 		string docDir = DocRelativeDir();
-		_ = Task.Run(() => RenderAndSend(text, version, docDir));
+		_ = Task.Run(() =>
+		{
+			try
+			{
+				RenderAndSend(text, version, docDir);
+			}
+			catch (Exception ex)
+			{
+				// RenderAndSend handles parse faults itself; this guards an unexpected fault on the
+				// background _send/transport path so it never becomes an unobserved task exception.
+				_logger.LogError(ex, "Background render task faulted (version {Version})", version);
+			}
+		});
 
 		// In an editing state, each edit (re)arms the idle disk autosave (write only, never a commit)
 		// and flips the status to "Unsaved changes".
@@ -274,11 +319,25 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
+		// Snapshot the text and publish the path under _sync (a matched pair, like LoadFile), so the
+		// autosave timer can't observe a torn (path, text) state.
+		string text;
+		lock (_sync)
+		{
+			text = _text;
+			_currentPath = path;
+		}
+
 		try
 		{
-			File.WriteAllText(path, _text);
-			_currentPath = path;
-			_logger.LogInformation("Saved {Path} to disk ({Length} chars)", path, _text.Length);
+			// Serialize with the autosave timer's write (which holds _repoGate) so the two can't both
+			// write this file at once.
+			lock (_repoGate)
+			{
+				File.WriteAllText(path, text);
+			}
+
+			_logger.LogInformation("Saved {Path} to disk ({Length} chars)", path, text.Length);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
@@ -695,17 +754,20 @@ public sealed class HostController : IDisposable
 		// A freshly loaded document is always at Published — reset any in-progress draft so an
 		// autosave can never commit the newly opened file onto the previous document's branch.
 		CancelAutosave();
+		string repoRoot = ResolveRepoRoot(path);
 		lock (_sync)
 		{
 			_state = Lifecycle.stateName(Lifecycle.State.Published);
 			_branch = null;
 			_baseBranch = null;
+			// Publish the document fields as one matched set under the lock, so a still-running autosave
+			// timer can never snapshot a torn (new path, old text) pair and write across documents.
+			_text = text;
+			_currentPath = path;
+			_repoRoot = repoRoot;
 		}
 
-		_text = text;
-		_currentPath = path;
-		_repoRoot = ResolveRepoRoot(path);
-		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, _repoRoot);
+		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);
 		_send(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text, DocRelativeDir())));
@@ -753,19 +815,37 @@ public sealed class HostController : IDisposable
 			mime);
 		_ = Task.Run(() =>
 		{
-			string? markdown = _inserter(repoRoot, docPath, bytes, originalName, mime);
-			if (markdown is null)
+			try
 			{
-				_logger.LogWarning("Image insert failed (name={Name}, mime={Mime})", originalName, mime);
-				_send(IpcSerializer.SerializeEvent(
-					MessageKinds.Error,
-					new ErrorPayload("Could not insert the image.")));
-				ReplyInserted(id, string.Empty);
+				// Serialize the image file write with every other repo mutation (begin-edit, autosave,
+				// save-version, discard) under _repoGate: libgit2 is not safe for concurrent writes, and
+				// a paste landing mid-stage/checkout would corrupt the staged tree or the new asset.
+				string? markdown;
+				lock (_repoGate)
+				{
+					markdown = _inserter(repoRoot, docPath, bytes, originalName, mime);
+				}
+
+				if (markdown is null)
+				{
+					_logger.LogWarning("Image insert failed (name={Name}, mime={Mime})", originalName, mime);
+					_send(IpcSerializer.SerializeEvent(
+						MessageKinds.Error,
+						new ErrorPayload("Could not insert the image.")));
+					ReplyInserted(id, string.Empty);
+				}
+				else
+				{
+					_logger.LogInformation("Image inserted: {Markdown}", markdown);
+					ReplyInserted(id, markdown);
+				}
 			}
-			else
+			catch (Exception ex)
 			{
-				_logger.LogInformation("Image inserted: {Markdown}", markdown);
-				ReplyInserted(id, markdown);
+				// Never leave the awaiting webview hanging on an unobserved task fault: log, and reply
+				// empty so the paste resolves with no insertion.
+				_logger.LogError(ex, "Image insert task faulted (name={Name}, mime={Mime})", originalName, mime);
+				ReplyInserted(id, string.Empty);
 			}
 		});
 	}

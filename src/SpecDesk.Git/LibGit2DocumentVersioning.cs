@@ -26,8 +26,14 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
         Repository.Init(repoRoot);
         using Repository repo = new(repoRoot);
         // Land the first commit on `main` rather than libgit2's default `master`. Repointing the
-        // symbolic HEAD is only valid while it is still unborn (before any commit exists).
-        repo.Refs.UpdateTarget("HEAD", "refs/heads/main");
+        // symbolic HEAD is only valid while it is still unborn (before any commit exists); on an
+        // already-initialized repo that has commits, leave HEAD alone so we never repoint it at a
+        // non-existent ref and break the repo.
+        if (repo.Info.IsHeadUnborn)
+        {
+            repo.Refs.UpdateTarget("HEAD", "refs/heads/main");
+        }
+
         Commands.Stage(repo, "*");
         TryCommit(repo, commitMessage);
     }
@@ -51,12 +57,27 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
         // previous session may have left a working branch checked out. Fall back to the current
         // branch only when the configured base is absent.
         Branch? baseRef = repo.Branches[preferredBase];
+        // Fall back to the current branch only when HEAD is on one. A detached HEAD has no friendly
+        // base name to fork from (and to return to on Discard), so refuse rather than fabricate the
+        // libgit2 placeholder "(no branch)", which would later be stored as the base and misused.
+        if (baseRef is null && repo.Info.IsHeadDetached)
+        {
+            throw new InvalidOperationException("The repository is not on a branch.");
+        }
+
         string baseName = baseRef?.FriendlyName ?? repo.Head.FriendlyName;
         Commit? tip = baseRef?.Tip ?? repo.Head.Tip;
         if (tip is null)
         {
             // A working branch forks from the latest published commit; there isn't one yet.
             throw new InvalidOperationException("The repository has no commits yet.");
+        }
+
+        // The working branch must differ from the base: otherwise Discard would later check out the
+        // base and then delete the same branch, destroying the author's published history.
+        if (string.Equals(branchName, baseName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The draft name must differ from the published branch.");
         }
 
         Branch working = repo.Branches[branchName] ?? repo.CreateBranch(branchName, tip);
@@ -94,6 +115,15 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
         ArgumentException.ThrowIfNullOrEmpty(baseBranch);
 
         using Repository repo = new(repoRoot);
+
+        // Never delete the base branch itself. If the working and base names coincide (a name
+        // collision, or a session that reused the published branch), removing it would destroy the
+        // author's history and leave HEAD detached — there is then nothing to discard.
+        if (string.Equals(workingBranch, baseBranch, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         Branch? @base = repo.Branches[baseBranch];
         if (@base is not null)
         {
@@ -102,9 +132,11 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
             Commands.Checkout(repo, @base, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
         }
 
-        // Removing the working branch is safe now that it is no longer checked out. If it was never
-        // created (or already gone) there is simply nothing to remove.
-        if (repo.Branches[workingBranch] is not null)
+        // Removing the working branch is safe now that it is no longer checked out. Skip it when it was
+        // never created/already gone, or — if the base was absent so the checkout above was skipped —
+        // when it is still the current HEAD (libgit2 refuses to remove the checked-out branch).
+        Branch? working = repo.Branches[workingBranch];
+        if (working is not null && !working.IsCurrentRepositoryHead)
         {
             repo.Branches.Remove(workingBranch);
         }

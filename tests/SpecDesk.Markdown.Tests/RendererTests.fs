@@ -79,3 +79,48 @@ let ``blockquote paragraphs are anchored, not the quote block`` () =
     let result = Renderer.render "" "> quoted line"
     Assert.That(result.Html, Does.Contain "<p data-line-start=\"0\"")
     Assert.That(result.Html, Does.Not.Contain "<blockquote data-line-start")
+
+[<Test>]
+let ``a link reference definition adds no line-map entry and does not desync the map`` () =
+    // The [s]: ... line renders no element; only the paragraph that uses it does. The map length must
+    // stay equal to the rendered anchor count (the bug this guards over-counted by one per ref-def).
+    let result = Renderer.render "" "Use [the spec][s].\n\n[s]: https://example.com\n"
+    Assert.That(result.LineMap.Length, Is.EqualTo 1)
+    Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
+
+[<Test>]
+let ``a javascript link href is neutralized`` () =
+    let result = Renderer.render "" "[click](javascript:evil)"
+    Assert.That(result.Html, Does.Not.Contain "javascript:")
+    Assert.That(result.Html, Does.Contain "href=\"#\"")
+
+[<Test>]
+let ``a data link href is neutralized`` () =
+    let result = Renderer.render "" "[x](data:text/html;base64,abc)"
+    Assert.That(result.Html, Does.Not.Contain "data:")
+
+[<Test>]
+let ``safe link hrefs are kept`` () =
+    let result =
+        Renderer.render "" "[a](https://example.com) [b](mailto:x@y.com) [c](#anchor) [d](other.md)"
+
+    Assert.That(result.Html, Does.Contain "href=\"https://example.com\"")
+    Assert.That(result.Html, Does.Contain "href=\"mailto:x@y.com\"")
+    Assert.That(result.Html, Does.Contain "href=\"#anchor\"")
+    Assert.That(result.Html, Does.Contain "href=\"other.md\"")
+
+[<Test>]
+let ``a javascript image src is neutralized`` () =
+    let result = Renderer.render "" "![x](javascript:evil)"
+    Assert.That(result.Html, Does.Not.Contain "javascript:")
+
+[<Test>]
+let ``a javascript angle-bracket autolink is neutralized`` () =
+    // `<javascript:evil>` parses to an AutolinkInline, a different path from a normal link.
+    let result = Renderer.render "" "<javascript:evil>"
+    Assert.That(result.Html, Does.Not.Contain "javascript:")
+
+[<Test>]
+let ``a footnote definition does not desync the line map`` () =
+    let result = Renderer.render "" "Text with a note.[^1]\n\n[^1]: the note body\n"
+    Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
