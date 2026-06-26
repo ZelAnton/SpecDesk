@@ -257,6 +257,53 @@ describe("FormattedEditor (jsdom)", () => {
     expect(changed[0]?.getAttribute("data-diff-label")).toBeNull();
   });
 
+  it("places a removed list-item marker between the surrounding items, not at the container edge", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("- one\n- two\n- three\n"); // items at lines 0, 1, 2
+    // A removed item sat just before "two" (the following head item, line 1).
+    ed.setDiff([
+      {
+        kind: "removed",
+        lineStart: 0,
+        lineEnd: 0,
+        anchorLine: 1,
+        removedText: "gone item",
+        sub: true,
+      },
+    ]);
+
+    const marker = host.querySelector(".sd-diff-removed-marker");
+    const items = [...host.querySelectorAll("li")];
+    const one = items.find((li) => li.textContent?.includes("one"));
+    const two = items.find((li) => li.textContent?.includes("two"));
+    expect(marker?.textContent).toContain("gone item");
+    expect(one && marker && follows(one, marker)).toBe(true); // after the first item
+    expect(marker && two && follows(marker, two)).toBe(true); // before the second item
+  });
+
+  it("highlights changed words inside a changed list item (no whole-item wash, no pill)", () => {
+    const { ed, host } = mountWithHost();
+    // A long second item with a single word changed, so the diff stays under the inline threshold.
+    ed.setText("- one\n- buy fresh apples from the market today\n- three\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        lineStart: 1,
+        lineEnd: 1,
+        anchorLine: -1,
+        removedText: "",
+        sub: true,
+        baseText: "buy fresh oranges from the market today",
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(true);
+    // No whole-item wash and no annotation pill — the inline word highlight is the signal.
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    expect(host.querySelectorAll(".sd-diff-inline")).toHaveLength(0);
+  });
+
   it("highlights changed words inline inside an edited paragraph (no whole-block wash)", () => {
     const { ed, host } = mountWithHost();
     ed.setText("The quick brown fox jumps over the lazy dog today.\n");

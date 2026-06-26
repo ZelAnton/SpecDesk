@@ -955,9 +955,9 @@ public sealed class HostController : IDisposable
 		{
 			ChildDiffPayload[] children = w.Children.Length == 0
 				? []
-				: Array.ConvertAll(w.Children, c => new ChildDiffPayload(c.Kind, c.ChildIndex, c.AnchorIndex, c.RemovedText));
+				: Array.ConvertAll(w.Children, c => new ChildDiffPayload(c.Kind, c.ChildIndex, c.AnchorIndex, c.RemovedText, c.BaseText));
 			entries.Add(new DiffEntryPayload(
-				w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText, children, w.BaseText));
+				w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText, children, w.BaseText, w.BaseSource));
 		}
 
 		_send(IpcSerializer.SerializeEvent(

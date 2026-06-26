@@ -17,6 +17,7 @@ type ChildWireEntry =
       ChildIndex: int // head child ordinal (added/changed/moved); -1 for removed
       AnchorIndex: int // for removed: the head child it sat before; -1 otherwise
       RemovedText: string // for removed: the base child's flattened text; "" otherwise
+      BaseText: string // for changed: the base child's flattened text (inline word-diff inside the item)
     }
 
 /// One changed top-level block, ready for the wire. CLIMutable so the C# host can read its fields.
@@ -28,7 +29,8 @@ type DiffWireEntry =
       AnchorLine: int // for removed: the head line it sat before; -1 otherwise
       RemovedText: string // for removed: the base source slice; "" otherwise
       Children: ChildWireEntry[] // per-child diff for a CHANGED list/table; [||] otherwise (whole-block)
-      BaseText: string // for a CHANGED plain block: the base rendered text, for the webview's inline word-diff
+      BaseText: string // for a CHANGED plain block: the base rendered text (Formatted-pane inline word-diff)
+      BaseSource: string // for a CHANGED plain block: the base raw source (Code-pane inline word-diff)
     }
 
 /// The base source slice for an inclusive 0-based line range, clamped to the array.
@@ -71,27 +73,30 @@ let private childDiff (baseTexts: string list) (headTexts: string list) : ChildW
     let entries = ResizeArray<ChildWireEntry>()
     let mutable lastHeadChild = -1
 
-    let emit kind (after: Ast.Node) =
+    let emit kind (after: Ast.Node) (baseText: string) =
         entries.Add(
             { Kind = kind
               ChildIndex = after.LineStart
               AnchorIndex = -1
-              RemovedText = "" })
+              RemovedText = ""
+              BaseText = baseText })
 
         lastHeadChild <- after.LineEnd
 
     for entry in AstDiff.diff (synthDoc baseTexts) (synthDoc headTexts) do
         match entry with
         | AstDiff.Unchanged node -> lastHeadChild <- node.LineEnd
-        | AstDiff.Added node -> emit "added" node
-        | AstDiff.Changed(_, after) -> emit "changed" after
-        | AstDiff.Moved(_, after) -> emit "moved" after
+        | AstDiff.Added node -> emit "added" node ""
+        // A changed child carries its base text so the webview can word-diff the row/item inline.
+        | AstDiff.Changed(before, after) -> emit "changed" after (AstDiff.blockText before.Content)
+        | AstDiff.Moved(_, after) -> emit "moved" after ""
         | AstDiff.Removed node ->
             entries.Add(
                 { Kind = "removed"
                   ChildIndex = -1
                   AnchorIndex = lastHeadChild + 1
-                  RemovedText = AstDiff.blockText node.Content })
+                  RemovedText = AstDiff.blockText node.Content
+                  BaseText = "" })
 
     entries.ToArray()
 
@@ -102,7 +107,7 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
     let entries = ResizeArray<DiffWireEntry>()
     let mutable lastHeadLineEnd = -1
 
-    let emit kind (node: Ast.Node) (children: ChildWireEntry[]) (baseText: string) =
+    let emit kind (node: Ast.Node) (children: ChildWireEntry[]) (baseText: string) (baseSource: string) =
         entries.Add(
             { Kind = kind
               LineStart = node.LineStart
@@ -110,22 +115,31 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
               AnchorLine = -1
               RemovedText = ""
               Children = children
-              BaseText = baseText })
+              BaseText = baseText
+              BaseSource = baseSource })
 
         lastHeadLineEnd <- node.LineEnd
 
     for entry in AstDiff.diffText baseText headText do
         match entry with
         | AstDiff.Unchanged node -> lastHeadLineEnd <- node.LineEnd
-        | AstDiff.Added node -> emit "added" node [||] ""
-        | AstDiff.Moved(_, after) -> emit "moved" after [||] ""
+        | AstDiff.Added node -> emit "added" node [||] "" ""
+        | AstDiff.Moved(_, after) -> emit "moved" after [||] "" ""
         | AstDiff.Changed(before, after) ->
             // A changed list/table descends to per-child diffs (highlight the changed rows/items, not the
-            // whole container); any other changed block carries its base rendered text so the webview can
-            // word-diff it inline (or, if too much changed, fall back to a whole-block wash).
+            // whole container); any other changed block carries its base rendered AND raw-source text so
+            // the webview can word-diff it inline in the Formatted and Code panes respectively (or, if too
+            // much changed, fall back to a whole-block wash).
             match childTexts before.Content, childTexts after.Content with
-            | Some baseChildren, Some headChildren -> emit "changed" after (childDiff baseChildren headChildren) ""
-            | _ -> emit "changed" after [||] (AstDiff.blockText before.Content)
+            | Some baseChildren, Some headChildren ->
+                emit "changed" after (childDiff baseChildren headChildren) "" ""
+            | _ ->
+                emit
+                    "changed"
+                    after
+                    [||]
+                    (AstDiff.blockText before.Content)
+                    (slice baseLines before.LineStart before.LineEnd)
         | AstDiff.Removed node ->
             entries.Add(
                 { Kind = "removed"
@@ -134,6 +148,7 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
                   AnchorLine = lastHeadLineEnd + 1
                   RemovedText = slice baseLines node.LineStart node.LineEnd
                   Children = [||]
-                  BaseText = "" })
+                  BaseText = ""
+                  BaseSource = "" })
 
     entries.ToArray()

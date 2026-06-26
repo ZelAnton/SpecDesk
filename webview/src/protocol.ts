@@ -42,6 +42,8 @@ export interface ChildDiffPayload {
   anchorIndex: number;
   /** For "removed": the deleted child's flattened text; "" otherwise. */
   removedText: string;
+  /** For "changed": the base child's flattened text (inline word-diff inside the row/item); "" otherwise. */
+  baseText: string;
 }
 
 /** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted. */
@@ -58,9 +60,11 @@ export interface DiffEntryPayload {
   /** Non-empty only for a changed list/table whose individual rows/items changed — then the UI
    *  highlights those children rather than washing the whole container. */
   children: ChildDiffPayload[];
-  /** The base rendered text of a changed plain block (paragraph/heading), for the webview's inline
-   *  word-diff; "" otherwise. */
+  /** The base rendered text of a changed plain block (paragraph/heading), for the Formatted pane's
+   *  inline word-diff; "" otherwise. */
   baseText: string;
+  /** The base raw source of a changed plain block, for the Code pane's inline word-diff; "" otherwise. */
+  baseSource: string;
 }
 
 /** Payload of `diff.result` (native→webview): the changed blocks of the working copy vs the last

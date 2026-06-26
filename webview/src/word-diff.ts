@@ -24,6 +24,10 @@ export interface WordDiff {
   changeRatio: number;
 }
 
+/** Above this changed fraction, inline word highlighting becomes confetti — both panes fall back to a
+ *  whole-block/line wash (the user's "too significant" case). */
+export const INLINE_DIFF_MAX_RATIO = 0.5;
+
 /** Split into alternating word (`\S+`) / whitespace (`\s+`) tokens; concatenating them rebuilds `s`. */
 function tokenize(s: string): string[] {
   return s.match(/\s+|\S+/g) ?? [];

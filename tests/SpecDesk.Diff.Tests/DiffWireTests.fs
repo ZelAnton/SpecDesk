@@ -57,6 +57,7 @@ let ``a changed list item is one changed child, not a whole-list wash`` () =
     Assert.That(w.[0].Children.Length, Is.EqualTo 1)
     Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "changed")
     Assert.That(w.[0].Children.[0].ChildIndex, Is.EqualTo 1) // the second item
+    Assert.That(w.[0].Children.[0].BaseText, Does.Contain "two") // base text, for the inline word-diff
 
 [<Test>]
 let ``an added table row is one added child on the table entry`` () =

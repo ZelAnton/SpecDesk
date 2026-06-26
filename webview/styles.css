@@ -742,6 +742,21 @@ button {
   text-overflow: ellipsis;
 }
 
+/* Inline word changes inside an edited source block (Code pane), painted over the line wash: added /
+   changed source words wash green; deleted source words show as a struck rose ghost. */
+.cm-diff-word-added {
+  background: var(--add-hl);
+  border-radius: 2px;
+}
+
+.cm-diff-word-removed {
+  background: var(--del-hl);
+  color: var(--del-text);
+  text-decoration: line-through;
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
 /* Formatted (ProseMirror): top-level node decorations. Two stacked OUTSET shadows render the wash and
    its kind bar with the bar FLUSH at the wash's left edge (matching the Code pane): the lower shadow
    (-0.4rem, bar colour) shows only in the 0.2rem the upper shadow (-0.2rem, wash colour) doesn't cover,

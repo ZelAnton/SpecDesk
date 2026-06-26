@@ -25,6 +25,7 @@ import type { EditorSpacer } from "./height-sync.js";
 import { urlAtColumn } from "./links.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { rafThrottle } from "./raf.js";
+import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
 
 const DEBOUNCE_MS = 120;
 /** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
@@ -130,8 +131,12 @@ export interface DiffMark {
   sub?: boolean;
   /** For a changed paragraph/heading: the base rendered text. The Formatted pane word-diffs it against
    *  the block's current text to highlight the changed words inline (or washes the whole block if too
-   *  much changed). The Code pane ignores it (it stays whole-line). */
+   *  much changed). */
   baseText?: string;
+  /** For a changed paragraph/heading: the base raw source. The Code pane word-diffs it against the
+   *  block's current source to highlight the changed words inline (or washes the lines if too much
+   *  changed). The Formatted pane ignores it. */
+  baseSource?: string;
 }
 
 /** A block widget standing in for a removed block (which is absent from the head document). */
@@ -160,10 +165,70 @@ class RemovedWidget extends WidgetType {
   }
 }
 
+/** The inline struck span standing in for source words deleted inside a changed block (Code pane). */
+class RemovedWordWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+
+  eq(other: RemovedWordWidget): boolean {
+    return other.text === this.text;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement("span");
+    span.className = "cm-diff-word-removed";
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = this.text;
+    return span;
+  }
+}
+
 // The review/compare overlay (PoC-6): per-line change classes + a removed-block marker. Cleared on any
 // real content edit (the snapshot goes stale — index.ts re-runs Compare), but re-applied across a silent
 // whole-document setText (the Split mirror / a mode-switch hydration) so it survives those.
 const setDiffEffect = StateEffect.define<DiffMark[] | null>();
+
+/**
+ * Append inline word-diff decorations for a changed block's SOURCE — a mark over each added/changed
+ * source run and a struck widget at each deletion — on top of the line wash. A near-total rewrite (over
+ * the ratio) or a too-large block adds nothing, leaving just the wash. `start`/`end` are 1-based inclusive
+ * CM line numbers; a source offset `o` maps to the document position `blockStart + o` (sliceDoc chars are
+ * 1:1 with positions).
+ */
+function pushInlineSourceWords(
+  ranges: Range<Decoration>[],
+  state: EditorState,
+  baseSource: string,
+  start: number,
+  end: number,
+): void {
+  const blockStart = state.doc.line(start).from;
+  const headSource = state.sliceDoc(blockStart, state.doc.line(end).to);
+  if (headSource.length > 4000 || baseSource.length > 4000) {
+    return;
+  }
+  const diff = wordDiff(baseSource, headSource);
+  if (diff.changeRatio > INLINE_DIFF_MAX_RATIO) {
+    return;
+  }
+  for (const op of diff.ops) {
+    if (op.type === "add") {
+      ranges.push(
+        Decoration.mark({ class: "cm-diff-word-added" }).range(
+          blockStart + op.start,
+          blockStart + op.end,
+        ),
+      );
+    } else if (op.type === "del") {
+      ranges.push(
+        Decoration.widget({ widget: new RemovedWordWidget(op.text), side: -1 }).range(
+          blockStart + op.start,
+        ),
+      );
+    }
+  }
+}
 
 function buildDiffDecorations(state: EditorState, marks: DiffMark[]): DecorationSet {
   const lineCount = state.doc.lines;
@@ -188,6 +253,12 @@ function buildDiffDecorations(state: EditorState, marks: DiffMark[]): Decoration
     const end = Math.min(Math.max(mark.lineEnd + 1, 1), lineCount);
     for (let n = start; n <= end; n++) {
       ranges.push(Decoration.line({ class: cls }).range(state.doc.line(n).from));
+    }
+    // On a granular changed paragraph/heading, refine the line wash with inline word highlights. The
+    // wash stays as the block-level signal (the Code pane has no annotation pill); too-significant or
+    // sub-block (row/item) marks keep just the wash.
+    if (mark.kind === "changed" && mark.sub !== true && mark.baseSource !== undefined) {
+      pushInlineSourceWords(ranges, state, mark.baseSource, start, end);
     }
   }
 

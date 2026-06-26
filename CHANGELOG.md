@@ -140,12 +140,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Code/Split/Formatted switch doubles as the raw↔rendered diff toggle. The native host computes the
   structural diff (`SpecDesk.Diff`) and the editors decorate the head document; a real edit clears the
   overlay (the snapshot is stale — click again to recompute), and a stale result is dropped by version.
-- "Show changes" — finer granularity: a changed **list or table** now highlights the individual rows /
-  items that changed rather than washing the whole container, and a changed **paragraph / heading** in
-  the Formatted pane highlights the specific changed words inline (added/changed words washed, deleted
-  words shown struck-through) — unless too much of it changed, in which case it falls back to washing the
-  whole block as "edited". The native diff descends into a changed container's children; the webview
-  word-diffs the rendered text where positions are natural.
+- "Show changes" — finer granularity: a changed **list or table** highlights the individual rows / items
+  that changed rather than washing the whole container, and a changed **paragraph / heading** highlights
+  the specific changed words inline (added/changed words washed, deleted words shown struck-through) —
+  unless too much of it changed, in which case it falls back to washing the whole block as "edited". The
+  inline word highlighting works in **both** panes (the Code pane word-diffs the raw source, the Formatted
+  pane the rendered text) and **inside a changed list item** too; a removed row/item's marker sits between
+  its neighbours rather than at the container edge. The native diff descends into a changed container's
+  children; the webview word-diffs where positions are natural in each pane.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

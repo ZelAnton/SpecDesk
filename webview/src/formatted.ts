@@ -25,12 +25,9 @@ import { serializeWithSplice } from "./md-splice.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import type { BlockGeometry } from "./preview.js";
 import { rafThrottle } from "./raf.js";
-import { wordDiff } from "./word-diff.js";
+import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
 
 const DEBOUNCE_MS = 120;
-// Above this fraction of a changed paragraph/heading differing, inline word highlighting becomes
-// confetti — fall back to washing the whole block as "edited" (the user's "too significant" case).
-const INLINE_DIFF_MAX_RATIO = 0.5;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
 
 /** Resolve a required node type from the shared schema (these are always present — strict indexing
@@ -466,23 +463,30 @@ export class FormattedEditor {
     let removedSeq = 0;
     for (const mark of this.diffMarks) {
       if (mark.kind === "removed") {
-        // The removed block sat just before the FIRST head block that starts at/after the anchor line
-        // — so the marker goes before that block. Keying on block STARTS (lineStart) keeps this robust
-        // to where trailing blank lines land (block ENDS can differ between the native AST that set the
-        // anchor and this pane's splitter). anchorLine 0 naturally targets the first block (top); when
-        // nothing starts at/after the anchor (deleted at the end) it falls to the document end.
-        let following = -1;
-        for (let i = 0; i < this.blocks.length; i++) {
-          const block = this.blocks[i];
-          if (block !== undefined && block.lineStart >= mark.anchorLine) {
-            following = i;
-            break;
+        // A removed ROW/ITEM (mark.sub) anchors at the following row/item inside its container, so the
+        // marker sits between the surrounding rows/items rather than at the container's edge.
+        const childRange = mark.sub === true ? this.nodeRangeForLine(mark.anchorLine) : null;
+        let pos: number;
+        if (childRange !== null) {
+          pos = childRange[0];
+        } else {
+          // A removed top-level BLOCK: before the FIRST head block starting at/after the anchor line.
+          // Keying on block STARTS (lineStart) is robust to where trailing blank lines land (block ENDS
+          // can differ between the native AST that set the anchor and this pane's splitter). anchorLine 0
+          // targets the first block (top); nothing at/after the anchor (deleted at the end) → doc end.
+          let following = -1;
+          for (let i = 0; i < this.blocks.length; i++) {
+            const block = this.blocks[i];
+            if (block !== undefined && block.lineStart >= mark.anchorLine) {
+              following = i;
+              break;
+            }
           }
+          pos =
+            following < 0 || following >= doc.childCount
+              ? doc.content.size
+              : blockRange(doc, following)[0];
         }
-        const pos =
-          following < 0 || following >= doc.childCount
-            ? doc.content.size
-            : blockRange(doc, following)[0];
         decos.push(
           Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
             side: -1,
@@ -497,15 +501,15 @@ export class FormattedEditor {
       if (range === null) {
         continue;
       }
-      // A changed paragraph/heading with base text tries an inline word-diff first (highlight the
-      // changed words rather than wash the whole block); pushInlineWordDiff returns true when it applied.
-      if (
-        mark.kind === "changed" &&
-        mark.sub !== true &&
-        mark.baseText !== undefined &&
-        this.pushInlineWordDiff(decos, range[0], mark.baseText)
-      ) {
-        continue;
+      // A changed block tries an inline word-diff first (highlight the changed words rather than wash
+      // the whole thing): a top-level paragraph/heading on its own node, or a row/item (sub) on its
+      // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub mark gets no
+      // annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
+      if (mark.kind === "changed" && mark.baseText !== undefined) {
+        const inlineFrom = mark.sub === true ? range[0] + 1 : range[0];
+        if (this.pushInlineWordDiff(decos, inlineFrom, mark.baseText, mark.sub !== true)) {
+          continue;
+        }
       }
       // Whole-block wash. `data-diff-label` drives the CSS ::before annotation pill — for whole-block
       // changes only; a row/item (mark.sub) skips it (it would clutter, and a <tr> can't anchor a label).
@@ -527,7 +531,12 @@ export class FormattedEditor {
    * markup-only edit). A pure-text block's content size equals its text length (no leaf nodes between
    * characters), so a text offset `o` maps to the document position `blockFrom + 1 + o`.
    */
-  private pushInlineWordDiff(decos: Decoration[], blockFrom: number, baseText: string): boolean {
+  private pushInlineWordDiff(
+    decos: Decoration[],
+    blockFrom: number,
+    baseText: string,
+    withLabel: boolean,
+  ): boolean {
     const node = this.view.state.doc.nodeAt(blockFrom);
     if (node === null) {
       return false;
@@ -563,12 +572,15 @@ export class FormattedEditor {
       }
     }
     // The annotation pill only (sd-diff-inline = position:relative + ::before label), with no block wash.
-    decos.push(
-      Decoration.node(blockFrom, blockFrom + node.nodeSize, {
-        class: "sd-diff-inline",
-        "data-diff-label": diffLabel("changed"),
-      }),
-    );
+    // A row/item (no pill) skips this — the inline word highlights are signal enough inside it.
+    if (withLabel) {
+      decos.push(
+        Decoration.node(blockFrom, blockFrom + node.nodeSize, {
+          class: "sd-diff-inline",
+          "data-diff-label": diffLabel("changed"),
+        }),
+      );
+    }
     return true;
   }
 

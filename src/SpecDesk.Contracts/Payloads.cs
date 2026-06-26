@@ -101,9 +101,15 @@ public sealed record OpenExternalPayload(string Url);
 /// <see cref="DiffEntryPayload"/>'s <c>Children</c>). Ordinals match the container's rendered children.
 /// For added/changed/moved, <paramref name="ChildIndex"/> is the 0-based HEAD child ordinal; for removed,
 /// <paramref name="AnchorIndex"/> is the head child it sat before and <paramref name="RemovedText"/> is the
-/// base child's flattened text (ChildIndex is unused).
+/// base child's flattened text (ChildIndex is unused). <paramref name="BaseText"/> is the base child's
+/// flattened text for a changed child (inline word-diff inside the row/item); "" otherwise.
 /// </summary>
-public sealed record ChildDiffPayload(string Kind, int ChildIndex, int AnchorIndex, string RemovedText);
+public sealed record ChildDiffPayload(
+    string Kind,
+    int ChildIndex,
+    int AnchorIndex,
+    string RemovedText,
+    string BaseText);
 
 /// <summary>
 /// One changed top-level block in a rendered diff (native→webview, inside <see cref="DiffResultPayload"/>).
@@ -114,8 +120,9 @@ public sealed record ChildDiffPayload(string Kind, int ChildIndex, int AnchorInd
 /// before and <paramref name="RemovedText"/> is its base source (for a marker); LineStart/LineEnd are unused.
 /// <paramref name="Children"/> is non-empty only for a changed list/table whose individual rows/items
 /// changed — then the UI highlights those children instead of washing the whole container.
-/// <paramref name="BaseText"/> is the base rendered text of a changed plain block (paragraph/heading),
-/// for the webview's inline word-diff; "" otherwise.
+/// <paramref name="BaseText"/> / <paramref name="BaseSource"/> are the base rendered text and base raw
+/// source of a changed plain block (paragraph/heading), for the webview's inline word-diff in the
+/// Formatted and Code panes respectively; "" otherwise.
 /// </summary>
 public sealed record DiffEntryPayload(
     string Kind,
@@ -124,7 +131,8 @@ public sealed record DiffEntryPayload(
     int AnchorLine,
     string RemovedText,
     IReadOnlyList<ChildDiffPayload> Children,
-    string BaseText);
+    string BaseText,
+    string BaseSource);
 
 /// <summary>Payload of <c>diff.result</c> (native→webview): the changed blocks of the working copy vs the
 /// last committed version, in document order. The editor-content version rides on the envelope so the

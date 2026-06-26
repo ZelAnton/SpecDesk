@@ -59,6 +59,7 @@ function expandDiffMarks(entries: DiffEntryPayload[], text: string): DiffMark[] 
         anchorLine: entry.anchorLine,
         removedText: entry.removedText,
         baseText: entry.baseText,
+        baseSource: entry.baseSource,
       });
       continue;
     }
@@ -71,6 +72,8 @@ function expandDiffMarks(entries: DiffEntryPayload[], text: string): DiffMark[] 
           lineEnd: 0,
           anchorLine: anchor ?? entry.lineEnd + 1,
           removedText: child.removedText,
+          // A removed row/item: the Formatted pane anchors its marker at the row/item, not the container.
+          sub: true,
         });
         continue;
       }
@@ -87,6 +90,8 @@ function expandDiffMarks(entries: DiffEntryPayload[], text: string): DiffMark[] 
         anchorLine: -1,
         removedText: "",
         sub: true,
+        // A changed row/item carries its base text so the Formatted pane can word-diff it inline.
+        baseText: child.baseText,
       });
     }
   }
