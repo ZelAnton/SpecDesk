@@ -64,6 +64,12 @@ function follows(a: Element, b: Element): boolean {
   return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
+/** The editor's ProseMirror view, for test setup (dispatching selections). Test-only internal access —
+ *  the one unavoidable cast is isolated here rather than repeated at each call site. */
+function viewOf(ed: FormattedEditor): EditorView {
+  return (ed as unknown as { view: EditorView }).view;
+}
+
 describe("FormattedEditor (jsdom)", () => {
   it("constructs a ProseMirror view without throwing", () => {
     expect(() => mount()).not.toThrow();
@@ -356,7 +362,7 @@ describe("FormattedEditor (jsdom)", () => {
     const ed = mount();
     ed.setText("hello\n");
     ed.setEditable(true);
-    const view = (ed as unknown as { view: EditorView }).view;
+    const view = viewOf(ed);
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
 
     ed.format("bold");
@@ -377,7 +383,7 @@ describe("FormattedEditor (jsdom)", () => {
     // serialize path: toggling strike wraps the selection in tildes.
     ed.setText("hi\n");
     ed.setEditable(true);
-    const view = (ed as unknown as { view: EditorView }).view;
+    const view = viewOf(ed);
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 3)));
     ed.format("strike");
     expect(ed.getText()).toBe("~~hi~~\n");
@@ -387,7 +393,7 @@ describe("FormattedEditor (jsdom)", () => {
     const ed = mount();
     ed.setText("- one\n- two\n");
     ed.setEditable(true);
-    const view = (ed as unknown as { view: EditorView }).view;
+    const view = viewOf(ed);
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
 
     ed.format("ordered");
@@ -438,7 +444,7 @@ describe("FormattedEditor (jsdom)", () => {
       onOpenLink: () => {},
     });
     ed.setText("# H\n\npara\n");
-    const view = (ed as unknown as { view: EditorView }).view;
+    const view = viewOf(ed);
 
     // Read-only: a document edit is blocked, the source is unchanged, and a draft is offered.
     ed.setEditable(false);

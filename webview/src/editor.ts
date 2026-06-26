@@ -21,6 +21,7 @@ import {
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
+import { isRecord } from "./decoders.js";
 import type { EditorSpacer } from "./height-sync.js";
 import { urlAtColumn } from "./links.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
@@ -40,7 +41,7 @@ class SpacerWidget extends WidgetType {
     super();
   }
 
-  eq(other: SpacerWidget): boolean {
+  override eq(other: SpacerWidget): boolean {
     return other.height === this.height && other.isLead === this.isLead;
   }
 
@@ -52,7 +53,7 @@ class SpacerWidget extends WidgetType {
     return element;
   }
 
-  get estimatedHeight(): number {
+  override get estimatedHeight(): number {
     return this.height;
   }
 }
@@ -145,7 +146,7 @@ class RemovedWidget extends WidgetType {
     super();
   }
 
-  eq(other: RemovedWidget): boolean {
+  override eq(other: RemovedWidget): boolean {
     return other.text === this.text;
   }
 
@@ -171,7 +172,7 @@ class RemovedWordWidget extends WidgetType {
     super();
   }
 
-  eq(other: RemovedWordWidget): boolean {
+  override eq(other: RemovedWordWidget): boolean {
     return other.text === this.text;
   }
 
@@ -646,7 +647,10 @@ export class MarkdownEditor {
     let total = 0;
     const cursor = this.view.state.field(spacerField).iter();
     while (cursor.value !== null) {
-      const widget = (cursor.value.spec as { widget?: unknown }).widget;
+      // CodeMirror types Decoration.spec as `any`; read its widget through `unknown` (no cast) and let
+      // the `instanceof` below validate it.
+      const spec: unknown = cursor.value.spec;
+      const widget = isRecord(spec) ? spec.widget : undefined;
       if (widget instanceof SpacerWidget && cursor.from < pos) {
         total += widget.height;
       }

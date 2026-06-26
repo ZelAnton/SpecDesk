@@ -15,8 +15,9 @@ import { history, redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
-import { type Command, EditorState, Plugin, PluginKey } from "prosemirror-state";
+import { type Command, EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import { closestElement } from "./dom.js";
 import type { DiffMark } from "./editor.js";
 import { isOpenableHref } from "./links.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
@@ -58,6 +59,12 @@ function markType(name: string): MarkType {
 // and mapped through edits so they never reference a stale position.
 const highlightKey = new PluginKey<DecorationSet>("sd-formatted-highlight");
 
+/** The DecorationSet we stashed on a transaction via setMeta. ProseMirror types `getMeta` as `any`, so
+ *  this is the single isolated narrowing — the value is one we set ourselves, never external. */
+function decorationMeta(tr: Transaction, key: PluginKey<DecorationSet>): DecorationSet | undefined {
+  return tr.getMeta(key) as DecorationSet | undefined;
+}
+
 /** [from, to] document positions of the top-level child at `index`. */
 function blockRange(doc: PmNode, index: number): [number, number] {
   let pos = 0;
@@ -71,8 +78,7 @@ const highlightPlugin = new Plugin<DecorationSet>({
   key: highlightKey,
   state: {
     init: () => DecorationSet.empty,
-    apply: (tr, set) =>
-      (tr.getMeta(highlightKey) as DecorationSet | undefined) ?? set.map(tr.mapping, tr.doc),
+    apply: (tr, set) => decorationMeta(tr, highlightKey) ?? set.map(tr.mapping, tr.doc),
   },
   props: {
     decorations: (state) => highlightKey.getState(state) ?? DecorationSet.empty,
@@ -90,8 +96,7 @@ const diffPlugin = new Plugin<DecorationSet>({
   key: diffKey,
   state: {
     init: () => DecorationSet.empty,
-    apply: (tr, set) =>
-      (tr.getMeta(diffKey) as DecorationSet | undefined) ?? set.map(tr.mapping, tr.doc),
+    apply: (tr, set) => decorationMeta(tr, diffKey) ?? set.map(tr.mapping, tr.doc),
   },
   props: {
     decorations: (state) => diffKey.getState(state) ?? DecorationSet.empty,
@@ -265,7 +270,7 @@ export class FormattedEditor {
     // place the caret (for editing the link text), so opening then needs Ctrl/Cmd-click; in read mode
     // a plain click opens. Other schemes / repo-relative links are ignored (just the navigation guard).
     this.view.dom.addEventListener("click", (event) => {
-      const anchor = (event.target as HTMLElement | null)?.closest("a");
+      const anchor = closestElement(event.target, "a");
       if (!anchor) {
         return;
       }

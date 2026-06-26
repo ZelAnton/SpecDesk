@@ -7,6 +7,7 @@
  * (docs/design/05-live-preview.md.)
  */
 
+import { closestElement } from "./dom.js";
 import { isOpenableHref } from "./links.js";
 
 /** A rendered top-level block plus its 0-based, inclusive source line range. */
@@ -62,7 +63,7 @@ export class Preview {
     this.el = el;
     // Report the source line of the rendered block under the mouse (for the faint hover highlight).
     this.el.addEventListener("mousemove", (event) => {
-      const block = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-line-start]");
+      const block = closestElement(event.target, "[data-line-start]");
       const line = block ? Number(block.getAttribute("data-line-start")) : Number.NaN;
       this.onHover?.(Number.isNaN(line) ? null : line);
     });
@@ -72,7 +73,7 @@ export class Preview {
     // (http/https) is instead handed to the host to open in the OS browser. Any other scheme (incl.
     // the `javascript:` Markdig does not sanitize, or repo-relative links) is simply ignored.
     this.el.addEventListener("click", (event) => {
-      const anchor = (event.target as HTMLElement | null)?.closest("a");
+      const anchor = closestElement(event.target, "a");
       if (!anchor) {
         return;
       }

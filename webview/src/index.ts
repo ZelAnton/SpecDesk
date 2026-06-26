@@ -4,6 +4,16 @@
  * `doc.loaded` events come back. All Markdown rendering is native — this stays thin.
  */
 
+import {
+  parseBranchNameSuggested,
+  parseDiffResult,
+  parseDocLoaded,
+  parseError,
+  parseImageInserted,
+  parsePreview,
+  parseStatus,
+  parseVersionNoteSuggested,
+} from "./decoders.js";
 import { type DiffMark, MarkdownEditor } from "./editor.js";
 import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
@@ -11,20 +21,9 @@ import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
 import { log } from "./log.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
-import type { FormatCommand } from "./md-format.js";
+import { type FormatCommand, isFormatCommand } from "./md-format.js";
 import { Preview } from "./preview.js";
-import {
-  type BranchNameSuggestedPayload,
-  type DiffEntryPayload,
-  type DiffResultPayload,
-  type DocLoadedPayload,
-  type ErrorPayload,
-  type ImageInsertedPayload,
-  Kinds,
-  type PreviewPayload,
-  type StatusPayload,
-  type VersionNoteSuggestedPayload,
-} from "./protocol.js";
+import { type DiffEntryPayload, Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
 import { isSplit, type ViewMode } from "./view-mode.js";
 
@@ -163,7 +162,7 @@ function wire(): void {
     let suggested = "";
     try {
       const reply = await ipc.request(Kinds.branchNameRequest);
-      suggested = (reply.payload as BranchNameSuggestedPayload | undefined)?.name ?? "";
+      suggested = parseBranchNameSuggested(reply.payload)?.name ?? "";
     } catch (error) {
       log.warn("Could not fetch a suggested draft name", String(error));
     }
@@ -223,7 +222,7 @@ function wire(): void {
     let suggested = "";
     try {
       const reply = await ipc.request(Kinds.versionNoteRequest);
-      suggested = (reply.payload as VersionNoteSuggestedPayload | undefined)?.note ?? "";
+      suggested = parseVersionNoteSuggested(reply.payload)?.note ?? "";
     } catch (error) {
       log.warn("Could not fetch a suggested version note", String(error));
     }
@@ -368,8 +367,10 @@ function wire(): void {
     const active =
       formatTarget() === "formatted" ? formatted.activeFormats() : new Set<FormatCommand>();
     for (const button of formatButtons) {
-      const command = button.dataset.format as FormatCommand;
-      button.setAttribute("aria-pressed", String(active.has(command)));
+      const command = button.dataset.format;
+      if (isFormatCommand(command)) {
+        button.setAttribute("aria-pressed", String(active.has(command)));
+      }
     }
   };
   const runFormat = (command: FormatCommand): void => {
@@ -558,7 +559,7 @@ function wire(): void {
           originalName: image.originalName,
           mime: image.mime,
         });
-        const payload = reply.payload as ImageInsertedPayload | undefined;
+        const payload = parseImageInserted(reply.payload);
         if (payload?.markdown) {
           editor.insertAt(image.pos, payload.markdown);
         }
@@ -569,7 +570,7 @@ function wire(): void {
   });
 
   ipc.on(Kinds.previewHtml, (message) => {
-    const payload = message.payload as PreviewPayload | undefined;
+    const payload = parsePreview(message.payload);
     if (payload) {
       preview.apply(payload.html, message.version ?? 0);
     }
@@ -582,7 +583,7 @@ function wire(): void {
     if (!reviewing || (message.version ?? 0) !== docVersion) {
       return;
     }
-    const payload = message.payload as DiffResultPayload | undefined;
+    const payload = parseDiffResult(message.payload);
     // Expand against the current head (the version-gate guarantees it matches the diff's head), so a
     // changed list/table resolves to per-row/item marks rather than a whole-container wash.
     const marks = expandDiffMarks(payload?.entries ?? [], editor.getText());
@@ -591,7 +592,7 @@ function wire(): void {
   });
 
   ipc.on(Kinds.docLoaded, (message) => {
-    const payload = message.payload as DocLoadedPayload | undefined;
+    const payload = parseDocLoaded(message.payload);
     if (payload) {
       // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
       // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
@@ -638,7 +639,7 @@ function wire(): void {
   // git vocabulary; the Edit button gives way to "Save version" + Discard once a draft is in
   // progress. Committing is explicit — typing only autosaves to disk, it never commits.
   ipc.on(Kinds.status, (message) => {
-    const payload = message.payload as StatusPayload | undefined;
+    const payload = parseStatus(message.payload);
     if (!payload) {
       return;
     }
@@ -671,7 +672,7 @@ function wire(): void {
   });
 
   ipc.on(Kinds.error, (message) => {
-    const payload = message.payload as ErrorPayload | undefined;
+    const payload = parseError(message.payload);
     if (payload && statusEl) {
       statusEl.textContent = payload.message;
     }
@@ -760,7 +761,10 @@ function wire(): void {
   // Formatting toolbar buttons. mousedown is prevented so the click never steals focus from the
   // editor — the selection it acts on stays intact and `lastFocused` keeps pointing at the right pane.
   for (const button of formatButtons) {
-    const command = button.dataset.format as FormatCommand;
+    const command = button.dataset.format;
+    if (!isFormatCommand(command)) {
+      continue;
+    }
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", () => runFormat(command));
   }

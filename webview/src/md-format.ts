@@ -18,6 +18,23 @@ export type FormatCommand =
   | "quote"
   | "code";
 
+const FORMAT_COMMANDS: readonly FormatCommand[] = [
+  "bold",
+  "italic",
+  "strike",
+  "h1",
+  "h2",
+  "bullet",
+  "ordered",
+  "quote",
+  "code",
+];
+
+/** Validate a `data-format` attribute (DOM boundary) into a {@link FormatCommand}; false for anything else. */
+export function isFormatCommand(value: string | undefined): value is FormatCommand {
+  return value !== undefined && FORMAT_COMMANDS.some((command) => command === value);
+}
+
 /** A single document edit plus the selection to set afterwards (offsets in the post-edit document). */
 export interface FormatEdit {
   from: number;

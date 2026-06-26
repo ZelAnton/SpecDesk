@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { type FormatCommand, formatMarkdown } from "../src/md-format.js";
+import { type FormatCommand, formatMarkdown, isFormatCommand } from "../src/md-format.js";
+
+describe("isFormatCommand (data-format DOM boundary)", () => {
+  it("accepts every known command and rejects anything else", () => {
+    for (const command of [
+      "bold",
+      "italic",
+      "strike",
+      "h1",
+      "h2",
+      "bullet",
+      "ordered",
+      "quote",
+      "code",
+    ]) {
+      expect(isFormatCommand(command)).toBe(true);
+    }
+    expect(isFormatCommand("underline")).toBe(false);
+    expect(isFormatCommand("")).toBe(false);
+    expect(isFormatCommand(undefined)).toBe(false);
+  });
+});
 
 /** Apply a toolbar command and return the resulting document + selection (for terse assertions). */
 function apply(

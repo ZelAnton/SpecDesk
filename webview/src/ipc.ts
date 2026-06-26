@@ -7,6 +7,8 @@
  * only ships intents and dispatches results.
  */
 
+import { isNumber, isRecord, isString } from "./decoders.js";
+
 export interface IpcMessage {
   kind: string;
   id?: string;
@@ -20,8 +22,35 @@ interface PhotinoExternal {
   receiveMessage?: (callback: (message: string) => void) => void;
 }
 
+/**
+ * The Photino-injected `window.external` bridge, read via Reflect so the non-standard global isn't a
+ * cast on `globalThis`. Validated to be an object; its (optional) methods are typeof-guarded at every
+ * call site, so the one boundary assertion here is the host bridge, isolated and absent outside the shell.
+ */
 function photinoExternal(): PhotinoExternal | undefined {
-  return (globalThis as { external?: PhotinoExternal }).external;
+  const external: unknown = Reflect.get(globalThis, "external");
+  return isRecord(external) ? (external as PhotinoExternal) : undefined;
+}
+
+/** Narrow a parsed JSON frame to a well-formed envelope, or null (a bare value / contract drift). */
+function parseEnvelope(value: unknown): IpcMessage | null {
+  if (!isRecord(value) || !isString(value.kind)) {
+    return null;
+  }
+  if (value.id !== undefined && !isString(value.id)) {
+    return null;
+  }
+  if (value.version !== undefined && !isNumber(value.version)) {
+    return null;
+  }
+  const message: IpcMessage = { kind: value.kind, payload: value.payload };
+  if (value.id !== undefined) {
+    message.id = value.id;
+  }
+  if (value.version !== undefined) {
+    message.version = value.version;
+  }
+  return message;
 }
 
 let idCounter = 0;
@@ -66,13 +95,10 @@ export class IpcClient {
       // Ignore malformed frames rather than throwing inside the bridge callback.
       return;
     }
-    // Drop anything that is not a well-formed envelope (e.g. a bare null, number, or array)
+    // Drop anything that is not a well-formed envelope (a bare null/number/array, or a missing kind)
     // so a stray frame never throws inside the host callback.
-    if (typeof parsed !== "object" || parsed === null) {
-      return;
-    }
-    const message = parsed as IpcMessage;
-    if (typeof message.kind !== "string") {
+    const message = parseEnvelope(parsed);
+    if (message === null) {
       return;
     }
     if (message.id !== undefined) {
