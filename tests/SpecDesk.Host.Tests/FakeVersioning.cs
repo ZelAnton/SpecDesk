@@ -22,7 +22,12 @@ internal sealed class FakeVersioning : IDocumentVersioning
 
     public bool DiscardCalled { get; private set; }
 
+    /// <summary>Canned "last committed version" returned by <see cref="ReadHeadContent"/>.</summary>
+    public string? HeadContent { get; set; }
+
     public bool IsVersioned(string repoRoot) => Versioned;
+
+    public string? ReadHeadContent(string repoRoot, string repoRelativePath) => HeadContent;
 
     public void Initialize(string repoRoot, string commitMessage)
     {

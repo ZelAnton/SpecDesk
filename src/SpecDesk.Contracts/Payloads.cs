@@ -21,6 +21,7 @@ public static class MessageKinds
 	public const string Log = "log";
 	public const string ExportLog = "action.exportLog";
 	public const string ActionOpenExternal = "action.openExternal";
+	public const string ActionCompare = "action.compare";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -30,6 +31,7 @@ public static class MessageKinds
 	public const string VersionNoteSuggested = "version.note.suggested";
 	public const string Status = "status";
 	public const string Error = "error";
+	public const string DiffResult = "diff.result";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -93,3 +95,18 @@ public sealed record LogPayload(string Level, string Message, string? Data);
 /// (in the browser) or mailto: (in the mail client) URLs — the webview is untrusted, so a
 /// javascript:/file:/data: URL cannot reach the shell, and a mailto: query is stripped.</summary>
 public sealed record OpenExternalPayload(string Url);
+
+/// <summary>
+/// One changed top-level block in a rendered diff (native→webview, inside <see cref="DiffResultPayload"/>).
+/// Unchanged blocks are omitted. <paramref name="Kind"/> is added/removed/changed/moved.
+/// For added/changed/moved, <paramref name="LineStart"/>/<paramref name="LineEnd"/> are the 0-based,
+/// inclusive HEAD source-line range of the (after) block; the webview decorates those lines/blocks.
+/// For removed, the block is not in the head, so <paramref name="AnchorLine"/> is the head line it sat
+/// before and <paramref name="RemovedText"/> is its base source (for a marker); LineStart/LineEnd are unused.
+/// </summary>
+public sealed record DiffEntryPayload(string Kind, int LineStart, int LineEnd, int AnchorLine, string RemovedText);
+
+/// <summary>Payload of <c>diff.result</c> (native→webview): the changed blocks of the working copy vs the
+/// last committed version, in document order. The editor-content version rides on the envelope so the
+/// webview can drop a result the document has already been edited past.</summary>
+public sealed record DiffResultPayload(IReadOnlyList<DiffEntryPayload> Entries);

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.Git;
+using SpecDesk.Diff;
 using SpecDesk.Markdown;
 // LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it
 // defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel used here).
@@ -202,6 +203,9 @@ public sealed class HostController : IDisposable
 				break;
 			case MessageKinds.ActionOpenExternal:
 				OnOpenExternal(message);
+				break;
+			case MessageKinds.ActionCompare:
+				OnCompare(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
@@ -905,6 +909,55 @@ public sealed class HostController : IDisposable
 				MessageKinds.Error,
 				new ErrorPayload($"Could not export log: {ex.Message}")));
 		}
+	}
+
+	// Compare the working copy (head) against the file's last committed version (base) and send the
+	// structural diff for the editors to overlay (PoC-6). Local only — no GitHub. An empty diff (no
+	// committed version, or nothing changed) clears any existing overlay. The editor-content version is
+	// echoed back so the webview can drop a result it has already edited past.
+	private void OnCompare(IpcMessage message)
+	{
+		string text;
+		string? path;
+		string? repoRoot;
+		lock (_sync)
+		{
+			text = _text;
+			path = _currentPath;
+			repoRoot = _repoRoot;
+		}
+
+		if (path is null || repoRoot is null)
+		{
+			SendError("Open a document before comparing.");
+			return;
+		}
+
+		if (!_versioning.IsVersioned(repoRoot))
+		{
+			SendError("This folder isn't set up for versioning yet.");
+			return;
+		}
+
+		string relativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+
+		string? baseText;
+		lock (_repoGate)
+		{
+			baseText = _versioning.ReadHeadContent(repoRoot, relativePath);
+		}
+
+		// No committed version (new file / unborn repo) → an empty diff, which clears any overlay.
+		DiffWire.DiffWireEntry[] wire = baseText is null ? [] : DiffWire.toWire(baseText, text);
+
+		List<DiffEntryPayload> entries = new(wire.Length);
+		foreach (DiffWire.DiffWireEntry w in wire)
+		{
+			entries.Add(new DiffEntryPayload(w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText));
+		}
+
+		_send(IpcSerializer.SerializeEvent(
+			MessageKinds.DiffResult, new DiffResultPayload(entries), message.Version));
 	}
 
 	// Open a link the author clicked in the rendered / formatted view in the OS default handler (a web

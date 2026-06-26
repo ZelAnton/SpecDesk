@@ -128,8 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PoC-6 groundwork — semantic (AST-level) diff engine (`SpecDesk.Diff`): given two versions of a
   document it classifies each top-level block as unchanged / added / removed / changed (same kind of
   node, edited — e.g. a heading-level change) / moved (identical content, reordered), so a review can
-  read as structure rather than line noise. Pure and input-agnostic (any base/head text pair). Not yet
-  wired to the UI — the rendered diff view and raw/rendered toggle follow.
+  read as structure rather than line noise. Pure and input-agnostic (any base/head text pair).
+- PoC-6 — "Show changes" review overlay: a toolbar toggle diffs the working copy against the document's
+  last saved version (fully local, no GitHub) and washes the changed content in place — added (green),
+  edited (accent), and moved (violet) blocks, with a marker standing in for removed blocks. The Code
+  (source) pane highlights the changed lines and the Formatted (WYSIWYG) pane highlights the changed
+  blocks; in Split both panes show the overlay at once, so the existing Code/Split/Formatted switch
+  doubles as the raw↔rendered diff toggle. The native host computes the structural diff (`SpecDesk.Diff`)
+  and the editors decorate the head document; a real edit clears the overlay (the snapshot is stale —
+  click again to recompute), and a stale result is dropped by document version.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

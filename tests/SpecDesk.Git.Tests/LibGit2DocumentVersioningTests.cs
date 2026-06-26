@@ -145,6 +145,32 @@ public sealed class LibGit2DocumentVersioningTests
     }
 
     [Test]
+    public void ReadHeadContent_ReturnsTheCommittedVersion()
+    {
+        _versioning.Initialize(_repo, "Seed");
+
+        Assert.That(_versioning.ReadHeadContent(_repo, "spec.md"), Is.EqualTo("# Version one"));
+    }
+
+    [Test]
+    public void ReadHeadContent_ReturnsNullForAFileNotTrackedAtHead()
+    {
+        _versioning.Initialize(_repo, "Seed");
+
+        Assert.That(_versioning.ReadHeadContent(_repo, "never-committed.md"), Is.Null);
+    }
+
+    [Test]
+    public void ReadHeadContent_ReturnsThePriorVersionWhenTheWorkingCopyHasUncommittedEdits()
+    {
+        _versioning.Initialize(_repo, "Seed"); // HEAD has "# Version one"
+        File.WriteAllText(_doc, "# Working-copy edit, not committed");
+
+        // The diff base is the last committed version, not the dirty working copy.
+        Assert.That(_versioning.ReadHeadContent(_repo, "spec.md"), Is.EqualTo("# Version one"));
+    }
+
+    [Test]
     public void Discard_ReturnsToBaseAndRevertsTheDocument()
     {
         _versioning.Initialize(_repo, "Seed");

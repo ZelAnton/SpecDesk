@@ -17,6 +17,7 @@ import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirro
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { type Command, EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import type { DiffMark } from "./editor.js";
 import { isOpenableHref } from "./links.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
@@ -77,6 +78,37 @@ const highlightPlugin = new Plugin<DecorationSet>({
   },
 });
 
+// The review/compare overlay (PoC-6): washes each changed top-level block by kind and marks removed
+// blocks with a widget at their anchor. A SEPARATE plugin from the highlight one — the highlight set is
+// overwritten on every caret move, while the diff must persist until the next Compare / a real edit. The
+// set is pushed in ready-made (the editor owns the line↔block map) and mapped through edits like the
+// highlights, so it survives the Split text-mirror and intervening edits until index.ts clears it.
+const diffKey = new PluginKey<DecorationSet>("sd-formatted-diff");
+
+const diffPlugin = new Plugin<DecorationSet>({
+  key: diffKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, set) =>
+      (tr.getMeta(diffKey) as DecorationSet | undefined) ?? set.map(tr.mapping, tr.doc),
+  },
+  props: {
+    decorations: (state) => diffKey.getState(state) ?? DecorationSet.empty,
+  },
+});
+
+/** The block-widget DOM standing in for a removed block (absent from the head document). */
+function removedMarkerDOM(text: string): HTMLElement {
+  const element = document.createElement("div");
+  element.className = "sd-diff-removed-marker";
+  element.setAttribute("aria-hidden", "true");
+  const lines = text.split("\n");
+  const first = (lines[0] ?? "").trim();
+  element.textContent =
+    lines.length > 1 ? `− ${first} (… ${lines.length} lines removed)` : `− ${first || "(removed)"}`;
+  return element;
+}
+
 export interface FormattedEditorCallbacks {
   /** Fired ~120 ms after an edit, with the block-spliced Markdown of the current document. */
   onChange: (text: string) => void;
@@ -129,6 +161,8 @@ export class FormattedEditor {
   // after setText rebuilds the document (which resets the highlight plugin's state).
   private activeLine: number | null = null;
   private hoverLine: number | null = null;
+  // The review/compare overlay marks (null = no overlay), remembered so a setText rebuild re-applies them.
+  private diffMarks: DiffMark[] | null = null;
   // The active node range resolved by the last pushHighlights, cached so revealSourceLine reuses it
   // instead of recomputing the line→node mapping on the caret hot path.
   private activeNodeRange: [number, number] | null = null;
@@ -253,6 +287,7 @@ export class FormattedEditor {
         keymap({ "Mod-z": undo, "Mod-y": redo, "Shift-Mod-z": redo }),
         keymap(baseKeymap),
         highlightPlugin,
+        diffPlugin,
         // Read-only gate: while not in a draft, block document edits and offer to start one — the
         // formatted-mode parity of the source editor's "type in a read-only doc → start a draft".
         // Selection-only transactions pass through, so the caret still works.
@@ -280,8 +315,10 @@ export class FormattedEditor {
     this.original = md;
     this.blocks = splitTopLevelBlocks(md);
     this.view.updateState(this.freshState(parser.parse(md) ?? emptyDoc()));
-    // freshState reset the highlight plugin's state; re-apply the synced active/hover blocks.
+    // freshState reset the highlight + diff plugin state; re-apply the synced active/hover blocks and,
+    // if a review overlay is showing, its diff marks (so a Split text-mirror doesn't drop them).
     this.pushHighlights();
+    this.pushDiff();
   }
 
   /** Map a 0-based source line to the index of the top-level block that contains it. */
@@ -379,6 +416,59 @@ export class FormattedEditor {
   setHoverLine(line: number | null): void {
     this.hoverLine = line;
     this.pushHighlights();
+  }
+
+  /** Build and push the review/compare decorations from the current diff marks (resolved to blocks). */
+  private pushDiff(): void {
+    const doc = this.view.state.doc;
+    if (this.diffMarks === null) {
+      this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.empty));
+      return;
+    }
+    const decos: Decoration[] = [];
+    // Distinct keys so adjacent deletions (which share an anchor position) stay separate widgets that
+    // ProseMirror can tell apart across redraws rather than collapsing into one.
+    let removedSeq = 0;
+    for (const mark of this.diffMarks) {
+      if (mark.kind === "removed") {
+        // Place the removed-block marker before the head block the deletion sat in front of; past the
+        // last block (deleted at the end) it goes at the document end.
+        const anchor = this.blockIndexForLine(mark.anchorLine);
+        const pos =
+          anchor === null || anchor >= doc.childCount
+            ? doc.content.size
+            : blockRange(doc, anchor)[0];
+        decos.push(
+          Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
+            side: -1,
+            key: `sd-removed-${removedSeq++}`,
+          }),
+        );
+        continue;
+      }
+      // A changed/added/moved entry is one top-level block; wash the whole block (the source span maps
+      // into a single node, so blockIndexForLine on its first line suffices).
+      const index = this.blockIndexForLine(mark.lineStart);
+      if (index === null || index < 0 || index >= doc.childCount) {
+        continue;
+      }
+      const [from, to] = blockRange(doc, index);
+      decos.push(Decoration.node(from, to, { class: `sd-diff-${mark.kind}` }));
+    }
+    this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.create(doc, decos)));
+  }
+
+  /** Show the review/compare overlay: wash each changed top-level block by kind and mark removed blocks.
+   *  The marks are remembered so a setText document rebuild (the Split mirror) re-applies them. */
+  setDiff(marks: DiffMark[]): void {
+    this.diffMarks = marks;
+    this.pushDiff();
+  }
+
+  /** Clear the review/compare overlay. */
+  clearDiff(): void {
+    this.diffMarks = null;
+    this.pushDiff();
   }
 
   /** The current document serialized back to Markdown, minimal-diff against the last {@link setText}. */

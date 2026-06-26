@@ -24,6 +24,12 @@ public interface IDocumentVersioning
     /// <summary>Whether <paramref name="repoRoot"/> is itself the root of a git working tree.</summary>
     bool IsVersioned(string repoRoot);
 
+    /// <summary>Read a file's content as of the current branch's HEAD commit (the last committed
+    /// version) — the base for a local "what changed in this draft" diff. <paramref name="repoRelativePath"/>
+    /// is the file path relative to <paramref name="repoRoot"/> (forward slashes). Returns <c>null</c>
+    /// when the repository has no commits yet, or the file is not tracked at HEAD.</summary>
+    string? ReadHeadContent(string repoRoot, string repoRelativePath);
+
     /// <summary>Initialize a new repository at <paramref name="repoRoot"/> (default branch
     /// <c>main</c>) and make an initial commit of everything already present.</summary>
     void Initialize(string repoRoot, string commitMessage);

@@ -7,6 +7,7 @@
 	<!-- F# compile order is significant — list files in dependency order. -->
 	<ItemGroup>
 		<Compile Include="AstDiff.fs" />
+		<Compile Include="DiffWire.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

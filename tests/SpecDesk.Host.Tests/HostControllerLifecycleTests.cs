@@ -234,6 +234,68 @@ public sealed class HostControllerLifecycleTests
         });
     }
 
+    [Test]
+    public void Compare_EmitsTheChangedBlocksEchoingTheVersion()
+    {
+        FakeVersioning versioning = new() { HeadContent = "# Billing" };
+        using HostController controller = NewController(versioning);
+        // The working copy (head) adds a paragraph below the heading — one "added" block vs the base.
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Billing\n\nNew clause.\n"),
+            version: 7));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 7));
+
+        IpcMessage? reply = FindKind(MessageKinds.DiffResult);
+        Assert.That(reply, Is.Not.Null);
+        DiffResultPayload? payload = reply!.GetPayload<DiffResultPayload>();
+        Assert.Multiple(() =>
+        {
+            // The version rides the envelope so the webview can drop a result it has edited past.
+            Assert.That(reply!.Version, Is.EqualTo(7));
+            Assert.That(payload!.Entries, Is.Not.Empty);
+            Assert.That(payload!.Entries[0].Kind, Is.EqualTo("added"));
+        });
+    }
+
+    [Test]
+    public void Compare_OnAnUnversionedFolder_ReportsAnErrorAndSendsNoResult()
+    {
+        FakeVersioning versioning = new() { Versioned = false };
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 1));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+            Assert.That(FindKind(MessageKinds.DiffResult), Is.Null);
+        });
+    }
+
+    [Test]
+    public void Compare_WithNoCommittedVersion_EmitsAnEmptyResultThatClearsTheOverlay()
+    {
+        // No committed base (unborn HEAD / never-committed file): an empty diff, not an error — the
+        // webview treats an empty result as "clear the overlay".
+        FakeVersioning versioning = new() { HeadContent = null };
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Billing edited\n"),
+            version: 2));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 2));
+
+        IpcMessage? reply = FindKind(MessageKinds.DiffResult);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply, Is.Not.Null);
+            Assert.That(reply!.GetPayload<DiffResultPayload>()!.Entries, Is.Empty);
+        });
+    }
+
     private StatusPayload? LatestStatus()
     {
         lock (_gate)

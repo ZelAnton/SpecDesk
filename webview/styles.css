@@ -242,6 +242,14 @@ button {
   background: var(--surface-sunken);
 }
 
+/* "Show changes" is a toggle whose label doesn't change, so its active (reviewing) state needs a
+   visible pressed treatment — the same accent wash the formatting toggles use. */
+#compare-btn[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
+}
+
 /* The three-mode segmented control: a sunken track; the active mode is a raised surface card. */
 #view-modes {
   display: inline-flex;
@@ -694,4 +702,78 @@ button {
 .sd-doc .sd-hover-block {
   background: var(--surface-raised);
   box-shadow: -0.4rem 0 0 var(--surface-raised);
+}
+
+/* ---- Review / compare overlay (PoC-6) — "Show changes" ----
+   Washes the changed lines (Code) / blocks (Formatted) of the working copy vs the last saved version,
+   by kind: added (green), changed (accent), moved (violet); a removed-block marker (rose) stands in for
+   deleted content. All colours come from the add/del/mov diff tokens and --accent-soft, which already
+   cover every theme. The accent bar is an inset box-shadow (no layout shift); these rules follow the
+   active/hover blocks so the diff wash wins on a block that is both. */
+
+/* Code (CodeMirror): whole-line decorations. The bar sits inside the line so it shows even when the
+   active-line background (higher specificity) wins the fill on the caret line. */
+.cm-diff-added {
+  background: var(--add-bg);
+  box-shadow: inset 0.18rem 0 0 var(--add-border);
+}
+
+.cm-diff-changed {
+  background: var(--accent-soft);
+  box-shadow: inset 0.18rem 0 0 var(--accent-soft-border);
+}
+
+.cm-diff-moved {
+  background: var(--mov-bg);
+  box-shadow: inset 0.18rem 0 0 var(--mov-border);
+}
+
+/* The stand-in for a block removed from the working copy (a block widget at its anchor line). */
+.cm-diff-removed-marker {
+  margin: 0.15rem 0;
+  padding: 0.1rem 0.6rem;
+  border-left: 0.18rem solid var(--del-border);
+  background: var(--del-bg);
+  color: var(--del-text);
+  font-size: 0.85em;
+  font-style: italic;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Formatted (ProseMirror): top-level node decorations. The first shadow extends the wash into the
+   gutter (matching the active/hover blocks); the inset shadow draws the kind's accent bar. */
+.sd-doc .sd-diff-added {
+  background: var(--add-bg);
+  box-shadow:
+    -0.4rem 0 0 var(--add-bg),
+    inset 0.2rem 0 0 var(--add-border);
+}
+
+.sd-doc .sd-diff-changed {
+  background: var(--accent-soft);
+  box-shadow:
+    -0.4rem 0 0 var(--accent-soft),
+    inset 0.2rem 0 0 var(--accent-soft-border);
+}
+
+.sd-doc .sd-diff-moved {
+  background: var(--mov-bg);
+  box-shadow:
+    -0.4rem 0 0 var(--mov-bg),
+    inset 0.2rem 0 0 var(--mov-border);
+}
+
+.sd-doc .sd-diff-removed-marker {
+  margin: 0.3rem 0;
+  padding: 0.15rem 0.6rem;
+  border-left: 0.2rem solid var(--del-border);
+  background: var(--del-bg);
+  color: var(--del-text);
+  font-size: 0.85em;
+  font-style: italic;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

@@ -19,6 +19,7 @@ export const Kinds = {
   log: "log",
   exportLog: "action.exportLog",
   openExternal: "action.openExternal",
+  compare: "action.compare",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -27,7 +28,27 @@ export const Kinds = {
   versionNoteSuggested: "version.note.suggested",
   status: "status",
   error: "error",
+  diffResult: "diff.result",
 } as const;
+
+/** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted. */
+export interface DiffEntryPayload {
+  /** "added" | "removed" | "changed" | "moved". */
+  kind: string;
+  /** 0-based inclusive HEAD source-line range of the (after) block; unused for "removed". */
+  lineStart: number;
+  lineEnd: number;
+  /** For "removed": the head line the block sat before (the overlay places a marker there); -1 otherwise. */
+  anchorLine: number;
+  /** For "removed": the deleted block's base source text (for the marker); "" otherwise. */
+  removedText: string;
+}
+
+/** Payload of `diff.result` (native→webview): the changed blocks of the working copy vs the last
+ *  committed version, in document order. The version rides on the envelope (drop a stale result). */
+export interface DiffResultPayload {
+  entries: DiffEntryPayload[];
+}
 
 /** Document lifecycle state names (mirror of F# Lifecycle.stateName). */
 export type StatusState = "published" | "draft" | "inReview" | "changesRequested" | "approved";

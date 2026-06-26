@@ -18,6 +18,23 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
         return Directory.Exists(repoRoot) && Repository.IsValid(repoRoot);
     }
 
+    public string? ReadHeadContent(string repoRoot, string repoRelativePath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(repoRelativePath);
+
+        using Repository repo = new(repoRoot);
+        // No commit yet (unborn HEAD) → there is no committed version to diff against.
+        if (repo.Head.Tip is null)
+        {
+            return null;
+        }
+
+        // Tree[path] is null when the file is not tracked at HEAD (new, never committed); its target is
+        // a Blob for a file (not a Tree/subdir). GetContentText decodes the blob as text.
+        return repo.Head.Tip.Tree[repoRelativePath]?.Target is Blob blob ? blob.GetContentText() : null;
+    }
+
     public void Initialize(string repoRoot, string commitMessage)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);

@@ -8,6 +8,7 @@
 	<!-- F# compile order is significant — list test files in dependency order. -->
 	<ItemGroup>
 		<Compile Include="AstDiffTests.fs" />
+		<Compile Include="DiffWireTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

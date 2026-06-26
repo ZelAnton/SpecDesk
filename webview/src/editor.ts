@@ -10,7 +10,14 @@
 
 import { markdown } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import { Compartment, EditorState, Prec, StateEffect, StateField } from "@codemirror/state";
+import {
+  Compartment,
+  EditorState,
+  Prec,
+  type Range,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
@@ -103,6 +110,89 @@ const activeLineField = StateField.define<DecorationSet>({
         const lineNumber = Math.min(Math.max(effect.value + 1, 1), tr.state.doc.lines);
         const line = tr.state.doc.line(lineNumber);
         return Decoration.set([Decoration.line({ class: "cm-active-line" }).range(line.from)]);
+      }
+    }
+    return decorations.map(tr.changes);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/** One changed top-level block in the review overlay (PoC-6). Mirrors the `diff.result` wire shape. */
+export interface DiffMark {
+  /** "added" | "removed" | "changed" | "moved". */
+  kind: string;
+  lineStart: number;
+  lineEnd: number;
+  anchorLine: number;
+  removedText: string;
+}
+
+/** A block widget standing in for a removed block (which is absent from the head document). */
+class RemovedWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+
+  eq(other: RemovedWidget): boolean {
+    return other.text === this.text;
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement("div");
+    element.className = "cm-diff-removed-marker";
+    element.setAttribute("aria-hidden", "true");
+    const lines = this.text.split("\n");
+    const first = (lines[0] ?? "").trim();
+    element.textContent =
+      lines.length > 1
+        ? `− ${first} (… ${lines.length} lines removed)`
+        : `− ${first || "(removed)"}`;
+    return element;
+  }
+}
+
+// The review/compare overlay (PoC-6): per-line change classes + a removed-block marker. Cleared on any
+// real content edit (the snapshot goes stale — index.ts re-runs Compare), but re-applied across a silent
+// whole-document setText (the Split mirror / a mode-switch hydration) so it survives those.
+const setDiffEffect = StateEffect.define<DiffMark[] | null>();
+
+function buildDiffDecorations(state: EditorState, marks: DiffMark[]): DecorationSet {
+  const lineCount = state.doc.lines;
+  const ranges: Range<Decoration>[] = [];
+  for (const mark of marks) {
+    if (mark.kind === "removed") {
+      const widget = new RemovedWidget(mark.removedText);
+      if (mark.anchorLine >= lineCount) {
+        // Deleted past the last head line — a marker below the last line.
+        ranges.push(
+          Decoration.widget({ widget, block: true, side: 1 }).range(state.doc.line(lineCount).to),
+        );
+      } else {
+        // A marker above the line the deleted block sat before.
+        const line = state.doc.line(Math.max(mark.anchorLine + 1, 1));
+        ranges.push(Decoration.widget({ widget, block: true, side: -1 }).range(line.from));
+      }
+      continue;
+    }
+    const cls = `cm-diff-${mark.kind}`;
+    const start = Math.min(Math.max(mark.lineStart + 1, 1), lineCount);
+    const end = Math.min(Math.max(mark.lineEnd + 1, 1), lineCount);
+    for (let n = start; n <= end; n++) {
+      ranges.push(Decoration.line({ class: cls }).range(state.doc.line(n).from));
+    }
+  }
+
+  return Decoration.set(ranges, true);
+}
+
+const diffField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setDiffEffect)) {
+        return effect.value === null
+          ? Decoration.none
+          : buildDiffDecorations(tr.state, effect.value);
       }
     }
     return decorations.map(tr.changes);
@@ -206,6 +296,8 @@ export class MarkdownEditor {
   // them in the same transaction (a whole-doc replace would otherwise collapse/clear the decorations).
   private activeLineValue: number | null = null;
   private hoverLineValue: number | null = null;
+  // The review/compare overlay marks, remembered so a whole-document setText re-applies them.
+  private diffValue: DiffMark[] | null = null;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -274,6 +366,7 @@ export class MarkdownEditor {
           spacerField,
           hoverLineField,
           activeLineField,
+          diffField,
           updates,
           // Ctrl/Cmd-click a link in the source opens it in the OS browser (the host re-validates the
           // scheme), matching the formatted view. Registered as a CodeMirror dom handler (not a
@@ -378,6 +471,7 @@ export class MarkdownEditor {
       effects: [
         setActiveLineEffect.of(this.activeLineValue),
         setHoverLineEffect.of(this.hoverLineValue),
+        setDiffEffect.of(this.diffValue),
       ],
     });
     // Clear in case the text was identical and no docChanged fired to consume the flag.
@@ -516,6 +610,19 @@ export class MarkdownEditor {
   setActiveLine(line: number | null): void {
     this.activeLineValue = line;
     this.view.dispatch({ effects: setActiveLineEffect.of(line) });
+  }
+
+  /** Show the review/compare overlay: highlight each changed source line by kind and mark removed
+   *  blocks. The marks are remembered so a silent whole-document setText (the Split mirror) keeps them. */
+  setDiff(marks: DiffMark[]): void {
+    this.diffValue = marks;
+    this.view.dispatch({ effects: setDiffEffect.of(marks) });
+  }
+
+  /** Clear the review/compare overlay. */
+  clearDiff(): void {
+    this.diffValue = null;
+    this.view.dispatch({ effects: setDiffEffect.of(null) });
   }
 
   /** Wrapping width of the editor (its scroller's client width) — for diagnostics. */
