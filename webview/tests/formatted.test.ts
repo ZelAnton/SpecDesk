@@ -38,10 +38,10 @@ const x = 1;
 Trailing paragraph.
 `;
 
-function mount(): FormattedEditor {
+function mountWithHost(): { ed: FormattedEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
-  return new FormattedEditor(host, {
+  const ed = new FormattedEditor(host, {
     onChange: () => {},
     onEditAttempt: () => {},
     onScroll: () => {},
@@ -52,6 +52,16 @@ function mount(): FormattedEditor {
     onActiveChange: () => {},
     onOpenLink: () => {},
   });
+  return { ed, host };
+}
+
+function mount(): FormattedEditor {
+  return mountWithHost().ed;
+}
+
+/** True if `b` comes after `a` in document order (robust to wrapping, unlike sibling checks). */
+function follows(a: Element, b: Element): boolean {
+  return (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
 
 describe("FormattedEditor (jsdom)", () => {
@@ -157,6 +167,66 @@ describe("FormattedEditor (jsdom)", () => {
     expect(active[0]?.tagName.toLowerCase()).toBe("li");
     expect(active[0]?.textContent).toContain("two");
     expect(active[0]?.textContent).not.toContain("three");
+  });
+
+  it("setDiff washes each changed block by its kind, and clearDiff removes them", () => {
+    const { ed, host } = mountWithHost();
+    // heading (line 0), paragraph "keep" (line 2), paragraph "more" (line 4).
+    ed.setText("# H\n\nkeep\n\nmore\n");
+
+    ed.setDiff([
+      { kind: "changed", lineStart: 0, lineEnd: 0, anchorLine: -1, removedText: "" },
+      { kind: "added", lineStart: 2, lineEnd: 2, anchorLine: -1, removedText: "" },
+      { kind: "moved", lineStart: 4, lineEnd: 4, anchorLine: -1, removedText: "" },
+    ]);
+    expect(host.querySelector(".sd-diff-changed")?.textContent).toContain("H");
+    expect(host.querySelector(".sd-diff-added")?.textContent).toContain("keep");
+    expect(host.querySelector(".sd-diff-moved")?.textContent).toContain("more");
+
+    ed.clearDiff();
+    expect(host.querySelectorAll(".sd-diff-changed, .sd-diff-added, .sd-diff-moved")).toHaveLength(
+      0,
+    );
+  });
+
+  it("places a removed-block marker between the surrounding head blocks, not at an edge", () => {
+    const { ed, host } = mountWithHost();
+    // head: heading (line 0), paragraph "keep" (line 2). A block was removed in between, so the wire
+    // anchor is line 1 (the blank inter-block line) — the case that naive block-containment got wrong.
+    ed.setText("# H\n\nkeep\n");
+    ed.setDiff([
+      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 1, removedText: "gone block" },
+    ]);
+
+    const marker = host.querySelector(".sd-diff-removed-marker");
+    const heading = host.querySelector("h1");
+    const kept = [...host.querySelectorAll("p")].find((p) => p.textContent?.includes("keep"));
+    expect(marker?.textContent).toContain("gone block");
+    expect(heading && marker && follows(heading, marker)).toBe(true); // after the heading
+    expect(marker && kept && follows(marker, kept)).toBe(true); // before the kept paragraph
+  });
+
+  it("anchors a leading removal at the top and a trailing removal at the end", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("# H\n\nkeep\n");
+    const heading = () => host.querySelector("h1");
+    const kept = () => [...host.querySelectorAll("p")].find((p) => p.textContent?.includes("keep"));
+
+    // Deleted before all head content (anchor 0) → the marker precedes the heading.
+    ed.setDiff([
+      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 0, removedText: "was first" },
+    ]);
+    let marker = host.querySelector(".sd-diff-removed-marker");
+    const h1 = heading();
+    expect(marker && h1 && follows(marker, h1)).toBe(true);
+
+    // Deleted after all head content (anchor past the last block) → the marker follows the last block.
+    ed.setDiff([
+      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 9, removedText: "was last" },
+    ]);
+    marker = host.querySelector(".sd-diff-removed-marker");
+    const p = kept();
+    expect(marker && p && follows(p, marker)).toBe(true);
   });
 
   it("format() applies ProseMirror commands and reports the active marks/blocks", () => {

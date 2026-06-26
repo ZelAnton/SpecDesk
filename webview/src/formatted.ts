@@ -431,13 +431,23 @@ export class FormattedEditor {
     let removedSeq = 0;
     for (const mark of this.diffMarks) {
       if (mark.kind === "removed") {
-        // Place the removed-block marker before the head block the deletion sat in front of; past the
-        // last block (deleted at the end) it goes at the document end.
-        const anchor = this.blockIndexForLine(mark.anchorLine);
+        // The removed block sat just before the FIRST head block that starts at/after the anchor line
+        // — so the marker goes before that block. Keying on block STARTS (lineStart) keeps this robust
+        // to where trailing blank lines land (block ENDS can differ between the native AST that set the
+        // anchor and this pane's splitter). anchorLine 0 naturally targets the first block (top); when
+        // nothing starts at/after the anchor (deleted at the end) it falls to the document end.
+        let following = -1;
+        for (let i = 0; i < this.blocks.length; i++) {
+          const block = this.blocks[i];
+          if (block !== undefined && block.lineStart >= mark.anchorLine) {
+            following = i;
+            break;
+          }
+        }
         const pos =
-          anchor === null || anchor >= doc.childCount
+          following < 0 || following >= doc.childCount
             ? doc.content.size
-            : blockRange(doc, anchor)[0];
+            : blockRange(doc, following)[0];
         decos.push(
           Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
             side: -1,
