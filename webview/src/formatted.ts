@@ -17,6 +17,7 @@ import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirro
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { type Command, EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import { debounce } from "./debounce.js";
 import { applyWordDiff, diffLabel, removedMarkerLabel } from "./diff-decoration.js";
 import type { DiffMark } from "./diff-marks.js";
 import { closestElement } from "./dom.js";
@@ -177,7 +178,19 @@ export class FormattedEditor {
   // re-parse on every caret/mouse move. Distinct from `original`, which stays the splice baseline.
   private blocks: MdBlock[] = [];
   private editable = false;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  // Edit-change notification, debounced: a burst of in-pane edits coalesces into one onChange once
+  // typing goes quiet (see debounce.ts). A field, so it exists before the update listener can call
+  // it; the body reads blocks/getText/onChange/reportCaret at fire time, all set by then.
+  private readonly scheduleChange = debounce(() => {
+    const text = this.getText();
+    // Refresh the block map from the edited source so the highlight + scroll line↔node mapping
+    // tracks the live document instead of drifting from the last setText after in-pane edits. Only
+    // `blocks` is refreshed — NOT `original` (the splice baseline `getText` diffs against, which must
+    // stay the loaded/mirrored source). Then re-report the caret so the highlight uses the fresh map.
+    this.blocks = splitTopLevelBlocks(text);
+    this.onChange(text);
+    this.reportCaret();
+  }, DEBOUNCE_MS);
   // The synced active/hover source lines (driven externally), remembered so they can be re-applied
   // after setText rebuilds the document (which resets the highlight plugin's state).
   private activeLine: number | null = null;
@@ -889,22 +902,5 @@ export class FormattedEditor {
       },
       line,
     );
-  }
-
-  private scheduleChange(): void {
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-    }
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      const text = this.getText();
-      // Refresh the block map from the edited source so the highlight + scroll line↔node mapping
-      // tracks the live document instead of drifting from the last setText after in-pane edits. Only
-      // `blocks` is refreshed — NOT `original` (the splice baseline `getText` diffs against, which must
-      // stay the loaded/mirrored source). Then re-report the caret so the highlight uses the fresh map.
-      this.blocks = splitTopLevelBlocks(text);
-      this.onChange(text);
-      this.reportCaret();
-    }, DEBOUNCE_MS);
   }
 }

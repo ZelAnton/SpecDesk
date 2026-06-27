@@ -21,6 +21,7 @@ import {
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
+import { debounce } from "./debounce.js";
 import { isRecord } from "./decoders.js";
 import { applyWordDiff, removedMarkerLabel } from "./diff-decoration.js";
 import type { DiffMark } from "./diff-marks.js";
@@ -331,7 +332,13 @@ export class MarkdownEditor {
   private readonly wrap = new Compartment();
   private readonly editable = new Compartment();
   private version = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  // Edit-change notification, debounced: a burst of keystrokes coalesces into one onChange once
+  // typing goes quiet (see debounce.ts). A field, so it exists before the EditorView's update
+  // listener (wired in the constructor) can call it; the body reads onChange/version at fire time.
+  private readonly scheduleChange = debounce(() => {
+    this.version += 1;
+    this.onChange(this.getText(), this.version);
+  }, DEBOUNCE_MS);
   // Set by a silent setText (mirror from the formatted editor) to skip the resulting change
   // notification, so a mirrored update doesn't echo back out as an edit.
   private suppressChange = false;
@@ -447,13 +454,10 @@ export class MarkdownEditor {
     // so the preview can be re-snapped exactly to the editor's top — the live frames can lag a
     // momentum scroll's final resting position by a frame.
     const reportScroll = rafThrottle(() => this.onScroll());
-    let scrollSettleTimer: ReturnType<typeof setTimeout> | undefined;
+    const reportScrollSettle = debounce(() => this.onScrollSettle(), SCROLL_SETTLE_MS);
     this.view.scrollDOM.addEventListener("scroll", () => {
       reportScroll();
-      if (scrollSettleTimer !== undefined) {
-        clearTimeout(scrollSettleTimer);
-      }
-      scrollSettleTimer = setTimeout(() => this.onScrollSettle(), SCROLL_SETTLE_MS);
+      reportScrollSettle();
     });
 
     let hoverX = 0;
@@ -710,16 +714,5 @@ export class MarkdownEditor {
 
   private clampLine(line: number): number {
     return Math.min(Math.max(line + 1, 1), this.view.state.doc.lines);
-  }
-
-  private scheduleChange(): void {
-    if (this.timer !== undefined) {
-      clearTimeout(this.timer);
-    }
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      this.version += 1;
-      this.onChange(this.getText(), this.version);
-    }, DEBOUNCE_MS);
   }
 }
