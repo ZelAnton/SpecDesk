@@ -14,6 +14,7 @@ import {
   parseStatus,
   parseVersionNoteSuggested,
 } from "./decoders.js";
+import { Dialogs } from "./dialogs.js";
 import { expandDiffMarks } from "./diff-marks.js";
 import { MarkdownEditor } from "./editor.js";
 import { FormattedEditor } from "./formatted.js";
@@ -25,6 +26,7 @@ import { type FormatCommand, isFormatCommand } from "./md-format.js";
 import { Preview } from "./preview.js";
 import { Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
+import { ScrollSync } from "./scroll-sync.js";
 import { isSplit, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
@@ -45,133 +47,12 @@ function wire(): void {
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
   const modeFormattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
   const compareBtn = document.querySelector<HTMLButtonElement>("#compare-btn");
-  const versionNoteBar = document.querySelector<HTMLElement>("#version-note-bar");
-  const versionNoteInput = document.querySelector<HTMLInputElement>("#version-note-input");
-  const versionNoteTextarea = document.querySelector<HTMLTextAreaElement>("#version-note-textarea");
-  const versionNoteExpand = document.querySelector<HTMLButtonElement>("#version-note-expand");
-  const versionNoteConfirm = document.querySelector<HTMLButtonElement>("#version-note-confirm");
-  const versionNoteCancel = document.querySelector<HTMLButtonElement>("#version-note-cancel");
-  const branchNameBar = document.querySelector<HTMLElement>("#branch-name-bar");
-  const branchNameInput = document.querySelector<HTMLInputElement>("#branch-name-input");
-  const branchNameConfirm = document.querySelector<HTMLButtonElement>("#branch-name-confirm");
-  const branchNameCancel = document.querySelector<HTMLButtonElement>("#branch-name-cancel");
   const formatBar = document.querySelector<HTMLElement>("#format-bar");
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
   );
   if (!editorEl || !previewEl || !formattedEl) {
     return;
-  }
-
-  // The draft-name (branch) prompt, revealed by "Edit". The host suggests a name; the author keeps
-  // or changes it, then confirming forks the working branch and begins editing. Cancel/Esc backs out.
-  function closeBranchName(): void {
-    if (branchNameBar) {
-      branchNameBar.hidden = true;
-    }
-  }
-
-  // Keep the draft name a valid git ref as the author types: backslashes become '/', and spaces or
-  // any other disallowed character become '_'. Length is preserved (1:1), so the caret stays put.
-  // The host sanitizes again on submit (collapsing/trimming) as the authority.
-  function sanitizeDraftName(value: string): string {
-    return value.replace(/\\/g, "/").replace(/[^A-Za-z0-9._/-]/g, "_");
-  }
-
-  function confirmBranchName(): void {
-    const branchName = branchNameInput?.value.trim() ?? "";
-    ipc.send(Kinds.actionEdit, { branchName });
-    closeBranchName();
-  }
-
-  async function openBranchName(): Promise<void> {
-    // Already prompting → don't stack requests (e.g. repeated keystrokes in the read-only editor).
-    if (branchNameBar && !branchNameBar.hidden) {
-      return;
-    }
-    let suggested = "";
-    try {
-      const reply = await ipc.request(Kinds.branchNameRequest);
-      suggested = parseBranchNameSuggested(reply.payload)?.name ?? "";
-    } catch (error) {
-      log.warn("Could not fetch a suggested draft name", String(error));
-    }
-    if (branchNameInput) {
-      branchNameInput.value = suggested;
-    }
-    if (branchNameBar) {
-      branchNameBar.hidden = false;
-    }
-    branchNameInput?.focus();
-    branchNameInput?.select();
-  }
-
-  // The version-note (commit message) inline editor. "Save version" asks the host for a suggested
-  // note, lets the author edit it, then sends the explicit commit. It is single-line by default and
-  // expands into a multi-line textarea on demand (⌄ button or Down arrow). Cancel/Esc backs out.
-  function versionNoteMultiline(): boolean {
-    return versionNoteTextarea !== null && !versionNoteTextarea.hidden;
-  }
-
-  function closeVersionNote(): void {
-    if (versionNoteBar) {
-      versionNoteBar.hidden = true;
-    }
-  }
-
-  // Swap the single-line input for the multi-line textarea, carrying the text and caret intent over.
-  function expandVersionNote(): void {
-    if (!versionNoteTextarea || !versionNoteInput || versionNoteMultiline()) {
-      return;
-    }
-    versionNoteTextarea.value = versionNoteInput.value;
-    versionNoteInput.hidden = true;
-    if (versionNoteExpand) {
-      versionNoteExpand.hidden = true;
-    }
-    versionNoteTextarea.hidden = false;
-    versionNoteTextarea.focus();
-    const end = versionNoteTextarea.value.length;
-    versionNoteTextarea.setSelectionRange(end, end);
-  }
-
-  function confirmVersionNote(): void {
-    const raw = versionNoteMultiline()
-      ? (versionNoteTextarea?.value ?? "")
-      : (versionNoteInput?.value ?? "");
-    ipc.send(Kinds.actionSaveVersion, { note: raw.trim() });
-    closeVersionNote();
-    // Saving a version advances the base the overlay diffs against, so any showing overlay is now stale.
-    clearReview();
-  }
-
-  async function openVersionNote(): Promise<void> {
-    if (versionNoteBar && !versionNoteBar.hidden) {
-      return;
-    }
-    let suggested = "";
-    try {
-      const reply = await ipc.request(Kinds.versionNoteRequest);
-      suggested = parseVersionNoteSuggested(reply.payload)?.note ?? "";
-    } catch (error) {
-      log.warn("Could not fetch a suggested version note", String(error));
-    }
-    // Always reopen in the compact single-line state.
-    if (versionNoteTextarea) {
-      versionNoteTextarea.hidden = true;
-    }
-    if (versionNoteExpand) {
-      versionNoteExpand.hidden = false;
-    }
-    if (versionNoteInput) {
-      versionNoteInput.hidden = false;
-      versionNoteInput.value = suggested;
-    }
-    if (versionNoteBar) {
-      versionNoteBar.hidden = false;
-    }
-    versionNoteInput?.focus();
-    versionNoteInput?.select();
   }
 
   // The native Markdig render. No longer a visible pane (Split now pairs the source editor with the
@@ -195,39 +76,10 @@ function wire(): void {
     ipc.send(Kinds.editorChanged, { text }, { version: docVersion });
   };
 
-  // Block-level scroll-sync between the two editable panes in split (they couple by source line —
-  // there is no shared native render to height-equalise against any more). A "driver" lock lets the
-  // pane the user is scrolling keep driving while the other pane's programmatic echo is ignored;
-  // suppressScroll() mutes both briefly around programmatic scrolls (edit mirror / mode switch).
-  const SCROLL_SYNC_MS = 120;
-  let scrollDriver: "editor" | "formatted" | "none" = "none";
-  let scrollDriverUntil = 0;
-  // When a genuine pane scroll last drove scroll-sync (top-aligned the other pane). While this is
-  // recent, the passive pane is already being positioned by scroll-sync, so a caret-move reveal must
-  // stand down — otherwise the two fight over the passive pane's scrollTop and it judders (most visible
-  // holding an arrow key inside a tall table/list, where sub-block drift makes the two disagree).
-  let lastScrollSyncAt = 0;
-  const claimScroll = (who: "editor" | "formatted"): boolean => {
-    const now = Date.now();
-    if (scrollDriver !== who && now < scrollDriverUntil) {
-      return false; // the other pane is driving (or a suppress window is active) — ignore the echo
-    }
-    scrollDriver = who;
-    scrollDriverUntil = now + SCROLL_SYNC_MS;
-    return true;
-  };
-  const suppressScroll = (): void => {
-    scrollDriver = "none";
-    scrollDriverUntil = Date.now() + SCROLL_SYNC_MS;
-  };
-  // Claim `who` as the authoritative scroll pane for the next sync window. Used when a deliberate caret
-  // move in `who` reveals the synced highlight in the OTHER pane: that other pane's programmatic reveal
-  // scroll must not echo back and drive `who`, yet `who`'s own caret-induced scroll must still sync
-  // normally — so we make `who` the driver rather than muting both panes (which suppressScroll does).
-  const driveScroll = (who: "editor" | "formatted"): void => {
-    scrollDriver = who;
-    scrollDriverUntil = Date.now() + SCROLL_SYNC_MS;
-  };
+  // Block-level scroll-sync between the two editable panes in Split (they couple by source line, with
+  // no shared native render to height-equalise against). A driver lock keeps the actively-scrolled pane
+  // authoritative while the other's programmatic echo is ignored; see scroll-sync.ts.
+  const scrollSync = new ScrollSync();
 
   // Forward-declared so the cross-sync callbacks below can reference both editors; assigned just after.
   let editor: MarkdownEditor;
@@ -239,8 +91,8 @@ function wire(): void {
   // button); the author clicks Show changes again to recompute. A silent Split text-mirror keeps it (the
   // editors re-apply their stored marks in setText), so only genuine edits clear it.
   let reviewing = false;
-  // A function declaration (hoisted) so the earlier confirmVersionNote can call it: saving a version
-  // advances the base, making the overlay stale, so it clears there too.
+  // A function declaration (hoisted) so the dialogs' version-note callback below can call it: saving a
+  // version advances the base, making the overlay stale, so it clears there too.
   function clearReview(): void {
     if (!reviewing) {
       return;
@@ -251,6 +103,35 @@ function wire(): void {
     formatted.clearDiff();
   }
 
+  // The two inline prompt bars (draft name on Edit, version note on Save version). They reach the host
+  // only through these callbacks — the integrator keeps the ipc/Kinds knowledge (see dialogs.ts).
+  const dialogs = new Dialogs({
+    suggestBranchName: async () => {
+      try {
+        const reply = await ipc.request(Kinds.branchNameRequest);
+        return parseBranchNameSuggested(reply.payload)?.name ?? "";
+      } catch (error) {
+        log.warn("Could not fetch a suggested draft name", String(error));
+        return "";
+      }
+    },
+    onBranchName: (branchName) => ipc.send(Kinds.actionEdit, { branchName }),
+    suggestVersionNote: async () => {
+      try {
+        const reply = await ipc.request(Kinds.versionNoteRequest);
+        return parseVersionNoteSuggested(reply.payload)?.note ?? "";
+      } catch (error) {
+        log.warn("Could not fetch a suggested version note", String(error));
+        return "";
+      }
+    },
+    onVersionNote: (note) => {
+      ipc.send(Kinds.actionSaveVersion, { note });
+      // Saving a version advances the base the overlay diffs against, so any showing overlay is now stale.
+      clearReview();
+    },
+  });
+
   // Cross-pane highlight sync: a single active source line (the caret line) and a single hovered
   // source line, shown in BOTH panes — the source editor highlights the line, the formatted view
   // highlights the block containing it. Whichever pane the user interacts with reports its position
@@ -259,22 +140,17 @@ function wire(): void {
   // set — highlight only, no reveal). After a deliberate caret move in Split, bring the synced
   // highlight into view on the OTHER (passive) pane: accumulated block-height drift can place it
   // outside that pane's viewport, where it would be invisible. Reveal is minimal (nearest) and only
-  // touches the passive pane — never the one the user is reading. driveScroll keeps the active pane
+  // touches the passive pane — never the one the user is reading. scrollSync.drive keeps the active pane
   // authoritative so the passive reveal scroll doesn't echo back, while the active pane's own
-  // scroll-sync keeps working (suppressScroll would have muted that too).
+  // scroll-sync keeps working (scrollSync.suppress would have muted that too).
   const setActive = (line: number | null, reveal: "editor" | "formatted" | null): void => {
     editor.setActiveLine(line);
     formatted.setActiveLine(line);
     // Skip the reveal while scroll-sync is actively positioning the passive pane (a scroll drove it
     // within the last window): the two would otherwise fight over its scrollTop and judder. A discrete
     // caret move with no recent scroll (a click / single arrow) still reveals normally.
-    if (
-      reveal !== null &&
-      line !== null &&
-      isSplit(mode) &&
-      Date.now() - lastScrollSyncAt >= SCROLL_SYNC_MS
-    ) {
-      driveScroll(reveal);
+    if (reveal !== null && line !== null && isSplit(mode) && !scrollSync.syncedRecently()) {
+      scrollSync.drive(reveal);
       if (reveal === "editor") {
         formatted.revealActiveBlock();
       } else {
@@ -315,11 +191,11 @@ function wire(): void {
   // Height-sync: pad the source editor with spacers so each source block's top lines up with its
   // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
   // Only meaningful in Split; rAF-throttled so a burst of edits/resizes reconciles once per frame.
-  // suppressScroll() guards against the spacer change nudging the editor's scroll into a false sync.
+  // scrollSync.suppress() guards against the spacer change nudging the editor's scroll into a false sync.
   let heightSync: HeightSync;
   const reconcileHeights = rafThrottle(() => {
     if (isSplit(mode)) {
-      suppressScroll();
+      scrollSync.suppress();
       heightSync.reconcile();
     }
   });
@@ -336,7 +212,7 @@ function wire(): void {
     if (formatted.getText() !== text) {
       formatted.setText(text);
       if (isSplit(mode)) {
-        suppressScroll();
+        scrollSync.suppress();
         formatted.scrollToSourceLine(editor.topVisibleLineExact());
       }
     }
@@ -348,7 +224,7 @@ function wire(): void {
     if (editor.getText() !== text) {
       editor.setText(text, true);
       if (isSplit(mode)) {
-        suppressScroll();
+        scrollSync.suppress();
         editor.scrollToSourceLine(formatted.topVisibleSourceLine());
       }
     }
@@ -357,16 +233,16 @@ function wire(): void {
 
   const offerDraft = (): void => {
     if (!editing) {
-      void openBranchName();
+      void dialogs.openBranchName();
     }
   };
 
   editor = new MarkdownEditor(editorEl, {
     onChange: onEditorChange,
     onScroll: () => {
-      if (isSplit(mode) && claimScroll("editor")) {
+      if (isSplit(mode) && scrollSync.claim("editor")) {
         formatted.scrollToSourceLine(editor.topVisibleLineExact());
-        lastScrollSyncAt = Date.now();
+        scrollSync.markSynced();
       }
     },
     onScrollSettle: () => {},
@@ -388,9 +264,9 @@ function wire(): void {
     onChange: onFormattedChange,
     onEditAttempt: offerDraft,
     onScroll: () => {
-      if (isSplit(mode) && claimScroll("formatted")) {
+      if (isSplit(mode) && scrollSync.claim("formatted")) {
         editor.scrollToSourceLine(formatted.topVisibleSourceLine());
-        lastScrollSyncAt = Date.now();
+        scrollSync.markSynced();
       }
     },
     onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
@@ -448,11 +324,11 @@ function wire(): void {
 
     // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll.
     // CodeMirror's re-measure is asynchronous, so restore on the SECOND frame (the PoC-11 timing).
-    suppressScroll();
+    scrollSync.suppress();
     editor.refresh();
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        suppressScroll();
+        scrollSync.suppress();
         if (formattedVisible(next)) {
           formatted.refresh();
         }
@@ -560,8 +436,7 @@ function wire(): void {
       if (discardBtn) {
         discardBtn.hidden = true;
       }
-      closeBranchName();
-      closeVersionNote();
+      dialogs.closeAll();
     }
   });
 
@@ -597,7 +472,7 @@ function wire(): void {
       discardBtn.hidden = !editing;
     }
     if (!editing) {
-      closeVersionNote();
+      dialogs.closeVersionNote();
     }
   });
 
@@ -612,61 +487,10 @@ function wire(): void {
     ipc.send(Kinds.actionOpen);
   });
   editBtn?.addEventListener("click", () => {
-    void openBranchName();
-  });
-  branchNameConfirm?.addEventListener("click", confirmBranchName);
-  branchNameCancel?.addEventListener("click", closeBranchName);
-  // Live-clean the draft name to a valid ref as it is typed, keeping the caret in place.
-  branchNameInput?.addEventListener("input", () => {
-    if (!branchNameInput) {
-      return;
-    }
-    const caret = branchNameInput.selectionStart;
-    const cleaned = sanitizeDraftName(branchNameInput.value);
-    if (cleaned !== branchNameInput.value) {
-      branchNameInput.value = cleaned;
-      if (caret !== null) {
-        branchNameInput.setSelectionRange(caret, caret);
-      }
-    }
-  });
-  branchNameInput?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      confirmBranchName();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeBranchName();
-    }
+    void dialogs.openBranchName();
   });
   saveVersionBtn?.addEventListener("click", () => {
-    void openVersionNote();
-  });
-  versionNoteConfirm?.addEventListener("click", confirmVersionNote);
-  versionNoteCancel?.addEventListener("click", closeVersionNote);
-  versionNoteExpand?.addEventListener("click", expandVersionNote);
-  // Single-line: Enter saves, Down arrow expands to the multi-line editor, Esc cancels.
-  versionNoteInput?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      confirmVersionNote();
-    } else if (event.key === "ArrowDown") {
-      event.preventDefault();
-      expandVersionNote();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeVersionNote();
-    }
-  });
-  // Multi-line: Enter inserts a newline (default), Ctrl/Cmd+Enter saves, Esc cancels.
-  versionNoteTextarea?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      confirmVersionNote();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      closeVersionNote();
-    }
+    void dialogs.openVersionNote();
   });
   discardBtn?.addEventListener("click", () => {
     clearReview();
