@@ -66,13 +66,21 @@ function decorationMeta(tr: Transaction, key: PluginKey<DecorationSet>): Decorat
   return tr.getMeta(key) as DecorationSet | undefined;
 }
 
-/** [from, to] document positions of the top-level child at `index`. */
-function blockRange(doc: PmNode, index: number): [number, number] {
+/** Document position where the top-level child at `index` starts — the sum of every prior child's
+ *  size. O(index); a scan that visits every block in order should accumulate the position inline
+ *  (`pos += doc.child(i).nodeSize` per step) rather than call this per block, which would be O(n²). */
+function startOfChild(doc: PmNode, index: number): number {
   let pos = 0;
   for (let i = 0; i < index; i++) {
     pos += doc.child(i).nodeSize;
   }
-  return [pos, pos + doc.child(index).nodeSize];
+  return pos;
+}
+
+/** [from, to] document positions of the top-level child at `index`. */
+function blockRange(doc: PmNode, index: number): [number, number] {
+  const from = startOfChild(doc, index);
+  return [from, from + doc.child(index).nodeSize];
 }
 
 const highlightPlugin = new Plugin<DecorationSet>({
@@ -862,10 +870,7 @@ export class FormattedEditor {
     const doc = this.view.state.doc;
     const clamped = Math.max(0, Math.min(index, doc.childCount - 1));
     const block = this.blocks[clamped];
-    let pos = 0;
-    for (let i = 0; i < clamped; i++) {
-      pos += doc.child(i).nodeSize;
-    }
+    const pos = startOfChild(doc, clamped);
     const dom = this.view.nodeDOM(pos);
     if (block === undefined || !(dom instanceof HTMLElement)) {
       return;
