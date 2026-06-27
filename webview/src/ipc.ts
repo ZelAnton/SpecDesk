@@ -8,6 +8,7 @@
  */
 
 import { isNumber, isRecord, isString } from "./decoders.js";
+import { Kinds } from "./protocol.js";
 
 export interface IpcMessage {
   kind: string;
@@ -170,12 +171,7 @@ export class IpcClient {
 /** Shared default client bound to the live host bridge. */
 export const ipc = new IpcClient();
 
-/** Convenience: fire-and-forget send via the default client. */
-export function sendToHost(kind: string, payload: unknown): boolean {
-  return ipc.send(kind, payload);
-}
-
 /** Announce to the host that the webview has finished loading. */
 export function postReady(): boolean {
-  return sendToHost("ready", null);
+  return ipc.send(Kinds.ready, null);
 }

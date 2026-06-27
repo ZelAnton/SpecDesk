@@ -36,6 +36,8 @@ let parse (tomlText: string option) : WorkflowConfig =
               BranchPattern = Toml.getString branch "pattern" defaults.BranchPattern
               CommitTemplate = Toml.getString commit "template" defaults.CommitTemplate }
         with _ ->
+            // Malformed config is the maintainer's problem to fix; naming degrades to the built-in
+            // defaults rather than breaking the workflow (design 10: invalid config must never break).
             defaults
 
 /// Build the token context for a document. Seq/Hash8/OriginalName are not meaningful for branch
