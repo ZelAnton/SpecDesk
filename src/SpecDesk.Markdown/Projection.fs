@@ -21,7 +21,7 @@ let rec private inlineOf (inl: Inline) : Ast.Inline option =
     | :? LinkInline as link ->
         let url = defaultArg (Option.ofObj link.Url) ""
         if link.IsImage then
-            Some(Ast.Image(plainText (inlinesOf link), url))
+            Some(Ast.Image(Inlines.flatten (inlinesOf link), url))
         else
             Some(Ast.Link(inlinesOf link, url))
     | :? AutolinkInline as auto -> Some(Ast.Link([ Ast.Text auto.Url ], auto.Url))
@@ -37,21 +37,6 @@ and private inlinesOf (container: ContainerInline | null) : Ast.Inline list =
               match inlineOf child with
               | Some i -> yield i
               | None -> () ]
-
-/// Flatten inline content to its visible text — used for image alt text, which the DU stores
-/// as a plain string.
-and private plainText (inlines: Ast.Inline list) : string =
-    inlines
-    |> List.map (fun i ->
-        match i with
-        | Ast.Text t -> t
-        | Ast.Code c -> c
-        | Ast.Emphasis xs
-        | Ast.Strong xs -> plainText xs
-        | Ast.Link(xs, _) -> plainText xs
-        | Ast.Image(alt, _) -> alt
-        | Ast.LineBreak -> " ")
-    |> String.concat ""
 
 let rec private blockOf (block: Block) : Ast.Block option =
     match block with

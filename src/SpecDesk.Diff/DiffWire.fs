@@ -45,7 +45,7 @@ let private listItemText (item: Ast.Block list) : string =
 
 /// The flattened text of one table row (its cells joined).
 let private tableRowText (cells: Ast.Inline list list) : string =
-    cells |> List.map AstDiff.inlinesText |> String.concat " | "
+    cells |> List.map Inlines.flatten |> String.concat " | "
 
 /// The flattened child texts of a container block, in the SAME order the webview's `childLineStarts`
 /// reports (list items in order; a table's header row first, then its body rows). None for a non-container.

@@ -48,28 +48,15 @@ let private kindTag (block: Ast.Block) : string =
     | Ast.Table _ -> "table"
     | Ast.ThematicBreak -> "thematicBreak"
 
-let rec inlineText (inl: Ast.Inline) : string =
-    match inl with
-    | Ast.Text t
-    | Ast.Code t -> t
-    | Ast.Emphasis xs
-    | Ast.Strong xs -> inlinesText xs
-    | Ast.Link(xs, _) -> inlinesText xs
-    | Ast.Image(alt, _) -> alt
-    | Ast.LineBreak -> " "
-
-and inlinesText (xs: Ast.Inline list) : string =
-    xs |> List.map inlineText |> String.concat ""
-
 /// The visible text of a block, flattened — the basis for change-similarity scoring.
 let rec blockText (block: Ast.Block) : string =
     match block with
     | Ast.Heading(_, xs)
-    | Ast.Paragraph xs -> inlinesText xs
+    | Ast.Paragraph xs -> Inlines.flatten xs
     | Ast.CodeBlock(_, code) -> code
     | Ast.ListBlock(_, items) -> items |> List.collect id |> List.map blockText |> String.concat " "
     | Ast.Quote blocks -> blocks |> List.map blockText |> String.concat " "
-    | Ast.Table(header, rows) -> header :: rows |> List.collect id |> List.map inlinesText |> String.concat " "
+    | Ast.Table(header, rows) -> header :: rows |> List.collect id |> List.map Inlines.flatten |> String.concat " "
     | Ast.ThematicBreak -> ""
 
 /// Lowercase alphanumeric word tokens of a node's visible text.
