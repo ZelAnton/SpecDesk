@@ -17,10 +17,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\SpecDesk.Contracts\SpecDesk.Contracts.csproj" />
-	</ItemGroup>
-
-	<ItemGroup>
 		<!-- Explicit FSharp.Core required under Central Package Management. -->
 		<PackageReference Include="FSharp.Core" />
 		<PackageReference Include="SkiaSharp" />
