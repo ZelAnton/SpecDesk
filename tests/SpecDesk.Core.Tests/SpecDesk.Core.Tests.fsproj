@@ -11,6 +11,7 @@
 		<Compile Include="SlugTests.fs" />
 		<Compile Include="LifecycleTests.fs" />
 		<Compile Include="TokensTests.fs" />
+		<Compile Include="TomlTests.fs" />
 		<Compile Include="ImagesConfigTests.fs" />
 		<Compile Include="WorkflowConfigTests.fs" />
 		<Compile Include="ImageProcessingTests.fs" />
