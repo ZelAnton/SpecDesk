@@ -9,6 +9,7 @@
 
 import { closestElement } from "./dom.js";
 import { isOpenableHref } from "./links.js";
+import { lineAtScrollTop, scrollTopForLine } from "./scroll-geometry.js";
 
 /** A rendered top-level block plus its 0-based, inclusive source line range. */
 export interface PreviewBlock {
@@ -166,10 +167,16 @@ export class Preview {
     if (block === undefined) {
       return;
     }
-    const span = block.lineEnd - block.lineStart + 1;
-    const fraction = Math.min(Math.max((line - block.lineStart) / span, 0), 1);
-    this.el.scrollTop =
-      this.blockTop(block.el) + fraction * block.el.getBoundingClientRect().height;
+    this.el.scrollTop = scrollTopForLine(
+      {
+        lineStart: block.lineStart,
+        lineEnd: block.lineEnd,
+        contentLineEnd: undefined,
+        top: this.blockTop(block.el),
+        height: block.el.getBoundingClientRect().height,
+      },
+      line,
+    );
   }
 
   /** Current vertical scroll offset (pixels from content top) — the scroll-map's preview coordinate. */
@@ -201,10 +208,16 @@ export class Preview {
     if (current === undefined) {
       return 0;
     }
-    const height = current.el.getBoundingClientRect().height;
-    const span = current.lineEnd - current.lineStart + 1;
-    const fraction = height > 0 ? (scrollTop - this.blockTop(current.el)) / height : 0;
-    return current.lineStart + Math.floor(fraction * span);
+    return lineAtScrollTop(
+      {
+        lineStart: current.lineStart,
+        lineEnd: current.lineEnd,
+        contentLineEnd: undefined,
+        top: this.blockTop(current.el),
+        height: current.el.getBoundingClientRect().height,
+      },
+      scrollTop,
+    );
   }
 
   private indexBlocks(): void {

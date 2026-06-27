@@ -27,6 +27,7 @@ import { serializeWithSplice } from "./md-splice.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import type { BlockGeometry } from "./preview.js";
 import { rafThrottle } from "./raf.js";
+import { lineAtScrollTop, scrollTopForLine } from "./scroll-geometry.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
@@ -799,10 +800,19 @@ export class FormattedEditor {
     // block's pixels cover its content, while the trailing blank lines ride with the block in the source
     // split but belong to the inter-block gap — mirrors preview.ts, which uses Markdig's blank-free
     // data-line-end. The lineEnd clamp still lets a viewport sitting in that gap report the blank line.
-    const span =
-      (current.block.contentLineEnd ?? current.block.lineEnd + 1) - current.block.lineStart;
-    const fraction = current.height > 0 ? (scrollTop - current.top) / current.height : 0;
-    return Math.min(current.block.lineStart + Math.floor(fraction * span), current.block.lineEnd);
+    return Math.min(
+      lineAtScrollTop(
+        {
+          lineStart: current.block.lineStart,
+          lineEnd: current.block.lineEnd,
+          contentLineEnd: current.block.contentLineEnd,
+          top: current.top,
+          height: current.height,
+        },
+        scrollTop,
+      ),
+      current.block.lineEnd,
+    );
   }
 
   /**
@@ -864,9 +874,16 @@ export class FormattedEditor {
     const blockTop = rect.top - this.scrollEl.getBoundingClientRect().top + this.scrollEl.scrollTop;
     // Content-line span only (see topVisibleSourceLine): the rendered block's height covers its content
     // lines, not the trailing blank lines that ride with the block in the source split.
-    const span = (block.contentLineEnd ?? block.lineEnd + 1) - block.lineStart;
-    const fraction = Math.min(Math.max((line - block.lineStart) / span, 0), 1);
-    this.scrollEl.scrollTop = blockTop + fraction * rect.height;
+    this.scrollEl.scrollTop = scrollTopForLine(
+      {
+        lineStart: block.lineStart,
+        lineEnd: block.lineEnd,
+        contentLineEnd: block.contentLineEnd,
+        top: blockTop,
+        height: rect.height,
+      },
+      line,
+    );
   }
 
   private scheduleChange(): void {
