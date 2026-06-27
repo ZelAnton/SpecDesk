@@ -26,6 +26,7 @@ public static class WorkflowSeeds
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
+			// A config we cannot read is treated as absent — callers fall back to the built-in defaults.
 			return null;
 		}
 	}

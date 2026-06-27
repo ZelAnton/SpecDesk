@@ -77,7 +77,7 @@ internal static class Program
 		string? originalName,
 		string? mime)
 	{
-		string? toml = TryReadToml(Path.Combine(repoRoot, ".spectool.toml"));
+		string? toml = WorkflowSeeds.TryReadRepoToml(repoRoot);
 		ImageEngine.InsertOutcome outcome =
 			ImageEngine.insertForHost(repoRoot, docPath, toml, bytes, originalName, mime);
 		if (outcome.Error is not null)
@@ -86,19 +86,6 @@ internal static class Program
 		}
 
 		return outcome.Markdown;
-	}
-
-	private static string? TryReadToml(string path)
-	{
-		try
-		{
-			return File.Exists(path) ? File.ReadAllText(path) : null;
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
-			// A config we cannot read is treated as absent — the engine falls back to defaults.
-			return null;
-		}
 	}
 
 	// Serve files referenced as app://<authority>/<path> from the current repo root. A rejected
