@@ -17,9 +17,12 @@
 		<PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
 		<PackageVersion Include="Octokit" Version="14.0.0" />
 		<PackageVersion Include="Photino.NET" Version="4.0.16" />
-		<!-- Image processing for the paste/drop rule engine (PoC-3). ImageSharp is under the
-		     Six Labors Split License — free for this personal project. -->
-		<PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
+		<!-- Image processing for the paste/drop rule engine (PoC-3). SkiaSharp is MIT-licensed (no
+		     build-time license key, unlike ImageSharp 4.x). The base package carries the Windows and
+		     macOS native binaries; the Linux .so for CI test runs is added on the test project via
+		     SkiaSharp.NativeAssets.Linux.NoDependencies (no fontconfig needed — we never render text). -->
+		<PackageVersion Include="SkiaSharp" Version="4.148.0" />
+		<PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.148.0" />
 
 		<!-- Logging: the Microsoft.Extensions.Logging abstraction backed by Serilog (rolling file). -->
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.9" />

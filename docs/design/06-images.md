@@ -108,9 +108,11 @@ max-width      = 2000        # downscale wider images (keeps repos lean)
 reencode-paste = true        # always normalize clipboard bitmaps to `preferred`
 ```
 
-Processing runs natively (ImageSharp or System.Drawing-free alternative; ImageSharp
-recommended for cross-platform safety). Rationale: pasted screenshots are often huge PNGs
-with metadata; normalizing keeps spec repos small and avoids leaking metadata.
+Processing runs natively via SkiaSharp (MIT-licensed, cross-platform). Rationale: pasted
+screenshots are often huge PNGs with metadata; normalizing keeps spec repos small and avoids
+leaking metadata. A decode → re-encode always drops EXIF/XMP/ICC, so re-encoded output is
+metadata-free; SVG and GIF pass through verbatim (Skia decodes but cannot encode GIF, so a GIF
+target keeps the original bytes — preserving any animation).
 
 ## De-duplication
 

@@ -26,7 +26,7 @@ public interface IFileDialogs
 /// <summary>
 /// Runs the image rule engine: process the bytes, write the file into the repo, and return the
 /// document-relative Markdown link, or <c>null</c> on failure. Injected so the controller stays
-/// free of ImageSharp / config / I/O and remains unit-testable.
+/// free of image processing / config / I/O and remains unit-testable.
 /// </summary>
 public delegate string? ImageInserter(
 	string repoRoot,

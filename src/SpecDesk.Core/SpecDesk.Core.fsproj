@@ -23,7 +23,7 @@
 	<ItemGroup>
 		<!-- Explicit FSharp.Core required under Central Package Management. -->
 		<PackageReference Include="FSharp.Core" />
-		<PackageReference Include="SixLabors.ImageSharp" />
+		<PackageReference Include="SkiaSharp" />
 	</ItemGroup>
 
 </Project>

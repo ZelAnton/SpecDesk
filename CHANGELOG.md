@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PoC-3 — image drop/paste rule engine: pasting or dragging an image into the editor saves it
   into the repo working tree, named by a `.spectool.toml [images]` rule, and inserts a
   document-relative `![](…)` link that the preview resolves via `app://`. `SpecDesk.Core` is the
-  F# rule engine (format sniff + re-encode/downscale/metadata-strip via ImageSharp, token
+  F# rule engine (format sniff + re-encode/downscale/metadata-strip via SkiaSharp, token
   expansion, slugified naming, `{hash8}` de-duplication, repository containment); the Markdown
   renderer rewrites relative image links to `app://`. Git staging is deferred to PoC-4.
 - Height-synced scroll: the editor pads each source block with a spacer so a taller rendered block —
