@@ -71,6 +71,9 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 
 ## Spike‑A — GitHub auth (parallel, start immediately)
 
+> **Reference:** [borrowings catalog](borrowings-from-knowledge.md) §B — Knowledge uses Octokit **OAuth
+> Device Flow**; a working device-flow + token-store reference to adopt.
+
 - **Goal:** prove we can authenticate to GitHub and perform one real write (open a throwaway PR via Octokit) from a console harness.
 - **Retires risk:** the auth model is the single biggest external unknown — GitHub App vs OAuth device flow vs PAT, token storage, scopes. The roadmap's own note says *spike it early even if the UI lags* ([design/03-roadmap.md](design/03-roadmap.md)).
 - **Build:** a `SpecDesk.GitHub` console spike that authenticates (try **device flow** first for simplicity, evaluate **GitHub App** for org rollout), pushes a branch, opens and closes a PR on a test repo. Decide and **document the chosen auth model** in [design/04-git-workflow.md](design/04-git-workflow.md) "Decisions to lock".
@@ -212,6 +215,9 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 
 ## PoC‑5 — Send for review (GitHub round-trip)
 
+> **Reference:** [borrowings catalog](borrowings-from-knowledge.md) §B — Knowledge's publish state machine +
+> `presentPublishError` (error→next-action discriminated union) + `classifyOctokitError`.
+
 - **Goal:** one button takes a saved version to an open PR on GitHub; status reflects review state.
 - **Retires risk:** wiring Spike‑A's auth into the app and the full author round-trip; the first time real GitHub state drives the UI.
 - **Build:**
@@ -274,6 +280,9 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 
 ## PoC‑9 — AI agent (parallel, slots in any time after PoC‑4)
 
+> **Reference:** [borrowings catalog](borrowings-from-knowledge.md) §D — Knowledge's MCP tool anatomy
+> (readOnly/destructive/idempotent annotations, structured+text output) + the consent-gate pattern.
+
 - **Goal:** an in-app assistant that drafts version notes / PR text and answers questions about the document — every mutating action gated.
 - **Retires risk:** Microsoft Agent Framework integration, streaming chat over IPC, and the **confirmation-gate** safety model.
 - **Build:**
@@ -285,6 +294,9 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 - **Effort:** **L** · **Depends on:** PoC‑4 (to have something to draft for); richer with PoC‑6.
 
 ## PoC‑10 — Conflict handling, publish & polish
+
+> **Reference:** [borrowings catalog](borrowings-from-knowledge.md) §C — Knowledge's conflict shape
+> discriminator + strategy enum (no raw markers) and the hunk accept/reject UX.
 
 - **Goal:** the production-ready manager workflow, including the gentle conflict path and Publish.
 - **Retires risk:** the genuinely dangerous part — never showing `<<<<<<<` markers to an author — plus the merge/publish gate.
