@@ -705,6 +705,11 @@ export class MarkdownEditor {
     this.view.requestMeasure();
   }
 
+  /** Move keyboard focus into the source editor (used by the skip-to-editor link). */
+  focus(): void {
+    this.view.focus();
+  }
+
   /** Toggle soft line wrapping. Off = long lines stay on one row (horizontal scroll). */
   setLineWrapping(enabled: boolean): void {
     this.view.dispatch({

@@ -720,6 +720,11 @@ export class FormattedEditor {
     this.view.updateState(this.view.state);
   }
 
+  /** Move keyboard focus into the formatted editor (used by the skip-to-editor link). */
+  focus(): void {
+    this.view.focus();
+  }
+
   /** Inner width of the pane (its wrapping width) — for height-sync diagnostics. */
   contentWidth(): number {
     return this.scrollEl.clientWidth;

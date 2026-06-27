@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <!-- Skip link (a11y §11): the first focusable element, visually hidden until focused, so a keyboard
+         user can jump past the toolbar straight into the editor. The handler in index.ts focuses the
+         pane visible in the current mode. -->
+    <a class="skip-link" href="#editor">Skip to editor</a>
     <div id="toolbar">
       <button id="open-btn" type="button">Open…</button>
       <button id="edit-btn" type="button">Edit</button>

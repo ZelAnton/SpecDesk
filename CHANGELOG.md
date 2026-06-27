@@ -152,6 +152,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved version yet), a calm "No changes since the last saved version" notice appears below the toolbar
   instead of silently washing nothing, so the author isn't left wondering why nothing is highlighted. It
   clears the moment there are changes to show or the overlay is turned off.
+- Accessibility — skip-to-editor link: a keyboard user's first Tab on the page reveals a "Skip to editor"
+  link that jumps focus past the toolbar straight into the editing surface visible in the current mode
+  (the source editor in Code/Split, the formatted editor in Formatted). It is parked off-screen until
+  focused, so it stays in the tab order without cluttering the layout.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

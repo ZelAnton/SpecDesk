@@ -205,6 +205,27 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* Skip-to-editor link (a11y §11): the first focusable element, parked off-screen so it stays in the
+   tab order (display:none would drop it) and appears only when focused — the first Tab on the page
+   reveals it to jump past the toolbar. The focus ring comes from the a:focus-visible rule above. */
+.skip-link {
+  position: absolute;
+  top: -3rem;
+  left: 0.5rem;
+  z-index: 10;
+  padding: 0.4rem 0.75rem;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: 0.5rem;
+}
+
 /* Control labels never wrap. A button has a fixed height, so a label that wraps to two lines spills
    out of it (e.g. "Export log…" when the toolbar is narrow). `nowrap` keeps every label on one line;
    it also makes a flex button's automatic minimum width equal its full label, so the button can't be

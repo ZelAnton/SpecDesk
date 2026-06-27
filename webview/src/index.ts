@@ -43,6 +43,7 @@ function wire(): void {
   const exportLogBtn = document.querySelector<HTMLButtonElement>("#export-log-btn");
   const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
+  const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
   const modeFormattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
@@ -543,6 +544,17 @@ function wire(): void {
   modeCodeBtn?.addEventListener("click", () => applyMode("code"));
   modeSplitBtn?.addEventListener("click", () => applyMode("split"));
   modeFormattedBtn?.addEventListener("click", () => applyMode("formatted"));
+
+  // Skip link (a11y): jump keyboard focus past the toolbar into the editing surface visible in the
+  // current mode — the source editor in Code/Split, the formatted editor in Formatted.
+  skipLink?.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (paneVisibility(mode).editor) {
+      editor.focus();
+    } else {
+      formatted.focus();
+    }
+  });
 
   // "Show changes" toggles the review overlay. Entering asks the host to diff against the last saved
   // version (version-stamped so a stale reply is dropped); the marks arrive via `diff.result` and are
