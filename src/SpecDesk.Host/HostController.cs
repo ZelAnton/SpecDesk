@@ -380,10 +380,10 @@ public sealed class HostController : IDisposable
 
 		try
 		{
-			string? toml = TryReadRepoToml(_repoRoot);
-			string docSlug = DocSlug(_currentPath);
+			string? toml = WorkflowSeeds.TryReadRepoToml(_repoRoot);
+			string docSlug = WorkflowSeeds.DocSlug(_currentPath);
 			// Prefer the author's chosen draft name (sanitized to a valid ref); else the generated one.
-			string sanitized = SanitizeBranchName(payload?.BranchName);
+			string sanitized = WorkflowSeeds.SanitizeBranchName(payload?.BranchName);
 			string branchName = sanitized.Length > 0
 				? sanitized
 				: WorkflowConfig.branchNameForHost(toml, docSlug, DateTimeOffset.Now);
@@ -567,7 +567,7 @@ public sealed class HostController : IDisposable
 
 		string note = !string.IsNullOrWhiteSpace(payload?.Note)
 			? payload!.Note
-			: SuggestedVersionNote(repoRoot, path);
+			: WorkflowSeeds.SuggestedVersionNote(repoRoot, path);
 
 		try
 		{
@@ -614,19 +614,11 @@ public sealed class HostController : IDisposable
 		string? id = message.Id;
 		string? repoRoot = _repoRoot;
 		string? path = _currentPath;
-		string note = repoRoot is not null && path is not null ? SuggestedVersionNote(repoRoot, path) : string.Empty;
+		string note = repoRoot is not null && path is not null ? WorkflowSeeds.SuggestedVersionNote(repoRoot, path) : string.Empty;
 		_send(IpcSerializer.SerializeEvent(
 			MessageKinds.VersionNoteSuggested,
 			new VersionNoteSuggestedPayload(note),
 			id: id));
-	}
-
-	// The generated, editable seed for a version note (the commit message), from the repo's
-	// .spectool.toml [commit] template (or the default), expanded with the document tokens.
-	private static string SuggestedVersionNote(string repoRoot, string docPath)
-	{
-		string? toml = TryReadRepoToml(repoRoot);
-		return WorkflowConfig.commitMessageForHost(toml, DocSlug(docPath), DateTimeOffset.Now);
 	}
 
 	// Reply to the webview's request for a draft (branch) name to prefill the Edit prompt. Correlated
@@ -637,49 +629,12 @@ public sealed class HostController : IDisposable
 		string? repoRoot = _repoRoot;
 		string? path = _currentPath;
 		string name = repoRoot is not null && path is not null
-			? WorkflowConfig.branchNameForHost(TryReadRepoToml(repoRoot), DocSlug(path), DateTimeOffset.Now)
+			? WorkflowSeeds.SuggestedBranchName(repoRoot, path)
 			: string.Empty;
 		_send(IpcSerializer.SerializeEvent(
 			MessageKinds.BranchNameSuggested,
 			new BranchNameSuggestedPayload(name),
 			id: id));
-	}
-
-	// Reduce an author-typed draft name to a valid git branch ref, matching the webview's live
-	// cleanup: backslashes become '/', and anything outside letters/digits and '-_/.' becomes '_'.
-	// Runs of the separators '-_/' collapse to one, ref-illegal edges are trimmed (leading/trailing
-	// '-_/.', a trailing ".lock", and ".."). Returns "" when nothing usable remains, so the caller
-	// falls back to the generated name. Defensive: a still-invalid result is caught by BeginEdit and
-	// surfaced as a plain error.
-	private static string SanitizeBranchName(string? raw)
-	{
-		if (string.IsNullOrWhiteSpace(raw))
-		{
-			return string.Empty;
-		}
-
-		System.Text.StringBuilder builder = new(raw.Length);
-		foreach (char original in raw.Trim())
-		{
-			char ch = original == '\\' ? '/' : original;
-			bool keep = char.IsLetterOrDigit(ch) || ch is '-' or '_' or '/' or '.';
-			char mapped = keep ? ch : '_';
-			// Collapse consecutive separators so "a   b" / "a///b" don't produce noisy runs.
-			if (mapped is '-' or '_' or '/' && builder.Length > 0 && builder[^1] is '-' or '_' or '/')
-			{
-				continue;
-			}
-
-			builder.Append(mapped);
-		}
-
-		string cleaned = builder.ToString().Trim('-', '_', '/', '.').Replace("..", "_", StringComparison.Ordinal);
-		if (cleaned.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
-		{
-			cleaned = cleaned[..^5].Trim('-', '_', '/', '.');
-		}
-
-		return cleaned;
 	}
 
 	private void CancelAutosave()
@@ -722,22 +677,6 @@ public sealed class HostController : IDisposable
 
 	private void SendError(string message) =>
 		_send(IpcSerializer.SerializeEvent(MessageKinds.Error, new ErrorPayload(message)));
-
-	private static string DocSlug(string docPath) =>
-		Slug.slugify(Slug.Case.Kebab, Path.GetFileNameWithoutExtension(docPath));
-
-	private static string? TryReadRepoToml(string repoRoot)
-	{
-		string path = Path.Combine(repoRoot, ".spectool.toml");
-		try
-		{
-			return File.Exists(path) ? File.ReadAllText(path) : null;
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
-			return null;
-		}
-	}
 
 	private void LoadFile(string path)
 	{
