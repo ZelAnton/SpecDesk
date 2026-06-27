@@ -28,6 +28,11 @@
 		<PackageReference Include="Serilog.Sinks.Console" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<!-- The test project exercises the SampleRepo first-run seeding logic directly. -->
+		<InternalsVisibleTo Include="SpecDesk.Host.Tests" />
+	</ItemGroup>
+
 	<!-- PoC-1 demo assets served via the app:// scheme; PoC-4 also seeds them into a sample repo.
 	     Tracked source (not generated). The dotfile is listed explicitly because the glob does not
 	     reliably match a leading-dot file. -->

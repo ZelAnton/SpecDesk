@@ -22,6 +22,11 @@ internal sealed class FakeVersioning : IDocumentVersioning
 
     public bool DiscardCalled { get; private set; }
 
+    public int InitializeCalls { get; private set; }
+
+    /// <summary>When set, <see cref="Initialize"/> throws — to exercise the seed-must-not-crash path.</summary>
+    public bool ThrowOnInitialize { get; set; }
+
     /// <summary>Canned "last committed version" returned by <see cref="ReadHeadContent"/>.</summary>
     public string? HeadContent { get; set; }
 
@@ -31,7 +36,14 @@ internal sealed class FakeVersioning : IDocumentVersioning
 
     public void Initialize(string repoRoot, string commitMessage)
     {
-        // Nothing to do; the fake is "born" with `main` checked out.
+        InitializeCalls++;
+        if (ThrowOnInitialize)
+        {
+            throw new IOException("seed boom");
+        }
+
+        // A real Initialize makes the repo versioned; reflect that so a second EnsureSeeded is idempotent.
+        Versioned = true;
     }
 
     public string? CurrentBranch(string repoRoot) => Branch;
