@@ -13,14 +13,12 @@ let ``provided fields override defaults`` () =
         "[images]\n"
         + "folder = \"assets/{docSlug}\"\n"
         + "max-width = 1000   # downscale\n"
-        + "strip-metadata = false\n"
         + "allowed = [\"png\", \"jpg\"]\n"
         + "case = \"snake\"\n"
 
     let config = ImagesConfig.parse (Some toml)
     Assert.That(config.Folder, Is.EqualTo "assets/{docSlug}")
     Assert.That(config.MaxWidth, Is.EqualTo 1000)
-    Assert.That(config.StripMetadata, Is.False)
     Assert.That(config.Allowed = [ "png"; "jpg" ], Is.True)
     Assert.That(config.Case, Is.EqualTo Slug.Snake)
     // Unspecified fields keep their defaults.

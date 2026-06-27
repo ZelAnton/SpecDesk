@@ -14,7 +14,6 @@ type ImagesConfig =
       Preferred: string
       Case: Slug.Case
       MaxNameLength: int
-      StripMetadata: bool
       MaxWidth: int
       ReencodePaste: bool }
 
@@ -25,7 +24,6 @@ let defaults: ImagesConfig =
       Preferred = "png"
       Case = Slug.Kebab
       MaxNameLength = 80
-      StripMetadata = true
       MaxWidth = 2000
       ReencodePaste = true }
 
@@ -44,7 +42,6 @@ let parse (tomlText: string option) : ImagesConfig =
               Preferred = Toml.getString table "preferred" defaults.Preferred
               Case = Slug.parseCase (Toml.getString table "case" "kebab")
               MaxNameLength = Toml.getInt table "max-name-length" defaults.MaxNameLength
-              StripMetadata = Toml.getBool table "strip-metadata" defaults.StripMetadata
               MaxWidth = Toml.getInt table "max-width" defaults.MaxWidth
               ReencodePaste = Toml.getBool table "reencode-paste" defaults.ReencodePaste }
         with _ ->

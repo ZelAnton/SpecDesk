@@ -57,7 +57,6 @@ allowed         = ["png", "jpg", "jpeg", "gif", "webp", "svg"]
 preferred       = "png"
 case            = "kebab"
 max-name-length = 80
-strip-metadata  = true
 max-width       = 2000
 reencode-paste  = true
 

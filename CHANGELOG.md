@@ -112,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other schemes (e.g. `javascript:`) are ignored, and the webview can never navigate itself.
 
 ### Changed
+- Image metadata stripping is now documented as automatic rather than a config toggle. The
+  `[images] strip-metadata` key is removed: re-encoding a pasted image (the default) always drops
+  EXIF/XMP/ICC — so EXIF/GPS never leak from screenshots — while the verbatim pass-through formats
+  (SVG, GIF) keep their bytes. The key had no runtime effect (its value was never read), so behaviour
+  is unchanged; an unknown key in `.spectool.toml` is simply ignored.
 - UI restyled to the agreed design concept (`docs/design/SpecDesk-Design-Concept.md`): a CSS
   design-token system now drives every surface (light, warm, and dark token sets); the rendered
   preview reads like a typeset document (serif headings, hairline tables, a soft accent caret-block

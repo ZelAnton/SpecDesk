@@ -182,7 +182,7 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 - **Retires risk:** the clipboard/drop capture path in the webview, and the F# token-expansion rule engine. Highest-value self-contained feature; deliberately decoupled from git so it can ship to early dogfooders before any network.
 - **Build:**
   - Webview capture of drop + clipboard paste → `image.paste {base64, originalName?, mime}`.
-  - `SpecDesk.Core` image-rule engine ([design/06-images.md](design/06-images.md)): format sniff, optional re-encode/strip-metadata/downscale (SkiaSharp), folder + naming token expansion, constraint enforcement, `{hash8}` de-duplication, relative-link computation.
+  - `SpecDesk.Core` image-rule engine ([design/06-images.md](design/06-images.md)): format sniff, optional re-encode/downscale (SkiaSharp, which drops metadata), folder + naming token expansion, constraint enforcement, `{hash8}` de-duplication, relative-link computation.
   - Reads `[images]` from `.spectool.toml` ([design/10-repo-config.md](design/10-repo-config.md)).
 - **Demo / acceptance:** paste a screenshot → file written to `images/{docSlug}/…-{hash8}.png`, link inserted, preview resolves it via `app://`; pasting the same image twice reuses one file.
 - **Effort:** **M** · **Depends on:** PoC‑1, PoC‑2.

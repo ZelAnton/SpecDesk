@@ -6,8 +6,8 @@
 /// raster format we accept but only ENCODES PNG/JPEG/WebP, so a GIF target is passed through unchanged
 /// (which also keeps any animation), and any other un-encodable target falls back to PNG. A decode →
 /// re-encode round-trip inherently drops EXIF/XMP/ICC metadata, so re-encoded output is always
-/// metadata-free regardless of `StripMetadata`; the pass-through formats (SVG, GIF) keep their bytes
-/// verbatim.
+/// metadata-free (this is what sheds EXIF/GPS from pasted screenshots — there is no separate strip
+/// step or toggle); the pass-through formats (SVG, GIF) keep their bytes verbatim.
 module SpecDesk.Core.ImageProcessing
 
 open System

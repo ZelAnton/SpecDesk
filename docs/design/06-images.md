@@ -103,10 +103,11 @@ max-name-length = 80
 
 ```toml
 [images]
-strip-metadata = true        # remove EXIF/GPS — important for screenshots of internal tools
 max-width      = 2000        # downscale wider images (keeps repos lean)
 reencode-paste = true        # always normalize clipboard bitmaps to `preferred`
 ```
+
+EXIF/GPS stripping is automatic (not a toggle): re-encoding always drops metadata — see below.
 
 Processing runs natively via SkiaSharp (MIT-licensed, cross-platform). Rationale: pasted
 screenshots are often huge PNGs with metadata; normalizing keeps spec repos small and avoids
