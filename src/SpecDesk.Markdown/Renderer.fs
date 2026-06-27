@@ -71,12 +71,9 @@ let private rewriteImageUrl (docDir: string) (url: string) : string =
         let combined = if docDir = "" then url else docDir.TrimEnd('/') + "/" + url
         "app://repo/" + normalizeRelative combined
 
-/// Parse once, rewrite relative image links, stamp line attributes onto top-level blocks, render to
-/// HTML, and collect the map. <paramref name="docDir"/> is the document's directory relative to the
-/// repo root (forward slashes, "" at the root).
-let render (docDir: string) (text: string) : RenderResult =
-    let doc = Markdown.Parse(text, Pipeline.shared)
-
+/// Neutralize dangerous-scheme hrefs and rewrite relative image links — the single canonical sanitize
+/// point — mutating the parsed document in place before it reaches the webview DOM.
+let private sanitizeLinks (docDir: string) (doc: MarkdownDocument) : unit =
     for link in doc.Descendants<LinkInline>() do
         match link.Url with
         | null -> ()
@@ -96,6 +93,9 @@ let render (docDir: string) (text: string) : RenderResult =
         if not (linkAllowed auto.Url) then
             auto.Url <- "#"
 
+/// Stamp `data-line-*` attributes onto the finest rendered blocks (mutating the document) and return
+/// the parallel line map. Both anchor the source↔render mapping the preview/scroll-sync/diff share.
+let private stampLineAnchors (text: string) (doc: MarkdownDocument) : LineSpan[] =
     let lines = Lines.build text
     let spans = ResizeArray<LineSpan>()
 
@@ -138,11 +138,25 @@ let render (docDir: string) (text: string) : RenderResult =
     for block in doc do
         tagTree block
 
+    spans.ToArray()
+
+/// Render the prepared document to HTML via the shared pipeline.
+let private renderHtml (doc: MarkdownDocument) : string =
     use writer = new StringWriter()
     let htmlRenderer = HtmlRenderer(writer)
     Pipeline.shared.Setup(htmlRenderer)
     htmlRenderer.Render(doc) |> ignore
     writer.Flush()
+    writer.ToString()
 
-    { Html = writer.ToString()
-      LineMap = spans.ToArray() }
+/// Parse once, then run the three render concerns over that one document — sanitize links, stamp the
+/// line anchors, emit HTML — so the preview, scroll-sync, diff and comments all agree on the
+/// source↔render mapping. <paramref name="docDir"/> is the document's directory relative to the repo
+/// root (forward slashes, "" at the root).
+let render (docDir: string) (text: string) : RenderResult =
+    let doc = Markdown.Parse(text, Pipeline.shared)
+    sanitizeLinks docDir doc
+    let lineMap = stampLineAnchors text doc
+
+    { Html = renderHtml doc
+      LineMap = lineMap }
