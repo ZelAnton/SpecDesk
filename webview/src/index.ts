@@ -27,7 +27,7 @@ import { Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
 import { ReviewController } from "./review.js";
 import { ScrollSync } from "./scroll-sync.js";
-import { isSplit, type ViewMode } from "./view-mode.js";
+import { isSplit, paneVisibility, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
   const editorEl = document.querySelector<HTMLElement>("#editor");
@@ -285,28 +285,26 @@ function wire(): void {
     docVersion: () => docVersion,
   });
 
-  // Which surfaces a mode shows. Split shows both; the (in-sync) visible one is the source of truth
-  // for the reading position and the canonical text when switching.
-  const editorVisible = (m: ViewMode): boolean => m === "code" || m === "split";
-  const formattedVisible = (m: ViewMode): boolean => m === "split" || m === "formatted";
-
   // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
   // #panes[data-mode]), never destroyed. A surface that becomes visible is hydrated from the current
-  // text (silently), and the reading position is carried across in the source-line coordinate.
+  // text (silently), and the reading position is carried across in the source-line coordinate. Pane
+  // visibility is the single policy in view-mode.ts (paneVisibility) — Split shows both; the visible
+  // pane (the source editor when shown, else the formatted view) is the source of truth for the
+  // reading position and the canonical text.
   function applyMode(next: ViewMode): void {
     if (next === mode) {
       return;
     }
     const prev = mode;
-    const line = editorVisible(prev)
-      ? editor.topVisibleLineExact()
-      : formatted.topVisibleSourceLine();
-    const text = editorVisible(prev) ? editor.getText() : formatted.getText();
+    const prevVis = paneVisibility(prev);
+    const nextVis = paneVisibility(next);
+    const line = prevVis.editor ? editor.topVisibleLineExact() : formatted.topVisibleSourceLine();
+    const text = prevVis.editor ? editor.getText() : formatted.getText();
 
-    if (editorVisible(next) && !editorVisible(prev)) {
+    if (nextVis.editor && !prevVis.editor) {
       editor.setText(text, true);
     }
-    if (formattedVisible(next) && !formattedVisible(prev)) {
+    if (nextVis.preview && !prevVis.preview) {
       formatted.setText(text);
     }
 
@@ -329,7 +327,7 @@ function wire(): void {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         scrollSync.suppress();
-        if (formattedVisible(next)) {
+        if (nextVis.preview) {
           formatted.refresh();
         }
         // Re-pad the editor to the formatted heights BEFORE restoring scroll, so the scroll target
@@ -340,10 +338,10 @@ function wire(): void {
         } else {
           heightSync.clear();
         }
-        if (formattedVisible(next)) {
+        if (nextVis.preview) {
           formatted.scrollToSourceLine(Math.floor(line));
         }
-        if (editorVisible(next)) {
+        if (nextVis.editor) {
           editor.scrollToSourceLine(Math.floor(line));
         }
       });
