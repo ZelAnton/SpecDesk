@@ -15,7 +15,6 @@ import {
   parseVersionNoteSuggested,
 } from "./decoders.js";
 import { Dialogs } from "./dialogs.js";
-import { expandDiffMarks } from "./diff-marks.js";
 import { MarkdownEditor } from "./editor.js";
 import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
@@ -26,6 +25,7 @@ import { type FormatCommand, isFormatCommand } from "./md-format.js";
 import { Preview } from "./preview.js";
 import { Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
+import { ReviewController } from "./review.js";
 import { ScrollSync } from "./scroll-sync.js";
 import { isSplit, type ViewMode } from "./view-mode.js";
 
@@ -86,22 +86,12 @@ function wire(): void {
   let formatted: FormattedEditor;
 
   // The review/compare overlay (PoC-6): "Show changes" diffs the working copy against the last saved
-  // version and washes the changed lines/blocks in BOTH editors. It is a snapshot taken at the docVersion
-  // of the click, so any real edit invalidates it — clearReview() drops the overlay (and un-presses the
-  // button); the author clicks Show changes again to recompute. A silent Split text-mirror keeps it (the
-  // editors re-apply their stored marks in setText), so only genuine edits clear it.
-  let reviewing = false;
-  // A function declaration (hoisted) so the dialogs' version-note callback below can call it: saving a
-  // version advances the base, making the overlay stale, so it clears there too.
-  function clearReview(): void {
-    if (!reviewing) {
-      return;
-    }
-    reviewing = false;
-    compareBtn?.setAttribute("aria-pressed", "false");
-    editor.clearDiff();
-    formatted.clearDiff();
-  }
+  // version and washes the changed lines/blocks in BOTH editors (see review.ts). It is a snapshot taken
+  // at the docVersion of the click, so any genuine edit invalidates it — review.clear() drops the
+  // overlay; the author clicks Show changes again to recompute. A silent Split text-mirror keeps it (the
+  // editors re-apply their stored marks in setText), so only genuine edits clear it. Constructed once
+  // both editors exist (below); referenced earlier only inside callbacks that fire after that.
+  let review: ReviewController;
 
   // The two inline prompt bars (draft name on Edit, version note on Save version). They reach the host
   // only through these callbacks — the integrator keeps the ipc/Kinds knowledge (see dialogs.ts).
@@ -128,7 +118,7 @@ function wire(): void {
     onVersionNote: (note) => {
       ipc.send(Kinds.actionSaveVersion, { note });
       // Saving a version advances the base the overlay diffs against, so any showing overlay is now stale.
-      clearReview();
+      review.clear();
     },
   });
 
@@ -207,7 +197,7 @@ function wire(): void {
   const onEditorChange = (text: string): void => {
     // A genuine edit invalidates the compare snapshot — drop the overlay (the mirror below is silent
     // and re-applies nothing once cleared).
-    clearReview();
+    review.clear();
     sendDoc(text);
     if (formatted.getText() !== text) {
       formatted.setText(text);
@@ -219,7 +209,7 @@ function wire(): void {
     reconcileHeights();
   };
   const onFormattedChange = (text: string): void => {
-    clearReview();
+    review.clear();
     sendDoc(text);
     if (editor.getText() !== text) {
       editor.setText(text, true);
@@ -284,6 +274,16 @@ function wire(): void {
   // The source editor is padded to match the formatted view's block heights (formatted is the fixed
   // reference). Assigned now that both panes exist; reconcileHeights() drives it.
   heightSync = new HeightSync(editor, formatted);
+
+  // The review/compare overlay state machine, now that both surfaces exist. It washes changes in both
+  // editors (the first is the canonical head it diffs against); the integrator keeps the ipc knowledge,
+  // stamping the live docVersion on the compare request and feeding the parsed `diff.result` back in.
+  review = new ReviewController({
+    surfaces: [editor, formatted],
+    setPressed: (on) => compareBtn?.setAttribute("aria-pressed", String(on)),
+    requestCompare: () => ipc.send(Kinds.compare, undefined, { version: docVersion }),
+    docVersion: () => docVersion,
+  });
 
   // Which surfaces a mode shows. Split shows both; the (in-sync) visible one is the source of truth
   // for the reading position and the canonical text when switching.
@@ -382,19 +382,13 @@ function wire(): void {
     }
   });
 
-  // The compare result: the changed blocks of the working copy vs the last saved version. Drop a stale
-  // one (the author edited past the snapshot the request was taken at — same version-gate as the
-  // preview), then wash the changes in BOTH editors (pane visibility is CSS, so Split shows both at once).
+  // The compare result: the changed blocks of the working copy vs the last saved version. Parsing stays
+  // here (ipc/decoder knowledge belongs to the integrator); the controller version-gates a stale one
+  // (the author edited past the snapshot the request was taken at — same gate as the preview) and
+  // otherwise washes the changes in BOTH editors (pane visibility is CSS, so Split shows both at once).
   ipc.on(Kinds.diffResult, (message) => {
-    if (!reviewing || (message.version ?? 0) !== docVersion) {
-      return;
-    }
     const payload = parseDiffResult(message.payload);
-    // Expand against the current head (the version-gate guarantees it matches the diff's head), so a
-    // changed list/table resolves to per-row/item marks rather than a whole-container wash.
-    const marks = expandDiffMarks(payload?.entries ?? [], editor.getText());
-    editor.setDiff(marks);
-    formatted.setDiff(marks);
+    review.applyResult(message.version ?? 0, payload?.entries ?? []);
   });
 
   ipc.on(Kinds.docLoaded, (message) => {
@@ -402,7 +396,7 @@ function wire(): void {
     if (payload) {
       // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
       // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
-      clearReview();
+      review.clear();
       editor.setText(payload.text);
       // Resolve relative image links in the formatted view against the document's folder. Set before
       // setText so the image node views render with the correct app://repo/… src.
@@ -493,7 +487,7 @@ function wire(): void {
     void dialogs.openVersionNote();
   });
   discardBtn?.addEventListener("click", () => {
-    clearReview();
+    review.clear();
     ipc.send(Kinds.actionDiscard);
   });
   saveBtn?.addEventListener("click", () => {
@@ -549,15 +543,7 @@ function wire(): void {
   // "Show changes" toggles the review overlay. Entering asks the host to diff against the last saved
   // version (version-stamped so a stale reply is dropped); the marks arrive via `diff.result` and are
   // applied in the handler above. Exiting clears the overlay in both editors.
-  compareBtn?.addEventListener("click", () => {
-    if (reviewing) {
-      clearReview();
-    } else {
-      reviewing = true;
-      compareBtn.setAttribute("aria-pressed", "true");
-      ipc.send(Kinds.compare, undefined, { version: docVersion });
-    }
-  });
+  compareBtn?.addEventListener("click", () => review.toggle());
 
   ipc.start();
   postReady();
