@@ -22,11 +22,11 @@ import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemir
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { isRecord } from "./decoders.js";
+import { applyWordDiff, removedMarkerLabel } from "./diff-decoration.js";
 import type { EditorSpacer } from "./height-sync.js";
 import { urlAtColumn } from "./links.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { rafThrottle } from "./raf.js";
-import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
 
 const DEBOUNCE_MS = 120;
 /** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
@@ -154,14 +154,7 @@ class RemovedWidget extends WidgetType {
     const element = document.createElement("div");
     element.className = "cm-diff-removed-marker";
     element.setAttribute("aria-hidden", "true");
-    const lines = this.text.split("\n");
-    const first = (lines[0] ?? "").trim();
-    const preview = first || "(empty block)";
-    // Lead with the annotation ("Deleted by you") for parity with the Formatted pane's removed marker.
-    element.textContent =
-      lines.length > 1
-        ? `Deleted by you — ${preview} (… ${lines.length} lines)`
-        : `Deleted by you — ${preview}`;
+    element.textContent = removedMarkerLabel(this.text);
     return element;
   }
 }
@@ -206,29 +199,18 @@ function pushInlineSourceWords(
 ): void {
   const blockStart = state.doc.line(start).from;
   const headSource = state.sliceDoc(blockStart, state.doc.line(end).to);
-  if (headSource.length > 4000 || baseSource.length > 4000) {
-    return;
-  }
-  const diff = wordDiff(baseSource, headSource);
-  if (diff.changeRatio > INLINE_DIFF_MAX_RATIO) {
-    return;
-  }
-  for (const op of diff.ops) {
-    if (op.type === "add") {
+  applyWordDiff(
+    baseSource,
+    headSource,
+    (s, e) =>
       ranges.push(
-        Decoration.mark({ class: "cm-diff-word-added" }).range(
-          blockStart + op.start,
-          blockStart + op.end,
-        ),
-      );
-    } else if (op.type === "del") {
+        Decoration.mark({ class: "cm-diff-word-added" }).range(blockStart + s, blockStart + e),
+      ),
+    (at, text) =>
       ranges.push(
-        Decoration.widget({ widget: new RemovedWordWidget(op.text), side: -1 }).range(
-          blockStart + op.start,
-        ),
-      );
-    }
-  }
+        Decoration.widget({ widget: new RemovedWordWidget(text), side: -1 }).range(blockStart + at),
+      ),
+  );
 }
 
 function buildDiffDecorations(state: EditorState, marks: DiffMark[]): DecorationSet {

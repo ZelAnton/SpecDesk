@@ -17,6 +17,7 @@ import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirro
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import { type Command, EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
+import { applyWordDiff, diffLabel, removedMarkerLabel } from "./diff-decoration.js";
 import { closestElement } from "./dom.js";
 import type { DiffMark } from "./editor.js";
 import { isOpenableHref } from "./links.js";
@@ -26,7 +27,6 @@ import { serializeWithSplice } from "./md-splice.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import type { BlockGeometry } from "./preview.js";
 import { rafThrottle } from "./raf.js";
-import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
@@ -103,24 +103,6 @@ const diffPlugin = new Plugin<DecorationSet>({
   },
 });
 
-/** The change-annotation label for a diff kind. The local "Show changes" diffs the working copy against
- *  the last saved version, so every change is the current author's — hence "by you". Multi-author wording
- *  ("Updated by Max, Phil and Petr") awaits the review-against-others flow (git blame / a PR base). */
-function diffLabel(kind: string): string {
-  switch (kind) {
-    case "added":
-      return "Added by you";
-    case "changed":
-      return "Updated by you";
-    case "moved":
-      return "Moved by you";
-    case "removed":
-      return "Deleted by you";
-    default:
-      return "Changed by you";
-  }
-}
-
 /** The inline strikethrough span standing in for words deleted inside a changed paragraph/heading. */
 function removedWordDOM(text: string): HTMLElement {
   const span = document.createElement("span");
@@ -130,19 +112,12 @@ function removedWordDOM(text: string): HTMLElement {
   return span;
 }
 
-/** The block-widget DOM standing in for a removed block (absent from the head document). It is the
- *  removed kind's own annotation, so it leads with the "Deleted by you" label then previews the text. */
+/** The block-widget DOM standing in for a removed block (absent from the head document). */
 function removedMarkerDOM(text: string): HTMLElement {
   const element = document.createElement("div");
   element.className = "sd-diff-removed-marker";
   element.setAttribute("aria-hidden", "true");
-  const lines = text.split("\n");
-  const first = (lines[0] ?? "").trim();
-  const preview = first || "(empty block)";
-  element.textContent =
-    lines.length > 1
-      ? `${diffLabel("removed")} — ${preview} (… ${lines.length} lines)`
-      : `${diffLabel("removed")} — ${preview}`;
+  element.textContent = removedMarkerLabel(text);
   return element;
 }
 
@@ -550,31 +525,28 @@ export class FormattedEditor {
     if (node.content.size !== headText.length) {
       return false; // images / hard breaks break the offset→position identity — wash the whole block
     }
-    // The word-LCS is O(tokens²); cap it so a pathologically long block washes whole instead of stalling.
-    if (headText.length > 4000 || baseText.length > 4000) {
-      return false;
-    }
-    const diff = wordDiff(baseText, headText);
-    if (diff.changeRatio > INLINE_DIFF_MAX_RATIO || !diff.ops.some((op) => op.type !== "equal")) {
-      return false;
-    }
+    // A pure-text block's text offset `o` maps to the document position `blockFrom + 1 + o`.
     const contentStart = blockFrom + 1;
     let delSeq = 0;
-    for (const op of diff.ops) {
-      if (op.type === "add") {
+    const applied = applyWordDiff(
+      baseText,
+      headText,
+      (start, end) =>
         decos.push(
-          Decoration.inline(contentStart + op.start, contentStart + op.end, {
+          Decoration.inline(contentStart + start, contentStart + end, {
             class: "sd-diff-word-added",
           }),
-        );
-      } else if (op.type === "del") {
+        ),
+      (at, text) =>
         decos.push(
-          Decoration.widget(contentStart + op.start, removedWordDOM(op.text), {
+          Decoration.widget(contentStart + at, removedWordDOM(text), {
             side: -1,
             key: `sd-delword-${blockFrom}-${delSeq++}`,
           }),
-        );
-      }
+        ),
+    );
+    if (!applied) {
+      return false;
     }
     // The annotation pill only (sd-diff-inline = position:relative + ::before label), with no block wash.
     // A row/item (no pill) skips this — the inline word highlights are signal enough inside it.
