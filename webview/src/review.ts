@@ -8,8 +8,7 @@
  * inline prompt bars reach the host only through callbacks (dialogs.ts).
  */
 
-import { expandDiffMarks } from "./diff-marks.js";
-import type { DiffMark } from "./editor.js";
+import { type DiffMark, expandDiffMarks } from "./diff-marks.js";
 import type { DiffEntryPayload } from "./protocol.js";
 
 /** The slice of an editor the overlay paints — both MarkdownEditor and FormattedEditor satisfy it. */

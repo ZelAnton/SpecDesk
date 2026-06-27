@@ -6,9 +6,32 @@
  * pure (no editor/DOM) so it is unit-tested directly.
  */
 
-import type { DiffMark } from "./editor.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
 import type { DiffEntryPayload } from "./protocol.js";
+
+/** One changed block (or sub-block: a table row / list item) in the review overlay (PoC-6). The flat,
+ *  line-based form the editors render, expanded from the wire {@link DiffEntryPayload}s by
+ *  {@link expandDiffMarks}; defined here (with its producer) rather than in an editor module so the pure
+ *  diff layer never depends on CodeMirror/ProseMirror. */
+export interface DiffMark {
+  /** "added" | "removed" | "changed" | "moved". */
+  kind: string;
+  lineStart: number;
+  lineEnd: number;
+  anchorLine: number;
+  removedText: string;
+  /** True for a row/item mark inside a changed container — the Formatted pane omits the annotation
+   *  pill for these (it would clutter a table/list and a `<tr>` can't anchor an absolute label). */
+  sub?: boolean;
+  /** For a changed paragraph/heading: the base rendered text. The Formatted pane word-diffs it against
+   *  the block's current text to highlight the changed words inline (or washes the whole block if too
+   *  much changed). */
+  baseText?: string;
+  /** For a changed paragraph/heading: the base raw source. The Code pane word-diffs it against the
+   *  block's current source to highlight the changed words inline (or washes the lines if too much
+   *  changed). The Formatted pane ignores it. */
+  baseSource?: string;
+}
 
 /**
  * @param entries the changed top-level blocks from `diff.result`.

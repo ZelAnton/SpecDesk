@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DiffMark } from "../src/editor.js";
+import type { DiffMark } from "../src/diff-marks.js";
 import type { DiffEntryPayload } from "../src/protocol.js";
 import { type DiffSurface, ReviewController, type ReviewDeps } from "../src/review.js";
 

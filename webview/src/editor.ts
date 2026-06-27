@@ -23,6 +23,7 @@ import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { isRecord } from "./decoders.js";
 import { applyWordDiff, removedMarkerLabel } from "./diff-decoration.js";
+import type { DiffMark } from "./diff-marks.js";
 import type { EditorSpacer } from "./height-sync.js";
 import { urlAtColumn } from "./links.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
@@ -118,27 +119,6 @@ const activeLineField = StateField.define<DecorationSet>({
   },
   provide: (field) => EditorView.decorations.from(field),
 });
-
-/** One changed block (or sub-block: a table row / list item) in the review overlay (PoC-6). */
-export interface DiffMark {
-  /** "added" | "removed" | "changed" | "moved". */
-  kind: string;
-  lineStart: number;
-  lineEnd: number;
-  anchorLine: number;
-  removedText: string;
-  /** True for a row/item mark inside a changed container — the Formatted pane omits the annotation
-   *  pill for these (it would clutter a table/list and a `<tr>` can't anchor an absolute label). */
-  sub?: boolean;
-  /** For a changed paragraph/heading: the base rendered text. The Formatted pane word-diffs it against
-   *  the block's current text to highlight the changed words inline (or washes the whole block if too
-   *  much changed). */
-  baseText?: string;
-  /** For a changed paragraph/heading: the base raw source. The Code pane word-diffs it against the
-   *  block's current source to highlight the changed words inline (or washes the lines if too much
-   *  changed). The Formatted pane ignores it. */
-  baseSource?: string;
-}
 
 /** A block widget standing in for a removed block (which is absent from the head document). */
 class RemovedWidget extends WidgetType {
