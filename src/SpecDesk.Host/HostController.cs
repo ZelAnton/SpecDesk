@@ -8,7 +8,7 @@ using SpecDesk.Git;
 using SpecDesk.Diff;
 using SpecDesk.Markdown;
 // LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it
-// defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel used here).
+// defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel).
 using LibGit2SharpException = LibGit2Sharp.LibGit2SharpException;
 
 namespace SpecDesk.Host;
@@ -60,6 +60,7 @@ public sealed class HostController : IDisposable
 	private readonly string? _initialDocPath;
 	private readonly TimeSpan _autosaveIdle;
 	private readonly PreviewCoordinator _coordinator = new();
+	private readonly LogBridge _logBridge;
 
 	// Guards the lifecycle / autosave fields below, which the message thread and the autosave timer
 	// callback both touch. _text/_currentPath/_repoRoot are also published and snapshotted under this
@@ -105,6 +106,7 @@ public sealed class HostController : IDisposable
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
+		_logBridge = new LogBridge(_logger, _dialogs, SendError, Logging.LogDirectory);
 	}
 
 	/// <summary>The repo working-tree root of the open document — the <c>app://</c> asset root.</summary>
@@ -797,58 +799,15 @@ public sealed class HostController : IDisposable
 	private void OnLog(IpcMessage message)
 	{
 		LogPayload? payload = SafeGetPayload<LogPayload>(message);
-		if (payload is null)
+		if (payload is not null)
 		{
-			return;
-		}
-
-		LogLevel level = payload.Level switch
-		{
-			"error" => LogLevel.Error,
-			"warn" => LogLevel.Warning,
-			"info" => LogLevel.Information,
-			_ => LogLevel.Debug,
-		};
-
-		if (payload.Data is null)
-		{
-			_logger.Log(level, "[webview] {Message}", payload.Message);
-		}
-		else
-		{
-			_logger.Log(level, "[webview] {Message} {Data}", payload.Message, payload.Data);
+			_logBridge.Receive(payload);
 		}
 	}
 
-	// Offer to save the current log file elsewhere. This also exercises the save dialog, whose
-	// exception (if any) the dialog layer now logs — so the log explains the dialog's behaviour.
-	private void OnExportLog()
-	{
-		string? destination = _dialogs.PickSaveFile(Path.Combine(Logging.LogDirectory, "specdesk-export.log"));
-		if (destination is null)
-		{
-			_send(IpcSerializer.SerializeEvent(
-				MessageKinds.Error,
-				new ErrorPayload($"Logs are at {Logging.LogDirectory}")));
-			return;
-		}
-
-		try
-		{
-			File.WriteAllText(destination, ReadCurrentLog());
-			_logger.LogInformation("Exported log to {Path}", destination);
-			_send(IpcSerializer.SerializeEvent(
-				MessageKinds.Error,
-				new ErrorPayload($"Log exported to {destination}")));
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
-			_logger.LogError(ex, "Failed to export log to {Path}", destination);
-			_send(IpcSerializer.SerializeEvent(
-				MessageKinds.Error,
-				new ErrorPayload($"Could not export log: {ex.Message}")));
-		}
-	}
+	// Offer to save the current log file elsewhere; the bridge reports the outcome (cancelled / exported
+	// / failed) through SendError, which the constructor wired in as its notify callback.
+	private void OnExportLog() => _logBridge.Export();
 
 	// Compare the working copy (head) against the file's last committed version (base) and send the
 	// structural diff for the editors to overlay (PoC-6). Local only — no GitHub. An empty diff (no
@@ -953,26 +912,6 @@ public sealed class HostController : IDisposable
 		{
 			Process.Start("xdg-open", url)?.Dispose();
 		}
-	}
-
-	// Read the newest rolling log file with shared access (Serilog keeps it open for writing).
-	private static string ReadCurrentLog()
-	{
-		if (!Directory.Exists(Logging.LogDirectory))
-		{
-			return "(no log directory yet)";
-		}
-
-		string[] files = Directory.GetFiles(Logging.LogDirectory, "specdesk-*.log");
-		if (files.Length == 0)
-		{
-			return "(no log file yet)";
-		}
-
-		string newest = files.OrderBy(File.GetLastWriteTimeUtc).Last();
-		using FileStream stream = new(newest, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-		using StreamReader reader = new(stream);
-		return reader.ReadToEnd();
 	}
 
 	private void ReplyInserted(string? id, string markdown) =>
