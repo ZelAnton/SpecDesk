@@ -65,13 +65,12 @@ let private tokens (node: Ast.Node) : Set<string> =
     let normalized = String(lowered |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else ' ') |> Seq.toArray)
     normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries) |> Set.ofArray
 
-/// Jaccard token overlap of two nodes' text, in [0, 1]. Two nodes with NO word tokens score 0, not 1:
-/// "no shared evidence" is not an edit — such blocks (e.g. all-punctuation paragraphs, empty code
-/// blocks) fall through to Removed/Added unless their Content is actually equal, which the LCS/Move
-/// phase already handles.
-let private similarity (a: Ast.Node) (b: Ast.Node) : float =
-    let ta = tokens a
-    let tb = tokens b
+/// Jaccard overlap of two nodes' precomputed token sets, in [0, 1]. Two nodes with NO word tokens
+/// score 0, not 1: "no shared evidence" is not an edit — such blocks (e.g. all-punctuation paragraphs,
+/// empty code blocks) fall through to Removed/Added unless their Content is actually equal, which the
+/// LCS/Move phase already handles. The caller precomputes tokens once per node (the change loop scores
+/// every same-kind unmatched pair, so recomputing per pair would re-flatten each node O(m)/O(n) times).
+let private similarity (ta: Set<string>) (tb: Set<string>) : float =
     let union = Set.union ta tb |> Set.count
     if union = 0 then 0.0 else float (Set.intersect ta tb |> Set.count) / float union
 
@@ -141,12 +140,18 @@ let diff (baseDoc: Ast.Document) (headDoc: Ast.Document) : DocumentDiff =
     // similarity (above the threshold), accepting greedily and skipping a pair whose either side is
     // already taken — so the strongest edit wins regardless of node order, and a head is never claimed
     // by a weaker base when a closer one exists.
+    // Precompute each still-unmatched node's tokens once: the loop below scores every same-kind base x
+    // head pair, so calling `tokens` inside it would re-flatten each node O(m) / O(n) times (matched
+    // nodes are never scored, so they get an unused empty placeholder).
+    let baseTokens = Array.init m (fun bi -> if baseFree bi then tokens baseArr.[bi] else Set.empty)
+    let headTokens = Array.init n (fun hi -> if headFree hi then tokens headArr.[hi] else Set.empty)
+
     let changeCandidates =
         [ for bi in 0 .. m - 1 do
               if baseFree bi then
                   for hi in 0 .. n - 1 do
                       if headFree hi && kindTag baseArr.[bi].Content = kindTag headArr.[hi].Content then
-                          let s = similarity baseArr.[bi] headArr.[hi]
+                          let s = similarity baseTokens.[bi] headTokens.[hi]
 
                           if s >= changeSimilarityThreshold then
                               yield s, bi, hi ]
