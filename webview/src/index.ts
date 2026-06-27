@@ -16,12 +16,12 @@ import {
 } from "./decoders.js";
 import { Dialogs } from "./dialogs.js";
 import { MarkdownEditor } from "./editor.js";
+import { FormatToolbar } from "./format-toolbar.js";
 import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
 import { log } from "./log.js";
-import { type FormatCommand, isFormatCommand } from "./md-format.js";
 import { Preview } from "./preview.js";
 import { Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
@@ -155,30 +155,10 @@ function wire(): void {
     formatted.setHoverLine(line);
   };
 
-  // Formatting toolbar. It applies to the pane the author last worked in: Code → source editor
-  // (Markdown text transforms), Formatted → WYSIWYG (ProseMirror commands), Split → whichever pane
-  // last had focus (default the source editor). Active-button state is shown for the formatted pane.
-  let lastFocused: "editor" | "formatted" = "editor";
-  const formatTarget = (): "editor" | "formatted" =>
-    mode === "code" ? "editor" : mode === "formatted" ? "formatted" : lastFocused;
-  const refreshFormatButtons = (): void => {
-    const active =
-      formatTarget() === "formatted" ? formatted.activeFormats() : new Set<FormatCommand>();
-    for (const button of formatButtons) {
-      const command = button.dataset.format;
-      if (isFormatCommand(command)) {
-        button.setAttribute("aria-pressed", String(active.has(command)));
-      }
-    }
-  };
-  const runFormat = (command: FormatCommand): void => {
-    if (formatTarget() === "formatted") {
-      formatted.format(command);
-    } else {
-      editor.applyFormat(command);
-    }
-    refreshFormatButtons();
-  };
+  // Formatting toolbar (PoC-12): routes a format command to the right pane by mode + last focus and
+  // reflects the formatted pane's active formats on the buttons (see format-toolbar.ts). Constructed
+  // once both editors exist (below); referenced earlier only inside callbacks that fire after that.
+  let formatToolbar: FormatToolbar;
 
   // Height-sync: pad the source editor with spacers so each source block's top lines up with its
   // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
@@ -242,10 +222,7 @@ function wire(): void {
     onHover: (line) => setHover(line),
     onGeometryChange: () => reconcileHeights(),
     onEditAttempt: offerDraft,
-    onFocus: () => {
-      lastFocused = "editor";
-      refreshFormatButtons();
-    },
+    onFocus: () => formatToolbar.setFocused("editor"),
     // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
     onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
   });
@@ -264,11 +241,8 @@ function wire(): void {
     onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
     onHover: (line) => setHover(line),
     onContentResize: () => reconcileHeights(),
-    onFocus: () => {
-      lastFocused = "formatted";
-      refreshFormatButtons();
-    },
-    onActiveChange: () => refreshFormatButtons(),
+    onFocus: () => formatToolbar.setFocused("formatted"),
+    onActiveChange: () => formatToolbar.refresh(),
     // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
     onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
   });
@@ -290,6 +264,17 @@ function wire(): void {
         reviewEmptyEl.hidden = !showing;
       }
     },
+  });
+
+  // The formatting toolbar, now that both editors exist. It routes a command to the source editor
+  // (Markdown transform) or the formatted editor (ProseMirror command) by mode + last-focused pane,
+  // owns the buttons' listeners, and reflects the formatted pane's active formats on aria-pressed.
+  formatToolbar = new FormatToolbar({
+    buttons: formatButtons,
+    applyInSource: (command) => editor.applyFormat(command),
+    applyInFormatted: (command) => formatted.format(command),
+    activeFormats: () => formatted.activeFormats(),
+    mode: () => mode,
   });
 
   // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
@@ -325,7 +310,7 @@ function wire(): void {
     editor.setEditable(editing);
     formatted.setEditable(editing);
     // The format target depends on the mode (Code→source, Formatted→WYSIWYG), so refresh the buttons.
-    refreshFormatButtons();
+    formatToolbar.refresh();
 
     // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll.
     // CodeMirror's re-measure is asynchronous, so restore on the SECOND frame (the PoC-11 timing).
@@ -459,7 +444,7 @@ function wire(): void {
       formatBar.hidden = !editing;
     }
     if (editing) {
-      refreshFormatButtons();
+      formatToolbar.refresh();
     }
     if (editBtn) {
       editBtn.hidden = editing;
@@ -510,17 +495,6 @@ function wire(): void {
   exportLogBtn?.addEventListener("click", () => {
     ipc.send(Kinds.exportLog);
   });
-
-  // Formatting toolbar buttons. mousedown is prevented so the click never steals focus from the
-  // editor — the selection it acts on stays intact and `lastFocused` keeps pointing at the right pane.
-  for (const button of formatButtons) {
-    const command = button.dataset.format;
-    if (!isFormatCommand(command)) {
-      continue;
-    }
-    button.addEventListener("mousedown", (event) => event.preventDefault());
-    button.addEventListener("click", () => runFormat(command));
-  }
 
   // Light/dark theme. The bare :root is the light (cool) theme, so "light" means no data-theme
   // attribute and dark sets data-theme="dark" (see styles.css). Default to the OS colour scheme; the
