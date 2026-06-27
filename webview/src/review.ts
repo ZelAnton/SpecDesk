@@ -31,6 +31,10 @@ export interface ReviewDeps {
   requestCompare: () => void;
   /** The live monotonic document version, for the result's version-gate. */
   docVersion: () => number;
+  /** Toggle the "no changes to show" notice: fired with true when a compare returns an empty diff
+   *  while the overlay is on (so the author isn't left wondering why nothing is highlighted), and with
+   *  false when there are changes to show or the overlay is cleared. */
+  onEmptyState: (showing: boolean) => void;
 }
 
 export class ReviewController {
@@ -61,6 +65,7 @@ export class ReviewController {
     for (const surface of this.deps.surfaces) {
       surface.clearDiff();
     }
+    this.deps.onEmptyState(false);
   }
 
   /** Apply a `diff.result`. Dropped unless the overlay is still showing and the result matches the live
@@ -77,5 +82,8 @@ export class ReviewController {
     for (const surface of this.deps.surfaces) {
       surface.setDiff(marks);
     }
+    // An empty diff (nothing changed, or no saved version yet) washes nothing, so surface a plain
+    // "no changes" notice; a non-empty diff hides it (the highlights speak for themselves).
+    this.deps.onEmptyState(marks.length === 0);
   }
 }

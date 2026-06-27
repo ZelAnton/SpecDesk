@@ -325,6 +325,16 @@ button {
   border-bottom-color: var(--warn-border);
 }
 
+/* The "Show changes" empty-result notice — calm and neutral (informational, not an error). A plain
+   block bar, so (unlike the display:flex prompt bars above) the `hidden` attribute alone removes it. */
+#review-empty-bar {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 #branch-name-bar input,
 #version-note-bar input,
 #version-note-bar textarea {

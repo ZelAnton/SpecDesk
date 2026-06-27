@@ -31,12 +31,14 @@ function harness(version = 1) {
   const formatted = surface();
   const setPressed = vi.fn();
   const requestCompare = vi.fn();
+  const onEmptyState = vi.fn<(showing: boolean) => void>();
   let current = version;
   const deps: ReviewDeps = {
     surfaces: [editor.view, formatted.view],
     setPressed,
     requestCompare,
     docVersion: () => current,
+    onEmptyState,
   };
   return {
     review: new ReviewController(deps),
@@ -44,6 +46,7 @@ function harness(version = 1) {
     formatted,
     setPressed,
     requestCompare,
+    onEmptyState,
     setVersion: (v: number) => {
       current = v;
     },
@@ -132,5 +135,33 @@ describe("ReviewController", () => {
     h.review.applyResult(1, []);
     expect(h.editor.setDiff).toHaveBeenCalledWith([]);
     expect(h.formatted.setDiff).toHaveBeenCalledWith([]);
+  });
+
+  it("an empty result raises the no-changes notice", () => {
+    const h = harness(1);
+    h.review.toggle();
+    h.review.applyResult(1, []);
+    expect(h.onEmptyState).toHaveBeenLastCalledWith(true);
+  });
+
+  it("a result with changes lowers the no-changes notice", () => {
+    const h = harness(1);
+    h.review.toggle();
+    h.review.applyResult(1, [changedEntry()]);
+    expect(h.onEmptyState).toHaveBeenLastCalledWith(false);
+  });
+
+  it("clearing the overlay lowers the no-changes notice", () => {
+    const h = harness(1);
+    h.review.toggle();
+    h.review.applyResult(1, []); // notice raised
+    h.review.clear();
+    expect(h.onEmptyState).toHaveBeenLastCalledWith(false);
+  });
+
+  it("a dropped result (stale / not showing) never touches the notice", () => {
+    const h = harness(4);
+    h.review.applyResult(4, []); // not reviewing → dropped
+    expect(h.onEmptyState).not.toHaveBeenCalled();
   });
 });

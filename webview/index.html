@@ -59,6 +59,9 @@
       <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote" aria-label="Quote">«»</button>
       <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block" aria-label="Code block">&lt;/&gt;</button>
     </div>
+    <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
+         the author isn't left wondering why nothing is highlighted. -->
+    <div id="review-empty-bar" role="status" hidden>No changes since the last saved version.</div>
     <div id="panes" data-mode="split">
       <div id="editor"></div>
       <div id="preview" class="sd-doc"></div>

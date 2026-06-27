@@ -148,6 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pane the rendered text) and **inside a changed list item** too; a removed row/item's marker sits between
   its neighbours rather than at the container edge. The native diff descends into a changed container's
   children; the webview word-diffs where positions are natural in each pane.
+- "Show changes" — empty result: when the working copy matches the last saved version (or there is no
+  saved version yet), a calm "No changes since the last saved version" notice appears below the toolbar
+  instead of silently washing nothing, so the author isn't left wondering why nothing is highlighted. It
+  clears the moment there are changes to show or the overlay is turned off.
 
 ### Fixed
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the

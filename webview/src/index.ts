@@ -47,6 +47,7 @@ function wire(): void {
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
   const modeFormattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
   const compareBtn = document.querySelector<HTMLButtonElement>("#compare-btn");
+  const reviewEmptyEl = document.querySelector<HTMLElement>("#review-empty-bar");
   const formatBar = document.querySelector<HTMLElement>("#format-bar");
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
@@ -283,6 +284,11 @@ function wire(): void {
     setPressed: (on) => compareBtn?.setAttribute("aria-pressed", String(on)),
     requestCompare: () => ipc.send(Kinds.compare, undefined, { version: docVersion }),
     docVersion: () => docVersion,
+    onEmptyState: (showing) => {
+      if (reviewEmptyEl) {
+        reviewEmptyEl.hidden = !showing;
+      }
+    },
   });
 
   // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
