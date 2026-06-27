@@ -22,4 +22,10 @@
 		<PackageReference Include="SkiaSharp" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<!-- The test project exercises the image-engine path-safety guards (isInside, sanitizeExt)
+		     directly, so they are internal rather than private. -->
+		<InternalsVisibleTo Include="SpecDesk.Core.Tests" />
+	</ItemGroup>
+
 </Project>

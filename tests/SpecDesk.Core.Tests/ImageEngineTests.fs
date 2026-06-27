@@ -70,3 +70,50 @@ let ``a folder rule escaping the repo is rejected`` () =
         | Error _ -> Assert.Pass()
     finally
         Directory.Delete(root, true)
+
+// —— Path-safety guards, exercised directly (internal via InternalsVisibleTo) ——————————————————————
+
+[<Test>]
+let ``isInside accepts a path within the repo and the root itself`` () =
+    let root = tempRepo ()
+
+    try
+        Assert.That(ImageEngine.isInside root (Path.Combine(root, "images", "x.png")), Is.True)
+        Assert.That(ImageEngine.isInside root root, Is.True)
+    finally
+        Directory.Delete(root, true)
+
+[<Test>]
+let ``isInside rejects a traversal out of the repo`` () =
+    let root = tempRepo ()
+
+    try
+        Assert.That(ImageEngine.isInside root (Path.Combine(root, "..", "escape")), Is.False)
+    finally
+        Directory.Delete(root, true)
+
+[<Test>]
+let ``isInside rejects a sibling that merely shares the root's name prefix`` () =
+    let root = tempRepo ()
+
+    try
+        // "<root>-evil" starts with the root string but is NOT inside it — the directory separator in
+        // the prefix check is what blocks this near-miss.
+        Assert.That(ImageEngine.isInside root (root + "-evil"), Is.False)
+    finally
+        Directory.Delete(root, true)
+
+[<Test>]
+let ``sanitizeExt lowercases and keeps only ascii alphanumerics`` () =
+    Assert.That(ImageEngine.sanitizeExt "png", Is.EqualTo "png")
+    Assert.That(ImageEngine.sanitizeExt "PNG", Is.EqualTo "png")
+    Assert.That(ImageEngine.sanitizeExt "JPEG", Is.EqualTo "jpeg")
+    Assert.That(ImageEngine.sanitizeExt "jp eg", Is.EqualTo "jpeg")
+    // A traversal smuggled through the preferred ext is reduced to its alnum residue, never a path.
+    Assert.That(ImageEngine.sanitizeExt "png/../..", Is.EqualTo "png")
+
+[<Test>]
+let ``sanitizeExt falls back to png when nothing usable remains`` () =
+    Assert.That(ImageEngine.sanitizeExt "", Is.EqualTo "png")
+    Assert.That(ImageEngine.sanitizeExt "..", Is.EqualTo "png")
+    Assert.That(ImageEngine.sanitizeExt "///", Is.EqualTo "png")

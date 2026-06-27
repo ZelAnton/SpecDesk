@@ -33,13 +33,13 @@ let private nameStem (path: string) : string =
 /// comes from an UNTRUSTED .spectool.toml and is interpolated straight into a file path; a real
 /// extension never contains separators or dots, so stripping them defeats a `preferred = "png/../.."`
 /// path-traversal write outside the repo.
-let private sanitizeExt (ext: string) : string =
+let internal sanitizeExt (ext: string) : string =
     let isAsciiAlnum c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
     let cleaned = String(ext.ToLowerInvariant() |> Seq.filter isAsciiAlnum |> Seq.toArray)
     if cleaned = "" then "png" else cleaned
 
 /// Containment guard (same rule as the PoC-1 app:// resolver): the target must stay inside root.
-let private isInside (rootFull: string) (candidate: string) : bool =
+let internal isInside (rootFull: string) (candidate: string) : bool =
     let candidateFull = Path.GetFullPath candidate
     let prefix = rootFull + string Path.DirectorySeparatorChar
 
