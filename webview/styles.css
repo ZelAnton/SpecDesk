@@ -321,6 +321,28 @@ button {
   border-radius: 50%;
 }
 
+/* The lifecycle dot reflects the state — one token family per state (design concept §8). The faint
+   default above stands in for the non-state displays (the file path on load, an error message). */
+#status[data-state="published"]::before {
+  background: var(--ink-bg);
+}
+
+#status[data-state="draft"]::before {
+  background: var(--neutral-fg);
+}
+
+#status[data-state="inReview"]::before {
+  background: var(--info-dot);
+}
+
+#status[data-state="changesRequested"]::before {
+  background: var(--danger-dot);
+}
+
+#status[data-state="approved"]::before {
+  background: var(--ok-dot);
+}
+
 /* ---- §7 components — inline prompt bars (under the toolbar) ----
    `display` is scoped to :not([hidden]) so each bar stays hidden until revealed — an unscoped
    `#id { display: flex }` would out-specify the user-agent `[hidden] { display: none }` and leak it. */

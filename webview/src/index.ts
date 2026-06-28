@@ -430,6 +430,8 @@ function wire(): void {
       lifecycleChrome.setEditing(false);
       if (statusEl) {
         statusEl.textContent = payload.path;
+        // The path is not a lifecycle state — clear the dot's state colour (a status message follows).
+        delete statusEl.dataset.state;
       }
       dialogs.closeAll();
     }
@@ -445,6 +447,8 @@ function wire(): void {
     }
     if (statusEl) {
       statusEl.textContent = payload.label;
+      // Colour the lifecycle dot for this state (styles.css §8: one token family per state).
+      statusEl.dataset.state = payload.state;
     }
     // Editing is only possible once a working branch exists (draft state).
     editing = payload.state !== "published";
@@ -461,6 +465,8 @@ function wire(): void {
     const payload = parseError(message.payload);
     if (payload && statusEl) {
       statusEl.textContent = payload.message;
+      // An error message is not a lifecycle state — drop the dot's state colour.
+      delete statusEl.dataset.state;
     }
   });
 

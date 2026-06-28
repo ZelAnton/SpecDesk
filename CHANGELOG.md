@@ -123,6 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   highlight in place of the former yellow); the CodeMirror editor gains a token-based theme with
   markdown syntax colours; and the toolbar buttons, the Code/Split/Formatted segmented control, the
   inline prompt bars, and the status badge are rebuilt from the shared component styles.
+- The toolbar's lifecycle status dot now reflects the state by colour (in review, changes requested,
+  approved, draft, published) using the design concept's per-state token family, instead of staying an
+  inert grey; the file path and error messages keep the neutral dot.
 - The host loads its web (`wwwroot`) and sample assets from the application base directory rather
   than the current working directory, so it runs correctly when launched from any folder (and as a
   single-file exe), not only from the project/output directory.
