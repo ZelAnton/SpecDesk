@@ -63,7 +63,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.forFile` | `{ path, items }` | open PRs touching the given file |
 | `comments.synced` | `{ list }` | current comment set for the doc |
 | `image.inserted` | `{ markdown, cursorHint }` | link to insert at the cursor |
-| `status` | `{ state, branch?, ahead?, behind?, dirty? }` | plain-language status (`state` ∈ Published, Editing, VersionSaved, InReview, ChangesRequested, Approved; `dirty` = unsaved changes since the last saved version) |
+| `status` | `{ state, label, branch? }` | plain-language status (`state` ∈ `published`, `draft`, `inReview`, `changesRequested`, `approved` — the wire state names, pinned by `lifecycle-states.json`; `label` is the author-facing text, including transient "Unsaved changes" / "Version saved"; `branch` is diagnostic only) |
 | `conflict.detected` | `{ sections }` | "someone else changed this too" data |
 | `chat.delta` | `{ text }` | streaming agent output chunk |
 | `chat.done` | `{ id }` | agent turn complete |

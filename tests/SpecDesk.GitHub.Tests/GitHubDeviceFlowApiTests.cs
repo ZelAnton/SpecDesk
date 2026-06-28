@@ -45,8 +45,10 @@ public sealed class GitHubDeviceFlowApiTests
     private static Task<DeviceCodeResponse> RequestDeviceCode(HttpStatusCode status, string body) =>
         RequestDeviceCodeWith(new StubHttpMessageHandler(status, body));
 
+    // interval is deliberately NOT 5 (the OptionalInt fallback) so the parse test proves it reads the
+    // present value rather than coincidentally returning the default.
     private const string DeviceCodeBody =
-        """{"device_code":"abc","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}""";
+        """{"device_code":"abc","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":7}""";
 
     [Test]
     public async Task ExchangeAsync_returns_Authorized_with_the_access_token()
@@ -285,6 +287,7 @@ public sealed class GitHubDeviceFlowApiTests
             Assert.That(
                 handler.LastRequest.Headers.Accept.ToString(),
                 Does.Contain("application/json"));
+            Assert.That(handler.LastRequest.Headers.UserAgent.ToString(), Does.Contain("SpecDesk"));
             Assert.That(handler.LastRequestBody, Does.Contain("client_id=client-id"));
             Assert.That(handler.LastRequestBody, Does.Contain("device_code=device-code"));
             Assert.That(
@@ -404,8 +407,19 @@ public sealed class GitHubDeviceFlowApiTests
             Assert.That(response.UserCode, Is.EqualTo("WXYZ-1234"));
             Assert.That(response.VerificationUri, Is.EqualTo(new Uri("https://github.com/login/device")));
             Assert.That(response.ExpiresIn, Is.EqualTo(TimeSpan.FromSeconds(900)));
-            Assert.That(response.Interval, Is.EqualTo(TimeSpan.FromSeconds(5)));
+            Assert.That(response.Interval, Is.EqualTo(TimeSpan.FromSeconds(7)));
         });
+    }
+
+    [Test]
+    public async Task RequestDeviceCodeAsync_defaults_a_missing_interval_to_five_seconds()
+    {
+        // interval is the one RFC 8628 optional field — a response without it must not throw.
+        DeviceCodeResponse response = await RequestDeviceCode(
+            HttpStatusCode.OK,
+            """{"device_code":"abc","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900}""");
+
+        Assert.That(response.Interval, Is.EqualTo(TimeSpan.FromSeconds(5)));
     }
 
     [Test]

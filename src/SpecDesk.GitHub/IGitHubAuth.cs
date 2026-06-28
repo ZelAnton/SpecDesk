@@ -88,11 +88,13 @@ public interface IGitHubAuth
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is
     /// cancelled / its deadline elapses. On <see cref="SignInOutcome.Authorized"/> the token is persisted
     /// to the secure store. Every outcome — including a structured GitHub error (<see cref="SignInOutcome.Failed"/>)
-    /// — is returned as a <see cref="SignInResult"/>. Transient failures while polling — an HTTP 5xx / 429,
-    /// a non-JSON body, a connection fault, or a stalled request — are ridden out as retryable polls, so a
-    /// brief GitHub or network blip doesn't fault the sign-in. When the device code's deadline elapses, the
-    /// result is <see cref="SignInOutcome.TimedOut"/> if GitHub was reached (the user just didn't authorize
-    /// in time) or <see cref="SignInOutcome.Unreachable"/> if every poll was a transient fault. The one
+    /// — is returned as a <see cref="SignInResult"/>. Transient failures while polling — an HTTP 5xx, a
+    /// non-JSON body, a connection fault, or a stalled request — are ridden out as retryable polls (a 429 is
+    /// honoured as a back-off and, being a real GitHub response, counts as reaching GitHub), so a brief
+    /// GitHub or network blip doesn't fault the sign-in. When the device code's deadline elapses, the result
+    /// is <see cref="SignInOutcome.TimedOut"/> if GitHub was reached (a real protocol response was seen — the
+    /// user just didn't authorize in time) or <see cref="SignInOutcome.Unreachable"/> if every poll was a
+    /// transient fault. The one
     /// thing that surfaces as a thrown exception (not a result) is a failure persisting the token to the
     /// secure store on success — disk / permissions / encryption — for the host's background handler.</summary>
     Task<SignInResult> AwaitAuthorizationAsync(DeviceCodePrompt prompt, CancellationToken cancellationToken = default);

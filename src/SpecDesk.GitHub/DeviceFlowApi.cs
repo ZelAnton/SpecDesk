@@ -151,7 +151,8 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             RequiredString(root, "user_code"),
             new Uri(RequiredString(root, "verification_uri")),
             TimeSpan.FromSeconds(RequiredInt(root, "expires_in")),
-            TimeSpan.FromSeconds(RequiredInt(root, "interval")));
+            // interval is the one RFC 8628 §3.2 optional field (default 5s); GitHub always sends it.
+            TimeSpan.FromSeconds(OptionalInt(root, "interval", 5)));
     }
 
     /// <summary>A required JSON-string field, or a throw — the device-code response must be well-formed.</summary>
@@ -179,6 +180,15 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         }
         throw new InvalidOperationException($"GitHub device-code response is missing or malformed '{name}'.");
     }
+
+    /// <summary>An optional JSON-number field, or <paramref name="fallback"/> when absent or not a number.</summary>
+    private static int OptionalInt(JsonElement root, string name, int fallback) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.TryGetProperty(name, out JsonElement element)
+        && element.ValueKind == JsonValueKind.Number
+        && element.TryGetInt32(out int value)
+            ? value
+            : fallback;
 
     public async Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct)
     {
