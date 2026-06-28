@@ -115,30 +115,28 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
 
     private async Task<string> FetchLoginWithRetryAsync(string accessToken, CancellationToken ct)
     {
-        for (int attempt = 1; ; attempt++)
+        for (int attempt = 1; attempt <= LoginAttempts; attempt++)
         {
-            try
+            LoginOutcome outcome = await _api.GetLoginAsync(accessToken, ct);
+            if (outcome.Status == LoginStatus.Success)
             {
-                return await _api.GetLoginAsync(accessToken, ct);
+                return outcome.Login ?? string.Empty;
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            if (outcome.Status == LoginStatus.Failed)
             {
-                // The host cancelled the sign-in — propagate so AwaitAuthorizationAsync maps it to TimedOut.
-                throw;
-            }
-            catch (Exception) when (attempt < LoginAttempts)
-            {
-                // A transient fault on GET /user (a 5xx, a rate-limit, a connection blip) in the moment
-                // after authorization. We already hold a valid token, so back off and retry the lookup.
-                await _delay(LoginRetryDelay, ct);
-            }
-            catch (Exception)
-            {
-                // The final attempt failed: give up the login, not the token. The caller persists the token
-                // with an empty login rather than losing a completed authorization.
+                // A non-transient fault (the token was rejected, or a malformed response). Retrying won't
+                // help — give up the login (not the token); the caller persists the token with empty login.
                 return string.Empty;
             }
+            // Transient (a 5xx / rate-limit / connection blip / stall): we already hold a valid token, so
+            // back off and retry; the final attempt gives up the login and keeps the token. Caller
+            // cancellation surfaces from GetLoginAsync / the delay and propagates to TimedOut.
+            if (attempt < LoginAttempts)
+            {
+                await _delay(LoginRetryDelay, ct);
+            }
         }
+        return string.Empty;
     }
 
     public bool IsSignedIn() => _store.Load() is not null;

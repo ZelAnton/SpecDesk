@@ -44,12 +44,15 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
 
     public string? LastAccessToken { get; private set; }
 
-    /// <summary>GetLoginAsync throws a transient fault on this many leading calls, then returns the login
+    /// <summary>GetLoginAsync returns a transient outcome on this many leading calls, then the login
     /// (models a blip on GET /user right after authorization). Default 0 → succeeds on the first call.</summary>
     public int LoginFailuresBeforeSuccess { get; init; }
 
-    /// <summary>GetLoginAsync always throws a transient fault (models GET /user being down throughout).</summary>
+    /// <summary>GetLoginAsync always returns a transient outcome (models GET /user being down throughout).</summary>
     public bool LoginNeverSucceeds { get; init; }
+
+    /// <summary>GetLoginAsync returns a terminal failure (models a rejected/under-scoped token — no retry).</summary>
+    public bool LoginFatal { get; init; }
 
     public FakeDeviceFlowApi(DeviceCodeResponse deviceCode, string login, params DevicePollOutcome[] polls)
     {
@@ -64,15 +67,19 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
     public Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct) =>
         Task.FromResult(_polls.Count > 0 ? _polls.Dequeue() : DevicePollOutcome.Pending());
 
-    public Task<string> GetLoginAsync(string accessToken, CancellationToken ct)
+    public Task<LoginOutcome> GetLoginAsync(string accessToken, CancellationToken ct)
     {
         LoginCalls++;
         LastAccessToken = accessToken;
+        if (LoginFatal)
+        {
+            return Task.FromResult(LoginOutcome.Failure("rejected"));
+        }
         if (LoginNeverSucceeds || LoginCalls <= LoginFailuresBeforeSuccess)
         {
-            throw new HttpRequestException("simulated GET /user failure");
+            return Task.FromResult(LoginOutcome.Transient());
         }
-        return Task.FromResult(_login);
+        return Task.FromResult(LoginOutcome.Success(_login));
     }
 }
 

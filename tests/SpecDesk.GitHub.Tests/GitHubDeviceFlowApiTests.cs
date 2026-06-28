@@ -25,6 +25,16 @@ public sealed class GitHubDeviceFlowApiTests
         return await api.ExchangeAsync("client-id", "device-code", ct);
     }
 
+    private static async Task<LoginOutcome> GetLoginWith(HttpMessageHandler handler, CancellationToken ct)
+    {
+        using HttpClient http = new(handler);
+        GitHubDeviceFlowApi api = new(http);
+        return await api.GetLoginAsync("gho_token", ct);
+    }
+
+    private static Task<LoginOutcome> GetLogin(HttpStatusCode status, string body) =>
+        GetLoginWith(new StubHttpMessageHandler(status, body), CancellationToken.None);
+
     [Test]
     public async Task ExchangeAsync_returns_Authorized_with_the_access_token()
     {
@@ -267,6 +277,106 @@ public sealed class GitHubDeviceFlowApiTests
             Assert.That(
                 handler.LastRequestBody,
                 Does.Contain("grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code"));
+        });
+    }
+
+    [Test]
+    public async Task GetLoginAsync_returns_Success_with_the_login()
+    {
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.OK, """{"login":"octocat","id":1}""");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Success));
+            Assert.That(outcome.Login, Is.EqualTo("octocat"));
+        });
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_5xx_as_Transient()
+    {
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.ServiceUnavailable, "down");
+
+        Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Transient));
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_429_as_Transient()
+    {
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.TooManyRequests, "rate limited");
+
+        Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Transient));
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_non_JSON_body_as_Transient()
+    {
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.OK, "not json");
+
+        Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Transient));
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_rejected_token_as_a_terminal_Failure()
+    {
+        // A 401/403 won't improve on retry — terminal, so the orchestrator gives up the login at once.
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.Unauthorized, """{"message":"Bad credentials"}""");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Failed));
+            Assert.That(outcome.Error, Is.EqualTo("http_401"));
+        });
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_200_without_a_login_as_a_terminal_Failure()
+    {
+        LoginOutcome outcome = await GetLogin(HttpStatusCode.OK, """{"id":1}""");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Failed));
+            Assert.That(outcome.Error, Is.EqualTo("no_login"));
+        });
+    }
+
+    [Test]
+    public async Task GetLoginAsync_treats_a_connection_fault_as_Transient()
+    {
+        using ThrowingHttpMessageHandler handler = new(new HttpRequestException("connection reset"));
+
+        LoginOutcome outcome = await GetLoginWith(handler, CancellationToken.None);
+
+        Assert.That(outcome.Status, Is.EqualTo(LoginStatus.Transient));
+    }
+
+    [Test]
+    public void GetLoginAsync_propagates_caller_cancellation()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.OK, """{"login":"octocat"}""");
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+
+        Assert.CatchAsync<OperationCanceledException>(() => GetLoginWith(handler, cts.Token));
+    }
+
+    [Test]
+    public async Task GetLoginAsync_sends_a_bearer_authorized_user_agent_request()
+    {
+        StubHttpMessageHandler handler = new(HttpStatusCode.OK, """{"login":"octocat"}""");
+
+        await GetLoginWith(handler, CancellationToken.None);
+
+        Assert.That(handler.LastRequest, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(handler.LastRequest!.Method, Is.EqualTo(HttpMethod.Get));
+            Assert.That(handler.LastRequest.RequestUri, Is.EqualTo(new Uri("https://api.github.com/user")));
+            Assert.That(handler.LastRequest.Headers.Authorization?.Scheme, Is.EqualTo("Bearer"));
+            Assert.That(handler.LastRequest.Headers.Authorization?.Parameter, Is.EqualTo("gho_token"));
+            Assert.That(handler.LastRequest.Headers.UserAgent.ToString(), Does.Contain("SpecDesk"));
+            Assert.That(handler.LastRequest.Headers.Accept.ToString(), Does.Contain("application/vnd.github+json"));
         });
     }
 }

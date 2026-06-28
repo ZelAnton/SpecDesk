@@ -42,6 +42,31 @@ internal sealed record DevicePollOutcome(DevicePollStatus Status, string? Access
     public static DevicePollOutcome Failure(string code) => new(DevicePollStatus.Error, null, code);
 }
 
+/// <summary>How a single login (GET /user) lookup ended.</summary>
+internal enum LoginStatus
+{
+    /// <summary>Got the login.</summary>
+    Success,
+
+    /// <summary>A transient fault (server down / rate-limit / connection blip / stall) — worth retrying.</summary>
+    Transient,
+
+    /// <summary>A non-transient fault (the token was rejected, or a malformed response): retrying won't help.</summary>
+    Failed,
+}
+
+/// <summary>One login lookup's outcome: the login on <see cref="LoginStatus.Success"/>, a transient signal
+/// the orchestrator retries, or a terminal failure it gives up on. Mirrors <see cref="DevicePollOutcome"/>
+/// so the orchestrator loops on structure instead of catching a raw exception.</summary>
+internal sealed record LoginOutcome(LoginStatus Status, string? Login, string? Error)
+{
+    public static LoginOutcome Success(string login) => new(LoginStatus.Success, login, null);
+
+    public static LoginOutcome Transient() => new(LoginStatus.Transient, null, null);
+
+    public static LoginOutcome Failure(string error) => new(LoginStatus.Failed, null, error);
+}
+
 /// <summary>The three GitHub network calls of device flow, behind a seam so the orchestration is unit-
 /// tested with a scripted fake and never touches the network.</summary>
 internal interface IDeviceFlowApi
@@ -52,23 +77,32 @@ internal interface IDeviceFlowApi
     /// gets the structured error code rather than a parsed exception message.</summary>
     Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct);
 
-    Task<string> GetLoginAsync(string accessToken, CancellationToken ct);
+    /// <summary>A SINGLE login (GET /user) lookup, returned as a structured outcome (no internal loop, no
+    /// thrown transport faults) so the orchestrator retries transients and gives up on terminal failures
+    /// without catching a raw exception. Only the caller's own cancellation throws.</summary>
+    Task<LoginOutcome> GetLoginAsync(string accessToken, CancellationToken ct);
 }
 
 /// <summary>
-/// Production transport: Octokit for the device-code request and the <c>GET /user</c> login lookup, and a
-/// hand-rolled single POST for the token exchange — Octokit's <c>CreateAccessTokenForDeviceFlow</c> owns
-/// the poll loop and flattens every terminal error into one message-parsed exception, so it can't give us
-/// one structured poll. Uses the BCL only (no extra package).
+/// Production transport: Octokit for the device-code request, and hand-rolled single BCL HttpClient calls
+/// for the token exchange (POST) and the <c>GET /user</c> login lookup. Octokit's
+/// <c>CreateAccessTokenForDeviceFlow</c> owns the poll loop and flattens every terminal error into one
+/// message-parsed exception, and its calls take no per-request timeout / cancellation token — so owning the
+/// HTTP gives a structured poll/login outcome, a per-request timeout, and honoured cancellation. Uses the
+/// BCL only (no extra package).
 /// </summary>
 internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 {
     private const string TokenEndpoint = "https://github.com/login/oauth/access_token";
+    private const string UserEndpoint = "https://api.github.com/user";
 
-    // A single poll's wall-clock budget — well under HttpClient's 100s default so a stalled exchange is
-    // detected promptly. Applied via a linked CancellationTokenSource so a (possibly shared) injected
-    // HttpClient is never mutated. A stall maps to a retryable Pending, bounded by the device deadline.
-    private static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(30);
+    // A single request's wall-clock budget — well under HttpClient's 100s default so a stalled exchange or
+    // login lookup is detected promptly. Applied via a linked CancellationTokenSource so a (possibly shared)
+    // injected HttpClient is never mutated. A stall maps to a retryable outcome, bounded by the loop.
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+
+    // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is fine).
+    private static readonly ProductInfoHeaderValue UserAgent = new("SpecDesk", "1.0");
 
     private static readonly Octokit.ProductHeaderValue Product = new("SpecDesk");
 
@@ -98,7 +132,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     public async Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct)
     {
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(ExchangeTimeout);
+        timeout.CancelAfter(RequestTimeout);
         try
         {
             return await ExchangeOnceAsync(clientId, deviceCode, timeout.Token);
@@ -202,10 +236,70 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         }
     }
 
-    public async Task<string> GetLoginAsync(string accessToken, CancellationToken ct)
+    public async Task<LoginOutcome> GetLoginAsync(string accessToken, CancellationToken ct)
     {
-        GitHubClient client = new(Product) { Credentials = new Credentials(accessToken) };
-        User user = await client.User.Current();
-        return user.Login;
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
+        try
+        {
+            return await GetLoginOnceAsync(accessToken, timeout.Token);
+        }
+        catch (HttpRequestException)
+        {
+            // A connection-level transient (reset / DNS / TLS), or a content-read fault the default
+            // buffering wraps here: no usable response. Retry — the orchestrator gives up the login (never
+            // the token) only after a bounded number of attempts.
+            return LoginOutcome.Transient();
+        }
+        catch (IOException)
+        {
+            // A broken read mid-body, guarded directly too so correctness doesn't depend on the buffering
+            // completion option. Still transient.
+            return LoginOutcome.Transient();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // The per-request timeout fired (the linked token, not the caller's cancellation): a stalled
+            // lookup. Report Transient so the orchestrator retries. Real caller cancellation propagates.
+            return LoginOutcome.Transient();
+        }
+    }
+
+    private async Task<LoginOutcome> GetLoginOnceAsync(string accessToken, CancellationToken ct)
+    {
+        using HttpRequestMessage request = new(HttpMethod.Get, UserEndpoint);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.UserAgent.Add(UserAgent);
+
+        using HttpResponseMessage response = await _http.SendAsync(request, ct);
+
+        // A 5xx (server down) or 429 (rate-limited) is transient — retry. Any other non-success — a 401, or
+        // a 403 (a rejected / under-scoped token, or a primary rate limit we don't separate out) — is
+        // treated as terminal: retrying wouldn't help a bad token, and a rate-limited lookup still degrades
+        // harmlessly to an empty (re-derivable) login with the token kept.
+        if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return LoginOutcome.Transient();
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            return LoginOutcome.Failure($"http_{(int)response.StatusCode}");
+        }
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument? json = TryParseJson(body);
+        if (json is null || json.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            // A 200 whose body isn't the documented JSON object (an intermediary's page) — treat as transient.
+            return LoginOutcome.Transient();
+        }
+        if (json.RootElement.TryGetProperty("login", out JsonElement loginElement)
+            && StringValue(loginElement) is { Length: > 0 } login)
+        {
+            return LoginOutcome.Success(login);
+        }
+        // A 200 with no usable login field is unexpected and won't change on retry.
+        return LoginOutcome.Failure("no_login");
     }
 }

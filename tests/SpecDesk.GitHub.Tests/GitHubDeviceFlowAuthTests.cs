@@ -113,6 +113,29 @@ public sealed class GitHubDeviceFlowAuthTests
     }
 
     [Test]
+    public async Task A_terminal_login_failure_persists_the_token_without_retrying()
+    {
+        // A rejected / under-scoped token (a 4xx on GET /user) won't improve on retry: give up the login
+        // immediately, but still keep the (irreplaceable) access token.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"))
+        {
+            LoginFatal = true,
+        };
+        (GitHubDeviceFlowAuth auth, List<TimeSpan> delays, InMemoryTokenStore store) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.Authorized));
+            Assert.That(result.Login, Is.EqualTo(string.Empty));
+            Assert.That(api.LoginCalls, Is.EqualTo(1)); // terminal → no retry
+            Assert.That(delays, Is.Empty); // no retry backoff
+            Assert.That(store.Saved, Is.EqualTo(new StoredToken("gho_token", string.Empty)));
+        });
+    }
+
+    [Test]
     public async Task Cancellation_during_the_login_retry_returns_TimedOut()
     {
         // The host cancels while the post-auth login lookup is being retried: it must surface as TimedOut
