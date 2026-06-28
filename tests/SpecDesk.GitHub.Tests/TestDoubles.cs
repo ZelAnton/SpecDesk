@@ -1,4 +1,26 @@
+using System.Net;
+
 namespace SpecDesk.GitHub.Tests;
+
+// A one-shot HTTP transport: every request gets the same scripted status + body, and the last request
+// (and its form body) are captured so a test can assert the exchange POST is well-formed. Lets the real
+// GitHubDeviceFlowApi.ExchangeAsync run against a controlled response with no network.
+internal sealed class StubHttpMessageHandler(HttpStatusCode status, string body) : HttpMessageHandler
+{
+    public HttpRequestMessage? LastRequest { get; private set; }
+
+    public string? LastRequestBody { get; private set; }
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        LastRequest = request;
+        LastRequestBody = request.Content is null
+            ? null
+            : await request.Content.ReadAsStringAsync(cancellationToken);
+        return new HttpResponseMessage(status) { Content = new StringContent(body) };
+    }
+}
 
 // A scripted device-flow transport: a fixed device-code response, a queue of poll outcomes, and a fixed
 // login. Once the queue is exhausted it stays Pending, so a "never authorized" run reaches the deadline.

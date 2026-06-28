@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Octokit;
@@ -99,16 +100,38 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         });
 
         using HttpResponseMessage response = await _http.SendAsync(request, ct);
-        string body = await response.Content.ReadAsStringAsync(ct);
-        using JsonDocument json = JsonDocument.Parse(body);
-        JsonElement root = json.RootElement;
 
-        if (root.TryGetProperty("access_token", out JsonElement token) && token.GetString() is { Length: > 0 } value)
+        // Transient server states are not terminal: the device flow is a poll loop, so a 5xx (GitHub
+        // down — it returns a non-JSON error page) maps to Pending and a 429 (rate-limited) to SlowDown.
+        // The orchestrator's loop then retries, bounded by the device code's deadline (a graceful TimedOut
+        // if GitHub never recovers), instead of parsing HTML and faulting the whole sign-in.
+        if ((int)response.StatusCode >= 500)
+        {
+            return DevicePollOutcome.Pending();
+        }
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return DevicePollOutcome.SlowDown();
+        }
+
+        string body = await response.Content.ReadAsStringAsync(ct);
+        using JsonDocument? json = TryParseJson(body);
+        if (json is null || json.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            // A success/4xx response whose body isn't the documented JSON object — an intermediary's error
+            // page (not JSON at all), or a bare JSON primitive/array. Treat it as transient and let the
+            // loop retry, rather than faulting the sign-in: a non-object root would throw from the
+            // TryGetProperty calls below, which only accept an object or null element.
+            return DevicePollOutcome.Pending();
+        }
+
+        JsonElement root = json.RootElement;
+        if (root.TryGetProperty("access_token", out JsonElement token) && StringValue(token) is { Length: > 0 } value)
         {
             return DevicePollOutcome.Authorized(value);
         }
 
-        string error = root.TryGetProperty("error", out JsonElement e) ? e.GetString() ?? "" : "";
+        string error = root.TryGetProperty("error", out JsonElement e) ? StringValue(e) ?? "" : "";
         return error switch
         {
             "authorization_pending" => DevicePollOutcome.Pending(),
@@ -118,6 +141,27 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             "" => DevicePollOutcome.Failure("unknown_error"),
             _ => DevicePollOutcome.Failure(error),
         };
+    }
+
+    /// <summary>The element's value when it is a JSON string, else <c>null</c> — so a malformed response
+    /// with a non-string <c>access_token</c>/<c>error</c> (a number, bool, object…) degrades to "no usable
+    /// value" instead of throwing from <see cref="JsonElement.GetString"/> (which requires String or Null).</summary>
+    private static string? StringValue(JsonElement element) =>
+        element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    /// <summary>Parse the exchange response body, or <c>null</c> when it is not JSON.</summary>
+    private static JsonDocument? TryParseJson(string body)
+    {
+        try
+        {
+            return JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            // Not JSON — an HTML error page or a truncated/garbled body. The caller treats this as a
+            // transient, retryable poll rather than faulting the whole sign-in on a parse exception.
+            return null;
+        }
     }
 
     public async Task<string> GetLoginAsync(string accessToken, CancellationToken ct)

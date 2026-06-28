@@ -25,7 +25,9 @@ public enum SignInOutcome
     /// <summary>The user explicitly denied the authorization.</summary>
     Denied,
 
-    /// <summary>The local wait was cancelled or its own deadline elapsed.</summary>
+    /// <summary>The local wait was cancelled, or its own deadline elapsed — including a transient GitHub
+    /// outage (HTTP 5xx / 429 / a non-JSON body) that is retried but never recovers within the device
+    /// code's lifetime.</summary>
     TimedOut,
 
     /// <summary>GitHub's token endpoint returned an error code — e.g. a misconfigured client id; the
@@ -68,7 +70,9 @@ public interface IGitHubAuth
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is
     /// cancelled / its deadline elapses. On <see cref="SignInOutcome.Authorized"/> the token is persisted
     /// to the secure store. Every outcome — including a structured GitHub error (<see cref="SignInOutcome.Failed"/>)
-    /// — is returned as a <see cref="SignInResult"/>; only a raw network/transport fault throws.</summary>
+    /// — is returned as a <see cref="SignInResult"/>; only a raw network/transport fault throws. A transient
+    /// server error (HTTP 5xx / 429 / a non-JSON body) is treated as a retryable poll, so a brief GitHub
+    /// outage is ridden out and a sustained one ends as <see cref="SignInOutcome.TimedOut"/>.</summary>
     Task<SignInResult> AwaitAuthorizationAsync(DeviceCodePrompt prompt, CancellationToken cancellationToken = default);
 
     /// <summary>Whether a usable token is stored. Local and cheap — does NOT call GitHub.</summary>
