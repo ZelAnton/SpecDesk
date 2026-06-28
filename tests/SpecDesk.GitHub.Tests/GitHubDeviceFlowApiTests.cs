@@ -132,22 +132,22 @@ public sealed class GitHubDeviceFlowApiTests
     }
 
     [Test]
-    public async Task ExchangeAsync_treats_a_503_as_Pending_so_the_poll_loop_retries()
+    public async Task ExchangeAsync_treats_a_503_as_Transient_so_the_poll_loop_retries()
     {
         // GitHub down: a 5xx returns an HTML error page, not JSON. Parsing it would throw and abort the
-        // sign-in; instead the transport reports Pending so the deadline-bounded loop keeps polling.
+        // sign-in; instead the transport reports Transient so the deadline-bounded loop keeps polling.
         DevicePollOutcome outcome = await Exchange(
             HttpStatusCode.ServiceUnavailable, "<html><body>Service Unavailable</body></html>");
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [Test]
-    public async Task ExchangeAsync_treats_a_500_with_an_empty_body_as_Pending()
+    public async Task ExchangeAsync_treats_a_500_with_an_empty_body_as_Transient()
     {
         DevicePollOutcome outcome = await Exchange(HttpStatusCode.InternalServerError, "");
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [Test]
@@ -159,18 +159,18 @@ public sealed class GitHubDeviceFlowApiTests
     }
 
     [Test]
-    public async Task ExchangeAsync_treats_a_connection_fault_as_Pending()
+    public async Task ExchangeAsync_treats_a_connection_fault_as_Transient()
     {
         // A reset / DNS / TLS failure throws before any HTTP response — ride it out as a retryable poll.
         using ThrowingHttpMessageHandler handler = new(new HttpRequestException("connection reset"));
 
         DevicePollOutcome outcome = await ExchangeWith(handler, CancellationToken.None);
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [Test]
-    public async Task ExchangeAsync_treats_a_request_timeout_as_Pending()
+    public async Task ExchangeAsync_treats_a_request_timeout_as_Transient()
     {
         // A stalled request surfaces as a TaskCanceledException whose token is NOT the caller's — the
         // per-request timeout, treated as transient.
@@ -178,7 +178,7 @@ public sealed class GitHubDeviceFlowApiTests
 
         DevicePollOutcome outcome = await ExchangeWith(handler, CancellationToken.None);
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [Test]
@@ -196,13 +196,13 @@ public sealed class GitHubDeviceFlowApiTests
     }
 
     [Test]
-    public async Task ExchangeAsync_treats_a_non_JSON_success_body_as_Pending()
+    public async Task ExchangeAsync_treats_a_non_JSON_success_body_as_Transient()
     {
         // A 2xx whose body isn't the documented JSON (e.g. an intermediary's page) degrades to a retry
         // rather than faulting the whole sign-in on a parse exception.
         DevicePollOutcome outcome = await Exchange(HttpStatusCode.OK, "not json at all");
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [TestCase("123")]
@@ -210,13 +210,13 @@ public sealed class GitHubDeviceFlowApiTests
     [TestCase("\"a bare string\"")]
     [TestCase("true")]
     [TestCase("null")]
-    public async Task ExchangeAsync_treats_a_valid_JSON_non_object_body_as_Pending(string body)
+    public async Task ExchangeAsync_treats_a_valid_JSON_non_object_body_as_Transient(string body)
     {
         // Valid JSON but not an object: TryGetProperty would throw on a non-object root, so the transport
         // must classify it as transient (retry) rather than letting that escape and abort the sign-in.
         DevicePollOutcome outcome = await Exchange(HttpStatusCode.OK, body);
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [TestCase("""{"access_token":123}""")]
@@ -243,7 +243,7 @@ public sealed class GitHubDeviceFlowApiTests
         DevicePollOutcome outcome = await Exchange(
             HttpStatusCode.ServiceUnavailable, """{"error":"access_denied"}""");
 
-        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Transient));
     }
 
     [Test]

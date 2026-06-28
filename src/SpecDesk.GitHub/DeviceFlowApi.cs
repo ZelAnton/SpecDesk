@@ -17,7 +17,14 @@ internal sealed record DeviceCodeResponse(
 /// <summary>The result of one token-exchange poll.</summary>
 internal enum DevicePollStatus
 {
+    /// <summary>GitHub answered <c>authorization_pending</c> — a real protocol response (we reached GitHub),
+    /// the user just hasn't authorized yet.</summary>
     Pending,
+
+    /// <summary>A transient fault (a 5xx, a non-JSON body, a connection blip / stall) — retry like Pending,
+    /// but it does NOT prove we reached GitHub, so a deadline reached on nothing but these is "unreachable".</summary>
+    Transient,
+
     SlowDown,
     Expired,
     Denied,
@@ -30,6 +37,8 @@ internal enum DevicePollStatus
 internal sealed record DevicePollOutcome(DevicePollStatus Status, string? AccessToken, string? Error)
 {
     public static DevicePollOutcome Pending() => new(DevicePollStatus.Pending, null, null);
+
+    public static DevicePollOutcome Transient() => new(DevicePollStatus.Transient, null, null);
 
     public static DevicePollOutcome SlowDown() => new(DevicePollStatus.SlowDown, null, null);
 
@@ -142,21 +151,21 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             // A connection-level transient (reset / DNS / TLS): no HTTP response arrived. Like a 5xx,
             // ride it out as a retryable poll — the loop is bounded by the device code's deadline — rather
             // than faulting the whole sign-in on a network blip mid-poll.
-            return DevicePollOutcome.Pending();
+            return DevicePollOutcome.Transient();
         }
         catch (IOException)
         {
             // A broken read mid-body. The default ResponseContentRead buffering wraps this into the
             // HttpRequestException above, but guard it directly too so correctness doesn't depend on the
             // completion option — a transient read failure is still just a retryable poll.
-            return DevicePollOutcome.Pending();
+            return DevicePollOutcome.Transient();
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             // The per-request timeout fired (the linked token, not the caller's cancellation): a stalled
             // poll. Treat it as transient and retry on the next tick. Real caller cancellation — where
             // ct itself is cancelled — is not caught here and propagates to the orchestrator (→ TimedOut).
-            return DevicePollOutcome.Pending();
+            return DevicePollOutcome.Transient();
         }
     }
 
@@ -174,12 +183,12 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         using HttpResponseMessage response = await _http.SendAsync(request, ct);
 
         // Transient server states are not terminal: the device flow is a poll loop, so a 5xx (GitHub
-        // down — it returns a non-JSON error page) maps to Pending and a 429 (rate-limited) to SlowDown.
-        // The orchestrator's loop then retries, bounded by the device code's deadline (a graceful TimedOut
-        // if GitHub never recovers), instead of parsing HTML and faulting the whole sign-in.
+        // down — it returns a non-JSON error page) maps to Transient and a 429 (rate-limited) to SlowDown.
+        // The orchestrator's loop then retries, bounded by the device code's deadline, instead of parsing
+        // HTML and faulting the whole sign-in. (429 is a real GitHub response, so it counts as "reached".)
         if ((int)response.StatusCode >= 500)
         {
-            return DevicePollOutcome.Pending();
+            return DevicePollOutcome.Transient();
         }
         if (response.StatusCode == HttpStatusCode.TooManyRequests)
         {
@@ -194,7 +203,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             // page (not JSON at all), or a bare JSON primitive/array. Treat it as transient and let the
             // loop retry, rather than faulting the sign-in: a non-object root would throw from the
             // TryGetProperty calls below, which only accept an object or null element.
-            return DevicePollOutcome.Pending();
+            return DevicePollOutcome.Transient();
         }
 
         JsonElement root = json.RootElement;

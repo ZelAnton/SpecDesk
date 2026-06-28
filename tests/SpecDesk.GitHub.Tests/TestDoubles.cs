@@ -33,7 +33,8 @@ internal sealed class ThrowingHttpMessageHandler(Exception toThrow) : HttpMessag
 }
 
 // A scripted device-flow transport: a fixed device-code response, a queue of poll outcomes, and a fixed
-// login. Once the queue is exhausted it stays Pending, so a "never authorized" run reaches the deadline.
+// login. Once the queue is exhausted it stays Pending (or Transient — see TransientWhenExhausted), so a
+// "never authorized" run reaches the deadline.
 internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
 {
     private readonly DeviceCodeResponse _deviceCode;
@@ -43,6 +44,10 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
     public int LoginCalls { get; private set; }
 
     public string? LastAccessToken { get; private set; }
+
+    /// <summary>Once the scripted poll queue is exhausted, return Transient instead of Pending (models a
+    /// never-reachable GitHub, so the deadline ends as Unreachable). Default false → Pending as before.</summary>
+    public bool TransientWhenExhausted { get; init; }
 
     /// <summary>GetLoginAsync returns a transient outcome on this many leading calls, then the login
     /// (models a blip on GET /user right after authorization). Default 0 → succeeds on the first call.</summary>
@@ -65,7 +70,9 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
         string clientId, IReadOnlyList<string> scopes, CancellationToken ct) => Task.FromResult(_deviceCode);
 
     public Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct) =>
-        Task.FromResult(_polls.Count > 0 ? _polls.Dequeue() : DevicePollOutcome.Pending());
+        Task.FromResult(_polls.Count > 0
+            ? _polls.Dequeue()
+            : TransientWhenExhausted ? DevicePollOutcome.Transient() : DevicePollOutcome.Pending());
 
     public Task<LoginOutcome> GetLoginAsync(string accessToken, CancellationToken ct)
     {

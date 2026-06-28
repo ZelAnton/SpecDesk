@@ -245,8 +245,71 @@ public sealed class GitHubDeviceFlowAuthTests
     [Test]
     public async Task Pending_past_the_expiry_deadline_returns_TimedOut()
     {
-        // No scripted outcome → always Pending; the delay advances the clock past ExpiresIn.
+        // No scripted outcome → always Pending (GitHub reached, user just slow); clock advances past ExpiresIn.
         FakeDeviceFlowApi api = new(DeviceCode(), "octocat");
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(
+            Prompt(expires: TimeSpan.FromSeconds(12), interval: TimeSpan.FromSeconds(5)));
+
+        Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.TimedOut));
+    }
+
+    [Test]
+    public async Task Only_transient_polls_past_the_deadline_returns_Unreachable()
+    {
+        // Every poll is a transient fault → GitHub was never reached, so the deadline distinguishes
+        // "couldn't reach GitHub" from the user simply being too slow.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat") { TransientWhenExhausted = true };
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(
+            Prompt(expires: TimeSpan.FromSeconds(12), interval: TimeSpan.FromSeconds(5)));
+
+        Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.Unreachable));
+    }
+
+    [Test]
+    public async Task A_transient_poll_is_retried_like_pending_then_signs_in()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat",
+            DevicePollOutcome.Transient(), DevicePollOutcome.Authorized("t"));
+        (GitHubDeviceFlowAuth auth, List<TimeSpan> delays, _) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt(interval: TimeSpan.FromSeconds(5)));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.Authorized));
+            Assert.That(delays, Is.EqualTo(new[] { TimeSpan.FromSeconds(5) })); // one retry wait, like Pending
+        });
+    }
+
+    [Test]
+    public async Task Reached_GitHub_then_only_transient_past_the_deadline_returns_TimedOut()
+    {
+        // Once a real protocol response was seen, a later outage is still "the code expired" (the latch
+        // doesn't flip back to Unreachable): one authorization_pending, then transient until the deadline.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Pending())
+        {
+            TransientWhenExhausted = true,
+        };
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(
+            Prompt(expires: TimeSpan.FromSeconds(12), interval: TimeSpan.FromSeconds(5)));
+
+        Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.TimedOut));
+    }
+
+    [Test]
+    public async Task A_slow_down_counts_as_reaching_GitHub()
+    {
+        // slow_down is a real GitHub response, so a deadline reached after it is TimedOut, not Unreachable.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.SlowDown())
+        {
+            TransientWhenExhausted = true,
+        };
         (GitHubDeviceFlowAuth auth, _, _) = Build(api);
 
         SignInResult result = await auth.AwaitAuthorizationAsync(

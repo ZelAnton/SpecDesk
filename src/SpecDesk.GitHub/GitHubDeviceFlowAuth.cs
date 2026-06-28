@@ -65,11 +65,15 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
             TimeSpan delay = prompt.Interval;
             DateTimeOffset deadline = _clock.GetUtcNow() + prompt.ExpiresIn;
 
+            // Whether any poll got a real GitHub protocol response (pending / slow_down). If the deadline
+            // elapses having only ever seen transient faults, GitHub was unreachable, not just slow.
+            bool reachedGitHub = false;
+
             while (true)
             {
                 if (_clock.GetUtcNow() >= deadline)
                 {
-                    return SignInResult.TimedOut();
+                    return reachedGitHub ? SignInResult.TimedOut() : SignInResult.Unreachable();
                 }
 
                 DevicePollOutcome poll =
@@ -77,9 +81,14 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
                 switch (poll.Status)
                 {
                     case DevicePollStatus.Pending:
+                        reachedGitHub = true;
+                        break;
+                    case DevicePollStatus.Transient:
+                        // A server/network fault — retry like Pending, but it doesn't prove we reached GitHub.
                         break;
                     case DevicePollStatus.SlowDown:
                         // GitHub asks us to back off; honour the +5s the spec mandates.
+                        reachedGitHub = true;
                         delay += TimeSpan.FromSeconds(5);
                         break;
                     case DevicePollStatus.Expired:

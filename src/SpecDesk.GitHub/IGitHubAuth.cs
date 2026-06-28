@@ -3,8 +3,8 @@ namespace SpecDesk.GitHub;
 /// <summary>
 /// What to show the user to authorize the device (GitHub OAuth device flow, RFC 8628 §3.2): the
 /// <see cref="UserCode"/> they type at <see cref="VerificationUri"/>. The opaque <see cref="DeviceCode"/>
-/// is round-tripped into <see cref="IGitHubAuth.AwaitAuthorizationAsync"/> so the implementation stays
-/// stateless (like <c>LibGit2DocumentVersioning</c>); it is never shown to the user.
+/// is round-tripped into <see cref="IGitHubAuth.AwaitAuthorizationAsync"/> so the implementation holds no
+/// per-flow state; it is never shown to the user.
 /// </summary>
 public sealed record DeviceCodePrompt(
     string UserCode,
@@ -19,27 +19,39 @@ public enum SignInOutcome
     /// <summary>The user authorized; a token was obtained and persisted.</summary>
     Authorized,
 
-    /// <summary>The user code expired before they authorized.</summary>
+    /// <summary>GitHub reported the user code expired (an <c>expired_token</c> response) before they
+    /// authorized — distinct from <see cref="TimedOut"/>, where our local deadline elapsed first; both mean
+    /// "the code expired — try again".</summary>
     Expired,
 
     /// <summary>The user explicitly denied the authorization.</summary>
     Denied,
 
-    /// <summary>The local wait was cancelled, or its own deadline elapsed — including a transient GitHub /
-    /// network outage (an HTTP 5xx / 429, a non-JSON body, a connection fault, or a stalled request) that
-    /// is retried but never recovers within the device code's lifetime.</summary>
+    /// <summary>The wait ended without authorization: either the device code's lifetime elapsed with GitHub
+    /// reachable (the user didn't authorize in time), or the host cancelled the wait. (For "the deadline
+    /// elapsed having never reached GitHub" see <see cref="Unreachable"/>.) The host shows "the code expired
+    /// — try again", and suppresses it for its own cancellation, which it initiated.</summary>
     TimedOut,
+
+    /// <summary>The device code's lifetime elapsed without ever reaching GitHub — every poll was a transient
+    /// fault (an HTTP 5xx, a non-JSON body, a connection fault, or a stalled request), so we never saw a
+    /// real protocol response. Distinct from <see cref="TimedOut"/> so the host can show "couldn't reach
+    /// GitHub — check your connection" rather than "you took too long".</summary>
+    Unreachable,
 
     /// <summary>GitHub's token endpoint returned an error code — e.g. a misconfigured client id; the
     /// <see cref="SignInResult.Error"/> carries the code. (During the initial device-code request a raw
     /// network/transport fault instead surfaces as an exception, which the host's background handler
-    /// catches; once polling, such faults are ridden out — see <see cref="SignInOutcome.TimedOut"/>.)</summary>
+    /// catches; once polling, such faults are ridden out — see <see cref="TimedOut"/> / <see cref="Unreachable"/>.)</summary>
     Failed,
 }
 
 /// <summary>
-/// The outcome of awaiting device authorization. On <see cref="SignInOutcome.Authorized"/> it carries
-/// the authenticated <see cref="Login"/>; the access token never crosses this boundary.
+/// The outcome of awaiting device authorization. On <see cref="SignInOutcome.Authorized"/> it carries the
+/// authenticated <see cref="Login"/>; the access token never crosses this boundary. <see cref="Login"/> is
+/// non-null only on Authorized, where it is the GitHub handle — or <c>""</c> when the sign-in succeeded but
+/// the login lookup couldn't complete (the token is still valid; the handle is re-derivable). So treat
+/// Authorized with an empty <see cref="Login"/> as "signed in, handle unknown", not as a failure.
 /// </summary>
 public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? Error)
 {
@@ -50,6 +62,8 @@ public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? 
     public static SignInResult Denied() => new(SignInOutcome.Denied, null, null);
 
     public static SignInResult TimedOut() => new(SignInOutcome.TimedOut, null, null);
+
+    public static SignInResult Unreachable() => new(SignInOutcome.Unreachable, null, null);
 
     public static SignInResult Failed(string error) => new(SignInOutcome.Failed, null, error);
 }
@@ -63,9 +77,10 @@ public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? 
 /// </summary>
 public interface IGitHubAuth
 {
-    /// <summary>Begin device flow: request a device + user code to display. Throws only on a hard
-    /// transport failure (network / HTTP). The returned prompt carries the opaque device code, so the
-    /// implementation holds no per-flow state.</summary>
+    /// <summary>Begin device flow: request a device + user code to display. Throws on a transport failure
+    /// (network / HTTP) or a GitHub API error (e.g. a misconfigured client id) — nothing is in flight yet,
+    /// so the host shows a "couldn't start sign-in" error and lets the user retry. The returned prompt
+    /// carries the opaque device code, so the implementation holds no per-flow state.</summary>
     Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is
@@ -73,15 +88,20 @@ public interface IGitHubAuth
     /// to the secure store. Every outcome — including a structured GitHub error (<see cref="SignInOutcome.Failed"/>)
     /// — is returned as a <see cref="SignInResult"/>. Transient failures while polling — an HTTP 5xx / 429,
     /// a non-JSON body, a connection fault, or a stalled request — are ridden out as retryable polls, so a
-    /// brief GitHub or network blip doesn't fault the sign-in; a sustained outage ends as
-    /// <see cref="SignInOutcome.TimedOut"/> when the device code's deadline elapses.</summary>
+    /// brief GitHub or network blip doesn't fault the sign-in. When the device code's deadline elapses, the
+    /// result is <see cref="SignInOutcome.TimedOut"/> if GitHub was reached (the user just didn't authorize
+    /// in time) or <see cref="SignInOutcome.Unreachable"/> if every poll was a transient fault. The one
+    /// thing that surfaces as a thrown exception (not a result) is a failure persisting the token to the
+    /// secure store on success — disk / permissions / encryption — for the host's background handler.</summary>
     Task<SignInResult> AwaitAuthorizationAsync(DeviceCodePrompt prompt, CancellationToken cancellationToken = default);
 
     /// <summary>Whether a usable token is stored. Local and cheap — does NOT call GitHub.</summary>
     bool IsSignedIn();
 
-    /// <summary>The login of the stored session, or <c>null</c> when signed out. Local — no network call
-    /// (the login is persisted alongside the token at sign-in).</summary>
+    /// <summary>The login of the stored session: a non-empty GitHub handle when known, <c>""</c> when signed
+    /// in but the handle couldn't be looked up at sign-in (re-derivable later; the token still works), or
+    /// <c>null</c> when signed out. So distinguish all three — an empty string is NOT "signed out". Local —
+    /// no network call (the login is persisted alongside the token at sign-in).</summary>
     string? SignedInLogin();
 
     /// <summary>Forget the stored token. Idempotent (a no-op when already signed out).</summary>
