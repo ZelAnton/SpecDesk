@@ -18,7 +18,9 @@ import {
   parseStatus,
   parseVersionNoteSuggested,
 } from "../src/decoders.js";
+import { Kinds } from "../src/protocol.js";
 import fixture from "./contract/native-payloads.json" with { type: "json" };
+import wireKinds from "./contract/wire-kinds.json" with { type: "json" };
 
 describe("native→webview contract (decoders accept the C# host's wire shapes)", () => {
   it("doc.loaded", () => {
@@ -88,5 +90,13 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
 
     expect(payload?.entries[2]?.kind).toBe("removed");
     expect(payload?.entries[2]?.removedText).toBe("Deprecated section");
+  });
+});
+
+describe("wire kinds (TS Kinds match the C# MessageKinds fixture)", () => {
+  it("the Kinds values are exactly the committed wire-kinds set", () => {
+    // wire-kinds.json is emitted from C# MessageKinds (ContractFixtureTests). A kind renamed/added on
+    // either side fails here — order-independent, so only the set of strings matters.
+    expect(new Set(Object.values(Kinds))).toEqual(new Set(wireKinds));
   });
 });

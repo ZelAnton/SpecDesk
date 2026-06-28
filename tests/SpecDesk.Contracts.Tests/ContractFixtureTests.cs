@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -49,7 +50,7 @@ public sealed class ContractFixtureTests
 		])),
 	];
 
-	private static string FixturePath()
+	private static string FixturePath(string fileName)
 	{
 		DirectoryInfo? dir = new(AppContext.BaseDirectory);
 		while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "SpecDesk.slnx")))
@@ -60,7 +61,7 @@ public sealed class ContractFixtureTests
 		{
 			throw new InvalidOperationException("Could not locate the repo root (no SpecDesk.slnx above the test binary).");
 		}
-		return Path.Combine(dir.FullName, "webview", "tests", "contract", "native-payloads.json");
+		return Path.Combine(dir.FullName, "webview", "tests", "contract", fileName);
 	}
 
 	[Test]
@@ -72,7 +73,7 @@ public sealed class ContractFixtureTests
 			actual[kind] = JsonSerializer.SerializeToNode(payload, payload.GetType(), IpcSerializer.Options);
 		}
 
-		string path = FixturePath();
+		string path = FixturePath("native-payloads.json");
 		// Regeneration is an explicit opt-in (like a snapshot --update): the single write path. A *missing*
 		// fixture is a failure, never a silent regenerate — otherwise deleting it would quietly disable the
 		// guard, and a normal `dotnet test` would write into the source tree.
@@ -104,5 +105,42 @@ public sealed class ContractFixtureTests
 		Assert.That(node, Is.Not.Null);
 		Assert.That(node!.AsObject().ContainsKey("branch"), Is.False,
 			"A null Branch must be omitted from the wire, not serialized as null.");
+	}
+
+	[Test]
+	public void MessageKinds_MatchTheCommittedWireKindsFixture()
+	{
+		// The wire kind strings ARE the protocol's public surface, hand-mirrored in webview/src/protocol.ts
+		// (the Kinds object). The payload-shape fixture above only pins the 8 kinds that carry a payload;
+		// this pins the FULL set (incl. the no-payload webview→native actions) so a renamed / added /
+		// removed kind on either side breaks CI rather than silently dropping a message. The webview half
+		// asserts Object.values(Kinds) against this same file (webview/tests/contract.test.ts).
+		JsonArray actual = [];
+		foreach (string kind in typeof(MessageKinds)
+			.GetFields(BindingFlags.Public | BindingFlags.Static)
+			.Where(f => f is { IsLiteral: true, IsInitOnly: false } && f.FieldType == typeof(string))
+			.Select(f => (string)f.GetRawConstantValue()!)
+			.OrderBy(s => s, StringComparer.Ordinal))
+		{
+			actual.Add(kind);
+		}
+
+		string path = FixturePath("wire-kinds.json");
+		if (Environment.GetEnvironmentVariable("UPDATE_CONTRACT_FIXTURE") == "1")
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+			File.WriteAllText(path, actual.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
+			Assert.Pass($"Wire-kinds fixture (re)generated at {path}. Commit it and keep protocol.ts in sync.");
+			return;
+		}
+
+		Assert.That(File.Exists(path), Is.True,
+			$"The wire-kinds fixture is missing ({path}). Regenerate it with UPDATE_CONTRACT_FIXTURE=1 and commit it.");
+		JsonNode? expected = JsonNode.Parse(File.ReadAllText(path));
+		Assert.That(expected, Is.Not.Null, $"The wire-kinds fixture at {path} is empty or unparseable.");
+		Assert.That(JsonNode.DeepEquals(actual, expected), Is.True,
+			"The wire kinds drifted from the committed fixture " +
+			$"({path}). If this is an intentional protocol change, regenerate with UPDATE_CONTRACT_FIXTURE=1 " +
+			"and update webview/src/protocol.ts (the Kinds object) to match.");
 	}
 }
