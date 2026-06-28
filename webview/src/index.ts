@@ -21,6 +21,7 @@ import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
+import { LifecycleChrome } from "./lifecycle-chrome.js";
 import { log } from "./log.js";
 import { Preview } from "./preview.js";
 import { Kinds } from "./protocol.js";
@@ -277,6 +278,29 @@ function wire(): void {
     mode: () => mode,
   });
 
+  // The lifecycle action buttons + the format bar. index.ts owns the wire kinds (so the actions are
+  // passed as callbacks) and the pane-editable coordination; the chrome owns the show/hide policy.
+  const lifecycleChrome = new LifecycleChrome({
+    openBtn,
+    editBtn,
+    saveVersionBtn,
+    discardBtn,
+    saveBtn,
+    formatBar,
+    setPaneEditable: (editable) => {
+      editor.setEditable(editable);
+      formatted.setEditable(editable);
+    },
+    onOpen: () => ipc.send(Kinds.actionOpen),
+    onEdit: () => void dialogs.openBranchName(),
+    onSaveVersion: () => void dialogs.openVersionNote(),
+    onDiscard: () => {
+      review.clear();
+      ipc.send(Kinds.actionDiscard);
+    },
+    onSave: () => ipc.send(Kinds.actionSave),
+  });
+
   // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
   // #panes[data-mode]), never destroyed. A surface that becomes visible is hydrated from the current
   // text (silently), and the reading position is carried across in the source-line coordinate. Pane
@@ -400,25 +424,12 @@ function wire(): void {
       setHover(null);
       // Align the source editor's line heights to the freshly rendered formatted blocks.
       reconcileHeights();
-      // Read-only until the author clicks Edit (which forks a working branch).
+      // Read-only until the author clicks Edit (which forks a working branch). A freshly loaded
+      // document is Published: the chrome offers Edit and hides the draft-only actions.
       editing = false;
-      editor.setEditable(false);
-      formatted.setEditable(false);
-      if (formatBar) {
-        formatBar.hidden = true;
-      }
+      lifecycleChrome.setEditing(false);
       if (statusEl) {
         statusEl.textContent = payload.path;
-      }
-      // A freshly loaded document is Published: offer Edit, hide the draft-only actions.
-      if (editBtn) {
-        editBtn.hidden = false;
-      }
-      if (saveVersionBtn) {
-        saveVersionBtn.hidden = true;
-      }
-      if (discardBtn) {
-        discardBtn.hidden = true;
       }
       dialogs.closeAll();
     }
@@ -435,25 +446,11 @@ function wire(): void {
     if (statusEl) {
       statusEl.textContent = payload.label;
     }
-    editing = payload.state !== "published";
     // Editing is only possible once a working branch exists (draft state).
-    editor.setEditable(editing);
-    formatted.setEditable(editing);
-    // The formatting toolbar is editing chrome — shown only while a draft is in progress.
-    if (formatBar) {
-      formatBar.hidden = !editing;
-    }
+    editing = payload.state !== "published";
+    lifecycleChrome.setEditing(editing);
     if (editing) {
       formatToolbar.refresh();
-    }
-    if (editBtn) {
-      editBtn.hidden = editing;
-    }
-    if (saveVersionBtn) {
-      saveVersionBtn.hidden = !editing;
-    }
-    if (discardBtn) {
-      discardBtn.hidden = !editing;
     }
     if (!editing) {
       dialogs.closeVersionNote();
@@ -465,23 +462,6 @@ function wire(): void {
     if (payload && statusEl) {
       statusEl.textContent = payload.message;
     }
-  });
-
-  openBtn?.addEventListener("click", () => {
-    ipc.send(Kinds.actionOpen);
-  });
-  editBtn?.addEventListener("click", () => {
-    void dialogs.openBranchName();
-  });
-  saveVersionBtn?.addEventListener("click", () => {
-    void dialogs.openVersionNote();
-  });
-  discardBtn?.addEventListener("click", () => {
-    review.clear();
-    ipc.send(Kinds.actionDiscard);
-  });
-  saveBtn?.addEventListener("click", () => {
-    ipc.send(Kinds.actionSave);
   });
 
   let wrap = true;
