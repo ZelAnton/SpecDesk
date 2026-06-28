@@ -18,6 +18,13 @@ public sealed class GitHubDeviceFlowApiTests
     private static Task<DevicePollOutcome> Exchange(HttpStatusCode status, string body) =>
         Exchange(new StubHttpMessageHandler(status, body));
 
+    private static async Task<DevicePollOutcome> ExchangeWith(HttpMessageHandler handler, CancellationToken ct)
+    {
+        using HttpClient http = new(handler);
+        GitHubDeviceFlowApi api = new(http);
+        return await api.ExchangeAsync("client-id", "device-code", ct);
+    }
+
     [Test]
     public async Task ExchangeAsync_returns_Authorized_with_the_access_token()
     {
@@ -139,6 +146,43 @@ public sealed class GitHubDeviceFlowApiTests
         DevicePollOutcome outcome = await Exchange(HttpStatusCode.TooManyRequests, "rate limited");
 
         Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.SlowDown));
+    }
+
+    [Test]
+    public async Task ExchangeAsync_treats_a_connection_fault_as_Pending()
+    {
+        // A reset / DNS / TLS failure throws before any HTTP response — ride it out as a retryable poll.
+        using ThrowingHttpMessageHandler handler = new(new HttpRequestException("connection reset"));
+
+        DevicePollOutcome outcome = await ExchangeWith(handler, CancellationToken.None);
+
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+    }
+
+    [Test]
+    public async Task ExchangeAsync_treats_a_request_timeout_as_Pending()
+    {
+        // A stalled request surfaces as a TaskCanceledException whose token is NOT the caller's — the
+        // per-request timeout, treated as transient.
+        using ThrowingHttpMessageHandler handler = new(new TaskCanceledException("request timed out"));
+
+        DevicePollOutcome outcome = await ExchangeWith(handler, CancellationToken.None);
+
+        Assert.That(outcome.Status, Is.EqualTo(DevicePollStatus.Pending));
+    }
+
+    [Test]
+    public void ExchangeAsync_propagates_caller_cancellation()
+    {
+        // The caller's own cancellation must NOT be swallowed as a transient — it propagates so the
+        // orchestrator maps it to TimedOut.
+        using StubHttpMessageHandler handler = new(HttpStatusCode.OK, "{}");
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+
+        // CatchAsync (not ThrowsAsync) so the OperationCanceledException subclass HttpClient raises
+        // (TaskCanceledException) matches — the point is that it is NOT swallowed into a poll outcome.
+        Assert.CatchAsync<OperationCanceledException>(() => ExchangeWith(handler, cts.Token));
     }
 
     [Test]

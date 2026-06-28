@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -63,6 +64,12 @@ internal interface IDeviceFlowApi
 internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 {
     private const string TokenEndpoint = "https://github.com/login/oauth/access_token";
+
+    // A single poll's wall-clock budget — well under HttpClient's 100s default so a stalled exchange is
+    // detected promptly. Applied via a linked CancellationTokenSource so a (possibly shared) injected
+    // HttpClient is never mutated. A stall maps to a retryable Pending, bounded by the device deadline.
+    private static readonly TimeSpan ExchangeTimeout = TimeSpan.FromSeconds(30);
+
     private static readonly Octokit.ProductHeaderValue Product = new("SpecDesk");
 
     private readonly HttpClient _http;
@@ -89,6 +96,37 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     }
 
     public async Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct)
+    {
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(ExchangeTimeout);
+        try
+        {
+            return await ExchangeOnceAsync(clientId, deviceCode, timeout.Token);
+        }
+        catch (HttpRequestException)
+        {
+            // A connection-level transient (reset / DNS / TLS): no HTTP response arrived. Like a 5xx,
+            // ride it out as a retryable poll — the loop is bounded by the device code's deadline — rather
+            // than faulting the whole sign-in on a network blip mid-poll.
+            return DevicePollOutcome.Pending();
+        }
+        catch (IOException)
+        {
+            // A broken read mid-body. The default ResponseContentRead buffering wraps this into the
+            // HttpRequestException above, but guard it directly too so correctness doesn't depend on the
+            // completion option — a transient read failure is still just a retryable poll.
+            return DevicePollOutcome.Pending();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // The per-request timeout fired (the linked token, not the caller's cancellation): a stalled
+            // poll. Treat it as transient and retry on the next tick. Real caller cancellation — where
+            // ct itself is cancelled — is not caught here and propagates to the orchestrator (→ TimedOut).
+            return DevicePollOutcome.Pending();
+        }
+    }
+
+    private async Task<DevicePollOutcome> ExchangeOnceAsync(string clientId, string deviceCode, CancellationToken ct)
     {
         using HttpRequestMessage request = new(HttpMethod.Post, TokenEndpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

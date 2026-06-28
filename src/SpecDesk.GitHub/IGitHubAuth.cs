@@ -25,14 +25,15 @@ public enum SignInOutcome
     /// <summary>The user explicitly denied the authorization.</summary>
     Denied,
 
-    /// <summary>The local wait was cancelled, or its own deadline elapsed — including a transient GitHub
-    /// outage (HTTP 5xx / 429 / a non-JSON body) that is retried but never recovers within the device
-    /// code's lifetime.</summary>
+    /// <summary>The local wait was cancelled, or its own deadline elapsed — including a transient GitHub /
+    /// network outage (an HTTP 5xx / 429, a non-JSON body, a connection fault, or a stalled request) that
+    /// is retried but never recovers within the device code's lifetime.</summary>
     TimedOut,
 
     /// <summary>GitHub's token endpoint returned an error code — e.g. a misconfigured client id; the
-    /// <see cref="SignInResult.Error"/> carries the code. (A raw network/transport fault instead surfaces
-    /// as an exception, which the host's background handler catches.)</summary>
+    /// <see cref="SignInResult.Error"/> carries the code. (During the initial device-code request a raw
+    /// network/transport fault instead surfaces as an exception, which the host's background handler
+    /// catches; once polling, such faults are ridden out — see <see cref="SignInOutcome.TimedOut"/>.)</summary>
     Failed,
 }
 
@@ -70,9 +71,10 @@ public interface IGitHubAuth
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is
     /// cancelled / its deadline elapses. On <see cref="SignInOutcome.Authorized"/> the token is persisted
     /// to the secure store. Every outcome — including a structured GitHub error (<see cref="SignInOutcome.Failed"/>)
-    /// — is returned as a <see cref="SignInResult"/>; only a raw network/transport fault throws. A transient
-    /// server error (HTTP 5xx / 429 / a non-JSON body) is treated as a retryable poll, so a brief GitHub
-    /// outage is ridden out and a sustained one ends as <see cref="SignInOutcome.TimedOut"/>.</summary>
+    /// — is returned as a <see cref="SignInResult"/>. Transient failures while polling — an HTTP 5xx / 429,
+    /// a non-JSON body, a connection fault, or a stalled request — are ridden out as retryable polls, so a
+    /// brief GitHub or network blip doesn't fault the sign-in; a sustained outage ends as
+    /// <see cref="SignInOutcome.TimedOut"/> when the device code's deadline elapses.</summary>
     Task<SignInResult> AwaitAuthorizationAsync(DeviceCodePrompt prompt, CancellationToken cancellationToken = default);
 
     /// <summary>Whether a usable token is stored. Local and cheap — does NOT call GitHub.</summary>

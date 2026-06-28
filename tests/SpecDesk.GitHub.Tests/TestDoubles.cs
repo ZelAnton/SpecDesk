@@ -14,12 +14,22 @@ internal sealed class StubHttpMessageHandler(HttpStatusCode status, string body)
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         LastRequest = request;
         LastRequestBody = request.Content is null
             ? null
             : await request.Content.ReadAsStringAsync(cancellationToken);
         return new HttpResponseMessage(status) { Content = new StringContent(body) };
     }
+}
+
+// An HTTP transport that always faults the send with a given exception — models a connection-level
+// transient (HttpRequestException) or a request timeout (TaskCanceledException) during the exchange poll.
+internal sealed class ThrowingHttpMessageHandler(Exception toThrow) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromException<HttpResponseMessage>(toThrow);
 }
 
 // A scripted device-flow transport: a fixed device-code response, a queue of poll outcomes, and a fixed
