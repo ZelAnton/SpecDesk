@@ -49,8 +49,7 @@ public static class AppAssetResolver
 
 		string rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 		string candidate = Path.GetFullPath(Path.Combine(rootFull, relative));
-		string prefix = rootFull + Path.DirectorySeparatorChar;
-		if (!candidate.StartsWith(prefix, PathComparison))
+		if (!IsInside(rootFull, candidate))
 		{
 			return null;
 		}
@@ -66,6 +65,19 @@ public static class AppAssetResolver
 
 		return new ResolvedAsset(candidate, ContentTypeFor(candidate));
 	}
+
+	/// <summary>
+	/// Descent containment: whether <paramref name="candidate"/> resolves to a path strictly UNDER
+	/// <paramref name="rootFull"/> (the root directory itself is excluded — this resolver serves files,
+	/// not the directory). This shares its descent + escape-rejection logic with the F# write-path guard
+	/// <c>SpecDesk.Core.ImageEngine.isInside</c>; a cross-language parity test pins those security-critical
+	/// cases to agree, so a hardening of one cannot silently leave the other behind. (The F# guard
+	/// additionally counts the root itself as inside, because the image folder may be the repo root.)
+	/// <paramref name="rootFull"/> must be an already-canonical, trailing-separator-trimmed absolute path
+	/// (as <see cref="ResolveRelative"/> passes).
+	/// </summary>
+	internal static bool IsInside(string rootFull, string candidate) =>
+		Path.GetFullPath(candidate).StartsWith(rootFull + Path.DirectorySeparatorChar, PathComparison);
 
 	// True when any existing path component between the root and the candidate is a reparse point
 	// (symlink/junction). Walks each segment and stats it; stops at the first non-existent component.

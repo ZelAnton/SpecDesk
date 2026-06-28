@@ -26,6 +26,9 @@
 		<!-- The test project exercises the image-engine path-safety guards (isInside, sanitizeExt)
 		     directly, so they are internal rather than private. -->
 		<InternalsVisibleTo Include="SpecDesk.Core.Tests" />
+		<!-- Host.Tests runs a cross-language parity test pinning ImageEngine.isInside (the write-path
+		     containment guard) to agree with the C# AppAssetResolver.IsInside read-path guard. -->
+		<InternalsVisibleTo Include="SpecDesk.Host.Tests" />
 	</ItemGroup>
 
 </Project>
