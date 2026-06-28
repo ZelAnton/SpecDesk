@@ -7,15 +7,14 @@
  */
 
 import { splitTopLevelBlocks } from "./md-blocks.js";
-import type { DiffEntryPayload } from "./protocol.js";
+import type { DiffEntryPayload, DiffKind } from "./protocol.js";
 
 /** One changed block (or sub-block: a table row / list item) in the review overlay (PoC-6). The flat,
  *  line-based form the editors render, expanded from the wire {@link DiffEntryPayload}s by
  *  {@link expandDiffMarks}; defined here (with its producer) rather than in an editor module so the pure
  *  diff layer never depends on CodeMirror/ProseMirror. */
 export interface DiffMark {
-  /** "added" | "removed" | "changed" | "moved". */
-  kind: string;
+  kind: DiffKind;
   lineStart: number;
   lineEnd: number;
   anchorLine: number;

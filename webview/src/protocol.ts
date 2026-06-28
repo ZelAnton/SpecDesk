@@ -31,11 +31,18 @@ export const Kinds = {
   diffResult: "diff.result",
 } as const;
 
+/** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
+ *  {@link DiffKind} type derives from it, so the validated set and the type can't drift apart. Mirror of
+ *  F# DiffWire.DiffKind, pinned by the cross-language guard in webview/tests/contract/diff-kinds.json. */
+export const DIFF_KINDS = ["added", "changed", "moved", "removed"] as const;
+
+/** How one changed block (or row/item) relates base→head (mirror of F# DiffWire.DiffKind). */
+export type DiffKind = (typeof DIFF_KINDS)[number];
+
 /** A changed child (table row / list item) of a changed container (native→webview, inside a
  *  {@link DiffEntryPayload}'s `children`). Ordinals match the container's rendered children. */
 export interface ChildDiffPayload {
-  /** "added" | "removed" | "changed" | "moved". */
-  kind: string;
+  kind: DiffKind;
   /** 0-based HEAD child ordinal (added/changed/moved); -1 for "removed". */
   childIndex: number;
   /** For "removed": the head child it sat before (the marker anchors there); -1 otherwise. */
@@ -48,8 +55,7 @@ export interface ChildDiffPayload {
 
 /** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted. */
 export interface DiffEntryPayload {
-  /** "added" | "removed" | "changed" | "moved". */
-  kind: string;
+  kind: DiffKind;
   /** 0-based inclusive HEAD source-line range of the (after) block; unused for "removed". */
   lineStart: number;
   lineEnd: number;

@@ -7,9 +7,10 @@
 
 import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
 
-/** The change-annotation label for a diff kind. The local "Show changes" diffs the working copy against
- *  the last saved version, so every change is the current author's — hence "by you". Multi-author wording
- *  ("Updated by Max, Phil and Petr") awaits the review-against-others flow (git blame / a PR base). */
+/** The change-annotation label for a diff kind (a {@link DiffKind}, or any string — an unrecognized kind
+ *  degrades to a generic label rather than throwing). The local "Show changes" diffs the working copy
+ *  against the last saved version, so every change is the current author's — hence "by you". Multi-author
+ *  wording ("Updated by Max, Phil and Petr") awaits the review-against-others flow (git blame / a PR base). */
 export function diffLabel(kind: string): string {
   switch (kind) {
     case "added":

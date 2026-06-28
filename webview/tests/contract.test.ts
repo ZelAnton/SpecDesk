@@ -18,7 +18,8 @@ import {
   parseStatus,
   parseVersionNoteSuggested,
 } from "../src/decoders.js";
-import { Kinds, STATUS_STATES } from "../src/protocol.js";
+import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/protocol.js";
+import diffKinds from "./contract/diff-kinds.json" with { type: "json" };
 import lifecycleStates from "./contract/lifecycle-states.json" with { type: "json" };
 import fixture from "./contract/native-payloads.json" with { type: "json" };
 import wireKinds from "./contract/wire-kinds.json" with { type: "json" };
@@ -108,5 +109,14 @@ describe("lifecycle states (TS StatusState matches the F# Lifecycle.State fixtur
     // state renamed/added on either side fails here — and because StatusState derives from STATUS_STATES,
     // this keeps the type, the runtime validator, and the F# source of truth in lockstep.
     expect(new Set(STATUS_STATES)).toEqual(new Set(lifecycleStates));
+  });
+});
+
+describe("diff kinds (TS DiffKind matches the F# DiffWire.DiffKind fixture)", () => {
+  it("DIFF_KINDS is exactly the committed diff-kinds set", () => {
+    // diff-kinds.json is emitted from F# DiffWire.DiffKind (DiffKindContractTests). A kind renamed/added on
+    // either side fails here — and because DiffKind derives from DIFF_KINDS (and the diff decoders validate
+    // against it), this keeps the type, the runtime validator, and the F# source of truth in lockstep.
+    expect(new Set(DIFF_KINDS)).toEqual(new Set(diffKinds));
   });
 });

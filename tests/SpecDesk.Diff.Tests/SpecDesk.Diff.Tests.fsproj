@@ -9,6 +9,7 @@
 	<ItemGroup>
 		<Compile Include="AstDiffTests.fs" />
 		<Compile Include="DiffWireTests.fs" />
+		<Compile Include="DiffKindContractTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -9,7 +9,9 @@
 import {
   type BranchNameSuggestedPayload,
   type ChildDiffPayload,
+  DIFF_KINDS,
   type DiffEntryPayload,
+  type DiffKind,
   type DiffResultPayload,
   type DocLoadedPayload,
   type ErrorPayload,
@@ -81,10 +83,14 @@ export function parsePreview(value: unknown): PreviewPayload | null {
   return { html: value.html, lineMap };
 }
 
+function isDiffKind(value: unknown): value is DiffKind {
+  return isString(value) && DIFF_KINDS.some((kind) => kind === value);
+}
+
 function parseChildDiff(value: unknown): ChildDiffPayload | null {
   if (
     !isRecord(value) ||
-    !isString(value.kind) ||
+    !isDiffKind(value.kind) ||
     !isNumber(value.childIndex) ||
     !isNumber(value.anchorIndex) ||
     !isString(value.removedText) ||
@@ -104,7 +110,7 @@ function parseChildDiff(value: unknown): ChildDiffPayload | null {
 function parseDiffEntry(value: unknown): DiffEntryPayload | null {
   if (
     !isRecord(value) ||
-    !isString(value.kind) ||
+    !isDiffKind(value.kind) ||
     !isNumber(value.lineStart) ||
     !isNumber(value.lineEnd) ||
     !isNumber(value.anchorLine) ||
