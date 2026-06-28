@@ -14,7 +14,10 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 }
 ```
 
-- `kind` — dotted message name (namespace.action).
+- `kind` — dotted message name, grouped by domain (`doc.*`, `diff.*`, `image.*`, `branch.*`,
+  `version.*`, …); the cross-cutting channels `ready` / `log` / `error` / `status` stay bare. (The
+  `action.*` rows below are pre-convention placeholders for not-yet-built actions; each takes a
+  domain name when it is implemented.)
 - `id` — present only when a correlated reply is expected; otherwise `null`.
 - `version` — monotonic counter for editor content; lets the receiver drop stale work.
 - `payload` — message-specific object.
@@ -28,11 +31,11 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `scroll.sync` | `{ side, sourceLine }` | a pane scrolled (throttled) |
 | `image.paste` | `{ base64, originalName?, mime }` | image dropped/pasted |
 | `action.autosave` | `{ text, version }` | autosave the working copy to disk — **no commit** (also happens automatically on idle) |
-| `action.saveVersion` | `{ note }` | **explicit commit** of the working copy with the author's (generated, edited) version note |
+| `doc.saveVersion` | `{ note }` | **explicit commit** of the working copy with the author's (generated, edited) version note |
 | `action.sendForReview` | `{}` | push + open PR |
 | `action.update` | `{}` | push the newly-saved versions to the open PR |
 | `action.publish` | `{}` | merge the PR (if permitted) |
-| `action.discard` | `{}` | abandon the draft |
+| `doc.discard` | `{}` | abandon the draft |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
 | `comment.resolve` | `{ id }` | resolve a thread |

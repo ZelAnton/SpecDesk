@@ -7,21 +7,22 @@ namespace SpecDesk.Contracts;
 /// </summary>
 public static class MessageKinds
 {
+	// Kinds follow `domain.verb`; the cross-cutting channels (ready / log / error / status) stay bare.
 	// webview → native
 	public const string Ready = "ready";
 	public const string EditorChanged = "editor.changed";
-	public const string ActionOpen = "action.open";
-	public const string ActionSave = "action.save";
-	public const string ActionEdit = "action.edit";
-	public const string ActionSaveVersion = "action.saveVersion";
-	public const string ActionDiscard = "action.discard";
+	public const string DocOpen = "doc.open";
+	public const string DocSave = "doc.save";
+	public const string DocEdit = "doc.edit";
+	public const string DocSaveVersion = "doc.saveVersion";
+	public const string DocDiscard = "doc.discard";
 	public const string BranchNameRequest = "branch.name.request";
 	public const string VersionNoteRequest = "version.note.request";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
-	public const string ExportLog = "action.exportLog";
-	public const string ActionOpenExternal = "action.openExternal";
-	public const string ActionCompare = "action.compare";
+	public const string LogExport = "log.export";
+	public const string LinkOpen = "link.open";
+	public const string DiffRequest = "diff.request";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -70,7 +71,7 @@ public sealed record ImageInsertedPayload(string Markdown);
 /// </summary>
 public sealed record StatusPayload(string State, string Label, string? Branch);
 
-/// <summary>Payload of <c>action.edit</c> (webview→native): the author's chosen draft (branch) name.
+/// <summary>Payload of <c>doc.edit</c> (webview→native): the author's chosen draft (branch) name.
 /// <c>null</c>/empty means "use the generated name". The host sanitizes it to a valid git ref.</summary>
 public sealed record EditPayload(string? BranchName);
 
@@ -78,7 +79,7 @@ public sealed record EditPayload(string? BranchName);
 /// (branch) name to prefill the "name this draft" prompt shown on Edit.</summary>
 public sealed record BranchNameSuggestedPayload(string Name);
 
-/// <summary>Payload of <c>action.saveVersion</c> (webview→native): the author's version note (the
+/// <summary>Payload of <c>doc.saveVersion</c> (webview→native): the author's version note (the
 /// commit message in plain words) for the explicit "Save a version" commit.</summary>
 public sealed record SaveVersionPayload(string Note);
 
@@ -90,7 +91,7 @@ public sealed record VersionNoteSuggestedPayload(string Note);
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>
 public sealed record LogPayload(string Level, string Message, string? Data);
 
-/// <summary>Payload of <c>action.openExternal</c> (webview→native): a link the author clicked in the
+/// <summary>Payload of <c>link.open</c> (webview→native): a link the author clicked in the
 /// rendered/formatted view. The host re-validates the scheme and only ever opens absolute http/https
 /// (in the browser) or mailto: (in the mail client) URLs — the webview is untrusted, so a
 /// javascript:/file:/data: URL cannot reach the shell, and a mailto: query is stripped.</summary>

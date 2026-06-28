@@ -50,7 +50,7 @@ public sealed class HostControllerImageTests
 			// Load the document so the controller has a current path + repo root.
 			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
 			// Enter edit mode (forks a working branch): images are only inserted into a draft.
-			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.ImagePaste,

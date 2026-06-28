@@ -63,7 +63,7 @@ function wire(): void {
   // editable WYSIWYG); kept updated, hidden, as the canonical render for the future diff/comments.
   const preview = new Preview(previewEl);
   // A web link clicked in the preview opens in the OS browser (the host re-validates the scheme).
-  preview.setOnOpenLink((url) => ipc.send(Kinds.openExternal, { url }));
+  preview.setOnOpenLink((url) => ipc.send(Kinds.linkOpen, { url }));
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
   // "start typing → offer to begin a draft" behaviour in both editors.
   let editing = false;
@@ -109,7 +109,7 @@ function wire(): void {
         return "";
       }
     },
-    onBranchName: (branchName) => ipc.send(Kinds.actionEdit, { branchName }),
+    onBranchName: (branchName) => ipc.send(Kinds.docEdit, { branchName }),
     suggestVersionNote: async () => {
       try {
         const reply = await ipc.request(Kinds.versionNoteRequest);
@@ -120,7 +120,7 @@ function wire(): void {
       }
     },
     onVersionNote: (note) => {
-      ipc.send(Kinds.actionSaveVersion, { note });
+      ipc.send(Kinds.docSaveVersion, { note });
       // Saving a version advances the base the overlay diffs against, so any showing overlay is now stale.
       review.clear();
     },
@@ -230,7 +230,7 @@ function wire(): void {
     onEditAttempt: offerDraft,
     onFocus: () => formatToolbar.setFocused("editor"),
     // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
-    onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
+    onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
   });
 
   // The formatted (WYSIWYG) editor — a sibling view of the same Markdown. Edits serialize back via
@@ -250,7 +250,7 @@ function wire(): void {
     onFocus: () => formatToolbar.setFocused("formatted"),
     onActiveChange: () => formatToolbar.refresh(),
     // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
-    onOpenLink: (url) => ipc.send(Kinds.openExternal, { url }),
+    onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
   });
 
   // The source editor is padded to match the formatted view's block heights (formatted is the fixed
@@ -263,7 +263,7 @@ function wire(): void {
   review = new ReviewController({
     surfaces: [editor, formatted],
     setPressed: (on) => compareBtn?.setAttribute("aria-pressed", String(on)),
-    requestCompare: () => ipc.send(Kinds.compare, undefined, { version: docVersion }),
+    requestCompare: () => ipc.send(Kinds.diffRequest, undefined, { version: docVersion }),
     docVersion: () => docVersion,
     onEmptyState: (showing) => {
       if (reviewEmptyEl) {
@@ -296,14 +296,14 @@ function wire(): void {
       editor.setEditable(editable);
       formatted.setEditable(editable);
     },
-    onOpen: () => ipc.send(Kinds.actionOpen),
+    onOpen: () => ipc.send(Kinds.docOpen),
     onEdit: () => void dialogs.openBranchName(),
     onSaveVersion: () => void dialogs.openVersionNote(),
     onDiscard: () => {
       review.clear();
-      ipc.send(Kinds.actionDiscard);
+      ipc.send(Kinds.docDiscard);
     },
-    onSave: () => ipc.send(Kinds.actionSave),
+    onSave: () => ipc.send(Kinds.docSave),
   });
 
   // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
@@ -482,7 +482,7 @@ function wire(): void {
   });
 
   exportLogBtn?.addEventListener("click", () => {
-    ipc.send(Kinds.exportLog);
+    ipc.send(Kinds.logExport);
   });
 
   // Light/dark theme. The bare :root is the light (cool) theme, so "light" means no data-theme

@@ -72,7 +72,7 @@ public sealed class HostControllerLifecycleTests
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
         StatusPayload? status = LatestStatus();
         Assert.Multiple(() =>
@@ -91,7 +91,7 @@ public sealed class HostControllerLifecycleTests
         FakeVersioning versioning = new() { Versioned = false };
         using HostController controller = NewController(versioning);
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
         Assert.Multiple(() =>
         {
@@ -108,7 +108,7 @@ public sealed class HostControllerLifecycleTests
 
         // Backslashes become '/', spaces and stray punctuation become '_', edges trimmed.
         controller.OnMessage(IpcSerializer.SerializeEvent(
-            MessageKinds.ActionEdit,
+            MessageKinds.DocEdit,
             new EditPayload(@"My New\Draft!")));
 
         StatusPayload? status = LatestStatus();
@@ -141,7 +141,7 @@ public sealed class HostControllerLifecycleTests
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning, TimeSpan.FromMilliseconds(20));
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
         controller.OnMessage(IpcSerializer.SerializeEvent(
             MessageKinds.EditorChanged,
@@ -162,7 +162,7 @@ public sealed class HostControllerLifecycleTests
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
         controller.OnMessage(IpcSerializer.SerializeEvent(
             MessageKinds.EditorChanged,
             new EditorChangedPayload("# Billing v2"),
@@ -170,7 +170,7 @@ public sealed class HostControllerLifecycleTests
 
         // Empty note → the host falls back to the generated version note (template "Update {docSlug}").
         controller.OnMessage(IpcSerializer.SerializeEvent(
-            MessageKinds.ActionSaveVersion,
+            MessageKinds.DocSaveVersion,
             new SaveVersionPayload(string.Empty)));
 
         StatusPayload? status = LatestStatus();
@@ -188,10 +188,10 @@ public sealed class HostControllerLifecycleTests
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
         controller.OnMessage(IpcSerializer.SerializeEvent(
-            MessageKinds.ActionSaveVersion,
+            MessageKinds.DocSaveVersion,
             new SaveVersionPayload("Clarify the refund rule")));
 
         Assert.That(versioning.LastCommitMessage, Is.EqualTo("Clarify the refund rule"));
@@ -202,7 +202,7 @@ public sealed class HostControllerLifecycleTests
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
         controller.OnMessage(IpcSerializer.SerializeEvent(
             MessageKinds.VersionNoteRequest,
@@ -222,9 +222,9 @@ public sealed class HostControllerLifecycleTests
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionDiscard));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard));
 
         StatusPayload? status = LatestStatus();
         Assert.Multiple(() =>
@@ -245,7 +245,7 @@ public sealed class HostControllerLifecycleTests
             new EditorChangedPayload("# Billing\n\nNew clause.\n"),
             version: 7));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 7));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 7));
 
         IpcMessage? reply = FindKind(MessageKinds.DiffResult);
         Assert.That(reply, Is.Not.Null);
@@ -265,7 +265,7 @@ public sealed class HostControllerLifecycleTests
         FakeVersioning versioning = new() { Versioned = false };
         using HostController controller = NewController(versioning);
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 1));
 
         Assert.Multiple(() =>
         {
@@ -286,7 +286,7 @@ public sealed class HostControllerLifecycleTests
             new EditorChangedPayload("# Billing edited\n"),
             version: 2));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 2));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 2));
 
         IpcMessage? reply = FindKind(MessageKinds.DiffResult);
         Assert.Multiple(() =>
@@ -306,7 +306,7 @@ public sealed class HostControllerLifecycleTests
             new EditorChangedPayload("- one\n- two changed\n- three\n"),
             version: 3));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 3));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 3));
 
         DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
         Assert.That(payload, Is.Not.Null);
@@ -332,7 +332,7 @@ public sealed class HostControllerLifecycleTests
             new EditorChangedPayload("Original phrasing here today.\n"),
             version: 4));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ActionCompare, version: 4));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 4));
 
         DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
         Assert.That(payload, Is.Not.Null);

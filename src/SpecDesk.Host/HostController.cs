@@ -172,16 +172,16 @@ public sealed class HostController : IDisposable
 			case MessageKinds.EditorChanged:
 				OnEditorChanged(message);
 				break;
-			case MessageKinds.ActionOpen:
+			case MessageKinds.DocOpen:
 				OnOpen();
 				break;
-			case MessageKinds.ActionSave:
+			case MessageKinds.DocSave:
 				OnSave();
 				break;
-			case MessageKinds.ActionEdit:
+			case MessageKinds.DocEdit:
 				OnEdit(message);
 				break;
-			case MessageKinds.ActionSaveVersion:
+			case MessageKinds.DocSaveVersion:
 				OnSaveVersion(message);
 				break;
 			case MessageKinds.BranchNameRequest:
@@ -190,7 +190,7 @@ public sealed class HostController : IDisposable
 			case MessageKinds.VersionNoteRequest:
 				OnSuggestVersionNote(message);
 				break;
-			case MessageKinds.ActionDiscard:
+			case MessageKinds.DocDiscard:
 				OnDiscard();
 				break;
 			case MessageKinds.ImagePaste:
@@ -199,13 +199,13 @@ public sealed class HostController : IDisposable
 			case MessageKinds.Log:
 				OnLog(message);
 				break;
-			case MessageKinds.ExportLog:
+			case MessageKinds.LogExport:
 				OnExportLog();
 				break;
-			case MessageKinds.ActionOpenExternal:
+			case MessageKinds.LinkOpen:
 				OnOpenExternal(message);
 				break;
-			case MessageKinds.ActionCompare:
+			case MessageKinds.DiffRequest:
 				OnCompare(message);
 				break;
 			default:

@@ -8,18 +8,18 @@ export const Kinds = {
   // webview → native
   ready: "ready",
   editorChanged: "editor.changed",
-  actionOpen: "action.open",
-  actionSave: "action.save",
-  actionEdit: "action.edit",
-  actionSaveVersion: "action.saveVersion",
-  actionDiscard: "action.discard",
+  docOpen: "doc.open",
+  docSave: "doc.save",
+  docEdit: "doc.edit",
+  docSaveVersion: "doc.saveVersion",
+  docDiscard: "doc.discard",
   branchNameRequest: "branch.name.request",
   versionNoteRequest: "version.note.request",
   imagePaste: "image.paste",
   log: "log",
-  exportLog: "action.exportLog",
-  openExternal: "action.openExternal",
-  compare: "action.compare",
+  logExport: "log.export",
+  linkOpen: "link.open",
+  diffRequest: "diff.request",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -102,7 +102,7 @@ export interface ErrorPayload {
   message: string;
 }
 
-/** Payload of `action.openExternal` (webview→native): a URL to open in the OS — an http/https page in
+/** Payload of `link.open` (webview→native): a URL to open in the OS — an http/https page in
  *  the browser, or a mailto: address in the mail client. The host re-validates the scheme; only
  *  absolute http/https/mailto URLs are honoured (and a mailto: query is stripped). */
 export interface OpenExternalPayload {
@@ -121,7 +121,7 @@ export interface ImageInsertedPayload {
   markdown: string;
 }
 
-/** Payload of `action.edit` (webview→native): the author's chosen draft (branch) name (empty → generated). */
+/** Payload of `doc.edit` (webview→native): the author's chosen draft (branch) name (empty → generated). */
 export interface EditPayload {
   branchName: string;
 }
@@ -131,7 +131,7 @@ export interface BranchNameSuggestedPayload {
   name: string;
 }
 
-/** Payload of `action.saveVersion` (webview→native): the author's version note (commit message). */
+/** Payload of `doc.saveVersion` (webview→native): the author's version note (commit message). */
 export interface SaveVersionPayload {
   note: string;
 }
