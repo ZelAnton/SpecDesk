@@ -42,8 +42,9 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.list` | `{}` | request PRs (author / reviewer) |
 | `pr.forFile` | `{ path }` | request the open PRs touching a given file (comparison) |
 | `pr.open` | `{ refOrUrl }` | open a PR by selection or URL |
-| `diff.request` | `{ path, mode }` | request rendered/raw diff of the open PR (base↔head) |
-| `compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
+| `diff.request` | `{}` (editor `version` on the envelope) | diff the working copy against its last saved version — replies with structured blocks via `diff.result` (the live "show changes" overlay) |
+| `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
+| `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
 | `chat.send` | `{ text }` | message to the agent |
 | `tree.request` | `{ path? }` | request the spec file tree |
 | `doc.open` | `{ path }` | open a spec for editing |
@@ -53,8 +54,9 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `kind` | payload | meaning |
 |--------|---------|---------|
 | `preview.html` | `{ html, lineMap, version }` | rendered preview to inject |
-| `diff.rendered` | `{ html, mode }` | rendered/raw diff to display |
-| `compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
+| `diff.result` | `{ entries }` | changed blocks of the working copy vs its last saved version, for the live "show changes" overlay (editor `version` on the envelope) |
+| `pr.diff.rendered` | `{ html, mode }` | rendered/raw diff of the open PR to display |
+| `pr.compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
 | `version.note.suggested` | `{ note }` | editable generated version note (the commit message in plain words) |
 | `pr.suggested` | `{ title, body }` | editable generated PR text |
 | `pr.list` | `{ items }` | PRs where the user is author/reviewer |
@@ -72,10 +74,15 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 
 ## Ordering & correctness rules
 
-- **Staleness:** every `preview.html` / `diff.rendered` carries the `version` it was computed
-  from; the webview ignores any result whose `version` is older than the latest local edit.
-- **Correlation:** request messages set `id`; the matching reply echoes it. Unsolicited events
-  (status, toast, chat.delta) carry no `id`.
+- **Staleness:** version-stamped results (`preview.html`, `diff.result`) carry the editor
+  `version` they were computed from; the webview ignores any whose `version` is older than the
+  latest local edit.
+- **Correlation:** replies correlate to their request in one of two ways. One-shot RPCs set `id`
+  and the reply echoes it (`branch.name.request` / `version.note.request` → `*.suggested`,
+  `image.paste` → `image.inserted`). Live-recompute requests instead correlate by `version`
+  (`editor.changed` → `preview.html`,
+  `diff.request` → `diff.result`): a newer edit supersedes any in-flight result. Unsolicited
+  events (status, toast, chat.delta) carry neither.
 - **Debounce/throttle:** `editor.changed` ~120 ms; `scroll.sync` throttled to animation frame.
 - **Cancellation:** a new `editor.changed` cancels the in-flight parse/preview for the prior
   version.
