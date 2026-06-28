@@ -34,6 +34,13 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
 
     public string? LastAccessToken { get; private set; }
 
+    /// <summary>GetLoginAsync throws a transient fault on this many leading calls, then returns the login
+    /// (models a blip on GET /user right after authorization). Default 0 → succeeds on the first call.</summary>
+    public int LoginFailuresBeforeSuccess { get; init; }
+
+    /// <summary>GetLoginAsync always throws a transient fault (models GET /user being down throughout).</summary>
+    public bool LoginNeverSucceeds { get; init; }
+
     public FakeDeviceFlowApi(DeviceCodeResponse deviceCode, string login, params DevicePollOutcome[] polls)
     {
         _deviceCode = deviceCode;
@@ -51,6 +58,10 @@ internal sealed class FakeDeviceFlowApi : IDeviceFlowApi
     {
         LoginCalls++;
         LastAccessToken = accessToken;
+        if (LoginNeverSucceeds || LoginCalls <= LoginFailuresBeforeSuccess)
+        {
+            throw new HttpRequestException("simulated GET /user failure");
+        }
         return Task.FromResult(_login);
     }
 }

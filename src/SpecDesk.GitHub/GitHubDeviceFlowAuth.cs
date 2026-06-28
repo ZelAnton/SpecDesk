@@ -8,6 +8,12 @@ namespace SpecDesk.GitHub;
 /// </summary>
 public sealed class GitHubDeviceFlowAuth : IGitHubAuth
 {
+    // The login lookup (GET /user) runs once, right after authorization. We already hold the irreplaceable
+    // access token by then, so a transient blip on that call is retried a few times before we give up on
+    // the (re-derivable) login — never on the token.
+    private const int LoginAttempts = 3;
+    private static readonly TimeSpan LoginRetryDelay = TimeSpan.FromSeconds(1);
+
     private readonly GitHubAuthOptions _options;
     private readonly IDeviceFlowApi _api;
     private readonly ITokenStore _store;
@@ -83,9 +89,7 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
                     case DevicePollStatus.Error:
                         return SignInResult.Failed(poll.Error ?? "unknown_error");
                     case DevicePollStatus.Authorized:
-                        string login = await _api.GetLoginAsync(poll.AccessToken!, cancellationToken);
-                        _store.Save(new StoredToken(poll.AccessToken!, login));
-                        return SignInResult.Authorized(login);
+                        return await CompleteAuthorizationAsync(poll.AccessToken!, cancellationToken);
                 }
 
                 await _delay(delay, cancellationToken);
@@ -96,6 +100,44 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
             // The host cancelled the wait (e.g. the user dismissed the sign-in). Surface it as a terminal
             // outcome rather than a fault, so the caller handles all endings uniformly (see the doc on TimedOut).
             return SignInResult.TimedOut();
+        }
+    }
+
+    // Finish a successful authorization: fetch the login (bounded retry), then persist the token whatever
+    // the login outcome. The token is the irreplaceable artifact — a failed login lookup must degrade to an
+    // empty login (re-derivable on the next authenticated call), never discard the sign-in.
+    private async Task<SignInResult> CompleteAuthorizationAsync(string accessToken, CancellationToken ct)
+    {
+        string login = await FetchLoginWithRetryAsync(accessToken, ct);
+        _store.Save(new StoredToken(accessToken, login));
+        return SignInResult.Authorized(login);
+    }
+
+    private async Task<string> FetchLoginWithRetryAsync(string accessToken, CancellationToken ct)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await _api.GetLoginAsync(accessToken, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // The host cancelled the sign-in — propagate so AwaitAuthorizationAsync maps it to TimedOut.
+                throw;
+            }
+            catch (Exception) when (attempt < LoginAttempts)
+            {
+                // A transient fault on GET /user (a 5xx, a rate-limit, a connection blip) in the moment
+                // after authorization. We already hold a valid token, so back off and retry the lookup.
+                await _delay(LoginRetryDelay, ct);
+            }
+            catch (Exception)
+            {
+                // The final attempt failed: give up the login, not the token. The caller persists the token
+                // with an empty login rather than losing a completed authorization.
+                return string.Empty;
+            }
         }
     }
 

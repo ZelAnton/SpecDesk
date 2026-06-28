@@ -69,6 +69,72 @@ public sealed class GitHubDeviceFlowAuthTests
     }
 
     [Test]
+    public async Task A_transient_login_failure_is_retried_then_signs_in()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"))
+        {
+            LoginFailuresBeforeSuccess = 2,
+        };
+        (GitHubDeviceFlowAuth auth, _, InMemoryTokenStore store) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.Authorized));
+            Assert.That(result.Login, Is.EqualTo("octocat"));
+            Assert.That(api.LoginCalls, Is.EqualTo(3)); // two failures, then success
+            Assert.That(store.Saved, Is.EqualTo(new StoredToken("gho_token", "octocat")));
+        });
+    }
+
+    [Test]
+    public async Task A_persistent_login_failure_still_persists_the_token_with_an_empty_login()
+    {
+        // The user authorized; GET /user being briefly down must not discard the (irreplaceable) token.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"))
+        {
+            LoginNeverSucceeds = true,
+        };
+        (GitHubDeviceFlowAuth auth, List<TimeSpan> delays, InMemoryTokenStore store) = Build(api);
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.Authorized));
+            Assert.That(result.Login, Is.EqualTo(string.Empty));
+            Assert.That(api.LoginCalls, Is.EqualTo(3)); // bounded by the retry budget
+            // Two 1s login-retry backoffs (after attempts 1 and 2; the 3rd gives up) — not the 5s poll interval.
+            Assert.That(delays, Is.EqualTo(new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1) }));
+            Assert.That(store.Saved, Is.EqualTo(new StoredToken("gho_token", string.Empty)));
+            Assert.That(auth.IsSignedIn(), Is.True); // the authorization is preserved
+        });
+    }
+
+    [Test]
+    public async Task Cancellation_during_the_login_retry_returns_TimedOut()
+    {
+        // The host cancels while the post-auth login lookup is being retried: it must surface as TimedOut
+        // (via the retry backoff observing the token), not be swallowed into a sign-in.
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"))
+        {
+            LoginNeverSucceeds = true,
+        };
+        (GitHubDeviceFlowAuth auth, _, InMemoryTokenStore store) = Build(api);
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt(), cts.Token);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.TimedOut));
+            Assert.That(store.Saved, Is.Null); // cancelled before any save
+        });
+    }
+
+    [Test]
     public async Task Pending_then_authorized_waits_one_interval_then_signs_in()
     {
         FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Pending(), DevicePollOutcome.Authorized("t"));
