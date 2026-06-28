@@ -93,3 +93,44 @@ let ``a multi-line paragraph spans its source line range`` () =
         Assert.That(node.LineStart, Is.EqualTo 0)
         Assert.That(node.LineEnd, Is.EqualTo 1)
     | other -> Assert.Fail($"expected one node, got %A{other}")
+
+// The branches below are the silent-drop risks in inlineOf/blockOf: each ends in `| _ -> None`, so a
+// regression that stops matching one quietly removes it from the AST the diff and comment anchoring
+// consume. Autolinks and HTML entities are the ones most likely to actually occur in a spec.
+
+[<Test>]
+let ``an angle-bracket autolink projects a link to its url`` () =
+    Assert.That(
+        paragraphInlines "<https://example.com>"
+        |> List.contains (Link([ Text "https://example.com" ], "https://example.com")),
+        Is.True)
+
+[<Test>]
+let ``an html entity projects its decoded text`` () =
+    Assert.That(paragraphInlines "&amp;" |> List.contains (Text "&"), Is.True)
+
+[<Test>]
+let ``a fenced code block keeps only the first info word as the language`` () =
+    match single "```fsharp ignore\nlet x = 1\n```" with
+    | CodeBlock(lang, _) -> Assert.That(lang, Is.EqualTo(Some "fsharp"))
+    | other -> Assert.Fail($"expected a code block, got %A{other}")
+
+[<Test>]
+let ``an indented code block projects with no language`` () =
+    match single "    let x = 1\n" with
+    | CodeBlock(lang, code) ->
+        Assert.That(lang, Is.EqualTo None)
+        Assert.That(code, Does.Contain "let x = 1")
+    | other -> Assert.Fail($"expected a code block, got %A{other}")
+
+[<Test>]
+let ``a list nested inside a list item projects a nested ListBlock`` () =
+    match single "- a\n  - b\n" with
+    | ListBlock(false, [ item ]) ->
+        Assert.That(
+            item
+            |> List.exists (function
+                | ListBlock _ -> true
+                | _ -> false),
+            Is.True)
+    | other -> Assert.Fail($"expected a single unordered list, got %A{other}")
