@@ -10,6 +10,15 @@
 
 	<ItemGroup>
 		<PackageReference Include="Octokit" />
+		<PackageReference Include="Microsoft.Extensions.Logging" />
+		<!-- DPAPI for the token at rest (Windows); see Directory.Packages.props. -->
+		<PackageReference Include="System.Security.Cryptography.ProtectedData" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- The test project drives the device-flow orchestration, the file token store, and the DPAPI
+		     protector directly through their internal seams. -->
+		<InternalsVisibleTo Include="SpecDesk.GitHub.Tests" />
 	</ItemGroup>
 
 </Project>
