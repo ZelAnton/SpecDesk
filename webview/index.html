@@ -18,10 +18,16 @@
       <button id="discard-btn" type="button" hidden>Discard</button>
       <button id="save-btn" type="button">Save</button>
       <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
-      <span id="view-modes">
-        <button id="mode-code" type="button" aria-pressed="false">Code</button>
-        <button id="mode-split" type="button" aria-pressed="true">Split</button>
-        <button id="mode-formatted" type="button" aria-pressed="false">Formatted</button>
+      <!-- A button-based radiogroup (segmented control): the WAI-ARIA radio keyboard pattern (roving
+           tabindex + arrow keys) is implemented in segmented-control.ts. Native <input type="radio">
+           does not fit the segmented-control visual, so useSemanticElements is suppressed per button. -->
+      <span id="view-modes" role="radiogroup" aria-label="View mode">
+        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+        <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
+        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+        <button id="mode-split" type="button" role="radio" aria-checked="true" tabindex="0">Split</button>
+        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+        <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
       </span>
       <button id="compare-btn" type="button" aria-pressed="false" title="Highlight changes against the last saved version">Show changes</button>
       <button id="export-log-btn" type="button">Export log…</button>

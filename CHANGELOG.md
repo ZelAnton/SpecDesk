@@ -126,6 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The toolbar's lifecycle status dot now reflects the state by colour (in review, changes requested,
   approved, draft, published) using the design concept's per-state token family, instead of staying an
   inert grey; the file path and error messages keep the neutral dot.
+- The toolbar's view switch (Code / Split / Formatted) is now an ARIA radiogroup with full keyboard
+  support — a single tab stop, arrow keys move and select, and `aria-checked` tracks the choice —
+  matching the design concept's segmented-control spec (§7/§11), rather than three independent toggles.
 - The host loads its web (`wwwroot`) and sample assets from the application base directory rather
   than the current working directory, so it runs correctly when launched from any folder (and as a
   single-file exe), not only from the project/output directory.

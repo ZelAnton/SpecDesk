@@ -294,7 +294,7 @@ button {
   color: var(--text);
 }
 
-#view-modes button[aria-pressed="true"] {
+#view-modes button[aria-checked="true"] {
   color: var(--text-strong);
   background: var(--surface);
   box-shadow: var(--shadow-card);

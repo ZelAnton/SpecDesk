@@ -28,6 +28,7 @@ import { Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
 import { ReviewController } from "./review.js";
 import { ScrollSync } from "./scroll-sync.js";
+import { SegmentedControl, type SegmentedOption } from "./segmented-control.js";
 import { isSplit, paneVisibility, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
@@ -160,6 +161,10 @@ function wire(): void {
   // reflects the formatted pane's active formats on the buttons (see format-toolbar.ts). Constructed
   // once both editors exist (below); referenced earlier only inside callbacks that fire after that.
   let formatToolbar: FormatToolbar;
+
+  // The view-switch radiogroup; assigned below once the mode buttons are gathered, referenced earlier
+  // only inside applyMode, which runs after the control is wired (on a click / arrow key).
+  let viewModeControl: SegmentedControl<ViewMode>;
 
   // Height-sync: pad the source editor with spacers so each source block's top lines up with its
   // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
@@ -328,9 +333,7 @@ function wire(): void {
     if (panesEl) {
       panesEl.dataset.mode = next;
     }
-    modeCodeBtn?.setAttribute("aria-pressed", String(next === "code"));
-    modeSplitBtn?.setAttribute("aria-pressed", String(next === "split"));
-    modeFormattedBtn?.setAttribute("aria-pressed", String(next === "formatted"));
+    viewModeControl.setSelected(next);
     editor.setEditable(editing);
     formatted.setEditable(editing);
     // The format target depends on the mode (Code→source, Formatted→WYSIWYG), so refresh the buttons.
@@ -501,9 +504,19 @@ function wire(): void {
     applyTheme(document.documentElement.dataset.theme !== "dark");
   });
 
-  modeCodeBtn?.addEventListener("click", () => applyMode("code"));
-  modeSplitBtn?.addEventListener("click", () => applyMode("split"));
-  modeFormattedBtn?.addEventListener("click", () => applyMode("formatted"));
+  // The view switch is a radiogroup (design §7/§11): clicks and arrow keys select a mode, and applyMode
+  // reflects the selection back via setSelected. Only buttons present in the DOM join the group.
+  const modeOptions: SegmentedOption<ViewMode>[] = [];
+  if (modeCodeBtn) {
+    modeOptions.push({ el: modeCodeBtn, value: "code" });
+  }
+  if (modeSplitBtn) {
+    modeOptions.push({ el: modeSplitBtn, value: "split" });
+  }
+  if (modeFormattedBtn) {
+    modeOptions.push({ el: modeFormattedBtn, value: "formatted" });
+  }
+  viewModeControl = new SegmentedControl(modeOptions, applyMode);
 
   // Skip link (a11y): jump keyboard focus past the toolbar into the editing surface visible in the
   // current mode — the source editor in Code/Split, the formatted editor in Formatted.
