@@ -35,6 +35,19 @@ public sealed class GitHubDeviceFlowApiTests
     private static Task<LoginOutcome> GetLogin(HttpStatusCode status, string body) =>
         GetLoginWith(new StubHttpMessageHandler(status, body), CancellationToken.None);
 
+    private static async Task<DeviceCodeResponse> RequestDeviceCodeWith(StubHttpMessageHandler handler)
+    {
+        using HttpClient http = new(handler);
+        GitHubDeviceFlowApi api = new(http);
+        return await api.RequestDeviceCodeAsync("client-id", ["repo", "read:user"], CancellationToken.None);
+    }
+
+    private static Task<DeviceCodeResponse> RequestDeviceCode(HttpStatusCode status, string body) =>
+        RequestDeviceCodeWith(new StubHttpMessageHandler(status, body));
+
+    private const string DeviceCodeBody =
+        """{"device_code":"abc","user_code":"WXYZ-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}""";
+
     [Test]
     public async Task ExchangeAsync_returns_Authorized_with_the_access_token()
     {
@@ -377,6 +390,67 @@ public sealed class GitHubDeviceFlowApiTests
             Assert.That(handler.LastRequest.Headers.Authorization?.Parameter, Is.EqualTo("gho_token"));
             Assert.That(handler.LastRequest.Headers.UserAgent.ToString(), Does.Contain("SpecDesk"));
             Assert.That(handler.LastRequest.Headers.Accept.ToString(), Does.Contain("application/vnd.github+json"));
+        });
+    }
+
+    [Test]
+    public async Task RequestDeviceCodeAsync_parses_the_device_code_response()
+    {
+        DeviceCodeResponse response = await RequestDeviceCode(HttpStatusCode.OK, DeviceCodeBody);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(response.DeviceCode, Is.EqualTo("abc"));
+            Assert.That(response.UserCode, Is.EqualTo("WXYZ-1234"));
+            Assert.That(response.VerificationUri, Is.EqualTo(new Uri("https://github.com/login/device")));
+            Assert.That(response.ExpiresIn, Is.EqualTo(TimeSpan.FromSeconds(900)));
+            Assert.That(response.Interval, Is.EqualTo(TimeSpan.FromSeconds(5)));
+        });
+    }
+
+    [Test]
+    public void RequestDeviceCodeAsync_throws_on_a_github_error()
+    {
+        // Nothing is in flight yet, so a rejected request (e.g. device_flow_disabled) throws for the host
+        // to surface as "couldn't start sign-in". The message carries the code, pinning the error branch
+        // (not the missing-field branch — the body also lacks the required fields).
+        InvalidOperationException? ex = Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RequestDeviceCode(HttpStatusCode.OK, """{"error":"device_flow_disabled"}"""));
+        Assert.That(ex!.Message, Does.Contain("device_flow_disabled"));
+    }
+
+    [Test]
+    public void RequestDeviceCodeAsync_throws_on_a_non_success_status()
+    {
+        Assert.ThrowsAsync<HttpRequestException>(() =>
+            RequestDeviceCode(HttpStatusCode.NotFound, "not found"));
+    }
+
+    [Test]
+    public void RequestDeviceCodeAsync_throws_on_a_missing_field()
+    {
+        // A 200 that omits a required field is malformed — throw rather than return a half-built prompt.
+        Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RequestDeviceCode(HttpStatusCode.OK, """{"device_code":"abc","user_code":"WXYZ-1234"}"""));
+    }
+
+    [Test]
+    public async Task RequestDeviceCodeAsync_posts_a_form_encoded_client_and_scope()
+    {
+        StubHttpMessageHandler handler = new(HttpStatusCode.OK, DeviceCodeBody);
+
+        await RequestDeviceCodeWith(handler);
+
+        Assert.That(handler.LastRequest, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(handler.LastRequest!.Method, Is.EqualTo(HttpMethod.Post));
+            Assert.That(handler.LastRequest.RequestUri, Is.EqualTo(new Uri("https://github.com/login/device/code")));
+            Assert.That(handler.LastRequest.Headers.UserAgent.ToString(), Does.Contain("SpecDesk"));
+            Assert.That(handler.LastRequest.Headers.Accept.ToString(), Does.Contain("application/json"));
+            Assert.That(handler.LastRequestBody, Does.Contain("client_id=client-id"));
+            // scopes are space-joined then form-encoded ("repo read:user" → "repo+read%3Auser").
+            Assert.That(handler.LastRequestBody, Does.Contain("scope=repo+read%3Auser"));
         });
     }
 }

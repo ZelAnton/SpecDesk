@@ -9,7 +9,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Octokit" />
 		<!-- DPAPI for the token at rest (Windows); see Directory.Packages.props. -->
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" />
 	</ItemGroup>

@@ -2,7 +2,6 @@ using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Octokit;
 
 namespace SpecDesk.GitHub;
 
@@ -93,15 +92,14 @@ internal interface IDeviceFlowApi
 }
 
 /// <summary>
-/// Production transport: Octokit for the device-code request, and hand-rolled single BCL HttpClient calls
-/// for the token exchange (POST) and the <c>GET /user</c> login lookup. Octokit's
-/// <c>CreateAccessTokenForDeviceFlow</c> owns the poll loop and flattens every terminal error into one
-/// message-parsed exception, and its calls take no per-request timeout / cancellation token — so owning the
-/// HTTP gives a structured poll/login outcome, a per-request timeout, and honoured cancellation. Uses the
-/// BCL only (no extra package).
+/// Production transport: hand-rolled single BCL <see cref="HttpClient"/> calls for all three device-flow
+/// requests — the device-code request, the token exchange, and the <c>GET /user</c> login lookup. Each runs
+/// under a per-request timeout and honours cancellation; the exchange and login return structured outcomes
+/// the orchestrator loops on. Uses the BCL only — no third-party GitHub SDK.
 /// </summary>
 internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 {
+    private const string DeviceCodeEndpoint = "https://github.com/login/device/code";
     private const string TokenEndpoint = "https://github.com/login/oauth/access_token";
     private const string UserEndpoint = "https://api.github.com/user";
 
@@ -113,8 +111,6 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is fine).
     private static readonly ProductInfoHeaderValue UserAgent = new("SpecDesk", "1.0");
 
-    private static readonly Octokit.ProductHeaderValue Product = new("SpecDesk");
-
     private readonly HttpClient _http;
 
     public GitHubDeviceFlowApi(HttpClient http) => _http = http;
@@ -122,20 +118,66 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     public async Task<DeviceCodeResponse> RequestDeviceCodeAsync(
         string clientId, IReadOnlyList<string> scopes, CancellationToken ct)
     {
-        OauthDeviceFlowRequest request = new(clientId);
-        foreach (string scope in scopes)
+        // The up-front call: nothing is in flight, so unlike the poll it throws on any failure (transport,
+        // a per-request-timeout stall, a GitHub error, or a malformed response) for the host to surface as
+        // "couldn't start sign-in, retry" — the documented StartSignInAsync contract.
+        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
+
+        using HttpRequestMessage request = new(HttpMethod.Post, DeviceCodeEndpoint);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.UserAgent.Add(UserAgent);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            request.Scopes.Add(scope);
+            ["client_id"] = clientId,
+            ["scope"] = string.Join(' ', scopes),
+        });
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        response.EnsureSuccessStatusCode();
+        string body = await response.Content.ReadAsStringAsync(timeout.Token);
+        using JsonDocument json = JsonDocument.Parse(body);
+        JsonElement root = json.RootElement;
+
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty("error", out JsonElement error)
+            && StringValue(error) is { Length: > 0 } code)
+        {
+            throw new InvalidOperationException($"GitHub rejected the device-code request: {code}");
         }
 
-        OauthDeviceFlowResponse response =
-            await new GitHubClient(Product).Oauth.InitiateDeviceFlow(request, ct);
         return new DeviceCodeResponse(
-            response.DeviceCode,
-            response.UserCode,
-            new Uri(response.VerificationUri),
-            TimeSpan.FromSeconds(response.ExpiresIn),
-            TimeSpan.FromSeconds(response.Interval));
+            RequiredString(root, "device_code"),
+            RequiredString(root, "user_code"),
+            new Uri(RequiredString(root, "verification_uri")),
+            TimeSpan.FromSeconds(RequiredInt(root, "expires_in")),
+            TimeSpan.FromSeconds(RequiredInt(root, "interval")));
+    }
+
+    /// <summary>A required JSON-string field, or a throw — the device-code response must be well-formed.</summary>
+    private static string RequiredString(JsonElement root, string name)
+    {
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out JsonElement element)
+            && element.ValueKind == JsonValueKind.String
+            && element.GetString() is { Length: > 0 } value)
+        {
+            return value;
+        }
+        throw new InvalidOperationException($"GitHub device-code response is missing the '{name}' field.");
+    }
+
+    /// <summary>A required JSON-number field, or a throw.</summary>
+    private static int RequiredInt(JsonElement root, string name)
+    {
+        if (root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out JsonElement element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt32(out int value))
+        {
+            return value;
+        }
+        throw new InvalidOperationException($"GitHub device-code response is missing or malformed '{name}'.");
     }
 
     public async Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct)
@@ -173,6 +215,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     {
         using HttpRequestMessage request = new(HttpMethod.Post, TokenEndpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.UserAgent.Add(UserAgent);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = clientId,

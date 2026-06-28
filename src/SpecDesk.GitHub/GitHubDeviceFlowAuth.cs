@@ -20,7 +20,7 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
     private readonly TimeProvider _clock;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
-    /// <summary>Production: wires the Octokit/HTTP transport and the DPAPI-encrypted file store under
+    /// <summary>Production: wires the BCL HttpClient transport and the DPAPI-encrypted file store under
     /// <paramref name="authDir"/> (the host passes <c>%LOCALAPPDATA%\SpecDesk\auth</c>).</summary>
     public GitHubDeviceFlowAuth(GitHubAuthOptions options, HttpClient http, string authDir)
         : this(

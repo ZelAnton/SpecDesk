@@ -23,7 +23,7 @@ src/
   SpecDesk.Markdown/       # F#  — Markdig wrapper, AST DU, HTML render
   SpecDesk.Diff/           # F#  — semantic (AST) diff
   SpecDesk.Git/            # C#  — LibGit2Sharp wrapper
-  SpecDesk.GitHub/         # C#  — Octokit wrapper
+  SpecDesk.GitHub/         # C#  — GitHub OAuth device-flow auth (BCL HttpClient)
   SpecDesk.Ai/             # C#  — Microsoft Agent Framework (PoC-8)
   SpecDesk.Host/           # C#  — Photino bootstrap, IPC router (the exe)
 tests/

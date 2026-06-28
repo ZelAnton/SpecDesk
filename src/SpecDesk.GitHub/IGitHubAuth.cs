@@ -70,17 +70,19 @@ public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? 
 
 /// <summary>
 /// GitHub OAuth device-flow sign-in and the secure token store behind it. Kept behind an interface so
-/// the host is testable without a real GitHub session and so no Octokit / HTTP / token types leak into
+/// the host is testable without a real GitHub session and so no HTTP / token types leak into
 /// <c>SpecDesk.Host</c> — the access token is confined to <c>SpecDesk.GitHub</c>. Async and stateless:
 /// the host starts the flow (to display the user code), then awaits authorization on a background task
 /// and replies to the webview by echoing the request id, matching the existing host pattern.
 /// </summary>
 public interface IGitHubAuth
 {
-    /// <summary>Begin device flow: request a device + user code to display. Throws on a transport failure
-    /// (network / HTTP) or a GitHub API error (e.g. a misconfigured client id) — nothing is in flight yet,
-    /// so the host shows a "couldn't start sign-in" error and lets the user retry. The returned prompt
-    /// carries the opaque device code, so the implementation holds no per-flow state.</summary>
+    /// <summary>Begin device flow: request a device + user code to display. Nothing is in flight yet, so
+    /// any failure throws (rather than returning a result) for the host to show a "couldn't start sign-in"
+    /// error and let the user retry — a transport failure, a GitHub API error (e.g. a misconfigured client
+    /// id), a request timeout, or cancellation. The varied exception types mean the host's start handler
+    /// should catch broadly. The returned prompt carries the opaque device code, so the implementation
+    /// holds no per-flow state.</summary>
     Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is

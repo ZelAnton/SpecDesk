@@ -15,7 +15,6 @@
 		<!-- Production dependencies -->
 		<PackageVersion Include="Markdig" Version="1.3.2" />
 		<PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
-		<PackageVersion Include="Octokit" Version="14.0.0" />
 		<!-- DPAPI for the GitHub OAuth token at rest (PoC-5). Windows-only at runtime (throws
 		     PlatformNotSupportedException elsewhere); builds cross-platform, guarded by [Platform] tests. -->
 		<PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
