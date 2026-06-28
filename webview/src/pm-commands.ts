@@ -85,7 +85,11 @@ function toggleQuote(): Command {
       : wrapIn(nodeType("blockquote"))(state, dispatch);
 }
 
-/** Map a toolbar command to a ProseMirror command (toggles where it makes sense). */
+/**
+ * Map a toolbar command to a ProseMirror command (toggles where it makes sense). The commands are
+ * unguarded by design: the read-only / editability check lives in the caller (FormattedEditor.format),
+ * so any other consumer — e.g. a future keymap binding — must apply its own gate before dispatching.
+ */
 export function commandFor(command: FormatCommand): Command {
   switch (command) {
     case "bold":
