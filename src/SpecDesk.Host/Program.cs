@@ -13,14 +13,11 @@ internal static class Program
 	private static readonly string BundledSamples =
 		Path.Combine(AppContext.BaseDirectory, "samples");
 
-	private static ILogger _engineLogger = Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
-
 	[STAThread]
 	private static void Main()
 	{
 		using ILoggerFactory loggerFactory = Logging.CreateFactory();
 		ILogger startup = loggerFactory.CreateLogger("SpecDesk.Host");
-		_engineLogger = loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine");
 		startup.LogInformation("SpecDesk starting; logs at {LogDirectory}", Logging.LogDirectory);
 
 		// Captured by the closures below; assigned before any message can arrive (Load is last).
@@ -42,7 +39,7 @@ internal static class Program
 			// call from the background render task as well as from the message handler.
 			send: json => window!.SendWebMessage(json),
 			dialogs: new PhotinoFileDialogs(() => window!, loggerFactory.CreateLogger("SpecDesk.Host.Dialogs")),
-			inserter: InsertImage,
+			inserter: new ImageInsertAdapter(loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine")).Insert,
 			versioning: versioning,
 			logger: loggerFactory.CreateLogger<HostController>(),
 			initialDocPath: welcomeDoc);
@@ -67,25 +64,6 @@ internal static class Program
 		window.WaitForClose();
 		startup.LogInformation("SpecDesk closing");
 		Serilog.Log.CloseAndFlush();
-	}
-
-	// The image rule engine adapter: read the repo's .spectool.toml (if any) and run the F# engine.
-	private static string? InsertImage(
-		string repoRoot,
-		string docPath,
-		byte[] bytes,
-		string? originalName,
-		string? mime)
-	{
-		string? toml = WorkflowSeeds.TryReadRepoToml(repoRoot);
-		ImageEngine.InsertOutcome outcome =
-			ImageEngine.insertForHost(repoRoot, docPath, toml, bytes, originalName, mime);
-		if (outcome.Error is not null)
-		{
-			_engineLogger.LogWarning("Image engine rejected the paste: {Error}", outcome.Error);
-		}
-
-		return outcome.Markdown;
 	}
 
 	// Serve files referenced as app://<authority>/<path> from the current repo root. A rejected

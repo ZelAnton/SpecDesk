@@ -15,6 +15,10 @@
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="NUnit" />
 		<PackageReference Include="NUnit3TestAdapter" />
+		<!-- ImageInsertAdapter's happy-path test runs the real F# image engine; SkiaSharp's managed
+		     assembly plus the Linux native binary so it decodes on the ubuntu CI leg too. -->
+		<PackageReference Include="SkiaSharp" />
+		<PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
 	</ItemGroup>
 
 	<ItemGroup>
