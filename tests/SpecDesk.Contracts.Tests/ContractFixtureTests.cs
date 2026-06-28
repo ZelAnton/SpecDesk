@@ -11,8 +11,11 @@ namespace SpecDesk.Contracts.Tests;
 /// changed field type drifts silently until it crashes at runtime. This fixture is the shared anchor:
 /// the C# side pins it (this test), and the webview side validates its decoders against the same file
 /// (<c>webview/tests/contract.test.ts</c>). A change on either side that the other doesn't follow breaks
-/// CI in that language. Regenerate after an intentional contract change with
-/// <c>UPDATE_CONTRACT_FIXTURE=1</c> and update the decoders/protocol to match.
+/// CI in that language. A sibling guard in <c>SpecDesk.Core.Tests</c> (LifecycleContractTests) pins the
+/// lifecycle state names the same way, from the F# source of truth. Both regenerate under the
+/// <c>UPDATE_CONTRACT_FIXTURE=1</c> opt-in, but they live in different test projects — run it over the
+/// whole solution (<c>UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx</c>) so every fixture is
+/// rewritten, not a single <c>--filter</c>, then update the decoders/protocol to match.
 /// </summary>
 [TestFixture]
 public sealed class ContractFixtureTests

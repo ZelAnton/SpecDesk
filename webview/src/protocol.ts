@@ -73,8 +73,20 @@ export interface DiffResultPayload {
   entries: DiffEntryPayload[];
 }
 
-/** Document lifecycle state names (mirror of F# Lifecycle.stateName). */
-export type StatusState = "published" | "draft" | "inReview" | "changesRequested" | "approved";
+/** The document lifecycle state names — the single runtime source on the webview side; the
+ *  {@link StatusState} type derives from it, so the validated set and the type can't drift apart.
+ *  Mirror of F# Lifecycle.State (via stateName), pinned by the cross-language guard in
+ *  webview/tests/contract/lifecycle-states.json. */
+export const STATUS_STATES = [
+  "published",
+  "draft",
+  "inReview",
+  "changesRequested",
+  "approved",
+] as const;
+
+/** Document lifecycle state name (mirror of F# Lifecycle.stateName). */
+export type StatusState = (typeof STATUS_STATES)[number];
 
 /** One rendered top-level block's 0-based, inclusive source line range. */
 export interface LineSpan {

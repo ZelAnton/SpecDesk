@@ -10,6 +10,7 @@
 		<Compile Include="TestImages.fs" />
 		<Compile Include="SlugTests.fs" />
 		<Compile Include="LifecycleTests.fs" />
+		<Compile Include="LifecycleContractTests.fs" />
 		<Compile Include="TokensTests.fs" />
 		<Compile Include="TomlTests.fs" />
 		<Compile Include="ImagesConfigTests.fs" />

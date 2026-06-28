@@ -18,7 +18,8 @@ import {
   parseStatus,
   parseVersionNoteSuggested,
 } from "../src/decoders.js";
-import { Kinds } from "../src/protocol.js";
+import { Kinds, STATUS_STATES } from "../src/protocol.js";
+import lifecycleStates from "./contract/lifecycle-states.json" with { type: "json" };
 import fixture from "./contract/native-payloads.json" with { type: "json" };
 import wireKinds from "./contract/wire-kinds.json" with { type: "json" };
 
@@ -98,5 +99,14 @@ describe("wire kinds (TS Kinds match the C# MessageKinds fixture)", () => {
     // wire-kinds.json is emitted from C# MessageKinds (ContractFixtureTests). A kind renamed/added on
     // either side fails here — order-independent, so only the set of strings matters.
     expect(new Set(Object.values(Kinds))).toEqual(new Set(wireKinds));
+  });
+});
+
+describe("lifecycle states (TS StatusState matches the F# Lifecycle.State fixture)", () => {
+  it("STATUS_STATES is exactly the committed lifecycle-states set", () => {
+    // lifecycle-states.json is emitted from the F# Lifecycle.State union (LifecycleContractTests). A
+    // state renamed/added on either side fails here — and because StatusState derives from STATUS_STATES,
+    // this keeps the type, the runtime validator, and the F# source of truth in lockstep.
+    expect(new Set(STATUS_STATES)).toEqual(new Set(lifecycleStates));
   });
 });

@@ -6,19 +6,20 @@
  * editors. The C# host (SpecDesk.Contracts) is the only writer, so a `null` means the contract moved.
  */
 
-import type {
-  BranchNameSuggestedPayload,
-  ChildDiffPayload,
-  DiffEntryPayload,
-  DiffResultPayload,
-  DocLoadedPayload,
-  ErrorPayload,
-  ImageInsertedPayload,
-  LineSpan,
-  PreviewPayload,
-  StatusPayload,
-  StatusState,
-  VersionNoteSuggestedPayload,
+import {
+  type BranchNameSuggestedPayload,
+  type ChildDiffPayload,
+  type DiffEntryPayload,
+  type DiffResultPayload,
+  type DocLoadedPayload,
+  type ErrorPayload,
+  type ImageInsertedPayload,
+  type LineSpan,
+  type PreviewPayload,
+  STATUS_STATES,
+  type StatusPayload,
+  type StatusState,
+  type VersionNoteSuggestedPayload,
 } from "./protocol.js";
 
 /** `value` is a non-null object whose fields can be read as `unknown` (the JSON-object boundary). */
@@ -139,14 +140,6 @@ export function parseDiffResult(value: unknown): DiffResultPayload | null {
   }
   return { entries };
 }
-
-const STATUS_STATES: readonly StatusState[] = [
-  "published",
-  "draft",
-  "inReview",
-  "changesRequested",
-  "approved",
-];
 
 function isStatusState(value: unknown): value is StatusState {
   return isString(value) && STATUS_STATES.some((state) => state === value);
