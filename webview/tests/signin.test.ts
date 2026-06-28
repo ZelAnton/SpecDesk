@@ -133,4 +133,17 @@ describe("SignInController — code bar", () => {
     expect(el("github-user-code").hidden).toBe(true);
     expect(el("github-cancel-btn").textContent).toBe("Close");
   });
+
+  it("surfaces an up-front failure even though no code was shown", () => {
+    // StartSignInAsync failed before a code was issued — the bar was never up, but the error must show.
+    const { controller } = mount();
+    controller.applyAccount({
+      available: true,
+      signedIn: false,
+      message: "Couldn't reach GitHub. Check your connection and try again.",
+    });
+
+    expect(el("github-signin-bar").hidden).toBe(false);
+    expect(el("github-signin-text").textContent).toContain("Couldn't reach GitHub");
+  });
 });

@@ -229,6 +229,9 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
   - **Update review**: after saving a further version while in review, offer to push it to the PR
     (explicit, never silent).
   - PR list (author/reviewer/by-URL); status: **In review / Changes requested / Approved**.
+- **Release requirement:** the (public, non-secret) OAuth App client id must be compiled into
+  `GitHubAuthOptions.DefaultClientId` (or supplied via env `SPECDESK_GITHUB_CLIENT_ID`) before shipping the
+  round-trip — otherwise sign-in ships dark: the account affordance hides and there is no error anywhere.
 - **Demo / acceptance:** edit a spec, **Save a version**, click **Send for review** → a real PR opens with sensible title/body and reviewers; save another version and **Update review** → the PR gains the new commit and status updates from GitHub.
 - **Effort:** **L** · **Depends on:** PoC‑4, Spike‑A.
 

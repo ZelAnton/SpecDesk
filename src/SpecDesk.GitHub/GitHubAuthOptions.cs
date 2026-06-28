@@ -10,7 +10,9 @@ namespace SpecDesk.GitHub;
 public sealed record GitHubAuthOptions(string ClientId, IReadOnlyList<string> Scopes)
 {
     /// <summary>The compiled-in OAuth App client id. Empty until the maintainer registers the app and
-    /// pastes its (public) client id here; an empty id means sign-in is unconfigured.</summary>
+    /// pastes its (public) client id here; an empty id means sign-in is unconfigured. RELEASE CHECKLIST:
+    /// this MUST be set (or supplied via env <c>SPECDESK_GITHUB_CLIENT_ID</c>) before shipping the GitHub
+    /// round-trip — otherwise the build silently ships with sign-in dark and no error anywhere.</summary>
     public const string DefaultClientId = "";
 
     /// <summary><c>repo</c> (push + open PR), <c>read:user</c> and <c>user:email</c> (identify the

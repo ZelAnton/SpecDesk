@@ -98,20 +98,17 @@ export class SignInController {
       setHidden(this.bar, true);
       return;
     }
-    // Signed out. A message means the flow ended without success (expired / declined / unreachable) — show
-    // it in the bar if it is up; otherwise (a plain signed-out state) just close the bar.
-    if (
-      payload.message !== undefined &&
-      payload.message.length > 0 &&
-      this.bar &&
-      !this.bar.hidden
-    ) {
+    // Signed out. A message means the flow ended without success (couldn't start / expired / declined /
+    // unreachable) — surface it in the bar, revealing the bar even if the code was never shown (an up-front
+    // failure). A plain signed-out state (no message) just closes the bar.
+    if (payload.message !== undefined && payload.message.length > 0) {
+      setHidden(this.bar, false);
       setText(this.text, payload.message);
       setHidden(this.userCode, true);
       setHidden(this.openBtn, true);
       setText(this.status, "");
       setText(this.cancelBtn, "Close");
-    } else if (payload.message === undefined || payload.message.length === 0) {
+    } else {
       setHidden(this.bar, true);
     }
   }
