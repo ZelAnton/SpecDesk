@@ -15,6 +15,8 @@ import {
   type DiffResultPayload,
   type DocLoadedPayload,
   type ErrorPayload,
+  type GitHubAccountPayload,
+  type GitHubCodePayload,
   type ImageInsertedPayload,
   type LineSpan,
   type PreviewPayload,
@@ -35,6 +37,10 @@ export function isString(value: unknown): value is string {
 
 export function isNumber(value: unknown): value is number {
   return typeof value === "number";
+}
+
+export function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
 }
 
 /** Validate every item of an array through `parseItem`; null if `value` isn't an array or an item fails. */
@@ -169,6 +175,35 @@ export function parseError(value: unknown): ErrorPayload | null {
     return null;
   }
   return { message: value.message };
+}
+
+export function parseGitHubCode(value: unknown): GitHubCodePayload | null {
+  if (!isRecord(value) || !isString(value.userCode) || !isString(value.verificationUri)) {
+    return null;
+  }
+  return { userCode: value.userCode, verificationUri: value.verificationUri };
+}
+
+export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null {
+  if (!isRecord(value) || !isBoolean(value.available) || !isBoolean(value.signedIn)) {
+    return null;
+  }
+  if (value.login !== undefined && !isString(value.login)) {
+    return null;
+  }
+  if (value.message !== undefined && !isString(value.message)) {
+    return null;
+  }
+  // login / message are optional (exactOptionalPropertyTypes forbids an explicit undefined), so add them
+  // only when present.
+  const payload: GitHubAccountPayload = { available: value.available, signedIn: value.signedIn };
+  if (value.login !== undefined) {
+    payload.login = value.login;
+  }
+  if (value.message !== undefined) {
+    payload.message = value.message;
+  }
+  return payload;
 }
 
 export function parseImageInserted(value: unknown): ImageInsertedPayload | null {

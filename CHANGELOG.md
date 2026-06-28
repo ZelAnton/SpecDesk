@@ -110,6 +110,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   client. While editing the formatted view, use Ctrl/Cmd-click so a plain click can still place the
   caret; in read mode a plain click opens it. Only validated http/https/mailto links are opened —
   other schemes (e.g. `javascript:`) are ignored, and the webview can never navigate itself.
+- PoC-5 — connect a GitHub account: a **Connect to GitHub** button signs you in without leaving the app.
+  It shows a short code to enter on GitHub (one click opens the page), waits while you authorize, then
+  shows **Sign out @your-handle**. A brief network blip is ridden out; an expired code or a connection
+  problem is reported in plain words. The affordance appears only when the app is configured with a
+  GitHub OAuth App client id (env `SPECDESK_GITHUB_CLIENT_ID` or a compiled default); this is the
+  foundation for *Send for review* in a later step. Your access stays on your machine and is never shown.
 
 ### Changed
 - Image metadata stripping is now documented as automatic rather than a config toggle. The

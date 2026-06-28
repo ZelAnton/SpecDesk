@@ -32,6 +32,9 @@
       <button id="compare-btn" type="button" aria-pressed="false" title="Highlight changes against the last saved version">Show changes</button>
       <button id="export-log-btn" type="button">Export log…</button>
       <button id="theme-btn" type="button" aria-pressed="false" title="Toggle dark theme">Dark</button>
+      <!-- Account affordance (PoC-5): "Connect to GitHub" / "Sign out @handle". Hidden until the host
+           reports sign-in is configured (github.account with available=true). -->
+      <button id="github-btn" type="button" hidden>Connect to GitHub</button>
       <span id="status" aria-live="polite">(no document)</span>
     </div>
     <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
@@ -53,6 +56,15 @@
       <button id="version-note-expand" type="button" title="More room (Down arrow)" aria-label="Expand to multiple lines">⌄</button>
       <button id="version-note-confirm" type="button">Save</button>
       <button id="version-note-cancel" type="button">Cancel</button>
+    </div>
+    <!-- Sign-in code bar (PoC-5), revealed while connecting a GitHub account: shows the one-time code to
+         enter at GitHub, a button to open the page, and a waiting/result line. Plain words only. -->
+    <div id="github-signin-bar" hidden>
+      <span id="github-signin-text">To connect, open GitHub and enter this code:</span>
+      <code id="github-user-code"></code>
+      <button id="github-open-btn" type="button">Open GitHub</button>
+      <span id="github-signin-status" aria-live="polite"></span>
+      <button id="github-cancel-btn" type="button">Cancel</button>
     </div>
     <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
          ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->

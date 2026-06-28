@@ -347,7 +347,8 @@ button {
    `display` is scoped to :not([hidden]) so each bar stays hidden until revealed — an unscoped
    `#id { display: flex }` would out-specify the user-agent `[hidden] { display: none }` and leak it. */
 #branch-name-bar:not([hidden]),
-#version-note-bar:not([hidden]) {
+#version-note-bar:not([hidden]),
+#github-signin-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -366,6 +367,29 @@ button {
 #version-note-bar {
   background: var(--warn-bg);
   border-bottom-color: var(--warn-border);
+}
+
+/* Connecting a GitHub account is an in-progress, informational step (info tint). */
+#github-signin-bar {
+  background: var(--info-bg);
+  border-bottom-color: var(--info-border);
+}
+
+/* The one-time code: a prominent, selectable monospace chip. */
+#github-user-code {
+  padding: 0.15rem 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  user-select: all;
+}
+
+#github-signin-status {
+  color: var(--text-muted);
 }
 
 /* The "Show changes" empty-result notice — calm and neutral (informational, not an error). A plain
@@ -396,7 +420,8 @@ button {
 }
 
 #branch-name-bar button,
-#version-note-bar button {
+#version-note-bar button,
+#github-signin-bar button {
   height: 28px;
   padding: 0 0.7rem;
   font: inherit;
@@ -407,18 +432,20 @@ button {
   cursor: pointer;
 }
 
-/* One primary action per bar — the confirm — gets the accent fill. Scoped under the bar id so it
-   out-specifies the `#…-bar button` secondary rule above (which is id + type); a bare `#…-confirm`
+/* One primary action per bar — the confirm / "Open GitHub" — gets the accent fill. Scoped under the bar
+   id so it out-specifies the `#…-bar button` secondary rule above (which is id + type); a bare `#…-confirm`
    is lower specificity and would lose the fill at rest. */
 #branch-name-bar #branch-name-confirm,
-#version-note-bar #version-note-confirm {
+#version-note-bar #version-note-confirm,
+#github-signin-bar #github-open-btn {
   color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
 }
 
 #branch-name-bar #branch-name-confirm:hover,
-#version-note-bar #version-note-confirm:hover {
+#version-note-bar #version-note-confirm:hover,
+#github-signin-bar #github-open-btn:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }

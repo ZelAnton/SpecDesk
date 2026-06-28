@@ -23,6 +23,9 @@ public static class MessageKinds
 	public const string LogExport = "log.export";
 	public const string LinkOpen = "link.open";
 	public const string DiffRequest = "diff.request";
+	public const string GitHubSignIn = "github.signIn";
+	public const string GitHubSignInCancel = "github.signInCancel";
+	public const string GitHubSignOut = "github.signOut";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -33,6 +36,8 @@ public static class MessageKinds
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
+	public const string GitHubCode = "github.code";
+	public const string GitHubAccount = "github.account";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -139,3 +144,17 @@ public sealed record DiffEntryPayload(
 /// last committed version, in document order. The editor-content version rides on the envelope so the
 /// webview can drop a result the document has already been edited past.</summary>
 public sealed record DiffResultPayload(IReadOnlyList<DiffEntryPayload> Entries);
+
+/// <summary>Payload of <c>github.code</c> (native→webview): the one-time code the author types at
+/// <paramref name="VerificationUri"/> to connect their GitHub account. Shown verbatim; never a secret
+/// token (the access token stays inside SpecDesk.GitHub).</summary>
+public sealed record GitHubCodePayload(string UserCode, string VerificationUri);
+
+/// <summary>
+/// Payload of <c>github.account</c> (native→webview): the GitHub connection state for the account
+/// affordance. <paramref name="Available"/> is false when sign-in isn't configured (no client id) — the
+/// UI hides the affordance entirely. <paramref name="SignedIn"/> with a <paramref name="Login"/> (the
+/// GitHub handle, possibly empty if it couldn't be looked up) means connected. <paramref name="Message"/>
+/// is an author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"); never jargon.
+/// </summary>
+public sealed record GitHubAccountPayload(bool Available, bool SignedIn, string? Login, string? Message);

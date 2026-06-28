@@ -1,8 +1,10 @@
+using System.Net.Http;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using Photino.NET;
 using SpecDesk.Core;
 using SpecDesk.Git;
+using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
 namespace SpecDesk.Host;
@@ -33,6 +35,24 @@ internal static class Program
 		string welcomeDoc = SampleRepo.EnsureSeeded(
 			sampleRepo, BundledSamples, versioning, loggerFactory.CreateLogger("SpecDesk.Host.SampleRepo"));
 
+		// GitHub sign-in (PoC-5): resolve the OAuth App client id (env → compiled default). An empty id
+		// means sign-in is unconfigured, so the auth library — and the webview's account affordance — stay
+		// off. The HttpClient is shared for the app's lifetime and disposed after the controller (so an
+		// in-flight sign-in is signalled to cancel first; at process teardown any residual fault is benign).
+		string gitHubClientId = Environment.GetEnvironmentVariable("SPECDESK_GITHUB_CLIENT_ID") is { Length: > 0 } id
+			? id
+			: GitHubAuthOptions.DefaultClientId;
+		using HttpClient gitHubHttp = new();
+		IGitHubAuth? gitHubAuth = gitHubClientId.Length > 0
+			? new GitHubDeviceFlowAuth(
+				GitHubAuthOptions.ForClient(gitHubClientId),
+				gitHubHttp,
+				Path.Combine(
+					Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+					"SpecDesk",
+					"auth"))
+			: null;
+
 		using HostController controller = new(
 			render: Renderer.render,
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
@@ -42,7 +62,8 @@ internal static class Program
 			inserter: new ImageInsertAdapter(loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine")).Insert,
 			versioning: versioning,
 			logger: loggerFactory.CreateLogger<HostController>(),
-			initialDocPath: welcomeDoc);
+			initialDocPath: welcomeDoc,
+			auth: gitHubAuth);
 
 		window = new PhotinoWindow()
 			.SetTitle("SpecDesk")

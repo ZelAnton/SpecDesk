@@ -20,6 +20,9 @@ export const Kinds = {
   logExport: "log.export",
   linkOpen: "link.open",
   diffRequest: "diff.request",
+  githubSignIn: "github.signIn",
+  githubSignInCancel: "github.signInCancel",
+  githubSignOut: "github.signOut",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -29,6 +32,8 @@ export const Kinds = {
   status: "status",
   error: "error",
   diffResult: "diff.result",
+  githubCode: "github.code",
+  githubAccount: "github.account",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -166,4 +171,22 @@ export interface StatusPayload {
   label: string;
   /** Working branch name — diagnostic only, never shown. */
   branch?: string;
+}
+
+/** Payload of `github.code` (native→webview): the one-time code the author enters at `verificationUri`
+ *  to connect their GitHub account. */
+export interface GitHubCodePayload {
+  userCode: string;
+  verificationUri: string;
+}
+
+/** Payload of `github.account` (native→webview): the GitHub connection state for the account affordance. */
+export interface GitHubAccountPayload {
+  /** False when sign-in isn't configured — the UI hides the affordance entirely. */
+  available: boolean;
+  signedIn: boolean;
+  /** The GitHub handle when connected (may be empty if it couldn't be looked up). */
+  login?: string;
+  /** An author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"). */
+  message?: string;
 }

@@ -13,6 +13,8 @@ import {
   parseDiffResult,
   parseDocLoaded,
   parseError,
+  parseGitHubAccount,
+  parseGitHubCode,
   parseImageInserted,
   parsePreview,
   parseStatus,
@@ -92,6 +94,22 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
 
     expect(payload?.entries[2]?.kind).toBe("removed");
     expect(payload?.entries[2]?.removedText).toBe("Deprecated section");
+  });
+
+  it("github.code", () => {
+    const payload = parseGitHubCode(fixture["github.code"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.userCode).toBe("WXYZ-1234");
+    expect(payload?.verificationUri).toBe("https://github.com/login/device");
+  });
+
+  it("github.account (signed in; the optional message is omitted)", () => {
+    const payload = parseGitHubAccount(fixture["github.account"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.available).toBe(true);
+    expect(payload?.signedIn).toBe(true);
+    expect(payload?.login).toBe("octocat");
+    expect(payload?.message).toBeUndefined();
   });
 });
 

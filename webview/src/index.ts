@@ -9,6 +9,8 @@ import {
   parseDiffResult,
   parseDocLoaded,
   parseError,
+  parseGitHubAccount,
+  parseGitHubCode,
   parseImageInserted,
   parsePreview,
   parseStatus,
@@ -29,6 +31,7 @@ import { rafThrottle } from "./raf.js";
 import { ReviewController } from "./review.js";
 import { ScrollSync } from "./scroll-sync.js";
 import { SegmentedControl, type SegmentedOption } from "./segmented-control.js";
+import { SignInController } from "./signin.js";
 import { isSplit, paneVisibility, type ViewMode } from "./view-mode.js";
 
 function wire(): void {
@@ -470,6 +473,27 @@ function wire(): void {
       statusEl.textContent = payload.message;
       // An error message is not a lifecycle state — drop the dot's state colour.
       delete statusEl.dataset.state;
+    }
+  });
+
+  // GitHub account affordance (PoC-5): the host drives the "Connect to GitHub" button + the sign-in code
+  // bar via github.code (the one-time code to display) and github.account (the connection state).
+  const signInController = new SignInController({
+    signIn: () => ipc.send(Kinds.githubSignIn),
+    cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
+    signOut: () => ipc.send(Kinds.githubSignOut),
+    openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+  });
+  ipc.on(Kinds.githubCode, (message) => {
+    const payload = parseGitHubCode(message.payload);
+    if (payload) {
+      signInController.showCode(payload);
+    }
+  });
+  ipc.on(Kinds.githubAccount, (message) => {
+    const payload = parseGitHubAccount(message.payload);
+    if (payload) {
+      signInController.applyAccount(payload);
     }
   });
 

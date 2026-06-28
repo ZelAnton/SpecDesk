@@ -51,6 +51,11 @@ public sealed class ContractFixtureTests
 			// A removed top-level block: not in the head, so it anchors before a head line and carries its source.
 			new DiffEntryPayload("removed", 0, 0, 8, "Deprecated section", [], "", ""),
 		])),
+		(MessageKinds.GitHubCode,
+			new GitHubCodePayload("WXYZ-1234", "https://github.com/login/device")),
+		// Signed in: Login present, Message absent (the optional fields are exercised by both decoders).
+		(MessageKinds.GitHubAccount,
+			new GitHubAccountPayload(Available: true, SignedIn: true, Login: "octocat", Message: null)),
 	];
 
 	private static string FixturePath(string fileName)
