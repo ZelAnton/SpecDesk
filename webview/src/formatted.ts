@@ -10,12 +10,11 @@
  * pm-markdown.ts, shared with the block-splice serializer so their top-level node counts agree.
  */
 
-import { baseKeymap, lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
+import { baseKeymap } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirror-model";
-import { liftListItem, wrapInList } from "prosemirror-schema-list";
-import { type Command, EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
+import type { Node as PmNode, ResolvedPos } from "prosemirror-model";
+import { EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { debounce } from "./debounce.js";
 import { applyWordDiff, diffLabel, removedMarkerLabel } from "./diff-decoration.js";
@@ -25,6 +24,7 @@ import { isOpenableHref } from "./links.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
+import { commandFor, activeFormats as computeActiveFormats } from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import type { BlockGeometry } from "./preview.js";
 import { rafThrottle } from "./raf.js";
@@ -32,25 +32,6 @@ import { lineAtScrollTop, scrollTopForLine } from "./scroll-geometry.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
-
-/** Resolve a required node type from the shared schema (these are always present — strict indexing
- *  otherwise types `schema.nodes[name]` as possibly-undefined). */
-function nodeType(name: string): NodeType {
-  const type = schema.nodes[name];
-  if (type === undefined) {
-    throw new Error(`SpecDesk: schema is missing the '${name}' node`);
-  }
-  return type;
-}
-
-/** Resolve a required mark type from the shared schema (see {@link nodeType}). */
-function markType(name: string): MarkType {
-  const type = schema.marks[name];
-  if (type === undefined) {
-    throw new Error(`SpecDesk: schema is missing the '${name}' mark`);
-  }
-  return type;
-}
 
 // Highlight the node holding the caret (active) and the one under the mouse (hover) — the formatted
 // equivalent of the source editor's active-/hover-line highlights. Both are driven externally
@@ -615,126 +596,13 @@ export class FormattedEditor {
       this.onEditAttempt();
       return;
     }
-    this.commandFor(command)(this.view.state, this.view.dispatch.bind(this.view));
+    commandFor(command)(this.view.state, this.view.dispatch.bind(this.view));
     this.view.focus();
   }
 
   /** The toolbar commands currently active at the selection (for the pressed-button state). */
   activeFormats(): Set<FormatCommand> {
-    const { state } = this.view;
-    const sel = state.selection;
-    const $head = sel.$head;
-    const result = new Set<FormatCommand>();
-
-    const markActive = (type: MarkType): boolean =>
-      sel.empty
-        ? (state.storedMarks ?? $head.marks()).some((m) => m.type === type)
-        : state.doc.rangeHasMark(sel.from, sel.to, type);
-    if (markActive(markType("strong"))) result.add("bold");
-    if (markActive(markType("em"))) result.add("italic");
-    if (markActive(markType("strikethrough"))) result.add("strike");
-
-    const parent = $head.parent;
-    if (parent.type === schema.nodes.heading) {
-      // Only the toolbar's own levels light up; H3–H6 leave both heading buttons unpressed.
-      if (parent.attrs.level === 1) {
-        result.add("h1");
-      } else if (parent.attrs.level === 2) {
-        result.add("h2");
-      }
-    } else if (parent.type === schema.nodes.code_block) {
-      result.add("code");
-    }
-    for (let depth = $head.depth; depth > 0; depth--) {
-      const type = $head.node(depth).type;
-      if (type === schema.nodes.bullet_list) {
-        result.add("bullet");
-      } else if (type === schema.nodes.ordered_list) {
-        result.add("ordered");
-      } else if (type === schema.nodes.blockquote) {
-        result.add("quote");
-      }
-    }
-    return result;
-  }
-
-  /** Map a toolbar command to a ProseMirror command (toggles where it makes sense). */
-  private commandFor(command: FormatCommand): Command {
-    switch (command) {
-      case "bold":
-        return toggleMark(markType("strong"));
-      case "italic":
-        return toggleMark(markType("em"));
-      case "strike":
-        return toggleMark(markType("strikethrough"));
-      case "h1":
-        return this.toggleBlock(nodeType("heading"), { level: 1 });
-      case "h2":
-        return this.toggleBlock(nodeType("heading"), { level: 2 });
-      case "code":
-        return this.toggleBlock(nodeType("code_block"), {});
-      case "bullet":
-        return this.toggleList(nodeType("bullet_list"));
-      case "ordered":
-        return this.toggleList(nodeType("ordered_list"));
-      default:
-        return this.toggleQuote();
-    }
-  }
-
-  /** Toggle a textblock type at the selection: set it, or revert to a paragraph if already active. */
-  private toggleBlock(type: NodeType, attrs: Record<string, unknown>): Command {
-    return (state, dispatch) => {
-      const active = state.selection.$from.parent.hasMarkup(type, attrs);
-      const target = active ? setBlockType(nodeType("paragraph")) : setBlockType(type, attrs);
-      return target(state, dispatch);
-    };
-  }
-
-  /**
-   * Toggle a list. Already inside one of this type → lift out of it. Inside a list of the OTHER type
-   * → convert it in place (rather than nesting a new list, which is what wrapInList would do). Not in
-   * a list → wrap the selection in one.
-   */
-  private toggleList(type: NodeType): Command {
-    return (state, dispatch) => {
-      const { $from } = state.selection;
-      if (this.inNodeType($from, type)) {
-        return liftListItem(nodeType("list_item"))(state, dispatch);
-      }
-      const bullet = nodeType("bullet_list");
-      const ordered = nodeType("ordered_list");
-      for (let depth = $from.depth; depth > 0; depth--) {
-        const node = $from.node(depth);
-        if (node.type === bullet || node.type === ordered) {
-          // Preserve `tight` so a tight list doesn't become loose (blank lines between items) on
-          // conversion; the new type fills its own remaining attrs (e.g. ordered's `order`).
-          dispatch?.(
-            state.tr.setNodeMarkup($from.before(depth), type, { tight: node.attrs.tight }),
-          );
-          return true;
-        }
-      }
-      return wrapInList(type)(state, dispatch);
-    };
-  }
-
-  /** Toggle a blockquote around the selection. */
-  private toggleQuote(): Command {
-    return (state, dispatch) =>
-      this.inNodeType(state.selection.$from, nodeType("blockquote"))
-        ? lift(state, dispatch)
-        : wrapIn(nodeType("blockquote"))(state, dispatch);
-  }
-
-  /** Whether any ancestor of the position is of the given node type. */
-  private inNodeType($pos: ResolvedPos, type: NodeType): boolean {
-    for (let depth = $pos.depth; depth > 0; depth--) {
-      if ($pos.node(depth).type === type) {
-        return true;
-      }
-    }
-    return false;
+    return computeActiveFormats(this.view.state);
   }
 
   /** Force a re-render after the pane returns from display:none to a new width. */
