@@ -5,7 +5,6 @@ using Microsoft.Extensions.Logging;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.Git;
-using SpecDesk.Diff;
 using SpecDesk.Markdown;
 // LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it
 // defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel).
@@ -845,21 +844,10 @@ public sealed class HostController : IDisposable
 			baseText = _versioning.ReadHeadContent(repoRoot, relativePath);
 		}
 
-		// No committed version (new file / unborn repo) → an empty diff, which clears any overlay.
-		DiffWire.DiffWireEntry[] wire = baseText is null ? [] : DiffWire.toWire(baseText, text);
-
-		List<DiffEntryPayload> entries = new(wire.Length);
-		foreach (DiffWire.DiffWireEntry w in wire)
-		{
-			ChildDiffPayload[] children = w.Children.Length == 0
-				? []
-				: Array.ConvertAll(w.Children, c => new ChildDiffPayload(c.Kind, c.ChildIndex, c.AnchorIndex, c.RemovedText, c.BaseText));
-			entries.Add(new DiffEntryPayload(
-				w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText, children, w.BaseText, w.BaseSource));
-		}
-
+		// The base/head → diff.result projection (incl. the empty diff for a null base, which clears any
+		// overlay) lives in DiffProjection so the wire shape is unit-testable apart from the controller.
 		_send(IpcSerializer.SerializeEvent(
-			MessageKinds.DiffResult, new DiffResultPayload(entries), message.Version));
+			MessageKinds.DiffResult, DiffProjection.Build(baseText, text), message.Version));
 	}
 
 	// Open a link the author clicked in the rendered / formatted view in the OS default handler (a web
