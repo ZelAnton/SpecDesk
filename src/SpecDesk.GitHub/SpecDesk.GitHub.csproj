@@ -10,7 +10,6 @@
 
 	<ItemGroup>
 		<PackageReference Include="Octokit" />
-		<PackageReference Include="Microsoft.Extensions.Logging" />
 		<!-- DPAPI for the token at rest (Windows); see Directory.Packages.props. -->
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" />
 	</ItemGroup>
