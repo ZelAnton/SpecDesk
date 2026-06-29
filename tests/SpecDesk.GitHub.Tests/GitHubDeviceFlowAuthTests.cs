@@ -339,4 +339,36 @@ public sealed class GitHubDeviceFlowAuthTests
                 GitHubAuthOptions.ForClient(""), new FakeDeviceFlowApi(DeviceCode(), "x"),
                 new InMemoryTokenStore(), TimeProvider.System, delay: null));
     }
+
+    [Test]
+    public async Task WithAccessTokenAsync_runs_the_callback_with_the_stored_token()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"));
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+        await auth.AwaitAuthorizationAsync(Prompt());
+
+        string seen = await auth.WithAccessTokenAsync((token, _) => Task.FromResult(token));
+
+        Assert.That(seen, Is.EqualTo("gho_token"));
+    }
+
+    [Test]
+    public void WithAccessTokenAsync_throws_when_signed_out()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat");
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+
+        Assert.ThrowsAsync<InvalidOperationException>(
+            () => auth.WithAccessTokenAsync((token, _) => Task.FromResult(token)));
+    }
+
+    [Test]
+    public void WithAccessTokenAsync_rejects_a_null_callback()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat");
+        (GitHubDeviceFlowAuth auth, _, _) = Build(api);
+
+        Assert.Throws<ArgumentNullException>(
+            () => auth.WithAccessTokenAsync<string>(use: null!));
+    }
 }

@@ -57,6 +57,8 @@ public sealed class HostController : IDisposable
 	private readonly ImageInserter _inserter;
 	private readonly IDocumentVersioning _versioning;
 	private readonly IGitHubAuth? _auth;
+	private readonly IGitPublishing? _publishing;
+	private readonly IGitHubReview? _review;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	private readonly TimeSpan _autosaveIdle;
@@ -79,6 +81,11 @@ public sealed class HostController : IDisposable
 	private Timer? _autosaveTimer;
 	private bool _dirty;
 
+	// True while a "Send for review" round-trip is in flight (guarded by _sync). It single-flights the
+	// action: the draft-only button stays visible until the In-review status arrives (after the multi-
+	// second push + PR), so without this a double-click would fire a second push and open a second PR.
+	private bool _sendingForReview;
+
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
@@ -96,7 +103,9 @@ public sealed class HostController : IDisposable
 		ILogger<HostController> logger,
 		string? initialDocPath = null,
 		TimeSpan? autosaveIdle = null,
-		IGitHubAuth? auth = null)
+		IGitHubAuth? auth = null,
+		IGitPublishing? publishing = null,
+		IGitHubReview? review = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -110,6 +119,8 @@ public sealed class HostController : IDisposable
 		_inserter = inserter;
 		_versioning = versioning;
 		_auth = auth;
+		_publishing = publishing;
+		_review = review;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -194,6 +205,9 @@ public sealed class HostController : IDisposable
 				break;
 			case MessageKinds.DocSaveVersion:
 				OnSaveVersion(message);
+				break;
+			case MessageKinds.DocSendForReview:
+				OnSendForReview();
 				break;
 			case MessageKinds.BranchNameRequest:
 				OnSuggestBranchName(message);
@@ -629,6 +643,172 @@ public sealed class HostController : IDisposable
 			_logger.LogError(ex, "Could not save a version of {Path}", path);
 			SendError("Could not save this version.");
 		}
+	}
+
+	// "Send for review": push the draft branch to GitHub and open a pull request, then move the
+	// document to In review. Needs the GitHub feature wired, a connected account, and a GitHub remote;
+	// the access token is taken transiently (WithAccessTokenAsync) for the push + API call and is never
+	// stored or logged here. The network round-trip runs on a background task — it can take seconds.
+	private void OnSendForReview()
+	{
+		// Gate the lifecycle transition AND claim the single-flight slot atomically under _sync, so a
+		// stale state read or a double-click can't slip a second round-trip through. fromState/_branch are
+		// re-checked in the continuation before the transition is committed (the document may have moved on).
+		string next;
+		string? repoRoot;
+		string? branch;
+		string? baseBranch;
+		string? path;
+		string fromState;
+		lock (_sync)
+		{
+			next = Lifecycle.tryStep(_state, "sendForReview");
+			if (next.Length == 0)
+			{
+				_logger.LogDebug("Send for review ignored from state {State}", _state);
+				return;
+			}
+
+			if (_sendingForReview)
+			{
+				_logger.LogDebug("Send for review ignored: one is already in flight");
+				return;
+			}
+
+			fromState = _state;
+			repoRoot = _repoRoot;
+			branch = _branch;
+			baseBranch = _baseBranch;
+			path = _currentPath;
+			_sendingForReview = true;
+		}
+
+		// The two pure null checks below can't throw, so it's safe to release the claim and return here.
+		// EVERYTHING that can throw (IsSignedIn, the repo read, the push, the API call) runs inside the
+		// Task.Run, whose finally always releases the claim — otherwise a single libgit2/IO fault on the
+		// synchronous path would leak the claim and wedge the feature for the rest of the session.
+		if (_auth is null || _publishing is null || _review is null)
+		{
+			ClearSending();
+			SendError("Connect a GitHub account to send a document for review.");
+			return;
+		}
+
+		if (repoRoot is null || branch is null || baseBranch is null || path is null)
+		{
+			ClearSending();
+			return;
+		}
+
+		// Non-null copies so the background closure below sees them as non-nullable.
+		string root = repoRoot;
+		string branchName = branch;
+		string baseName = baseBranch;
+		string docPath = path;
+
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				if (!_auth.IsSignedIn())
+				{
+					SendError("Connect your GitHub account first, then send for review.");
+					return;
+				}
+
+				// Resolve the GitHub repo and the PR title from local git (one repo-gated read). A
+				// non-GitHub remote can't host a review.
+				string? remoteUrl;
+				string? lastNote;
+				lock (_repoGate)
+				{
+					remoteUrl = _publishing.RemoteUrl(root);
+					lastNote = _publishing.LastVersionNote(root, branchName);
+				}
+
+				GitHubRepo? repo = GitHubRemote.TryParse(remoteUrl);
+				if (repo is null)
+				{
+					SendError("This document isn't in a GitHub repository, so it can't be sent for review.");
+					return;
+				}
+
+				(string title, string body) = ReviewRequestContent(lastNote, docPath);
+
+				PullRequest pr = await _auth.WithAccessTokenAsync(async (token, ct) =>
+				{
+					// The push is a repo mutation — serialize it with every other libgit2 write. The lock
+					// is released before the awaited network call, which needs no repo access.
+					lock (_repoGate)
+					{
+						_publishing.PushBranch(root, branchName, token);
+					}
+
+					return await _review.OpenPullRequestAsync(
+						token, repo.Owner, repo.Name, branchName, baseName, title, body, ct);
+				});
+
+				// Commit the transition only if the document is still the same draft — the author may have
+				// discarded it or switched files during the round-trip, in which case the PR opened but this
+				// document must NOT be stamped In review.
+				bool advanced = false;
+				lock (_sync)
+				{
+					if (_state == fromState && _branch == branchName)
+					{
+						_state = next;
+						advanced = true;
+					}
+				}
+
+				if (advanced)
+				{
+					_logger.LogInformation(
+						"Sent {Branch} for review: opened pull request #{Number} ({Url})",
+						branchName, pr.Number, pr.Url);
+					SendLifecycleStatus();
+				}
+				else
+				{
+					_logger.LogInformation(
+						"Pull request #{Number} opened for {Branch}, but the document moved on — not advancing",
+						pr.Number, branchName);
+				}
+			}
+			catch (Exception ex)
+			{
+				// Push / token / API / repo faults (HttpRequestException, LibGit2SharpException,
+				// InvalidOperationException, a request timeout) all surface as one plain line — never the
+				// token or a stack trace. The document stays in Draft so the author can retry.
+				_logger.LogError(ex, "Could not send {Branch} for review", branchName);
+				SendError("Couldn't send this for review. Check your connection and try again.");
+			}
+			finally
+			{
+				ClearSending();
+			}
+		});
+	}
+
+	// Release the single-flight claim taken by OnSendForReview (success, failure, or an early gate exit).
+	private void ClearSending()
+	{
+		lock (_sync)
+		{
+			_sendingForReview = false;
+		}
+	}
+
+	// Compose the pull-request title and body for a review request: the title is the author's last
+	// version note (falling back to the document name when there is none), and the body is a short,
+	// plain-language line naming the document. PR content is reviewer-facing on GitHub, so it may name
+	// the file — but it stays free of internal git vocabulary.
+	private static (string Title, string Body) ReviewRequestContent(string? lastNote, string docPath)
+	{
+		string docName = Path.GetFileName(docPath);
+		string title = !string.IsNullOrWhiteSpace(lastNote) ? lastNote! : $"Review: {docName}";
+		string body = $"Review requested for {docName} via SpecDesk.";
+		return (title, body);
 	}
 
 	// Reply to the webview's request for a version note to prefill the "Save a version" prompt. The

@@ -12,6 +12,7 @@ export const Kinds = {
   docSave: "doc.save",
   docEdit: "doc.edit",
   docSaveVersion: "doc.saveVersion",
+  docSendForReview: "doc.sendForReview",
   docDiscard: "doc.discard",
   branchNameRequest: "branch.name.request",
   versionNoteRequest: "version.note.request",

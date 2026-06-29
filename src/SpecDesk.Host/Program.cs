@@ -26,8 +26,9 @@ internal static class Program
 		PhotinoWindow? window = null;
 
 		// PoC-4 seeds a writable, git-versioned sample repo so Edit / Save version work out of the
-		// box without ever touching SpecDesk's own working tree.
-		IDocumentVersioning versioning = new LibGit2DocumentVersioning();
+		// box without ever touching SpecDesk's own working tree. The concrete type also implements
+		// IGitPublishing (push / remote / last-note) for the PoC-5 "Send for review" round-trip.
+		LibGit2DocumentVersioning versioning = new();
 		string sampleRepo = Path.Combine(
 			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
 			"SpecDesk",
@@ -63,7 +64,12 @@ internal static class Program
 			versioning: versioning,
 			logger: loggerFactory.CreateLogger<HostController>(),
 			initialDocPath: welcomeDoc,
-			auth: gitHubAuth);
+			auth: gitHubAuth,
+			// The same LibGit2 instance also publishes (push / remote / last note); the PR client shares
+			// the app-lifetime HttpClient. Both are harmless when sign-in is unconfigured — "Send for
+			// review" gates on a connected account before it touches them.
+			publishing: versioning,
+			review: new GitHubReviewClient(gitHubHttp));
 
 		window = new PhotinoWindow()
 			.SetTitle("SpecDesk")

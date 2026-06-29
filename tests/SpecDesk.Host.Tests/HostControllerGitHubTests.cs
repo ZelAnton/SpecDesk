@@ -59,6 +59,18 @@ public sealed class HostControllerGitHubTests
 
         public string? SignedInLogin() => Login;
 
+        public Task<T> WithAccessTokenAsync<T>(
+            Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(use);
+            if (!SignedIn)
+            {
+                throw new InvalidOperationException("Not signed in to GitHub.");
+            }
+
+            return use("gho_test", cancellationToken);
+        }
+
         public void SignOut()
         {
             SignOutCalls++;

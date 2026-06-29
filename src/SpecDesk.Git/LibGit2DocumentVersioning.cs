@@ -3,11 +3,12 @@ using LibGit2Sharp;
 namespace SpecDesk.Git;
 
 /// <summary>
-/// The <see cref="IDocumentVersioning"/> implementation backed by LibGit2Sharp. Each call opens and
-/// disposes its own <see cref="Repository"/> handle — the operations are infrequent (edit start,
-/// save a version, discard), so a short-lived handle keeps the class stateless and thread-safe.
+/// The <see cref="IDocumentVersioning"/> + <see cref="IGitPublishing"/> implementation backed by
+/// LibGit2Sharp. Each call opens and disposes its own <see cref="Repository"/> handle — the operations
+/// are infrequent (edit start, save a version, discard, push), so a short-lived handle keeps the class
+/// stateless and thread-safe.
 /// </summary>
-public sealed class LibGit2DocumentVersioning : IDocumentVersioning
+public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublishing
 {
     // Used when the repository has no committer identity configured (a freshly seeded demo repo).
     private static readonly Identity FallbackIdentity = new("SpecDesk", "specdesk@localhost");
@@ -157,6 +158,51 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning
         {
             repo.Branches.Remove(workingBranch);
         }
+    }
+
+    public string? RemoteUrl(string repoRoot, string remoteName = "origin")
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(remoteName);
+
+        using Repository repo = new(repoRoot);
+        return repo.Network.Remotes[remoteName]?.Url;
+    }
+
+    public string? LastVersionNote(string repoRoot, string branchName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branchName);
+
+        using Repository repo = new(repoRoot);
+        // MessageShort is the commit's first line (the version-note subject); null when the branch
+        // doesn't exist or points at no commit.
+        return repo.Branches[branchName]?.Tip?.MessageShort;
+    }
+
+    public void PushBranch(string repoRoot, string branchName, string accessToken, string remoteName = "origin")
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(accessToken);
+        ArgumentException.ThrowIfNullOrEmpty(remoteName);
+
+        using Repository repo = new(repoRoot);
+        Remote remote = repo.Network.Remotes[remoteName]
+            ?? throw new InvalidOperationException($"The repository has no '{remoteName}' remote.");
+        Branch branch = repo.Branches[branchName]
+            ?? throw new InvalidOperationException($"The repository has no branch '{branchName}'.");
+
+        PushOptions options = new()
+        {
+            // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username
+            // (the convention is "x-access-token"); the token never appears in a URL. Local-file remotes
+            // ignore credentials, so this is a no-op there.
+            CredentialsProvider = (_, _, _) =>
+                new UsernamePasswordCredentials { Username = "x-access-token", Password = accessToken },
+        };
+        // The single-ref form pushes the local branch to the remote ref of the same name.
+        repo.Network.Push(remote, branch.CanonicalName, options);
     }
 
     // Commit the staged tree, or return null when there is nothing staged to commit (an unchanged

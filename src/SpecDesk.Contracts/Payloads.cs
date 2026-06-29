@@ -15,6 +15,7 @@ public static class MessageKinds
 	public const string DocSave = "doc.save";
 	public const string DocEdit = "doc.edit";
 	public const string DocSaveVersion = "doc.saveVersion";
+	public const string DocSendForReview = "doc.sendForReview";
 	public const string DocDiscard = "doc.discard";
 	public const string BranchNameRequest = "branch.name.request";
 	public const string VersionNoteRequest = "version.note.request";

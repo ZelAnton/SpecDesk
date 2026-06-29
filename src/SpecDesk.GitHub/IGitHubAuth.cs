@@ -108,6 +108,13 @@ public interface IGitHubAuth
     /// no network call (the login is persisted alongside the token at sign-in).</summary>
     string? SignedInLogin();
 
+    /// <summary>Run <paramref name="use"/> with the stored access token, giving it the token transiently —
+    /// for a git push or a GitHub API call — without exposing the token as a returned or stored value (it
+    /// stays confined to this scope). Throws <see cref="InvalidOperationException"/> when signed out, so
+    /// gate with <see cref="IsSignedIn"/> first.</summary>
+    Task<T> WithAccessTokenAsync<T>(
+        Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default);
+
     /// <summary>Forget the stored token. Idempotent (a no-op when already signed out).</summary>
     void SignOut();
 }

@@ -9,6 +9,7 @@
   "doc.open",
   "doc.save",
   "doc.saveVersion",
+  "doc.sendForReview",
   "editor.changed",
   "error",
   "github.account",

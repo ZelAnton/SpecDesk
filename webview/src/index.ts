@@ -42,6 +42,7 @@ function wire(): void {
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
   const saveVersionBtn = document.querySelector<HTMLButtonElement>("#save-version-btn");
+  const sendForReviewBtn = document.querySelector<HTMLButtonElement>("#send-for-review-btn");
   const discardBtn = document.querySelector<HTMLButtonElement>("#discard-btn");
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
@@ -292,6 +293,7 @@ function wire(): void {
     openBtn,
     editBtn,
     saveVersionBtn,
+    sendForReviewBtn,
     discardBtn,
     saveBtn,
     formatBar,
@@ -302,6 +304,9 @@ function wire(): void {
     onOpen: () => ipc.send(Kinds.docOpen),
     onEdit: () => void dialogs.openBranchName(),
     onSaveVersion: () => void dialogs.openVersionNote(),
+    // Push the draft to GitHub and open a review (the host gates on a connected account and a GitHub
+    // remote, and surfaces any problem as a plain status message).
+    onSendForReview: () => ipc.send(Kinds.docSendForReview),
     onDiscard: () => {
       review.clear();
       ipc.send(Kinds.docDiscard);
@@ -433,7 +438,7 @@ function wire(): void {
       // Read-only until the author clicks Edit (which forks a working branch). A freshly loaded
       // document is Published: the chrome offers Edit and hides the draft-only actions.
       editing = false;
-      lifecycleChrome.setEditing(false);
+      lifecycleChrome.setLifecycle("published");
       if (statusEl) {
         statusEl.textContent = payload.path;
         // The path is not a lifecycle state — clear the dot's state colour (a status message follows).
@@ -458,7 +463,7 @@ function wire(): void {
     }
     // Editing is only possible once a working branch exists (draft state).
     editing = payload.state !== "published";
-    lifecycleChrome.setEditing(editing);
+    lifecycleChrome.setLifecycle(payload.state);
     if (editing) {
       formatToolbar.refresh();
     }
@@ -494,6 +499,9 @@ function wire(): void {
     const payload = parseGitHubAccount(message.payload);
     if (payload) {
       signInController.applyAccount(payload);
+      // "Send for review" is a dead end without GitHub configured (no Connect affordance), so the chrome
+      // hides it unless sign-in is available. Sign-in *state* (signed in or not) is the host's gate.
+      lifecycleChrome.setGitHubAvailable(payload.available);
     }
   });
 

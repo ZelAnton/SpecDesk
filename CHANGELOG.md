@@ -116,6 +116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   problem is reported in plain words. The affordance appears only when the app is configured with a
   GitHub OAuth App client id (env `SPECDESK_GITHUB_CLIENT_ID` or a compiled default); this is the
   foundation for *Send for review* in a later step. Your access stays on your machine and is never shown.
+- PoC-5 — send a draft for review on GitHub: with a draft open, **Send for review** publishes your
+  working branch to GitHub and opens a pull request, then the document moves to **In review**. The
+  request title is your last version note (or the document name); the body names the document. It needs
+  a connected GitHub account and a GitHub remote — if either is missing, or the network fails, it says so
+  in plain words and leaves the draft untouched. The access token is used only for the push and the API
+  call and is never stored on the host side or written to logs. (The button shows only while drafting.)
 
 ### Changed
 - Image metadata stripping is now documented as automatic rather than a config toggle. The
