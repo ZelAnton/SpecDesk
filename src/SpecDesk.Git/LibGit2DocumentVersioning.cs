@@ -180,12 +180,45 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         return repo.Branches[branchName]?.Tip?.MessageShort;
     }
 
-    public void PushBranch(string repoRoot, string branchName, string accessToken, string remoteName = "origin")
+    public bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch);
+
+        using Repository repo = new(repoRoot);
+        Commit? branchTip = repo.Branches[branchName]?.Tip;
+        if (branchTip is null)
+        {
+            return false;
+        }
+
+        Commit? baseTip = repo.Branches[baseBranch]?.Tip;
+        if (baseTip is null)
+        {
+            // No base branch to compare against — any commit on the working branch is unreviewed.
+            return true;
+        }
+
+        // AheadBy counts commits reachable from the branch tip but not the base; >0 means there is
+        // something to open a pull request for. (AheadBy is null only for unrelated histories — treat
+        // that as "has commits" so we never block on a corner case.)
+        HistoryDivergence divergence = repo.ObjectDatabase.CalculateHistoryDivergence(branchTip, baseTip);
+        return divergence.AheadBy is null or > 0;
+    }
+
+    public void PushBranch(
+        string repoRoot,
+        string branchName,
+        string accessToken,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
         ArgumentException.ThrowIfNullOrEmpty(branchName);
         ArgumentException.ThrowIfNullOrEmpty(accessToken);
         ArgumentException.ThrowIfNullOrEmpty(remoteName);
+        cancellationToken.ThrowIfCancellationRequested();
 
         using Repository repo = new(repoRoot);
         Remote remote = repo.Network.Remotes[remoteName]
@@ -195,15 +228,33 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
 
         PushOptions options = new()
         {
-            // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username
-            // (the convention is "x-access-token"); the token never appears in a URL. Local-file remotes
-            // ignore credentials, so this is a no-op there.
-            CredentialsProvider = (_, _, _) =>
-                new UsernamePasswordCredentials { Username = "x-access-token", Password = accessToken },
+            // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username (the
+            // convention is "x-access-token"); the token never appears in a URL. The callback's `url` is
+            // the endpoint libgit2 is authenticating against — which reflects the remote's pushurl, not
+            // just the fetch URL the caller validated — so we only release the token to an HTTPS github.com
+            // host. Anything else (a pushurl re-pointed at a look-alike, an SSH remote, a local-file
+            // remote) gets no credential; the push then either proceeds without one or fails, but the
+            // token is never sent off to a non-github.com host.
+            CredentialsProvider = (url, _, _) =>
+                IsGitHubHttps(url)
+                    ? new UsernamePasswordCredentials { Username = "x-access-token", Password = accessToken }
+                    : new DefaultCredentials(),
+            // Abort a stalled transfer when the caller cancels (the host bounds the send with a timeout).
+            // The initial connect/handshake phase isn't surfaced through this callback, so a stall there
+            // is bounded only by the OS socket timeout — a known LibGit2Sharp limitation.
+            OnPushTransferProgress = (_, _, _) => !cancellationToken.IsCancellationRequested,
         };
         // The single-ref form pushes the local branch to the remote ref of the same name.
         repo.Network.Push(remote, branch.CanonicalName, options);
     }
+
+    // Whether a URL libgit2 is authenticating against is an HTTPS github.com endpoint — the only target
+    // the OAuth token may be sent to. Kept here (rather than reusing SpecDesk.GitHub's richer parser) so
+    // the Git layer stays free of a dependency on SpecDesk.GitHub.
+    private static bool IsGitHubHttps(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)
+        && uri.Scheme == Uri.UriSchemeHttps
+        && string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase);
 
     // Commit the staged tree, or return null when there is nothing staged to commit (an unchanged
     // document on autosave, or an empty seed folder).

@@ -193,6 +193,28 @@ public sealed class HostControllerSendForReviewTests
     }
 
     [Test]
+    public void SendForReview_without_a_saved_version_asks_to_save_first_and_does_not_push()
+    {
+        // The draft is level with its base (nothing committed to review). The author gets actionable
+        // guidance — not a misleading network error — and nothing is pushed.
+        FakeVersioning versioning = new() { HasCommitsValue = false };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new StubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        IpcMessage? error = WaitForKind(MessageKinds.Error);
+        Assert.That(error, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(error!.GetPayload<ErrorPayload>()!.Message, Does.Contain("Save a version"));
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
+            Assert.That(review.Calls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
     public void SendForReview_while_signed_out_reports_an_error_and_does_not_push()
     {
         FakeVersioning versioning = new();

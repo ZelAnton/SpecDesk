@@ -88,6 +88,31 @@ public sealed class GitPublishingTests
     }
 
     [Test]
+    public void HasCommitsToReview_is_false_for_a_fresh_branch_level_with_its_base()
+    {
+        // A draft just forked from main, with no saved version yet, has nothing to review.
+        _versioning.BeginEdit(_work, "spec/draft", "main");
+
+        Assert.That(_versioning.HasCommitsToReview(_work, "spec/draft", "main"), Is.False);
+    }
+
+    [Test]
+    public void HasCommitsToReview_is_true_once_the_draft_has_a_saved_version()
+    {
+        _versioning.BeginEdit(_work, "spec/draft", "main");
+        File.WriteAllText(Path.Combine(_work, "spec.md"), "# Version two");
+        _versioning.SaveVersion(_work, "Draft change");
+
+        Assert.That(_versioning.HasCommitsToReview(_work, "spec/draft", "main"), Is.True);
+    }
+
+    [Test]
+    public void HasCommitsToReview_is_false_for_a_missing_branch()
+    {
+        Assert.That(_versioning.HasCommitsToReview(_work, "no-such-branch", "main"), Is.False);
+    }
+
+    [Test]
     public void PushBranch_throws_for_a_missing_remote()
     {
         Assert.Throws<InvalidOperationException>(

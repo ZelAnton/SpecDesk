@@ -46,6 +46,10 @@ public sealed class HostController : IDisposable
 	/// <summary>Default idle gap after the last keystroke before a draft autosaves to disk (no commit).</summary>
 	private static readonly TimeSpan DefaultAutosaveIdle = TimeSpan.FromMilliseconds(1500);
 
+	// Upper bound on the whole "Send for review" round-trip (push + open PR), so a stalled transfer can't
+	// hold _repoGate / the single-flight claim indefinitely. The PR call also has its own 30s API timeout.
+	private static readonly TimeSpan SendForReviewTimeout = TimeSpan.FromSeconds(120);
+
 	// Upper bound on an incoming wire frame (UTF-16 chars). The webview is untrusted, so a single
 	// malformed/hostile frame must not be able to exhaust memory. Generous: a large spec plus a
 	// base64 image paste fit well under this.
@@ -708,6 +712,11 @@ public sealed class HostController : IDisposable
 
 		_ = Task.Run(async () =>
 		{
+			// Bound the whole round-trip so a stalled push/API call can't hold _repoGate (and the
+			// single-flight claim) indefinitely. The transfer phase honours this; a connect-phase stall is
+			// bounded only by the OS socket timeout (see PushBranch).
+			using CancellationTokenSource timeout = new();
+			timeout.CancelAfter(SendForReviewTimeout);
 			try
 			{
 				if (!_auth.IsSignedIn())
@@ -716,14 +725,16 @@ public sealed class HostController : IDisposable
 					return;
 				}
 
-				// Resolve the GitHub repo and the PR title from local git (one repo-gated read). A
-				// non-GitHub remote can't host a review.
+				// Resolve the GitHub repo, the PR title, and whether there's anything to review from local
+				// git (one repo-gated read). A non-GitHub remote can't host a review.
 				string? remoteUrl;
 				string? lastNote;
+				bool hasCommits;
 				lock (_repoGate)
 				{
 					remoteUrl = _publishing.RemoteUrl(root);
 					lastNote = _publishing.LastVersionNote(root, branchName);
+					hasCommits = _publishing.HasCommitsToReview(root, branchName, baseName);
 				}
 
 				GitHubRepo? repo = GitHubRemote.TryParse(remoteUrl);
@@ -733,20 +744,32 @@ public sealed class HostController : IDisposable
 					return;
 				}
 
+				if (!hasCommits)
+				{
+					// The draft is level with its base (no saved version), so GitHub would reject the PR as
+					// "no commits between base and head" — turn that into actionable plain language rather
+					// than a misleading network error. Committing stays the author's explicit "Save a version".
+					SendError("Save a version before sending it for review.");
+					return;
+				}
+
+				SendTransientStatus("Sending for review…");
 				(string title, string body) = ReviewRequestContent(lastNote, docPath);
 
-				PullRequest pr = await _auth.WithAccessTokenAsync(async (token, ct) =>
-				{
-					// The push is a repo mutation — serialize it with every other libgit2 write. The lock
-					// is released before the awaited network call, which needs no repo access.
-					lock (_repoGate)
+				PullRequest pr = await _auth.WithAccessTokenAsync(
+					async (token, ct) =>
 					{
-						_publishing.PushBranch(root, branchName, token);
-					}
+						// The push is a repo mutation — serialize it with every other libgit2 write. The lock
+						// is released before the awaited network call, which needs no repo access.
+						lock (_repoGate)
+						{
+							_publishing.PushBranch(root, branchName, token, cancellationToken: ct);
+						}
 
-					return await _review.OpenPullRequestAsync(
-						token, repo.Owner, repo.Name, branchName, baseName, title, body, ct);
-				});
+						return await _review.OpenPullRequestAsync(
+							token, repo.Owner, repo.Name, branchName, baseName, title, body, ct);
+					},
+					timeout.Token);
 
 				// Commit the transition only if the document is still the same draft — the author may have
 				// discarded it or switched files during the round-trip, in which case the PR opened but this
@@ -773,6 +796,9 @@ public sealed class HostController : IDisposable
 					_logger.LogInformation(
 						"Pull request #{Number} opened for {Branch}, but the document moved on — not advancing",
 						pr.Number, branchName);
+					// The document changed during the send (discard / switch), so re-sync the chrome to the
+					// real current state — otherwise the transient "Sending for review…" label could linger.
+					SendLifecycleStatus();
 				}
 			}
 			catch (Exception ex)

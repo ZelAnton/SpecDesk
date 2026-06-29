@@ -42,6 +42,34 @@ public sealed class GitHubReviewTests
     }
 
     [Test]
+    public async Task OpenPullRequestAsync_treats_a_malformed_success_body_as_an_opened_pr()
+    {
+        // A 2xx with a non-JSON body still means GitHub created the PR — degrade to unknown coordinates
+        // rather than throwing (which would strand the author in Draft with a PR already open).
+        using StubHttpMessageHandler handler = new(HttpStatusCode.Created, "not json at all");
+
+        PullRequest pr = await Open(handler);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pr.Number, Is.EqualTo(0));
+            Assert.That(pr.Url, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
+    public async Task OpenPullRequestAsync_pins_the_rest_api_version()
+    {
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.Created, """{"number":1,"html_url":"https://example/pull/1"}""");
+
+        await Open(handler);
+
+        Assert.That(
+            handler.LastRequest!.Headers.GetValues("X-GitHub-Api-Version"), Does.Contain("2022-11-28"));
+    }
+
+    [Test]
     public async Task OpenPullRequestAsync_posts_a_bearer_authorized_create_request()
     {
         using StubHttpMessageHandler handler = new(

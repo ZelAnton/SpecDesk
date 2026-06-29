@@ -66,6 +66,8 @@ public sealed class GitHubReviewClient : IGitHubReview
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.UserAgent.Add(UserAgent);
+        // Pin the REST API version so a future rolling-default bump can't silently change the contract.
+        request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         // GitHub's create-PR fields are already lowercase, so no naming policy is needed; `base` is a C#
         // keyword escaped with @ (the serialized JSON key is "base").
         string json = JsonSerializer.Serialize(new { title, head, @base = baseBranch, body });
@@ -81,9 +83,19 @@ public sealed class GitHubReviewClient : IGitHubReview
                 $"GitHub rejected the pull-request create (HTTP {(int)response.StatusCode}).");
         }
 
-        using JsonDocument document = JsonDocument.Parse(responseBody);
-        JsonElement root = document.RootElement;
-        return new PullRequest(NumberOf(root, "number"), StringOf(root, "html_url"));
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            JsonElement root = document.RootElement;
+            return new PullRequest(NumberOf(root, "number"), StringOf(root, "html_url"));
+        }
+        catch (JsonException)
+        {
+            // A 2xx with an empty or non-JSON body still means GitHub created the PR — surfacing this as a
+            // failure would strand the author in Draft with a pull request already open (and a retry would
+            // then hit "already exists"). Treat it as success with unknown coordinates instead.
+            return new PullRequest(0, string.Empty);
+        }
     }
 
     private static int NumberOf(JsonElement root, string name) =>

@@ -17,7 +17,21 @@ public interface IGitPublishing
     /// to seed the pull-request title. <c>null</c> when the branch is missing or has no commit.</summary>
     string? LastVersionNote(string repoRoot, string branchName);
 
+    /// <summary>Whether the branch has at least one commit its base doesn't — i.e. there is something to
+    /// review. <c>false</c> when the branch is level with (or behind) its base, so opening a pull request
+    /// would be rejected as "no commits between base and head"; the host uses this to ask the author to
+    /// save a version first rather than surfacing that as a network error.</summary>
+    bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch);
+
     /// <summary>Push a local branch to the remote over HTTPS, authenticating with the GitHub access
-    /// token. Throws when the remote or branch is missing, or on a transport / auth failure.</summary>
-    void PushBranch(string repoRoot, string branchName, string accessToken, string remoteName = "origin");
+    /// token. The token is handed only to an HTTPS <c>github.com</c> target — the URL libgit2 presents for
+    /// authentication, which reflects the remote's <c>pushurl</c>, not merely the fetch URL — so a remote
+    /// re-pointed at a look-alike host cannot exfiltrate it. Cancellation aborts a stalled transfer. Throws
+    /// when the remote or branch is missing, or on a transport / auth failure.</summary>
+    void PushBranch(
+        string repoRoot,
+        string branchName,
+        string accessToken,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default);
 }

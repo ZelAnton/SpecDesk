@@ -36,6 +36,10 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// synchronous read must not wedge Send for review" path.</summary>
     public bool ThrowOnRemoteUrl { get; set; }
 
+    /// <summary>What <see cref="HasCommitsToReview"/> returns; true by default (the draft has a saved
+    /// version). Set false to exercise the "save a version first" guard.</summary>
+    public bool HasCommitsValue { get; set; } = true;
+
     public int PushBranchCalls { get; private set; }
 
     public string? PushedBranch { get; private set; }
@@ -92,7 +96,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public string? LastVersionNote(string repoRoot, string branchName) => LastNoteValue;
 
-    public void PushBranch(string repoRoot, string branchName, string accessToken, string remoteName = "origin")
+    public bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch) => HasCommitsValue;
+
+    public void PushBranch(
+        string repoRoot, string branchName, string accessToken, string remoteName = "origin",
+        CancellationToken cancellationToken = default)
     {
         PushBranchCalls++;
         PushedBranch = branchName;
