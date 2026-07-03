@@ -27,6 +27,21 @@ public interface IGitHubReview
         string title,
         string body,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Request reviewers on pull request <paramref name="pullNumber"/> in
+    /// <paramref name="owner"/>/<paramref name="repo"/>. Each entry is an <c>@user</c> or <c>@org/team</c>
+    /// handle (the leading <c>@</c> is optional); a handle containing <c>/</c> is treated as a team (its
+    /// slug is the segment after the last <c>/</c>), everything else as a user. Returns the number of
+    /// reviewers actually requested — 0 (with no HTTP call) when the handles resolve to nothing usable, so
+    /// the caller never reports assigning reviewers it didn't. Throws on a transport / API failure — the
+    /// host requests reviewers best-effort, so a failure never undoes the already-open PR.</summary>
+    Task<int> RequestReviewersAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        IReadOnlyList<string> reviewers,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -62,12 +77,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         // never build a request URL from interpolated identifiers without escaping.
         Uri endpoint = new(
             $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls");
-        using HttpRequestMessage request = new(HttpMethod.Post, endpoint);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Headers.UserAgent.Add(UserAgent);
-        // Pin the REST API version so a future rolling-default bump can't silently change the contract.
-        request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Post, endpoint, accessToken);
         // GitHub's create-PR fields are already lowercase, so no naming policy is needed; `base` is a C#
         // keyword escaped with @ (the serialized JSON key is "base").
         string json = JsonSerializer.Serialize(new { title, head, @base = baseBranch, body });
@@ -96,6 +106,90 @@ public sealed class GitHubReviewClient : IGitHubReview
             // then hit "already exists"). Treat it as success with unknown coordinates instead.
             return new PullRequest(0, string.Empty);
         }
+    }
+
+    public async Task<int> RequestReviewersAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        IReadOnlyList<string> reviewers,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reviewers);
+        (IReadOnlyList<string> users, IReadOnlyList<string> teams) = Partition(reviewers);
+        int count = users.Count + teams.Count;
+        if (count == 0)
+        {
+            // The handles resolved to nothing usable (e.g. a "codeowners"-only list filtered upstream, or a
+            // malformed entry) — make no HTTP call and report that zero were requested.
+            return 0;
+        }
+
+        using CancellationTokenSource timeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(RequestTimeout);
+
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/requested_reviewers");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Post, endpoint, accessToken);
+        string json = JsonSerializer.Serialize(new { reviewers = users, team_reviewers = teams });
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            // This is a single all-or-nothing batch: GitHub rejects the whole request (422 if a reviewer
+            // isn't a collaborator, 403 if a team review needs read:org, …) rather than assigning the valid
+            // ones. The host logs and moves on — the PR is already open, so this is never fatal and the
+            // author can add reviewers on GitHub.
+            throw new HttpRequestException(
+                $"GitHub rejected the reviewer request (HTTP {(int)response.StatusCode}).");
+        }
+
+        return count;
+    }
+
+    // Build a REST request with the standard GitHub headers (JSON accept, Bearer auth, User-Agent, and a
+    // pinned API version so a future rolling-default bump can't silently change the contract).
+    private static HttpRequestMessage NewRequest(HttpMethod method, Uri endpoint, string accessToken)
+    {
+        HttpRequestMessage request = new(method, endpoint);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        request.Headers.UserAgent.Add(UserAgent);
+        request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
+        return request;
+    }
+
+    // Split @user / @org/team handles into the API's separate `reviewers` (user logins) and
+    // `team_reviewers` (team slugs) lists. The leading @ is optional; a handle containing '/' is a team
+    // (its slug is the segment after the last '/'), everything else a user. Blank handles are dropped.
+    private static (IReadOnlyList<string> Users, IReadOnlyList<string> Teams) Partition(
+        IReadOnlyList<string> reviewers)
+    {
+        List<string> users = [];
+        List<string> teams = [];
+        foreach (string raw in reviewers)
+        {
+            string handle = raw.Trim().TrimStart('@');
+            if (handle.Length == 0)
+            {
+                continue;
+            }
+
+            int slash = handle.LastIndexOf('/');
+            if (slash < 0)
+            {
+                users.Add(handle);
+            }
+            else if (slash + 1 < handle.Length)
+            {
+                teams.Add(handle[(slash + 1)..]);
+            }
+        }
+
+        return (users, teams);
     }
 
     private static int NumberOf(JsonElement root, string name) =>

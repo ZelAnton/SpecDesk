@@ -43,3 +43,22 @@ let ``an unexpandable template token falls back to the default`` () =
     // commit message before then.
     let toml = "[commit]\ntemplate = \"{summary}\"\n"
     Assert.That(WorkflowConfig.commitMessageForHost toml "billing" date, Is.EqualTo "Update billing")
+
+[<Test>]
+let ``reviewersForHost returns the explicit user and team entries`` () =
+    let toml = "[review]\nreviewers = [\"@alice\", \"@octo/reviewers\"]\n"
+
+    Assert.That(
+        WorkflowConfig.reviewersForHost toml |> Array.toList,
+        Is.EqualTo(box [ "@alice"; "@octo/reviewers" ]))
+
+[<Test>]
+let ``reviewersForHost drops the codeowners sentinel but keeps explicit entries`` () =
+    // "codeowners" is deferred to GitHub's own auto-request; explicit entries override it.
+    let toml = "[review]\nreviewers = [\"codeowners\", \"@alice\"]\n"
+    Assert.That(WorkflowConfig.reviewersForHost toml |> Array.toList, Is.EqualTo(box [ "@alice" ]))
+
+[<Test>]
+let ``reviewersForHost is empty for a codeowners-only or absent config`` () =
+    Assert.That(WorkflowConfig.reviewersForHost null, Is.Empty)
+    Assert.That(WorkflowConfig.reviewersForHost "[review]\nreviewers = [\"codeowners\"]\n", Is.Empty)

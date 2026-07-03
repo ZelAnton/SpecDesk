@@ -22,6 +22,9 @@ public sealed class HostControllerReviewTests
 
     private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
 
+    // The reviewer handles the configured-reviewers test expects to reach the GitHub layer, verbatim.
+    private static readonly string[] ExpectedReviewers = ["@alice", "@octo/team"];
+
     private string _tempDir = string.Empty;
     private string _docPath = string.Empty;
     private readonly List<string> _sent = [];
@@ -255,6 +258,68 @@ public sealed class HostControllerReviewTests
         {
             Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
             Assert.That(review.Calls, Is.EqualTo(0));
+        });
+    }
+
+    // Write a [review] reviewers list into the temp repo's .spectool.toml (the doc's repo root), so a
+    // send resolves reviewers from it. Call before Build so the root resolves to the temp dir.
+    private void WriteReviewersConfig(string reviewersArrayBody) =>
+        File.WriteAllText(
+            Path.Combine(_tempDir, ".spectool.toml"), $"[review]\nreviewers = [{reviewersArrayBody}]\n");
+
+    [Test]
+    public void SendForReview_requests_the_configured_reviewers_on_the_new_pr()
+    {
+        WriteReviewersConfig("\"@alice\", \"@octo/team\"");
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.RequestReviewersCalls, Is.EqualTo(1));
+            // FakeGitHubReview opens PR #42; the reviewers are passed through untouched (the client splits
+            // them into users/teams).
+            Assert.That(review.RequestedOnPull, Is.EqualTo(42));
+            Assert.That(review.RequestedReviewers, Is.EqualTo(ExpectedReviewers));
+        });
+    }
+
+    [Test]
+    public void SendForReview_requests_no_reviewers_when_none_are_configured()
+    {
+        // No .spectool.toml [review] reviewers (a "codeowners"-only list would be the same) → nothing
+        // explicit to request; GitHub's own CODEOWNERS auto-request, if any, is left to it.
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.That(review.RequestReviewersCalls, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void SendForReview_still_reaches_in_review_when_the_reviewer_request_fails()
+    {
+        WriteReviewersConfig("\"@alice\"");
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowOnRequestReviewers = true };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        // Reviewer assignment is best-effort: the PR opened, the request was attempted and failed, but the
+        // document still reaches In review rather than being stranded in Draft.
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.Calls, Is.EqualTo(1));
+            Assert.That(review.RequestReviewersCalls, Is.EqualTo(1));
         });
     }
 

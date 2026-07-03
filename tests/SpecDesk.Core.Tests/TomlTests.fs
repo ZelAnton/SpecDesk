@@ -125,3 +125,32 @@ let ``getList falls back when there are no quoted items`` () =
 let ``getList falls back when the key is absent`` () =
     let t = Toml.readTable "x" "[x]\n"
     Assert.That(Toml.getList t "exts" [ "d" ] = [ "d" ], Is.True)
+
+[<Test>]
+let ``getList reads a multi-line array`` () =
+    // The common one-entry-per-line TOML form must parse the same as its single-line equivalent.
+    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\",\n  \"@bob\",\n]\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "@alice"; "@bob" ], Is.True)
+
+[<Test>]
+let ``a multi-line array does not swallow the following keys`` () =
+    // Once the array closes, later keys in the same table are still read.
+    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\"\n]\ndraft-first = true\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
+    Assert.That(Toml.getBool t "draft-first" false, Is.True)
+
+[<Test>]
+let ``a multi-line array in another table is not read into the target`` () =
+    let t = Toml.readTable "review" "[repo]\nspec-globs = [\n  \"**/*.md\"\n]\n[review]\nreviewers = [\"@alice\"]\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
+
+[<Test>]
+let ``a bracket in a trailing comment does not close a multi-line array early`` () =
+    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\", # lead [temp]\n  \"@bob\",\n]\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "@alice"; "@bob" ], Is.True)
+
+[<Test>]
+let ``an unclosed array degrades only its own key`` () =
+    // A missing ']' must not swallow later keys back to their defaults (regression guard).
+    let t = Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"**/*.md\"\ndefault-base = \"develop\"\n"
+    Assert.That(Toml.getString t "default-base" "main", Is.EqualTo "develop")

@@ -27,6 +27,16 @@ internal sealed class FakeGitHubReview : IGitHubReview
 
     public bool ThrowOnOpen { get; init; }
 
+    /// <summary>When set, <see cref="RequestReviewersAsync"/> throws — to exercise the best-effort path
+    /// where a reviewer-request failure must not undo the already-open pull request.</summary>
+    public bool ThrowOnRequestReviewers { get; init; }
+
+    public int RequestReviewersCalls { get; private set; }
+
+    public int RequestedOnPull { get; private set; }
+
+    public IReadOnlyList<string>? RequestedReviewers { get; private set; }
+
     /// <summary>When set, the call blocks (after recording its arguments) until released — so a test
     /// can keep one round-trip in flight and assert a concurrent send is single-flighted away.</summary>
     public ManualResetEventSlim? ReleaseGate { get; init; }
@@ -51,5 +61,20 @@ internal sealed class FakeGitHubReview : IGitHubReview
         // Block in flight until the test releases it (bounded so a wiring bug fails fast, not hangs).
         ReleaseGate?.Wait(TimeSpan.FromSeconds(10), cancellationToken);
         return Task.FromResult(new PullRequest(42, $"https://github.com/{owner}/{repo}/pull/42"));
+    }
+
+    public Task<int> RequestReviewersAsync(
+        string accessToken, string owner, string repo, int pullNumber,
+        IReadOnlyList<string> reviewers, CancellationToken cancellationToken = default)
+    {
+        RequestReviewersCalls++;
+        RequestedOnPull = pullNumber;
+        RequestedReviewers = reviewers;
+        if (ThrowOnRequestReviewers)
+        {
+            throw new HttpRequestException("GitHub rejected the reviewer request (HTTP 422).");
+        }
+
+        return Task.FromResult(reviewers.Count);
     }
 }

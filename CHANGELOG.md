@@ -129,6 +129,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so and pushes nothing, so an accidental click can't churn the review. Like *Send for review* it needs
   a connected account and a GitHub remote, reports any problem in plain words, and never stores or logs the
   access token. (The button shows only while a review is open.)
+- PoC-5 — assign reviewers when sending for review: reviewers listed under `[review] reviewers` in
+  `.spectool.toml` (e.g. `["@alice", "@org/team"]`) are requested on the pull request as soon as it opens.
+  The special value `"codeowners"` defers to the repository's own CODEOWNERS (GitHub requests them
+  automatically); explicit entries override it. Assignment is best-effort — if a reviewer can't be
+  requested (not a collaborator, a team needing extra permissions, a network blip) the review still opens
+  and the author can add reviewers on GitHub.
 
 ### Changed
 - Image metadata stripping is now documented as automatic rather than a config toggle. The

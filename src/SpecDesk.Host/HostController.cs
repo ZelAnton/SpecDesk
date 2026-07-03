@@ -770,6 +770,9 @@ public sealed class HostController : IDisposable
 
 				SendTransientStatus("Sending for review…");
 				(string title, string body) = ReviewRequestContent(lastNote, docPath);
+				// The explicit @user/@team reviewers to request (a plain .spectool.toml read, no repo access);
+				// "codeowners" is filtered out upstream and left to GitHub's own auto-request.
+				string[] reviewers = WorkflowConfig.reviewersForHost(WorkflowSeeds.TryReadRepoToml(root));
 
 				PullRequest pr = await _auth.WithAccessTokenAsync(
 					async (token, innerCt) =>
@@ -781,8 +784,11 @@ public sealed class HostController : IDisposable
 							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
 						}
 
-						return await _review.OpenPullRequestAsync(
+						PullRequest opened = await _review.OpenPullRequestAsync(
 							token, repo.Owner, repo.Name, branchName, baseName, title, body, innerCt);
+						// Assign reviewers within the same token scope, best-effort (never fails the send).
+						await RequestReviewersBestEffort(token, repo, opened, reviewers, innerCt);
+						return opened;
 					},
 					ct);
 
@@ -1012,6 +1018,54 @@ public sealed class HostController : IDisposable
 		string title = !string.IsNullOrWhiteSpace(lastNote) ? lastNote! : $"Review: {docName}";
 		string body = $"Review requested for {docName} via SpecDesk.";
 		return (title, body);
+	}
+
+	// Request the configured reviewers on the freshly-opened PR, best-effort. The PR is already open (the
+	// author is In review), so a reviewer-request failure — a handle that isn't a collaborator, a team that
+	// needs read:org, a network blip — is logged and swallowed, never failing the send; the author can add
+	// reviewers on GitHub. Skipped when there are no explicit reviewers, or the PR number is unknown (a 2xx
+	// create with an unparseable body). Runs inside the caller's token scope.
+	private async Task RequestReviewersBestEffort(
+		string token, GitHubRepo repo, PullRequest pr, string[] reviewers, CancellationToken ct)
+	{
+		if (reviewers.Length == 0 || _review is null)
+		{
+			return;
+		}
+
+		if (pr.Number == 0)
+		{
+			// The PR opened but its number couldn't be read (a 2xx create with an unparseable body), so the
+			// reviewers endpoint can't be targeted. Say so rather than skipping silently — the author may
+			// need to add the configured reviewers on GitHub.
+			_logger.LogWarning(
+				"Opened a pull request with an unknown number; could not request {Count} configured reviewer(s)",
+				reviewers.Length);
+			return;
+		}
+
+		try
+		{
+			int requested = await _review.RequestReviewersAsync(token, repo.Owner, repo.Name, pr.Number, reviewers, ct);
+			if (requested > 0)
+			{
+				_logger.LogInformation("Requested {Count} reviewer(s) on pull request #{Number}", requested, pr.Number);
+			}
+			else
+			{
+				// The configured entries resolved to nothing GitHub could be asked for (all filtered or
+				// malformed) — report honestly rather than claiming an assignment that didn't happen.
+				_logger.LogWarning(
+					"Configured reviewers resolved to none that could be requested on pull request #{Number}",
+					pr.Number);
+			}
+		}
+		catch (Exception ex)
+		{
+			// Best-effort: assigning reviewers must never undo an opened PR. Swallow the fault (an API
+			// rejection, a request timeout, an unexpected error) with a diagnostic, and stay In review.
+			_logger.LogWarning(ex, "Could not request reviewers on pull request #{Number}", pr.Number);
+		}
 	}
 
 	// Reply to the webview's request for a version note to prefill the "Save a version" prompt. The

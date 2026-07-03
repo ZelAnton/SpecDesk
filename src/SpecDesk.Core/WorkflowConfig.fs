@@ -14,15 +14,19 @@ type WorkflowConfig =
       BranchPattern: string
       /// Version-note (commit message) template; expanded with the document tokens. Seeds the
       /// editable note shown when the author saves a version.
-      CommitTemplate: string }
+      CommitTemplate: string
+      /// `[review] reviewers` — the @users/@teams to request on a pull request, or the literal
+      /// "codeowners" to defer to the repo's CODEOWNERS (GitHub's own auto-request). Empty by default.
+      Reviewers: string list }
 
 let defaults: WorkflowConfig =
     { DefaultBase = "main"
       BranchPattern = "spec/{docSlug}-{date:yyyyMMdd}"
-      CommitTemplate = "Update {docSlug}" }
+      CommitTemplate = "Update {docSlug}"
+      Reviewers = [] }
 
-/// Parse `[repo] default-base`, `[branch] pattern`, and `[commit] template`. Any error returns the
-/// full defaults (design 10: invalid config must never break the app).
+/// Parse `[repo] default-base`, `[branch] pattern`, `[commit] template`, and `[review] reviewers`. Any
+/// error returns the full defaults (design 10: invalid config must never break the app).
 let parse (tomlText: string option) : WorkflowConfig =
     match tomlText with
     | None -> defaults
@@ -31,10 +35,12 @@ let parse (tomlText: string option) : WorkflowConfig =
             let repo = Toml.readTable "repo" text
             let branch = Toml.readTable "branch" text
             let commit = Toml.readTable "commit" text
+            let review = Toml.readTable "review" text
 
             { DefaultBase = Toml.getString repo "default-base" defaults.DefaultBase
               BranchPattern = Toml.getString branch "pattern" defaults.BranchPattern
-              CommitTemplate = Toml.getString commit "template" defaults.CommitTemplate }
+              CommitTemplate = Toml.getString commit "template" defaults.CommitTemplate
+              Reviewers = Toml.getList review "reviewers" defaults.Reviewers }
         with _ ->
             // Malformed config is the maintainer's problem to fix; naming degrades to the built-in
             // defaults rather than breaking the workflow (design 10: invalid config must never break).
@@ -78,3 +84,18 @@ let commitMessageForHost (tomlText: string | null) (docSlug: string) (date: Date
 /// C#-facing facade: the published base branch a draft forks from.
 let defaultBaseForHost (tomlText: string | null) : string =
     (parse (Option.ofObj tomlText)).DefaultBase
+
+/// Whether a reviewer entry is the "codeowners" sentinel (optionally written "@codeowners"), which
+/// defers to the repo's CODEOWNERS via GitHub's own auto-request rather than an explicit ask.
+let private isCodeowners (entry: string) : bool =
+    entry.Trim().TrimStart('@').Equals("codeowners", StringComparison.OrdinalIgnoreCase)
+
+/// C#-facing facade: the explicit @user/@team reviewers to request on a pull request, from
+/// `[review] reviewers`. Only the "codeowners" sentinel is dropped here — those are left to GitHub's
+/// own CODEOWNERS auto-request; handle normalization (trimming, stripping '@', dropping blanks, and
+/// the user/team split) is the GitHub layer's job, so it isn't duplicated on this side. Empty when
+/// there is nothing explicit to request.
+let reviewersForHost (tomlText: string | null) : string[] =
+    (parse (Option.ofObj tomlText)).Reviewers
+    |> List.filter (fun entry -> not (isCodeowners entry))
+    |> List.toArray

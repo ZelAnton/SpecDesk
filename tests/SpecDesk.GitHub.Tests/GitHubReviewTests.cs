@@ -69,6 +69,58 @@ public sealed class GitHubReviewTests
             handler.LastRequest!.Headers.GetValues("X-GitHub-Api-Version"), Does.Contain("2022-11-28"));
     }
 
+    private static async Task<int> RequestReviewers(StubHttpMessageHandler handler, params string[] reviewers)
+    {
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+        return await client.RequestReviewersAsync("gho_token", "octo", "spec-repo", 42, reviewers);
+    }
+
+    [Test]
+    public async Task RequestReviewersAsync_posts_users_and_teams_partitioned_to_the_pr_endpoint()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.Created, "{}");
+
+        int requested = await RequestReviewers(handler, "@alice", "bob", "@octo/reviewers");
+
+        Assert.That(handler.LastRequest, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            // The return value is the count actually sent (2 users + 1 team).
+            Assert.That(requested, Is.EqualTo(3));
+            Assert.That(handler.LastRequest!.Method, Is.EqualTo(HttpMethod.Post));
+            Assert.That(
+                handler.LastRequest.RequestUri,
+                Is.EqualTo(new Uri("https://api.github.com/repos/octo/spec-repo/pulls/42/requested_reviewers")));
+            Assert.That(handler.LastRequest.Headers.Authorization?.Parameter, Is.EqualTo("gho_token"));
+            Assert.That(handler.LastRequest.Headers.GetValues("X-GitHub-Api-Version"), Does.Contain("2022-11-28"));
+            // The leading @ is stripped; a handle with '/' becomes a team slug (the last segment).
+            Assert.That(handler.LastRequestBody, Does.Contain("\"reviewers\":[\"alice\",\"bob\"]"));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"team_reviewers\":[\"reviewers\"]"));
+        });
+    }
+
+    [Test]
+    public void RequestReviewersAsync_throws_when_GitHub_rejects_the_request()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.UnprocessableEntity, "{}");
+
+        Assert.ThrowsAsync<HttpRequestException>(() => RequestReviewers(handler, "@alice"));
+    }
+
+    [Test]
+    public async Task RequestReviewersAsync_makes_no_request_when_there_is_nothing_to_ask()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.Created, "{}");
+
+        // Only blank / bare-@ / empty-team entries remain (a "codeowners"-only list is filtered upstream),
+        // so there is nothing to request: no HTTP call, and a reported count of zero.
+        int requested = await RequestReviewers(handler, "  ", "@", "@org/");
+
+        Assert.That(requested, Is.EqualTo(0));
+        Assert.That(handler.LastRequest, Is.Null);
+    }
+
     [Test]
     public async Task OpenPullRequestAsync_posts_a_bearer_authorized_create_request()
     {

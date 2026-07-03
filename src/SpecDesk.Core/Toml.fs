@@ -25,14 +25,37 @@ let private stripInlineComment (value: string) : string =
 
     if cut >= 0 then value.Substring(0, cut) else value
 
-/// Collect the `key = value` pairs (raw, trimmed) from a single named table.
+/// Collect the `key = value` pairs (raw, trimmed) from a single named table. An array value that opens
+/// with `[` but does not close on its line (the common multi-line TOML array form) is accumulated across
+/// the following lines until the closing `]`, so a reviewer / glob list written one entry per line parses
+/// the same as its single-line equivalent rather than silently yielding nothing. A malformed (never
+/// closed) array degrades only its own key: a following section header or `key = …` line ends it, so
+/// unrelated later keys are still read.
 let readTable (tableName: string) (text: string) : Dictionary<string, string> =
     let table = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     let mutable inTable = false
+    // Non-empty while a `key = [` array in the target table is still open; `pending` gathers its text.
+    let mutable openArrayKey = ""
+    let pending = System.Text.StringBuilder()
 
-    for rawLine in text.Replace("\r\n", "\n").Split('\n') do
-        let line = rawLine.Trim()
+    // A section header or a `bareKey = …` assignment — either means a still-open array was never closed
+    // (malformed); we stop swallowing lines into it so the keys that follow aren't lost to defaults.
+    let looksLikeNewEntry (line: string) : bool =
+        if line.StartsWith("[") && line.EndsWith("]") then
+            true
+        else
+            let eq = line.IndexOf('=')
 
+            eq > 0
+            && line.Substring(0, eq).Trim()
+               |> Seq.forall (fun c -> Char.IsLetterOrDigit c || c = '-' || c = '_' || c = '.')
+
+    let closeOpenArray () =
+        if openArrayKey.Length > 0 then
+            table.[openArrayKey] <- pending.ToString().Trim()
+            openArrayKey <- ""
+
+    let processLine (line: string) =
         if line.Length = 0 || line.StartsWith("#") then
             ()
         elif line.StartsWith("[") && line.EndsWith("]") then
@@ -43,7 +66,30 @@ let readTable (tableName: string) (text: string) : Dictionary<string, string> =
             if eq > 0 then
                 let key = line.Substring(0, eq).Trim()
                 let value = (stripInlineComment (line.Substring(eq + 1))).Trim()
-                table.[key] <- value
+                // An array that opens without closing on this line continues on the following lines.
+                if value.StartsWith("[") && not (value.Contains "]") then
+                    openArrayKey <- key
+                    pending.Clear().Append(value) |> ignore
+                else
+                    table.[key] <- value
+
+    for rawLine in text.Replace("\r\n", "\n").Split('\n') do
+        let line = rawLine.Trim()
+
+        if openArrayKey.Length = 0 then
+            processLine line
+        elif looksLikeNewEntry line then
+            // The array never closed — store what we have (best-effort) and process this line normally.
+            closeOpenArray ()
+            processLine line
+        else
+            // A continuation line: strip its comment BEFORE looking for the closing ']', so a ']' in a
+            // trailing comment can't close the array early.
+            let stripped = stripInlineComment line
+            pending.Append(' ').Append(stripped) |> ignore
+
+            if stripped.Contains "]" then
+                closeOpenArray ()
 
     table
 
