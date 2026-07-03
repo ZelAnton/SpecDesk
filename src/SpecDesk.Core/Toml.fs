@@ -25,6 +25,24 @@ let private stripInlineComment (value: string) : string =
 
     if cut >= 0 then value.Substring(0, cut) else value
 
+/// Whether `ch` appears in `value` outside any double-quoted string (mirrors stripInlineComment's quote
+/// tracking) — used to find an array's real closing ']' without tripping on a ']' inside a quoted entry,
+/// e.g. a glob character class like "docs/[a-z].md".
+let private containsUnquoted (ch: char) (value: string) : bool =
+    let mutable inQuote = false
+    let mutable found = false
+    let mutable i = 0
+
+    while i < value.Length && not found do
+        match value.[i] with
+        | '"' -> inQuote <- not inQuote
+        | c when c = ch && not inQuote -> found <- true
+        | _ -> ()
+
+        i <- i + 1
+
+    found
+
 /// Collect the `key = value` pairs (raw, trimmed) from a single named table. An array value that opens
 /// with `[` but does not close on its line (the common multi-line TOML array form) is accumulated across
 /// the following lines until the closing `]`, so a reviewer / glob list written one entry per line parses
@@ -66,8 +84,9 @@ let readTable (tableName: string) (text: string) : Dictionary<string, string> =
             if eq > 0 then
                 let key = line.Substring(0, eq).Trim()
                 let value = (stripInlineComment (line.Substring(eq + 1))).Trim()
-                // An array that opens without closing on this line continues on the following lines.
-                if value.StartsWith("[") && not (value.Contains "]") then
+                // An array that opens without closing on this line continues on the following lines. The
+                // close test is quote-aware so a ']' inside a quoted entry (a glob class) doesn't count.
+                if value.StartsWith("[") && not (containsUnquoted ']' value) then
                     openArrayKey <- key
                     pending.Clear().Append(value) |> ignore
                 else
@@ -83,13 +102,19 @@ let readTable (tableName: string) (text: string) : Dictionary<string, string> =
             closeOpenArray ()
             processLine line
         else
-            // A continuation line: strip its comment BEFORE looking for the closing ']', so a ']' in a
-            // trailing comment can't close the array early.
+            // A continuation line: strip its comment BEFORE looking for the closing ']' (so a ']' in a
+            // trailing comment can't close early), and match only an unquoted ']' (so a ']' inside a quoted
+            // glob entry doesn't either).
             let stripped = stripInlineComment line
             pending.Append(' ').Append(stripped) |> ignore
 
-            if stripped.Contains "]" then
+            if containsUnquoted ']' stripped then
                 closeOpenArray ()
+
+    // Flush an array still open at end of input (a malformed, never-closed list) so it degrades to its own
+    // best-effort partial value — consistent with how a mid-file unclosed array is handled — rather than
+    // vanishing entirely.
+    closeOpenArray ()
 
     table
 

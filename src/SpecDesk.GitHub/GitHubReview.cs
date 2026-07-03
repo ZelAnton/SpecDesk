@@ -32,9 +32,11 @@ public interface IGitHubReview
     /// <paramref name="owner"/>/<paramref name="repo"/>. Each entry is an <c>@user</c> or <c>@org/team</c>
     /// handle (the leading <c>@</c> is optional); a handle containing <c>/</c> is treated as a team (its
     /// slug is the segment after the last <c>/</c>), everything else as a user. Returns the number of
-    /// reviewers actually requested — 0 (with no HTTP call) when the handles resolve to nothing usable, so
-    /// the caller never reports assigning reviewers it didn't. Throws on a transport / API failure — the
-    /// host requests reviewers best-effort, so a failure never undoes the already-open PR.</summary>
+    /// reviewers <em>asked for</em> (users + teams sent in the request) — 0, with no HTTP call, when the
+    /// handles resolve to nothing usable, so the caller never reports assigning reviewers it didn't send.
+    /// (GitHub may still silently ignore a handle it won't honour, e.g. the PR author, so this is the
+    /// request count, not a confirmed-assigned count.) Throws on a transport / API failure — the host
+    /// requests reviewers best-effort, so a failure never undoes the already-open PR.</summary>
     Task<int> RequestReviewersAsync(
         string accessToken,
         string owner,

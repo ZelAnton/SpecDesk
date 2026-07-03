@@ -89,7 +89,11 @@ model    = "claude-opus-4-8"
 - `images.folder` must resolve **inside** the repo working tree; paths escaping the repo are
   rejected.
 - `reviewers = ["codeowners"]` reads the repo's `CODEOWNERS`; explicit `@user`/`@team` entries
-  override it.
+  override it. *Implementation note:* the `codeowners` value is deferred to GitHub's own automatic
+  code-owner review request rather than parsed locally, and explicit entries are requested **in
+  addition** to it — GitHub auto-requests code owners on PR open whenever a `CODEOWNERS` file matches,
+  which the app cannot suppress. So on a repo that has both a `CODEOWNERS` file and explicit
+  `reviewers`, the override is additive in practice, not exclusive.
 
 ## What is deliberately NOT here
 

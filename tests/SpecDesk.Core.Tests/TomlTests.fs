@@ -154,3 +154,16 @@ let ``an unclosed array degrades only its own key`` () =
     // A missing ']' must not swallow later keys back to their defaults (regression guard).
     let t = Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"**/*.md\"\ndefault-base = \"develop\"\n"
     Assert.That(Toml.getString t "default-base" "main", Is.EqualTo "develop")
+
+[<Test>]
+let ``a bracket inside a quoted entry does not close a multi-line array early`` () =
+    // A glob character class contains ']'; the close test must be quote-aware, not a raw substring match.
+    let t = Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"docs/[a-z].md\",\n  \"specs/x.md\"\n]\n"
+    Assert.That(Toml.getList t "spec-globs" [] = [ "docs/[a-z].md"; "specs/x.md" ], Is.True)
+
+[<Test>]
+let ``an array left open at end of input keeps its partial value`` () =
+    // A never-closed array at EOF flushes its best-effort partial value (not nothing), matching the
+    // mid-file unclosed case.
+    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\"\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
