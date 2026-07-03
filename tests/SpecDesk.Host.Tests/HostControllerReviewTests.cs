@@ -364,6 +364,46 @@ public sealed class HostControllerReviewTests
     }
 
     [Test]
+    public void UpdateReview_when_the_push_fails_reports_an_error_and_is_not_wedged()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = BuildInReview(versioning, new FakeGitHubReview());
+        SaveAVersion(controller);
+
+        // First attempt: the push throws — the author sees an error and the document stays In review.
+        versioning.ThrowOnPush = true;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+        Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+        Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+
+        // The fault must NOT have wedged the single-flight claim (the version is still unshared, so a
+        // retry once the push recovers pushes it and settles back on In review).
+        versioning.ThrowOnPush = false;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+        Assert.That(
+            WaitUntil(() => versioning.PushBranchCalls == 2), Is.True, "a retry after the fault should push");
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+    }
+
+    [Test]
+    public void UpdateReview_does_not_treat_a_no_op_save_as_a_new_version()
+    {
+        FakeVersioning versioning = new() { SaveCommits = false };
+        using HostController controller = BuildInReview(versioning, new FakeGitHubReview());
+
+        // A "Save a version" that committed nothing (no changes) must not make Update review believe there
+        // is a new version to share.
+        SaveAVersion(controller);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+
+        Assert.That(
+            WaitUntil(() => LatestStatus()?.Label?.Contains("No new versions") == true),
+            Is.True,
+            "a no-op save leaves nothing new to update");
+        Assert.That(versioning.PushBranchCalls, Is.EqualTo(1));
+    }
+
+    [Test]
     public void UpdateReview_with_no_new_versions_says_so_and_does_not_push()
     {
         FakeVersioning versioning = new();

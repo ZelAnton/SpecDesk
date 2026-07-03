@@ -40,6 +40,15 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// version). Set false to exercise the "save a version first" guard.</summary>
     public bool HasCommitsValue { get; set; } = true;
 
+    /// <summary>Whether <see cref="SaveVersion"/> reports a real commit; true by default. Set false to
+    /// exercise a no-op "Save a version" (nothing changed) — which must not count as a new version to
+    /// share.</summary>
+    public bool SaveCommits { get; set; } = true;
+
+    /// <summary>When set, <see cref="PushBranch"/> throws — to exercise the "an Update push that fails
+    /// surfaces a plain error, stays put, and does not wedge the single-flight claim" path.</summary>
+    public bool ThrowOnPush { get; set; }
+
     public int PushBranchCalls { get; private set; }
 
     public string? PushedBranch { get; private set; }
@@ -86,6 +95,12 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     {
         SaveVersionCalls++;
         LastCommitMessage = message;
+        if (!SaveCommits)
+        {
+            // A no-op commit (nothing changed since the last version).
+            return new CommitResult(false, string.Empty, DateTimeOffset.UnixEpoch);
+        }
+
         _commits++;
         return new CommitResult(true, $"sha{_commits}", DateTimeOffset.UnixEpoch);
     }
@@ -107,6 +122,12 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         string repoRoot, string branchName, string accessToken, string remoteName = "origin",
         CancellationToken cancellationToken = default)
     {
+        if (ThrowOnPush)
+        {
+            // A transport / auth failure — thrown before recording the call, so it counts as "did not push".
+            throw new InvalidOperationException("push boom");
+        }
+
         PushBranchCalls++;
         PushedBranch = branchName;
         PushedToken = accessToken;
