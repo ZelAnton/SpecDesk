@@ -160,6 +160,13 @@ Offered right after the first **Save a version**, and always available as a butt
   picks from a list),
 - status becomes **In review**.
 
+> **Implementation status (MVP):** the reviewer assignment and the round-trip are wired; the
+> author-facing **edit-before-submit** of the PR title/description is not yet — the title is the
+> last version note (falling back to the document name) and the body is a fixed template, opened
+> without a confirm dialog. The `pr.suggested` IPC seam
+> ([09-ipc-protocol.md](09-ipc-protocol.md)) is reserved for it. Wiring the editable prompt (mirroring
+> the branch-name / version-note prompts) is a pending enhancement.
+
 ### 6. Respond to feedback
 
 Reviewers leave inline comments (see [07-review-experience.md](07-review-experience.md)). The

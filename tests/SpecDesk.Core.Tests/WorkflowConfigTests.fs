@@ -59,6 +59,14 @@ let ``reviewersForHost drops the codeowners sentinel but keeps explicit entries`
     Assert.That(WorkflowConfig.reviewersForHost toml |> Array.toList, Is.EqualTo(box [ "@alice" ]))
 
 [<Test>]
+let ``defaultBaseForHost falls back to the default for a blank value`` () =
+    // A present-but-empty (or whitespace) default-base must degrade to the default, not an empty ref that
+    // makes Edit throw and silently no-op.
+    Assert.That(WorkflowConfig.defaultBaseForHost "[repo]\ndefault-base = \"\"\n", Is.EqualTo "main")
+    Assert.That(WorkflowConfig.defaultBaseForHost "[repo]\ndefault-base = \"   \"\n", Is.EqualTo "main")
+    Assert.That(WorkflowConfig.defaultBaseForHost "[repo]\ndefault-base = \"trunk\"\n", Is.EqualTo "trunk")
+
+[<Test>]
 let ``reviewersForHost is empty for a codeowners-only or absent config`` () =
     Assert.That(WorkflowConfig.reviewersForHost null, Is.Empty)
     Assert.That(WorkflowConfig.reviewersForHost "[review]\nreviewers = [\"codeowners\"]\n", Is.Empty)

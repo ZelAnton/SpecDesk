@@ -74,10 +74,13 @@ public sealed class HostController : IDisposable
 	// lock so the timer never sees a torn (path, text) pair when a document switch races a pending save.
 	private readonly object _sync = new();
 
-	// Serializes every repository-mutating call (begin edit, autosave commit, discard) so the
-	// message thread and the autosave timer never drive LibGit2Sharp against one repo concurrently
-	// — it is not safe for concurrent writes. Never acquired while holding _sync (and vice versa),
-	// so the two locks cannot deadlock.
+	// Serializes every repository call (begin edit, autosave commit, discard, and the review push) so the
+	// message thread and the autosave timer never drive LibGit2Sharp against one repo concurrently — it is
+	// not safe for concurrent writes. Never acquired while holding _sync (and vice versa), so the two locks
+	// cannot deadlock. Note the review push holds this across its whole network transfer (see PushBranch),
+	// so a message-thread handler that also takes _repoGate (Save / Save a version / Discard / Compare)
+	// blocks until the push returns — a bounded responsiveness cost on a slow/stalled network, not a
+	// deadlock. The push itself runs off the message thread; only a concurrent repo-gated action contends.
 	private readonly object _repoGate = new();
 	private string _state = Lifecycle.stateName(Lifecycle.State.Published);
 	private string? _branch;
@@ -334,7 +337,7 @@ public sealed class HostController : IDisposable
 			_logger.LogError(ex, "Markdown render failed (version {Version}, {Length} chars)", version, text.Length);
 			if (_coordinator.ShouldEmit(version))
 			{
-				_send(IpcSerializer.SerializeEvent(
+				Emit(IpcSerializer.SerializeEvent(
 					MessageKinds.Error,
 					new ErrorPayload("Could not render the preview.")));
 			}
@@ -353,7 +356,7 @@ public sealed class HostController : IDisposable
 			lineMap[i] = new LineSpan(result.LineMap[i].LineStart, result.LineMap[i].LineEnd);
 		}
 
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.PreviewHtml,
 			new PreviewPayload(result.Html, lineMap),
 			version));
@@ -402,7 +405,7 @@ public sealed class HostController : IDisposable
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			_logger.LogError(ex, "Could not save {Path}", path);
-			_send(IpcSerializer.SerializeEvent(
+			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload("Could not save the file.")));
 		}
@@ -811,8 +814,11 @@ public sealed class HostController : IDisposable
 				PullRequest pr = await _auth.WithAccessTokenAsync(
 					async (token, innerCt) =>
 					{
-						// The push is a repo mutation — serialize it with every other libgit2 write. The lock
-						// is released before the awaited network call, which needs no repo access.
+						// The push is a repo operation AND a network transfer, so _repoGate is held across the
+						// whole push to serialize it with every other libgit2 access (libgit2 isn't
+						// concurrency-safe). This can block a concurrent repo-gated message-thread handler for
+						// the push's duration — see the _repoGate note. The lock is released before the
+						// separate PR API call below, which needs no repo access.
 						lock (_repoGate)
 						{
 							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
@@ -1110,7 +1116,7 @@ public sealed class HostController : IDisposable
 		string? repoRoot = _repoRoot;
 		string? path = _currentPath;
 		string note = repoRoot is not null && path is not null ? WorkflowSeeds.SuggestedVersionNote(repoRoot, path) : string.Empty;
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.VersionNoteSuggested,
 			new VersionNoteSuggestedPayload(note),
 			id: id));
@@ -1126,7 +1132,7 @@ public sealed class HostController : IDisposable
 		string name = repoRoot is not null && path is not null
 			? WorkflowSeeds.SuggestedBranchName(repoRoot, path)
 			: string.Empty;
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.BranchNameSuggested,
 			new BranchNameSuggestedPayload(name),
 			id: id));
@@ -1152,7 +1158,7 @@ public sealed class HostController : IDisposable
 			branch = _branch;
 		}
 
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.Status,
 			new StatusPayload(state, Lifecycle.labelOf(state), branch)));
 	}
@@ -1167,11 +1173,28 @@ public sealed class HostController : IDisposable
 			branch = _branch;
 		}
 
-		_send(IpcSerializer.SerializeEvent(MessageKinds.Status, new StatusPayload(state, label, branch)));
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.Status, new StatusPayload(state, label, branch)));
 	}
 
 	private void SendError(string message) =>
-		_send(IpcSerializer.SerializeEvent(MessageKinds.Error, new ErrorPayload(message)));
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.Error, new ErrorPayload(message)));
+
+	// Single funnel for every outbound frame. The webview transport (_send) can throw if the window is
+	// being torn down (SendWebMessage on a disposed window); a send is best-effort, so swallow that here so
+	// it can never surface as an unobserved fault on a background task (RunReviewPublish / sign-in / render
+	// / image) or need a guard at each catch site. Message-thread sends are already under OnMessage's net;
+	// this makes the background paths equally safe and uniform.
+	private void Emit(string json)
+	{
+		try
+		{
+			_send(json);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogDebug(ex, "Dropped an outbound IPC frame (webview transport unavailable)");
+		}
+	}
 
 	// Connect the author's GitHub account: show the one-time code, then poll for authorization on a
 	// background task (it runs for minutes). Cancellable; only one flow at a time.
@@ -1201,7 +1224,7 @@ public sealed class HostController : IDisposable
 			try
 			{
 				DeviceCodePrompt prompt = await _auth.StartSignInAsync(token);
-				_send(IpcSerializer.SerializeEvent(
+				Emit(IpcSerializer.SerializeEvent(
 					MessageKinds.GitHubCode,
 					new GitHubCodePayload(prompt.UserCode, prompt.VerificationUri.ToString())));
 
@@ -1277,7 +1300,7 @@ public sealed class HostController : IDisposable
 	}
 
 	private void SendAccount(bool signedIn, string? login, string? message, bool available = true) =>
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.GitHubAccount,
 			new GitHubAccountPayload(available, signedIn, login, message)));
 
@@ -1301,7 +1324,7 @@ public sealed class HostController : IDisposable
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			_logger.LogError(ex, "Could not open {Path}", path);
-			_send(IpcSerializer.SerializeEvent(
+			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload("Could not open the file.")));
 			return;
@@ -1327,7 +1350,7 @@ public sealed class HostController : IDisposable
 		}
 
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text, DocRelativeDir())));
 	}
@@ -1388,7 +1411,7 @@ public sealed class HostController : IDisposable
 				if (markdown is null)
 				{
 					_logger.LogWarning("Image insert failed (name={Name}, mime={Mime})", originalName, mime);
-					_send(IpcSerializer.SerializeEvent(
+					Emit(IpcSerializer.SerializeEvent(
 						MessageKinds.Error,
 						new ErrorPayload("Could not insert the image.")));
 					ReplyInserted(id, string.Empty);
@@ -1461,7 +1484,7 @@ public sealed class HostController : IDisposable
 
 		// The base/head → diff.result projection (incl. the empty diff for a null base, which clears any
 		// overlay) lives in DiffProjection so the wire shape is unit-testable apart from the controller.
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DiffResult, DiffProjection.Build(baseText, text), message.Version));
 	}
 
@@ -1518,7 +1541,7 @@ public sealed class HostController : IDisposable
 	}
 
 	private void ReplyInserted(string? id, string markdown) =>
-		_send(IpcSerializer.SerializeEvent(
+		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.ImageInserted,
 			new ImageInsertedPayload(markdown),
 			id: id));

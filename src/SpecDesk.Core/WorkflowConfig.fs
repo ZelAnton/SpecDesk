@@ -81,9 +81,12 @@ let commitMessageForHost (tomlText: string | null) (docSlug: string) (date: Date
     let ctx = docContext docSlug date
     expandOrDefault config.CommitTemplate defaults.CommitTemplate ctx
 
-/// C#-facing facade: the published base branch a draft forks from.
+/// C#-facing facade: the published base branch a draft forks from. A present-but-blank
+/// `default-base = ""` degrades to the built-in default rather than an empty ref (which would make
+/// "Edit" throw and silently no-op) — invalid config must never break the workflow (design 10).
 let defaultBaseForHost (tomlText: string | null) : string =
-    (parse (Option.ofObj tomlText)).DefaultBase
+    let configured = (parse (Option.ofObj tomlText)).DefaultBase
+    if String.IsNullOrWhiteSpace configured then defaults.DefaultBase else configured
 
 /// Whether a reviewer entry is the "codeowners" sentinel (optionally written "@codeowners"), which
 /// defers to the repo's CODEOWNERS via GitHub's own auto-request rather than an explicit ask.
