@@ -199,7 +199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "a pull request already exists" is now reconciled to **In review** instead of a misleading "check
   your connection" error.
 - A sign-in that authorizes on GitHub but can't save the token on this device (a disk/encryption fault)
-  now says exactly that, instead of the wrong "Couldn't reach GitHub".
+  now says exactly that, instead of the wrong "Couldn't reach GitHub". An unreadable saved token (denied
+  by file permissions, say) now reads as "signed out" rather than faulting the account display.
 - Discarding a draft is refused while it is being sent for review, so a race can't delete the local
   draft after the pull request has already opened (which would orphan it on GitHub). Saving a version
   at the moment a send completes no longer reverts the status back to Draft.

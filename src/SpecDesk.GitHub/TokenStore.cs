@@ -52,11 +52,13 @@ internal sealed class FileTokenStore : ITokenStore
             byte[] plaintext = _protector.Unprotect(File.ReadAllBytes(_path));
             return JsonSerializer.Deserialize<StoredToken>(plaintext);
         }
-        catch (Exception ex) when (ex is JsonException or CryptographicException or IOException)
+        catch (Exception ex) when (
+            ex is JsonException or CryptographicException or IOException or UnauthorizedAccessException)
         {
-            // A corrupt, partially-written, or undecryptable token (e.g. copied from another machine, so
-            // DPAPI can't unprotect it) is treated as "signed out" — the user re-authenticates rather than
-            // the app crashing on a tampered file.
+            // A corrupt, partially-written, undecryptable (e.g. copied from another machine, so DPAPI can't
+            // unprotect it), or unreadable (ACL-denied / path is a directory — an UnauthorizedAccessException,
+            // which is NOT an IOException) token is treated as "signed out": the user re-authenticates rather
+            // than the app crashing or the account affordance faulting on a tampered/inaccessible file.
             return null;
         }
     }

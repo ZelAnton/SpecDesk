@@ -60,6 +60,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// single-flighted away. (Send exercises the same via the review client's gate.)</summary>
     public ManualResetEventSlim? PushGate { get; set; }
 
+    /// <summary>When set, <see cref="SaveVersion"/> blocks (while holding the caller's _repoGate) until
+    /// released — so a test can hold a "Save a version" commit mid-flight and interleave it deterministically
+    /// with a concurrent review transition.</summary>
+    public ManualResetEventSlim? SaveGate { get; set; }
+
     /// <summary>When set, <see cref="Initialize"/> throws — to exercise the seed-must-not-crash path.</summary>
     public bool ThrowOnInitialize { get; set; }
 
@@ -95,6 +100,8 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     {
         SaveVersionCalls++;
         LastCommitMessage = message;
+        // Block in flight until the test releases it (bounded so a wiring bug fails fast, not hangs).
+        SaveGate?.Wait(TimeSpan.FromSeconds(10));
         if (!SaveCommits)
         {
             // A no-op commit (nothing changed since the last version).

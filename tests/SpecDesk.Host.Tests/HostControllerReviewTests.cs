@@ -346,6 +346,41 @@ public sealed class HostControllerReviewTests
         Assert.That(versioning.DiscardCalled, Is.False);
     }
 
+    [Test]
+    public void SaveVersion_completing_during_a_send_does_not_revert_the_In_review_transition()
+    {
+        // Regression guard for the OnSaveVersion state-clobber race: a "Save a version" that reads _state
+        // while still Draft, then commits while a concurrent Send for review advances the document to In
+        // review, must NOT write its stale state back and revert In review → Draft.
+        using ManualResetEventSlim pushGate = new(initialState: false);
+        using ManualResetEventSlim saveGate = new(initialState: false);
+        FakeVersioning versioning = new() { PushGate = pushGate, SaveGate = saveGate };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        // Send is in flight, blocked inside PushBranch while holding _repoGate; the document is still Draft.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitUntil(() => versioning.PushBranchCalls == 1), Is.True, "the send should reach the push");
+
+        // Save a version on another thread. OnSaveVersion reads _state (Draft) up front, then blocks
+        // acquiring _repoGate (held by the push). The short pause lets it capture that stale Draft read
+        // before the send advances the document's state.
+        Task saver = Task.Run(() => SaveAVersion(controller));
+        Thread.Sleep(100);
+
+        // Let the send finish: it releases _repoGate, opens the PR, and advances Draft → In review. The save
+        // then acquires _repoGate and reaches its commit, where SaveGate holds it mid-flight.
+        pushGate.Set();
+        Assert.That(WaitForStatusState("inReview"), Is.True, "the send should reach In review");
+        Assert.That(WaitUntil(() => versioning.SaveVersionCalls == 1), Is.True, "the save should reach its commit");
+
+        // Release the held commit. With the fix OnSaveVersion does not write its stale Draft state, so the
+        // document stays In review; a regression would revert it to Draft right here.
+        saveGate.Set();
+        Assert.That(saver.Wait(TimeSpan.FromSeconds(10)), Is.True, "the save should complete");
+        Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+    }
+
     // Drive a freshly-built draft all the way to In review (Send for review succeeds), so an Update
     // review test starts from an open pull request (one push + one PR already recorded). Returns once
     // the status has settled at In review.
