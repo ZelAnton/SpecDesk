@@ -46,6 +46,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public string? PushedToken { get; private set; }
 
+    /// <summary>When set, <see cref="PushBranch"/> blocks (after recording its arguments) until released —
+    /// so an Update review test can keep one push in flight and assert a concurrent request is
+    /// single-flighted away. (Send exercises the same via the review client's gate.)</summary>
+    public ManualResetEventSlim? PushGate { get; set; }
+
     /// <summary>When set, <see cref="Initialize"/> throws — to exercise the seed-must-not-crash path.</summary>
     public bool ThrowOnInitialize { get; set; }
 
@@ -105,5 +110,7 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         PushBranchCalls++;
         PushedBranch = branchName;
         PushedToken = accessToken;
+        // Block in flight until the test releases it (bounded so a wiring bug fails fast, not hangs).
+        PushGate?.Wait(TimeSpan.FromSeconds(10), cancellationToken);
     }
 }

@@ -19,11 +19,14 @@ type State =
 
 /// An author action (or a reviewer event) that may advance the lifecycle. `SaveVersion` is the
 /// explicit commit ("Save a version") — the only thing that creates a commit; plain autosave to
-/// disk is a side effect the host performs and is not modelled here.
+/// disk is a side effect the host performs and is not modelled here. `UpdateReview` pushes the
+/// newly-saved versions to the open pull request; it (not `SaveVersion`) is what re-opens review
+/// after changes were requested, so the author-facing status flips only once the push lands.
 type Command =
     | Edit
     | SaveVersion
     | SendForReview
+    | UpdateReview
     | RequestChanges
     | Approve
     | Publish
@@ -36,12 +39,18 @@ let next (state: State) (command: Command) : Result<State, string> =
     | Draft, SaveVersion -> Ok Draft
     | Draft, SendForReview -> Ok InReview
     | Draft, Discard -> Ok Published
+    // Saving a version while under review is a local commit only — it never changes the review state.
+    // Sharing those versions (and re-opening review after changes were requested) is the explicit
+    // UpdateReview push below, so the author-facing status never flips ahead of GitHub.
     | InReview, SaveVersion -> Ok InReview
+    | InReview, UpdateReview -> Ok InReview
     | InReview, RequestChanges -> Ok ChangesRequested
     | InReview, Approve -> Ok Approved
-    | ChangesRequested, SaveVersion -> Ok InReview
+    | ChangesRequested, SaveVersion -> Ok ChangesRequested
+    | ChangesRequested, UpdateReview -> Ok InReview
     | ChangesRequested, Approve -> Ok Approved
-    | Approved, SaveVersion -> Ok InReview
+    | Approved, SaveVersion -> Ok Approved
+    | Approved, UpdateReview -> Ok InReview
     | Approved, Publish -> Ok Published
     | _ -> Error(sprintf "Cannot %A while %A" command state)
 
@@ -77,6 +86,7 @@ let private parseCommand (name: string) : Command option =
     | "edit" -> Some Edit
     | "saveVersion" -> Some SaveVersion
     | "sendForReview" -> Some SendForReview
+    | "updateReview" -> Some UpdateReview
     | "requestChanges" -> Some RequestChanges
     | "approve" -> Some Approve
     | "publish" -> Some Publish

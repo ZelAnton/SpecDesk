@@ -29,17 +29,27 @@ let ``a reviewer requesting changes moves to changes-requested`` () =
     Assert.That(next InReview RequestChanges, Is.EqualTo(ok ChangesRequested))
 
 [<Test>]
-let ``saving after changes requested re-opens review`` () =
-    Assert.That(next ChangesRequested SaveVersion, Is.EqualTo(ok InReview))
+let ``saving a version while under review is a local commit that never changes the review state`` () =
+    // Saving is local; only the explicit Update review push moves the author-facing status.
+    Assert.That(next InReview SaveVersion, Is.EqualTo(ok InReview))
+    Assert.That(next ChangesRequested SaveVersion, Is.EqualTo(ok ChangesRequested))
+    Assert.That(next Approved SaveVersion, Is.EqualTo(ok Approved))
+
+[<Test>]
+let ``updating the review re-opens it from every review state`` () =
+    Assert.That(next InReview UpdateReview, Is.EqualTo(ok InReview))
+    Assert.That(next ChangesRequested UpdateReview, Is.EqualTo(ok InReview))
+    Assert.That(next Approved UpdateReview, Is.EqualTo(ok InReview))
+
+[<Test>]
+let ``updating a review is only legal once a review is open`` () =
+    Assert.That(Result.isError (next Published UpdateReview))
+    Assert.That(Result.isError (next Draft UpdateReview))
 
 [<Test>]
 let ``approval then publish returns to published`` () =
     Assert.That(next InReview Approve, Is.EqualTo(ok Approved))
     Assert.That(next Approved Publish, Is.EqualTo(ok Published))
-
-[<Test>]
-let ``editing again after approval re-opens review`` () =
-    Assert.That(next Approved SaveVersion, Is.EqualTo(ok InReview))
 
 [<Test>]
 let ``illegal transitions are rejected with a reason`` () =
@@ -56,6 +66,7 @@ let ``publishing is only allowed from approved`` () =
 let ``tryStep facade returns the next state name`` () =
     Assert.That(tryStep "published" "edit", Is.EqualTo "draft")
     Assert.That(tryStep "draft" "discard", Is.EqualTo "published")
+    Assert.That(tryStep "changesRequested" "updateReview", Is.EqualTo "inReview")
 
 [<Test>]
 let ``tryStep facade returns empty on an illegal or unknown transition`` () =

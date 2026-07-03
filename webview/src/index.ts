@@ -43,6 +43,7 @@ function wire(): void {
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
   const saveVersionBtn = document.querySelector<HTMLButtonElement>("#save-version-btn");
   const sendForReviewBtn = document.querySelector<HTMLButtonElement>("#send-for-review-btn");
+  const updateReviewBtn = document.querySelector<HTMLButtonElement>("#update-review-btn");
   const discardBtn = document.querySelector<HTMLButtonElement>("#discard-btn");
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
@@ -294,6 +295,7 @@ function wire(): void {
     editBtn,
     saveVersionBtn,
     sendForReviewBtn,
+    updateReviewBtn,
     discardBtn,
     saveBtn,
     formatBar,
@@ -307,6 +309,9 @@ function wire(): void {
     // Push the draft to GitHub and open a review (the host gates on a connected account and a GitHub
     // remote, and surfaces any problem as a plain status message).
     onSendForReview: () => ipc.send(Kinds.docSendForReview),
+    // Push the newly-saved versions to the already-open review (the host gates on a connected account and
+    // a GitHub remote, and surfaces any problem as a plain status message).
+    onUpdateReview: () => ipc.send(Kinds.docUpdateReview),
     onDiscard: () => {
       review.clear();
       ipc.send(Kinds.docDiscard);

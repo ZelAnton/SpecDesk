@@ -7,15 +7,18 @@ import type { StatusState } from "./protocol.js";
  * document offers Edit; once a draft is in progress the panes become editable and the format bar + the
  * draft actions (Save version / Discard / Send for review) take over while Edit hides. Discard and Send
  * for review are Draft-only (Discard isn't a legal move once In review; a sent draft is already
- * submitted), and Send for review additionally needs GitHub to be configured — without it there is no
- * Connect affordance, so the button would be a dead end. No IPC/protocol knowledge: index.ts supplies
- * each action as a callback (it owns the wire kinds) and the pane-editable coordination.
+ * submitted); once the draft is under review, Update review replaces Send for review (push the
+ * newly-saved versions to the open PR). Both Send for review and Update review additionally need GitHub
+ * to be configured — without it there is no Connect affordance, so the button would be a dead end. No
+ * IPC/protocol knowledge: index.ts supplies each action as a callback (it owns the wire kinds) and the
+ * pane-editable coordination.
  */
 export interface LifecycleChromeDeps {
   openBtn: HTMLButtonElement | null;
   editBtn: HTMLButtonElement | null;
   saveVersionBtn: HTMLButtonElement | null;
   sendForReviewBtn: HTMLButtonElement | null;
+  updateReviewBtn: HTMLButtonElement | null;
   discardBtn: HTMLButtonElement | null;
   saveBtn: HTMLButtonElement | null;
   formatBar: HTMLElement | null;
@@ -25,9 +28,13 @@ export interface LifecycleChromeDeps {
   onEdit: () => void;
   onSaveVersion: () => void;
   onSendForReview: () => void;
+  onUpdateReview: () => void;
   onDiscard: () => void;
   onSave: () => void;
 }
+
+/** The states in which a review is open, so Update review (push the new versions to the PR) applies. */
+const REVIEW_STATES: readonly StatusState[] = ["inReview", "changesRequested", "approved"];
 
 export class LifecycleChrome {
   private readonly deps: LifecycleChromeDeps;
@@ -40,6 +47,7 @@ export class LifecycleChrome {
     deps.editBtn?.addEventListener("click", () => deps.onEdit());
     deps.saveVersionBtn?.addEventListener("click", () => deps.onSaveVersion());
     deps.sendForReviewBtn?.addEventListener("click", () => deps.onSendForReview());
+    deps.updateReviewBtn?.addEventListener("click", () => deps.onUpdateReview());
     deps.discardBtn?.addEventListener("click", () => deps.onDiscard());
     deps.saveBtn?.addEventListener("click", () => deps.onSave());
   }
@@ -48,7 +56,8 @@ export class LifecycleChrome {
    * Apply the chrome for a lifecycle state: both panes editable in any non-published state; the format
    * bar and Save version shown while a draft is in progress; Edit shown only when published; Discard and
    * Send for review shown only in the Draft state (Discard isn't legal once In review; a sent draft is
-   * already submitted). Send for review additionally requires GitHub to be configured (see setGitHubAvailable).
+   * already submitted); Update review shown only while a review is open. Send for review and Update review
+   * additionally require GitHub to be configured (see setGitHubAvailable).
    */
   setLifecycle(state: StatusState): void {
     this.state = state;
@@ -66,21 +75,27 @@ export class LifecycleChrome {
     if (this.deps.discardBtn) {
       this.deps.discardBtn.hidden = state !== "draft";
     }
-    this.applySendForReview();
+    this.applyReviewButtons();
   }
 
   /**
    * Whether GitHub sign-in is configured for this host (mirrors the account affordance). When it isn't,
-   * "Send for review" stays hidden — there is no Connect button to act on its "connect first" message.
+   * "Send for review" / "Update review" stay hidden — there is no Connect button to act on their
+   * "connect first" message.
    */
   setGitHubAvailable(available: boolean): void {
     this.githubAvailable = available;
-    this.applySendForReview();
+    this.applyReviewButtons();
   }
 
-  private applySendForReview(): void {
+  private applyReviewButtons(): void {
     if (this.deps.sendForReviewBtn) {
       this.deps.sendForReviewBtn.hidden = !(this.state === "draft" && this.githubAvailable);
+    }
+    if (this.deps.updateReviewBtn) {
+      this.deps.updateReviewBtn.hidden = !(
+        REVIEW_STATES.includes(this.state) && this.githubAvailable
+      );
     }
   }
 }

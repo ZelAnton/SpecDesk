@@ -10,6 +10,7 @@
   "doc.save",
   "doc.saveVersion",
   "doc.sendForReview",
+  "doc.updateReview",
   "editor.changed",
   "error",
   "github.account",

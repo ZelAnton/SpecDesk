@@ -85,10 +85,20 @@ public sealed class HostController : IDisposable
 	private Timer? _autosaveTimer;
 	private bool _dirty;
 
-	// True while a "Send for review" round-trip is in flight (guarded by _sync). It single-flights the
-	// action: the draft-only button stays visible until the In-review status arrives (after the multi-
-	// second push + PR), so without this a double-click would fire a second push and open a second PR.
-	private bool _sendingForReview;
+	// Monotonic count of versions committed on the current draft ("Save a version"), and how many of
+	// those have been pushed to an open review. Guarded by _sync; both reset when the draft changes (begin
+	// edit / open a document / discard). "Has versions not yet shared" ⟺ _versionsSaved > _versionsShared —
+	// this is what makes Update review meaningful and stops it re-opening review (or losing an Approved
+	// status) on a no-op push when nothing new was saved.
+	private long _versionsSaved;
+	private long _versionsShared;
+
+	// True while a review-publishing round-trip — "Send for review" (push + open PR) or "Update review"
+	// (push to the open PR) — is in flight (guarded by _sync). It single-flights both, and across both:
+	// the button stays visible until the status settles (after the multi-second push), so without this a
+	// double-click would fire a second push (and, for Send, open a second PR). Send and Update are never
+	// legal in the same state, but sharing one claim also stops a state change mid-flight racing the two.
+	private bool _publishInFlight;
 
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
@@ -212,6 +222,9 @@ public sealed class HostController : IDisposable
 				break;
 			case MessageKinds.DocSendForReview:
 				OnSendForReview();
+				break;
+			case MessageKinds.DocUpdateReview:
+				OnUpdateReview();
 				break;
 			case MessageKinds.BranchNameRequest:
 				OnSuggestBranchName(message);
@@ -442,6 +455,9 @@ public sealed class HostController : IDisposable
 				_branch = session.Branch;
 				_baseBranch = session.BaseBranch;
 				_dirty = false;
+				// A fresh draft has saved nothing and shared nothing yet.
+				_versionsSaved = 0;
+				_versionsShared = 0;
 			}
 
 			_logger.LogInformation(
@@ -628,6 +644,8 @@ public sealed class HostController : IDisposable
 				if (result.Committed)
 				{
 					_state = next;
+					// One more version now exists that a later Send / Update review can share.
+					_versionsSaved++;
 				}
 			}
 
@@ -657,13 +675,15 @@ public sealed class HostController : IDisposable
 	{
 		// Gate the lifecycle transition AND claim the single-flight slot atomically under _sync, so a
 		// stale state read or a double-click can't slip a second round-trip through. fromState/_branch are
-		// re-checked in the continuation before the transition is committed (the document may have moved on).
+		// re-checked before the transition is committed (the document may have moved on); seq records how
+		// many saved versions this push carries, so a later Update review knows what is already shared.
 		string next;
 		string? repoRoot;
 		string? branch;
 		string? baseBranch;
 		string? path;
 		string fromState;
+		long seq;
 		lock (_sync)
 		{
 			next = Lifecycle.tryStep(_state, "sendForReview");
@@ -673,9 +693,9 @@ public sealed class HostController : IDisposable
 				return;
 			}
 
-			if (_sendingForReview)
+			if (_publishInFlight)
 			{
-				_logger.LogDebug("Send for review ignored: one is already in flight");
+				_logger.LogDebug("Send for review ignored: a review publish is already in flight");
 				return;
 			}
 
@@ -684,23 +704,24 @@ public sealed class HostController : IDisposable
 			branch = _branch;
 			baseBranch = _baseBranch;
 			path = _currentPath;
-			_sendingForReview = true;
+			seq = _versionsSaved;
+			_publishInFlight = true;
 		}
 
 		// The two pure null checks below can't throw, so it's safe to release the claim and return here.
 		// EVERYTHING that can throw (IsSignedIn, the repo read, the push, the API call) runs inside the
-		// Task.Run, whose finally always releases the claim — otherwise a single libgit2/IO fault on the
-		// synchronous path would leak the claim and wedge the feature for the rest of the session.
+		// background task (RunReviewPublish), whose finally always releases the claim — otherwise a single
+		// libgit2/IO fault on the synchronous path would leak the claim and wedge the feature for the session.
 		if (_auth is null || _publishing is null || _review is null)
 		{
-			ClearSending();
+			ClearPublishInFlight();
 			SendError("Connect a GitHub account to send a document for review.");
 			return;
 		}
 
 		if (repoRoot is null || branch is null || baseBranch is null || path is null)
 		{
-			ClearSending();
+			ClearPublishInFlight();
 			return;
 		}
 
@@ -710,38 +731,32 @@ public sealed class HostController : IDisposable
 		string baseName = baseBranch;
 		string docPath = path;
 
-		_ = Task.Run(async () =>
-		{
-			// Bound the whole round-trip so a stalled push/API call can't hold _repoGate (and the
-			// single-flight claim) indefinitely. The transfer phase honours this; a connect-phase stall is
-			// bounded only by the OS socket timeout (see PushBranch).
-			using CancellationTokenSource timeout = new();
-			timeout.CancelAfter(SendForReviewTimeout);
-			try
+		RunReviewPublish(
+			fromState, branchName, next, seq, "Sent for review",
+			"Couldn't send this for review. Check your connection and try again.",
+			async ct =>
 			{
 				if (!_auth.IsSignedIn())
 				{
 					SendError("Connect your GitHub account first, then send for review.");
-					return;
+					return false;
 				}
 
-				// Resolve the GitHub repo, the PR title, and whether there's anything to review from local
-				// git (one repo-gated read). A non-GitHub remote can't host a review.
-				string? remoteUrl;
+				GitHubRepo? repo = ResolveGitHubReviewRepo(root);
+				if (repo is null)
+				{
+					SendError("This document isn't in a GitHub repository, so it can't be sent for review.");
+					return false;
+				}
+
+				// The PR title seed and the "is there anything to review" check are the remaining local-git
+				// reads (one repo-gated batch).
 				string? lastNote;
 				bool hasCommits;
 				lock (_repoGate)
 				{
-					remoteUrl = _publishing.RemoteUrl(root);
 					lastNote = _publishing.LastVersionNote(root, branchName);
 					hasCommits = _publishing.HasCommitsToReview(root, branchName, baseName);
-				}
-
-				GitHubRepo? repo = GitHubRemote.TryParse(remoteUrl);
-				if (repo is null)
-				{
-					SendError("This document isn't in a GitHub repository, so it can't be sent for review.");
-					return;
 				}
 
 				if (!hasCommits)
@@ -750,78 +765,240 @@ public sealed class HostController : IDisposable
 					// "no commits between base and head" — turn that into actionable plain language rather
 					// than a misleading network error. Committing stays the author's explicit "Save a version".
 					SendError("Save a version before sending it for review.");
-					return;
+					return false;
 				}
 
 				SendTransientStatus("Sending for review…");
 				(string title, string body) = ReviewRequestContent(lastNote, docPath);
 
 				PullRequest pr = await _auth.WithAccessTokenAsync(
-					async (token, ct) =>
+					async (token, innerCt) =>
 					{
 						// The push is a repo mutation — serialize it with every other libgit2 write. The lock
 						// is released before the awaited network call, which needs no repo access.
 						lock (_repoGate)
 						{
-							_publishing.PushBranch(root, branchName, token, cancellationToken: ct);
+							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
 						}
 
 						return await _review.OpenPullRequestAsync(
-							token, repo.Owner, repo.Name, branchName, baseName, title, body, ct);
+							token, repo.Owner, repo.Name, branchName, baseName, title, body, innerCt);
 					},
-					timeout.Token);
+					ct);
 
-				// Commit the transition only if the document is still the same draft — the author may have
-				// discarded it or switched files during the round-trip, in which case the PR opened but this
-				// document must NOT be stamped In review.
-				bool advanced = false;
-				lock (_sync)
+				_logger.LogInformation(
+					"Opened pull request #{Number} ({Url}) for {Branch}", pr.Number, pr.Url, branchName);
+				return true;
+			});
+	}
+
+	// "Update review": push the newly-saved versions of a draft that is already under review to its open
+	// pull request. The PR tracks the head branch, so pushing is all it takes — no second PR is opened.
+	// On success the document (re-)settles at In review (from Changes requested / Approved, the status
+	// flips only now, once the push has landed). Needs the GitHub feature wired, a connected account, and
+	// a GitHub remote; the token is taken transiently (WithAccessTokenAsync) for the push and never stored
+	// or logged. Shares OnSendForReview's single-flight + off-thread scaffold (RunReviewPublish), minus
+	// the PR-open step, plus a "nothing new to share" guard.
+	private void OnUpdateReview()
+	{
+		// Gate the transition AND claim the shared single-flight slot atomically under _sync (see
+		// OnSendForReview). seq/shared capture how many saved versions exist vs. have been shared, so the
+		// "nothing new" guard below and the post-push bookkeeping agree on one snapshot.
+		string next;
+		string? repoRoot;
+		string? branch;
+		string fromState;
+		long seq;
+		long shared;
+		lock (_sync)
+		{
+			next = Lifecycle.tryStep(_state, "updateReview");
+			if (next.Length == 0)
+			{
+				_logger.LogDebug("Update review ignored from state {State}", _state);
+				return;
+			}
+
+			if (_publishInFlight)
+			{
+				_logger.LogDebug("Update review ignored: a review publish is already in flight");
+				return;
+			}
+
+			fromState = _state;
+			repoRoot = _repoRoot;
+			branch = _branch;
+			seq = _versionsSaved;
+			shared = _versionsShared;
+			_publishInFlight = true;
+		}
+
+		if (_auth is null || _publishing is null)
+		{
+			ClearPublishInFlight();
+			SendError("Connect a GitHub account to update a review.");
+			return;
+		}
+
+		if (repoRoot is null || branch is null)
+		{
+			ClearPublishInFlight();
+			return;
+		}
+
+		if (seq <= shared)
+		{
+			// Nothing saved since the review was last shared: a push would be a no-op and re-opening review
+			// (or dropping an Approved status) would be misleading. Report it plainly, touch nothing. This is
+			// a pure field compare, so it's safe on the synchronous path — no background task is spun up.
+			ClearPublishInFlight();
+			SendTransientStatus("No new versions to update the review with");
+			return;
+		}
+
+		// Non-null copies so the background closure below sees them as non-nullable.
+		string root = repoRoot;
+		string branchName = branch;
+
+		RunReviewPublish(
+			fromState, branchName, next, seq, "Updated the review",
+			"Couldn't update the review. Check your connection and try again.",
+			ct =>
+			{
+				if (!_auth.IsSignedIn())
 				{
-					if (_state == fromState && _branch == branchName)
-					{
-						_state = next;
-						advanced = true;
-					}
+					SendError("Connect your GitHub account first, then update the review.");
+					return Task.FromResult(false);
 				}
 
-				if (advanced)
+				if (ResolveGitHubReviewRepo(root) is null)
 				{
-					_logger.LogInformation(
-						"Sent {Branch} for review: opened pull request #{Number} ({Url})",
-						branchName, pr.Number, pr.Url);
-					SendLifecycleStatus();
+					SendError("This document isn't in a GitHub repository, so its review can't be updated.");
+					return Task.FromResult(false);
+				}
+
+				SendTransientStatus("Updating the review…");
+
+				// Push only — the PR already exists and tracks the branch, so there is no network step to
+				// await once the repo-gated push returns.
+				return _auth.WithAccessTokenAsync(
+					(token, innerCt) =>
+					{
+						lock (_repoGate)
+						{
+							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+						}
+
+						return Task.FromResult(true);
+					},
+					ct);
+			});
+	}
+
+	// The background scaffold both review pushes share: bound the round-trip with the timeout, run the
+	// caller's <paramref name="publish"/> (its own signed-in / remote checks, guards, and the token-scoped
+	// push [+ PR open]), and — only when it reports it actually pushed AND the document is still the same
+	// draft — commit the lifecycle transition and record how far the review is now shared. Always releases
+	// the single-flight claim. A <paramref name="publish"/> that returns false has already told the author
+	// why it bailed, so the lifecycle is left untouched.
+	private void RunReviewPublish(
+		string fromState,
+		string branchName,
+		string next,
+		long seq,
+		string action,
+		string errorMessage,
+		Func<CancellationToken, Task<bool>> publish)
+	{
+		_ = Task.Run(async () =>
+		{
+			// Bound the whole round-trip so a stalled push/API call can't hold _repoGate (and the single-
+			// flight claim) indefinitely. The transfer phase honours this; a connect-phase stall is bounded
+			// only by the OS socket timeout (see PushBranch).
+			using CancellationTokenSource timeout = new();
+			timeout.CancelAfter(SendForReviewTimeout);
+			try
+			{
+				if (!await publish(timeout.Token))
+				{
+					return;
+				}
+
+				if (TryAdvanceReview(fromState, branchName, next, seq))
+				{
+					_logger.LogInformation("{Action}: {Branch}", action, branchName);
 				}
 				else
 				{
+					// The document changed during the push (discard / switch), so the branch was pushed / the
+					// PR opened but this document must NOT be stamped — re-sync the chrome to the real state so
+					// the transient "…" label never lingers.
 					_logger.LogInformation(
-						"Pull request #{Number} opened for {Branch}, but the document moved on — not advancing",
-						pr.Number, branchName);
-					// The document changed during the send (discard / switch), so re-sync the chrome to the
-					// real current state — otherwise the transient "Sending for review…" label could linger.
-					SendLifecycleStatus();
+						"{Action} completed, but the document moved on — not advancing: {Branch}", action, branchName);
 				}
+
+				SendLifecycleStatus();
 			}
 			catch (Exception ex)
 			{
 				// Push / token / API / repo faults (HttpRequestException, LibGit2SharpException,
 				// InvalidOperationException, a request timeout) all surface as one plain line — never the
-				// token or a stack trace. The document stays in Draft so the author can retry.
-				_logger.LogError(ex, "Could not send {Branch} for review", branchName);
-				SendError("Couldn't send this for review. Check your connection and try again.");
+				// token or a stack trace. The document stays where it was so the author can retry.
+				_logger.LogError(ex, "Review push failed for {Branch}", branchName);
+				SendError(errorMessage);
 			}
 			finally
 			{
-				ClearSending();
+				ClearPublishInFlight();
 			}
 		});
 	}
 
-	// Release the single-flight claim taken by OnSendForReview (success, failure, or an early gate exit).
-	private void ClearSending()
+	// Commit a review lifecycle transition iff the document is still the same draft that began the push,
+	// and record how far the review has now been shared. seq is the saved-version count captured when the
+	// push began. A version saved mid-push is deliberately NOT counted as shared even though the push may
+	// actually carry it to the PR (git pushes HEAD): the bias is to UNDER-count, never over-count. Under-
+	// counting only costs a later Update review a harmless no-op re-push; over-counting would mark a version
+	// shared that never left, so the next Update would report "nothing new" and the reviewer would never see
+	// it. Exactly tracking "what HEAD held at push time" would need the counter under _repoGate (the push's
+	// lock), which the _sync/_repoGate ordering rule forbids reading here — not worth it for a no-op re-push.
+	// Returns whether the transition was applied.
+	private bool TryAdvanceReview(string fromState, string branchName, string next, long seq)
 	{
 		lock (_sync)
 		{
-			_sendingForReview = false;
+			if (_state != fromState || _branch != branchName)
+			{
+				return false;
+			}
+
+			_state = next;
+			_versionsShared = seq;
+			return true;
+		}
+	}
+
+	// Resolve the GitHub owner/repo the current remote points at (a repo-gated read of the remote URL, then
+	// the strict github.com parse), or null when there is no GitHub remote to host a review. Callers have
+	// already established _publishing is non-null on the synchronous path.
+	private GitHubRepo? ResolveGitHubReviewRepo(string root)
+	{
+		string? remoteUrl;
+		lock (_repoGate)
+		{
+			remoteUrl = _publishing!.RemoteUrl(root);
+		}
+
+		return GitHubRemote.TryParse(remoteUrl);
+	}
+
+	// Release the shared single-flight claim taken by OnSendForReview / OnUpdateReview (success, failure,
+	// or an early gate exit).
+	private void ClearPublishInFlight()
+	{
+		lock (_sync)
+		{
+			_publishInFlight = false;
 		}
 	}
 
@@ -1032,6 +1209,9 @@ public sealed class HostController : IDisposable
 			_state = Lifecycle.stateName(Lifecycle.State.Published);
 			_branch = null;
 			_baseBranch = null;
+			// A newly loaded document carries no draft, so no saved / shared versions either.
+			_versionsSaved = 0;
+			_versionsShared = 0;
 			// Publish the document fields as one matched set under the lock, so a still-running autosave
 			// timer can never snapshot a torn (new path, old text) pair and write across documents.
 			_text = text;
