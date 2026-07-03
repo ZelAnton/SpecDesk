@@ -118,7 +118,19 @@ public sealed class GitHubDeviceFlowAuth : IGitHubAuth
     private async Task<SignInResult> CompleteAuthorizationAsync(string accessToken, CancellationToken ct)
     {
         string login = await FetchLoginWithRetryAsync(accessToken, ct);
-        _store.Save(new StoredToken(accessToken, login));
+        try
+        {
+            _store.Save(new StoredToken(accessToken, login));
+        }
+        catch (Exception ex) when (
+            ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            // Authorization succeeded, but persisting the token locally failed (a disk / DPAPI fault). The
+            // network and GitHub were fine, so surface it distinctly rather than letting it propagate as a
+            // "couldn't reach GitHub" exception. IsSignedIn stays false (nothing was stored), which is honest.
+            return SignInResult.StorageFailed();
+        }
+
         return SignInResult.Authorized(login);
     }
 

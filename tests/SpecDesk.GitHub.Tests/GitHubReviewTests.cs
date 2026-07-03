@@ -34,11 +34,31 @@ public sealed class GitHubReviewTests
     [Test]
     public void OpenPullRequestAsync_throws_when_GitHub_rejects_the_create()
     {
+        // A 422 that is NOT the "already exists" case (here an invalid base) is a genuine rejection.
         using StubHttpMessageHandler handler = new(
             HttpStatusCode.UnprocessableEntity,
-            """{"message":"A pull request already exists for octo:spec/draft."}""");
+            """{"message":"Validation Failed","errors":[{"field":"base","code":"invalid"}]}""");
 
         Assert.ThrowsAsync<HttpRequestException>(() => Open(handler));
+    }
+
+    [Test]
+    public async Task OpenPullRequestAsync_reconciles_an_already_exists_422_as_an_open_pr()
+    {
+        // The branch already has an open PR (e.g. sent earlier, then re-sent the same day). GitHub 422s the
+        // create with "already exists"; that must resolve to success (unknown coordinates) so the author
+        // settles to In review rather than being stranded in Draft with a real PR open.
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.UnprocessableEntity,
+            """{"message":"Validation Failed","errors":[{"message":"A pull request already exists for octo:spec/draft."}]}""");
+
+        PullRequest pr = await Open(handler);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(pr.Number, Is.EqualTo(0));
+            Assert.That(pr.Url, Is.EqualTo(string.Empty));
+        });
     }
 
     [Test]

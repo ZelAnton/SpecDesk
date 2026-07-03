@@ -194,6 +194,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   focused, so it stays in the tab order without cluttering the layout.
 
 ### Fixed
+- Send for review no longer strands a document in Draft when a review already exists for it: if the
+  pull request was opened earlier (e.g. sent, app restarted, then re-sent the same day), GitHub's
+  "a pull request already exists" is now reconciled to **In review** instead of a misleading "check
+  your connection" error.
+- A sign-in that authorizes on GitHub but can't save the token on this device (a disk/encryption fault)
+  now says exactly that, instead of the wrong "Couldn't reach GitHub".
+- Discarding a draft is refused while it is being sent for review, so a race can't delete the local
+  draft after the pull request has already opened (which would orphan it on GitHub). Saving a version
+  at the moment a send completes no longer reverts the status back to Draft.
 - Split view: selecting a line in one pane now scrolls the other pane just enough to reveal the
   matching highlighted line when block-height drift had pushed it outside the visible area (the
   highlight was applied but off-screen). The pane you are working in is never scrolled, and a pane

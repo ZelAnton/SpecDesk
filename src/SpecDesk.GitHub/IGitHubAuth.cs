@@ -44,6 +44,12 @@ public enum SignInOutcome
     /// network/transport fault instead surfaces as an exception, which the host's background handler
     /// catches; once polling, such faults are ridden out — see <see cref="TimedOut"/> / <see cref="Unreachable"/>.)</summary>
     Failed,
+
+    /// <summary>The user authorized and a valid token was obtained, but persisting it to the local secure
+    /// store failed (a disk or DPAPI fault). GitHub and the network were fine, so this is distinct from
+    /// <see cref="Unreachable"/> / <see cref="Failed"/>; the sign-in can't take effect (nothing loads back),
+    /// so the host reports "signed in, but couldn't save it on this device".</summary>
+    StorageFailed,
 }
 
 /// <summary>
@@ -66,6 +72,8 @@ public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? 
     public static SignInResult Unreachable() => new(SignInOutcome.Unreachable, null, null);
 
     public static SignInResult Failed(string error) => new(SignInOutcome.Failed, null, error);
+
+    public static SignInResult StorageFailed() => new(SignInOutcome.StorageFailed, null, null);
 }
 
 /// <summary>

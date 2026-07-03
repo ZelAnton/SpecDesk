@@ -69,6 +69,25 @@ public sealed class GitHubDeviceFlowAuthTests
     }
 
     [Test]
+    public async Task Authorized_but_a_failed_token_save_reports_storage_failed_and_stays_signed_out()
+    {
+        // Authorization succeeded but persisting the token locally throws (a disk / DPAPI fault). It must
+        // surface as StorageFailed — not a network error — and leave the account signed out (nothing stored).
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"));
+        (GitHubDeviceFlowAuth auth, _, InMemoryTokenStore store) = Build(api);
+        store.ThrowOnSave = true;
+
+        SignInResult result = await auth.AwaitAuthorizationAsync(Prompt());
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.StorageFailed));
+            Assert.That(store.Saved, Is.Null);
+            Assert.That(auth.IsSignedIn(), Is.False);
+        });
+    }
+
+    [Test]
     public async Task A_transient_login_failure_is_retried_then_signs_in()
     {
         FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"))

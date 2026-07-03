@@ -323,6 +323,29 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    [Test]
+    public void Discard_during_an_in_flight_send_is_ignored_so_the_open_pr_is_not_orphaned()
+    {
+        using ManualResetEventSlim gate = new(initialState: false);
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ReleaseGate = gate };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        // Send reaches the (blocked) PR call and stays in flight.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitUntil(() => review.Calls == 1), Is.True, "the send should reach the PR call");
+
+        // Discard while the send is publishing must be ignored — deleting the draft branch now would orphan
+        // the pull request the push is opening on GitHub.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard));
+        Thread.Sleep(60);
+        Assert.That(versioning.DiscardCalled, Is.False, "discard must not run while a send is in flight");
+
+        gate.Set();
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.That(versioning.DiscardCalled, Is.False);
+    }
+
     // Drive a freshly-built draft all the way to In review (Send for review succeeds), so an Update
     // review test starts from an open pull request (one push + one PR already recorded). Returns once
     // the status has settled at In review.

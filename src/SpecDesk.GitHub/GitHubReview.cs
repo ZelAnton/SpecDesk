@@ -89,8 +89,18 @@ public sealed class GitHubReviewClient : IGitHubReview
         string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
         if (!response.IsSuccessStatusCode)
         {
-            // 422 (a PR already exists / invalid head or base), 404 (no repo / no push access), 5xx, … —
-            // the host shows a plain "couldn't open the pull request"; the status aids the diagnostic log.
+            // A 422 whose body says a pull request already exists is the IDEMPOTENT case: the review the
+            // author is asking for is already open — e.g. they sent it earlier, restarted, and re-sent the
+            // same day (the default branch name is date-to-the-day deterministic). Treat it as success with
+            // unknown coordinates so the document settles to In review, rather than stranding the author in
+            // Draft with a real PR open and a misleading "check your connection" error. Every other
+            // rejection (invalid head/base, 404 no push access, 5xx, …) still throws.
+            if ((int)response.StatusCode == 422
+                && responseBody.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+            {
+                return new PullRequest(0, string.Empty);
+            }
+
             throw new HttpRequestException(
                 $"GitHub rejected the pull-request create (HTTP {(int)response.StatusCode}).");
         }

@@ -103,7 +103,19 @@ internal sealed class InMemoryTokenStore : ITokenStore
 {
     public StoredToken? Saved { get; private set; }
 
-    public void Save(StoredToken token) => Saved = token;
+    /// <summary>When set, <see cref="Save"/> throws — to exercise the "authorized but couldn't persist the
+    /// token locally" path (a disk / DPAPI fault).</summary>
+    public bool ThrowOnSave { get; set; }
+
+    public void Save(StoredToken token)
+    {
+        if (ThrowOnSave)
+        {
+            throw new IOException("token save boom");
+        }
+
+        Saved = token;
+    }
 
     public StoredToken? Load() => Saved;
 

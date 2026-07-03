@@ -151,8 +151,9 @@ public sealed class HostController : IDisposable
 		{
 			_autosaveTimer?.Dispose();
 			_autosaveTimer = null;
+			// Cancel any in-flight sign-in, but leave disposal to that task's finally — disposing the cts
+			// here while its token is still in flight risks ObjectDisposedException from the running task.
 			_signInCts?.Cancel();
-			_signInCts?.Dispose();
 			_signInCts = null;
 		}
 	}
@@ -425,7 +426,7 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		if (!_versioning.IsVersioned(_repoRoot))
+		if (!IsRepoVersioned(_repoRoot))
 		{
 			SendError("This folder isn't set up for versioning yet.");
 			return;
@@ -485,6 +486,15 @@ public sealed class HostController : IDisposable
 		string? baseBranch;
 		lock (_sync)
 		{
+			if (_publishInFlight)
+			{
+				// A Send for review is publishing this draft right now. Discarding would delete the local
+				// branch, which — if the push has already opened the PR — orphans it on GitHub. Ignore the
+				// discard; the send settles to In review in a moment, where Discard is no longer offered.
+				_logger.LogDebug("Discard ignored: a review publish is in flight");
+				return;
+			}
+
 			branch = _branch;
 			baseBranch = _baseBranch;
 		}
@@ -517,6 +527,16 @@ public sealed class HostController : IDisposable
 	// Whether the current lifecycle state is one in which the document is being edited on a working
 	// branch (so disk autosave should run and "Save a version" is allowed).
 	private bool IsEditingState() => Lifecycle.tryStep(_state, "saveVersion").Length > 0;
+
+	// Whether the repo is set up for versioning — a libgit2 read, so it is serialized under _repoGate like
+	// every other repository access (a background push / image insert may be driving libgit2 concurrently).
+	private bool IsRepoVersioned(string repoRoot)
+	{
+		lock (_repoGate)
+		{
+			return _versioning.IsVersioned(repoRoot);
+		}
+	}
 
 	// (Re)arm the idle disk-autosave timer after an edit, and flip the status to "Unsaved changes"
 	// on the first dirty change. "Dirty" means the working copy differs from the last saved version;
@@ -567,21 +587,31 @@ public sealed class HostController : IDisposable
 			path = _currentPath;
 		}
 
+		// Outer net: this runs on the Timer thread, which has no last-resort catch of its own (unlike the
+		// message pump's OnMessage), so ANY exception escaping — an unexpected IO subtype, or a fault from
+		// the SendError transport in the inner catch — would go unobserved and terminate the process.
 		try
 		{
-			// Serialize the disk write with repo mutations: a "Save a version" commit stages the
-			// working tree, and writing the file mid-stage would race it.
-			lock (_repoGate)
+			try
 			{
-				File.WriteAllText(path, text);
-			}
+				// Serialize the disk write with repo mutations: a "Save a version" commit stages the
+				// working tree, and writing the file mid-stage would race it.
+				lock (_repoGate)
+				{
+					File.WriteAllText(path, text);
+				}
 
-			_logger.LogDebug("Disk-autosaved {Path} ({Length} chars)", path, text.Length);
+				_logger.LogDebug("Disk-autosaved {Path} ({Length} chars)", path, text.Length);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				_logger.LogError(ex, "Disk autosave failed for {Path}", path);
+				SendError("Could not save your changes.");
+			}
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Disk autosave failed for {Path}", path);
-			SendError("Could not save your changes.");
+			_logger.LogError(ex, "Unexpected fault in the disk-autosave timer callback");
 		}
 	}
 
@@ -617,7 +647,7 @@ public sealed class HostController : IDisposable
 			repoRoot = _repoRoot;
 		}
 
-		if (!_versioning.IsVersioned(repoRoot))
+		if (!IsRepoVersioned(repoRoot))
 		{
 			SendError("This folder isn't set up for versioning yet.");
 			return;
@@ -643,7 +673,11 @@ public sealed class HostController : IDisposable
 				_dirty = false;
 				if (result.Committed)
 				{
-					_state = next;
+					// Save a version is a self-transition in every editing state (Draft→Draft, InReview→
+					// InReview, …) — it never changes the lifecycle state, so we deliberately do NOT write
+					// _state here. `next` was computed from a possibly-stale read (this commit ran under
+					// _repoGate, not _sync); a Send / Update review completing meanwhile may have advanced
+					// _state (e.g. Draft→InReview), and writing the stale `next` would clobber that.
 					// One more version now exists that a later Send / Update review can share.
 					_versionsSaved++;
 				}
@@ -1149,15 +1183,19 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		CancellationToken token;
+		CancellationTokenSource cts;
 		lock (_sync)
 		{
+			// Cancel the previous flow but do NOT dispose it here: its still-running task captured that
+			// token and may be about to build a linked source from it, and disposing under it would throw
+			// ObjectDisposedException that escapes as a spurious "Couldn't reach GitHub". Each task disposes
+			// its OWN cts in its finally instead — a cancelled-but-alive token just yields clean cancellation.
 			_signInCts?.Cancel();
-			_signInCts?.Dispose();
-			_signInCts = new CancellationTokenSource();
-			token = _signInCts.Token;
+			cts = new CancellationTokenSource();
+			_signInCts = cts;
 		}
 
+		CancellationToken token = cts.Token;
 		_ = Task.Run(async () =>
 		{
 			try
@@ -1195,6 +1233,20 @@ public sealed class HostController : IDisposable
 				// The up-front device-code request failed (transport / a GitHub error / a timeout).
 				_logger.LogError(ex, "GitHub sign-in could not start");
 				SendAccount(false, login: null, "Couldn't reach GitHub. Check your connection and try again.");
+			}
+			finally
+			{
+				// Dispose this flow's cts now that its token is no longer in use. Only clear the field if it
+				// is still the current flow — a newer sign-in may have replaced it (and owns its own cts).
+				lock (_sync)
+				{
+					if (ReferenceEquals(_signInCts, cts))
+					{
+						_signInCts = null;
+					}
+				}
+
+				cts.Dispose();
 			}
 		});
 	}
@@ -1235,6 +1287,7 @@ public sealed class HostController : IDisposable
 		SignInOutcome.Expired or SignInOutcome.TimedOut => "Your sign-in code expired. Connect again to retry.",
 		SignInOutcome.Denied => "Sign-in was declined on GitHub.",
 		SignInOutcome.Unreachable => "Couldn't reach GitHub. Check your connection and try again.",
+		SignInOutcome.StorageFailed => "Signed in to GitHub, but couldn't save it on this device. Try again.",
 		_ => "Couldn't sign in to GitHub. Please try again.",
 	};
 
@@ -1392,7 +1445,7 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		if (!_versioning.IsVersioned(repoRoot))
+		if (!IsRepoVersioned(repoRoot))
 		{
 			SendError("This folder isn't set up for versioning yet.");
 			return;
