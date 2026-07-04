@@ -37,6 +37,8 @@
       <!-- Account affordance (PoC-5): "Connect to GitHub" / "Sign out @handle". Hidden until the host
            reports sign-in is configured (github.account with available=true). -->
       <button id="github-btn" type="button" hidden>Connect to GitHub</button>
+      <!-- Browse your open reviews (PoC-5). Shown once a GitHub account is connected. -->
+      <button id="reviews-btn" type="button" hidden>My reviews</button>
       <span id="status" aria-live="polite">(no document)</span>
     </div>
     <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
@@ -77,6 +79,21 @@
       <button id="github-open-btn" type="button">Open GitHub</button>
       <span id="github-signin-status" aria-live="polite"></span>
       <button id="github-cancel-btn" type="button">Cancel</button>
+    </div>
+    <!-- Your open reviews (PoC-5), revealed by "My reviews": the PRs you authored or were asked to review,
+         each opening on GitHub, plus a field to open any review by pasting its link. Plain words only. -->
+    <div id="reviews-panel" hidden>
+      <div id="reviews-panel-head">
+        <span id="reviews-panel-title">Your open reviews</span>
+        <button id="reviews-close" type="button">Close</button>
+      </div>
+      <div id="reviews-open-by-url">
+        <label for="reviews-url-input">Open a review by link</label>
+        <input id="reviews-url-input" type="text" autocomplete="off" placeholder="Paste a review link" />
+        <button id="reviews-url-open" type="button">Open</button>
+      </div>
+      <ul id="reviews-list" aria-live="polite"></ul>
+      <span id="reviews-status" aria-live="polite"></span>
     </div>
     <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
          ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->

@@ -184,10 +184,10 @@ not clear someone else's block), whereas an **approval is of the versions that w
 and updating with new versions returns the status to **In review** so the author never treats unseen
 content as approved. If the pull request is **merged or closed** on GitHub out of band, SpecDesk does not
 silently change the document's state from a background read (which could strand in-progress edits) — it
-keeps the last-known status and stops polling; turning a merged review into Published is the deliberate
-Publish step. The status refreshes while under review — polled and whenever the window regains focus (the
-"check GitHub, come back" rhythm); reading it is best-effort, so a network hiccup just leaves the
-last-known status in place.
+just leaves the last-known status; turning a merged review into Published is the deliberate Publish step.
+The status refreshes while under review — polled (only while the window is focused) and whenever the window
+regains focus (the "check GitHub, come back" rhythm); reading it is best-effort, so a network hiccup just
+leaves the last-known status in place.
 
 ### 7. Publish
 

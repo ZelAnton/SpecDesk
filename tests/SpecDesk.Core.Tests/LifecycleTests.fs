@@ -25,8 +25,11 @@ let ``sending a draft for review opens review`` () =
     Assert.That(next Draft SendForReview, Is.EqualTo(ok InReview))
 
 [<Test>]
-let ``a reviewer requesting changes moves to changes-requested`` () =
-    Assert.That(next InReview RequestChanges, Is.EqualTo(ok ChangesRequested))
+let ``a reviewer's verdict is not a Command — GitHub drives those states, so it can't be stepped`` () =
+    // The host writes ChangesRequested / Approved onto the state from a GitHub status refresh; there is no
+    // author Command for a reviewer verdict, so requesting one is rejected like any illegal transition.
+    Assert.That(tryStep "inReview" "requestChanges", Is.EqualTo "")
+    Assert.That(tryStep "inReview" "approve", Is.EqualTo "")
 
 [<Test>]
 let ``saving a version while under review is a local commit that never changes the review state`` () =
@@ -50,8 +53,7 @@ let ``updating a review is only legal once a review is open`` () =
     Assert.That(Result.isError (next Draft UpdateReview))
 
 [<Test>]
-let ``approval then publish returns to published`` () =
-    Assert.That(next InReview Approve, Is.EqualTo(ok Approved))
+let ``publishing an approved review returns to published`` () =
     Assert.That(next Approved Publish, Is.EqualTo(ok Published))
 
 [<Test>]

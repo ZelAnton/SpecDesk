@@ -394,6 +394,130 @@ button {
   color: var(--text-muted);
 }
 
+/* The "My reviews" browse panel (PoC-5) — info tint like the other GitHub steps, but a column: a header
+   row, an open-by-link row, and a scrollable list of reviews. */
+#reviews-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--info-border);
+  background: var(--info-bg);
+  font-size: 0.85rem;
+}
+
+#reviews-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#reviews-panel-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+#reviews-open-by-url {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+#reviews-url-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+}
+
+/* The panel's buttons reuse the shared secondary/primary button rules (§7, grouped selectors) — the
+   open-by-link button is joined to the primary-accent group, the rest stay secondary — so a future tweak
+   to those shared styles carries the panel with it. Only the review rows below are panel-specific. */
+#reviews-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 40vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.review-row {
+  margin: 0;
+}
+
+/* Each review is one full-width ghost button: title, repo·role meta, and a state pill. Scoped under the
+   panel id so it out-specifies the shared `#reviews-panel button` secondary rule (id + type) — a bare
+   `.review-open` (one class) would lose the boxed/opaque secondary look at rest and on hover. */
+#reviews-panel .review-open {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  width: 100%;
+  height: auto;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+#reviews-panel .review-open:hover {
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.review-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.review-meta {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The state pill mirrors the status dot's per-state colour family (design concept §8); the word always
+   carries the meaning, never colour alone (§11). */
+.review-state {
+  padding: 0.05rem 0.4rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.review-state[data-state="inReview"] {
+  color: var(--info-fg);
+  border-color: var(--info-border);
+}
+
+.review-state[data-state="changesRequested"] {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+}
+
+.review-state[data-state="approved"] {
+  color: var(--ok-fg);
+  border-color: var(--ok-border);
+}
+
+#reviews-status {
+  color: var(--text-muted);
+}
+
 /* The "Show changes" empty-result notice — calm and neutral (informational, not an error). A plain
    block bar, so (unlike the display:flex prompt bars above) the `hidden` attribute alone removes it. */
 #review-empty-bar {
@@ -432,7 +556,8 @@ button {
 #branch-name-bar button,
 #version-note-bar button,
 #pr-text-bar button,
-#github-signin-bar button {
+#github-signin-bar button,
+#reviews-panel button {
   height: 28px;
   padding: 0 0.7rem;
   font: inherit;
@@ -449,7 +574,8 @@ button {
 #branch-name-bar #branch-name-confirm,
 #version-note-bar #version-note-confirm,
 #pr-text-bar #pr-text-confirm,
-#github-signin-bar #github-open-btn {
+#github-signin-bar #github-open-btn,
+#reviews-panel #reviews-url-open {
   color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
@@ -458,7 +584,8 @@ button {
 #branch-name-bar #branch-name-confirm:hover,
 #version-note-bar #version-note-confirm:hover,
 #pr-text-bar #pr-text-confirm:hover,
-#github-signin-bar #github-open-btn:hover {
+#github-signin-bar #github-open-btn:hover,
+#reviews-panel #reviews-url-open:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }

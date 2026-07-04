@@ -129,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saved since the last update it says so and pushes nothing, so an accidental click can't churn the review.
   Like *Send for review* it needs a connected account and a GitHub remote, reports any problem in plain
   words, and never stores or logs the access token. (The button shows only while a review is open.)
+- PoC-5 — browse your reviews: once a GitHub account is connected, a **My reviews** button lists the open
+  pull requests you authored or were asked to review (most recently updated first), each with its repo, your
+  role, and its live status — click one to open it on GitHub. You can also open any review by pasting its
+  link. Plain words throughout: a pull request is a "review". Loading is best-effort and reports a plain
+  reason if it can't reach GitHub.
 - PoC-5 — the review status now reflects GitHub: while a document is under review, the status shows the
   live decision — **In review**, **Changes requested**, or **Approved** — read from GitHub. It refreshes
   automatically while you're on the window (polled, and when you return to it — the usual "check the review

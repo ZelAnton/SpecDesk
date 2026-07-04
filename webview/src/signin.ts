@@ -1,3 +1,4 @@
+import { setHidden, setText } from "./dom.js";
 import type { GitHubAccountPayload, GitHubCodePayload } from "./protocol.js";
 
 /** The host actions the account affordance triggers (each maps to one IPC message). */
@@ -10,18 +11,6 @@ export interface SignInDeps {
   signOut: () => void;
   /** Open the GitHub authorization page in the OS browser. */
   openUrl: (url: string) => void;
-}
-
-function setText(element: HTMLElement | null, text: string): void {
-  if (element) {
-    element.textContent = text;
-  }
-}
-
-function setHidden(element: HTMLElement | null, hidden: boolean): void {
-  if (element) {
-    element.hidden = hidden;
-  }
 }
 
 /** Prefix a bare GitHub handle with `@` for display (idempotent). */

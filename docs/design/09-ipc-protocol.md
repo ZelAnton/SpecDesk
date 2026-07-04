@@ -40,7 +40,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
 | `comment.resolve` | `{ id }` | resolve a thread |
-| `pr.list` | `{}` | request PRs (author / reviewer) |
+| `pr.list.request` | `{}` | request the user's open reviews (author / reviewer); host replies with `pr.list`, correlated by `id` |
 | `pr.forFile` | `{ path }` | request the open PRs touching a given file (comparison) |
 | `pr.open` | `{ refOrUrl }` | open a PR by selection or URL |
 | `diff.request` | `{}` (editor `version` on the envelope) | diff the working copy against its last saved version — replies with structured blocks via `diff.result` (the live "show changes" overlay) |
@@ -60,7 +60,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
 | `version.note.suggested` | `{ note }` | editable generated version note (the commit message in plain words) |
 | `pr.suggested` | `{ title, body }` | editable generated PR text |
-| `pr.list` | `{ items }` | PRs where the user is author/reviewer |
+| `pr.list` | `{ items, error? }` | the user's open reviews (`items[]`: `{ number, title, url, repo, role, status, label }`; `label` is the host-authoritative status text) — reply to `pr.list.request`; `error` (plain reason) means the list couldn't be loaded |
 | `pr.forFile` | `{ path, items }` | open PRs touching the given file |
 | `comments.synced` | `{ list }` | current comment set for the doc |
 | `image.inserted` | `{ markdown, cursorHint }` | link to insert at the cursor |
@@ -80,7 +80,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
   latest local edit.
 - **Correlation:** replies correlate to their request in one of two ways. One-shot RPCs set `id`
   and the reply echoes it (`branch.name.request` / `version.note.request` / `pr.suggested.request`
-  → `*.suggested`, `image.paste` → `image.inserted`). Live-recompute requests instead correlate by `version`
+  → `*.suggested`, `pr.list.request` → `pr.list`, `image.paste` → `image.inserted`). Live-recompute requests instead correlate by `version`
   (`editor.changed` → `preview.html`,
   `diff.request` → `diff.result`): a newer edit supersedes any in-flight result. Unsolicited
   events (status, toast, chat.delta) carry neither.

@@ -17,6 +17,7 @@ import {
   parseGitHubCode,
   parseImageInserted,
   parsePreview,
+  parsePrList,
   parsePrSuggested,
   parseStatus,
   parseVersionNoteSuggested,
@@ -76,6 +77,20 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.title).toBe("Clarify the refund window");
     expect(payload?.body).toContain("billing.md");
     expect(payload?.blocked).toBeUndefined();
+  });
+
+  it("pr.list (author + reviewer items; error absent)", () => {
+    const payload = parsePrList(fixture["pr.list"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.error).toBeUndefined();
+    expect(payload?.items).toHaveLength(2);
+    expect(payload?.items[0]).toMatchObject({
+      number: 42,
+      repo: "octo/spec-repo",
+      role: "author",
+      status: "changesRequested",
+    });
+    expect(payload?.items[1]).toMatchObject({ role: "reviewer", status: "inReview" });
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {

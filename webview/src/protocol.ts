@@ -19,6 +19,7 @@ export const Kinds = {
   branchNameRequest: "branch.name.request",
   versionNoteRequest: "version.note.request",
   prSuggestedRequest: "pr.suggested.request",
+  prListRequest: "pr.list.request",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -34,6 +35,7 @@ export const Kinds = {
   branchNameSuggested: "branch.name.suggested",
   versionNoteSuggested: "version.note.suggested",
   prSuggested: "pr.suggested",
+  prList: "pr.list",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -103,6 +105,23 @@ export const STATUS_STATES = [
 
 /** Document lifecycle state name (mirror of F# Lifecycle.stateName). */
 export type StatusState = (typeof STATUS_STATES)[number];
+
+/** The states in which a review is open on GitHub — the single runtime source for review-scoped
+ *  behaviour (Update-review visibility, status polling, a review item's status). Subset of STATUS_STATES. */
+export const REVIEW_STATES = [
+  "inReview",
+  "changesRequested",
+  "approved",
+] as const satisfies StatusState[];
+
+/** A review-open state name (a strict subset of {@link StatusState}). */
+export type ReviewStatusState = (typeof REVIEW_STATES)[number];
+
+/** Whether a value is a review-open state — the single membership check for review-scoped behaviour
+ *  (Update-review visibility, status polling, decoding a review item's status). */
+export function isReviewState(state: unknown): state is ReviewStatusState {
+  return typeof state === "string" && REVIEW_STATES.some((review) => review === state);
+}
 
 /** One rendered top-level block's 0-based, inclusive source line range. */
 export interface LineSpan {
@@ -184,6 +203,30 @@ export interface PrSuggestedPayload {
   title: string;
   body: string;
   blocked?: string;
+}
+
+/** One open review in the author's review list (native→webview, inside {@link PrListPayload}). `role` is
+ *  `author` (they opened it) or `reviewer` (they were asked to review); `status` is the wire review-state
+ *  name (`inReview` / `changesRequested` / `approved`). */
+export interface PrListItemPayload {
+  number: number;
+  title: string;
+  url: string;
+  /** `owner/name`. */
+  repo: string;
+  role: "author" | "reviewer";
+  /** Wire review-state name, for styling the state pill. */
+  status: ReviewStatusState;
+  /** Author-facing label for the status — host-authoritative (same source as the status bar). */
+  label: string;
+}
+
+/** Payload of `pr.list` (native→webview, correlated to `pr.list.request` by id): the open PRs the user is
+ *  involved in, most recently updated first. `error` is a plain reason the list couldn't be loaded (not
+ *  connected / transport failure) — present means `items` is empty and the panel shows the reason. */
+export interface PrListPayload {
+  items: PrListItemPayload[];
+  error?: string;
 }
 
 /** Payload of `status` (native→webview): the lifecycle state surfaced to the author. */

@@ -704,48 +704,24 @@ public sealed class HostControllerReviewTests
     }
 
     [Test]
-    public void RefreshReviewStatus_keeps_the_status_and_pauses_polling_once_a_seen_open_pr_is_gone()
+    public void RefreshReviewStatus_leaves_the_status_unchanged_when_the_pr_is_gone_and_keeps_recovering()
     {
         FakeVersioning versioning = new();
         FakeGitHubReview review = new();
         using HostController controller = BuildInReview(versioning, review);
 
-        // A first refresh confirms the PR is open.
-        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 1, PullRequestState.Open);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
-        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True);
-
-        // The PR is then merged on GitHub. SpecDesk must NOT force the doc to Published from a background read
-        // (that could strand uncommitted edits); it keeps the last-known status and stops querying the dead
-        // PR — merging is a deliberate step (the Publish flow).
+        // The PR reads merged. SpecDesk must NOT force the doc to Published from a background read (that
+        // could strand uncommitted edits) — it leaves the last-known status. It does NOT latch a permanent
+        // pause either: a later open read (e.g. a reopened PR) still recovers the live status.
         review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 1, PullRequestState.Merged);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
-        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 2), Is.True);
+        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True);
         Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
 
-        // Further refreshes are no-ops — no more GitHub queries for the dead PR.
+        // The PR is open again and approved — the next refresh still queries and picks it up (no freeze).
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 1, PullRequestState.Open);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
-        Thread.Sleep(50);
-        Assert.That(review.GetReviewStatusCalls, Is.EqualTo(2));
-    }
-
-    [Test]
-    public void RefreshReviewStatus_does_not_freeze_on_a_stale_closed_pr_read_before_the_review_is_open()
-    {
-        FakeVersioning versioning = new();
-        FakeGitHubReview review = new();
-        using HostController controller = BuildInReview(versioning, review);
-
-        // Right after Send, on a reused branch name, GitHub can lag and return the branch's PRIOR closed PR
-        // before it indexes the just-opened one. That stale read must NOT pause the live review.
-        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 9, PullRequestState.Closed);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
-        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True);
-
-        // Once GitHub indexes the real, open PR, a later refresh still picks up the decision (not frozen).
-        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 10, PullRequestState.Open);
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
-        Assert.That(WaitForStatusState("approved"), Is.True, "a stale pre-open read must not freeze the review");
+        Assert.That(WaitForStatusState("approved"), Is.True, "a gone read must not permanently freeze the review");
     }
 
     [Test]
@@ -775,6 +751,80 @@ public sealed class HostControllerReviewTests
 
         Thread.Sleep(50);
         Assert.That(review.GetReviewStatusCalls, Is.EqualTo(0));
+    }
+
+    [Test]
+    public void ListReviews_replies_with_the_users_open_reviews_mapped_to_plain_terms()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new()
+        {
+            ReviewsValue =
+            [
+                new ReviewSummary(
+                    42, "Clarify refunds", "https://github.com/o/r/pull/42", "o/r",
+                    ReviewRole.Author, ReviewDecision.ChangesRequested),
+            ],
+        };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrListRequest, id: "r"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+        Assert.That(reply, Is.Not.Null);
+        PrListPayload? payload = reply!.GetPayload<PrListPayload>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.Id, Is.EqualTo("r"));
+            Assert.That(payload!.Error, Is.Null);
+            Assert.That(payload!.Items, Has.Count.EqualTo(1));
+            Assert.That(payload!.Items[0].Role, Is.EqualTo("author"));
+            Assert.That(payload!.Items[0].Status, Is.EqualTo("changesRequested"));
+            Assert.That(payload!.Items[0].Label, Is.EqualTo("Changes requested"));
+            Assert.That(payload!.Items[0].Repo, Is.EqualTo("o/r"));
+        });
+    }
+
+    [Test]
+    public void ListReviews_when_signed_out_replies_with_a_reason_and_no_items()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: false), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrListRequest, id: "r"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+        PrListPayload? payload = reply?.GetPayload<PrListPayload>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Error, Does.Contain("Connect"));
+            Assert.That(payload!.Items, Is.Empty);
+        });
+    }
+
+    [Test]
+    public void ListReviews_on_a_failure_replies_with_a_plain_reason()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowOnListReviews = true };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrListRequest, id: "r"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+        PrListPayload? payload = reply?.GetPayload<PrListPayload>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Error, Does.Contain("Couldn't load"));
+            Assert.That(payload!.Items, Is.Empty);
+        });
     }
 
     private bool WaitForStatusState(string state) => WaitUntil(() => LatestStatus()?.State == state);

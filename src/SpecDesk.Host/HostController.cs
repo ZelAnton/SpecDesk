@@ -54,6 +54,11 @@ public sealed class HostController : IDisposable
 	// separate from the publish round-trip: the client bounds the HTTP call at 30s, this bounds the whole task.
 	private static readonly TimeSpan ReviewStatusTimeout = TimeSpan.FromSeconds(35);
 
+	// Upper bound on the "My reviews" list read. Deliberately BELOW the webview's ipc.request timeout (30s):
+	// the reply is correlated, so the host must answer before the waiter gives up, or a slow-but-successful
+	// load surfaces as a failure and the real reply is dropped against an abandoned request id.
+	private static readonly TimeSpan PrListTimeout = TimeSpan.FromSeconds(20);
+
 	// Upper bound on an incoming wire frame (UTF-16 chars). The webview is untrusted, so a single
 	// malformed/hostile frame must not be able to exhaust memory. Generous: a large spec plus a
 	// base64 image paste fit well under this.
@@ -115,20 +120,6 @@ public sealed class HostController : IDisposable
 	// may have started before the change the new request wants to see (e.g. a slow poll vs. a focus after a
 	// reviewer acted), so instead of dropping it we run exactly one more refresh when the current one ends.
 	private bool _refreshPending;
-
-	// Set once a refresh finds the branch's pull request is no longer open (merged / closed on GitHub). It
-	// short-circuits further refreshes so the poll stops querying GitHub for a dead PR. The document keeps
-	// its last-known review status — SpecDesk does NOT force a lifecycle change from a background read, which
-	// could strand uncommitted edits or swap in destructive chrome; merging/abandoning is a deliberate step
-	// (the Publish flow, PoC-10). Reset (guarded by _sync) whenever a new draft context begins.
-	private bool _reviewGone;
-
-	// True once a refresh has confirmed THIS review's pull request is open. It gates the _reviewGone latch:
-	// a refresh right after Send can, on a reused branch name, still read a prior cycle's closed PR before
-	// GitHub has indexed the new one (replication lag) — without this gate that stale read would freeze a
-	// live review. So merged/closed only pauses refresh once we've actually seen the PR open. Reset with
-	// _reviewGone whenever a new draft context begins.
-	private bool _reviewSeenOpen;
 
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
@@ -262,6 +253,9 @@ public sealed class HostController : IDisposable
 				break;
 			case MessageKinds.ReviewRefresh:
 				OnRefreshReviewStatus();
+				break;
+			case MessageKinds.PrListRequest:
+				OnListReviews(message);
 				break;
 			case MessageKinds.BranchNameRequest:
 				OnSuggestBranchName(message);
@@ -495,8 +489,6 @@ public sealed class HostController : IDisposable
 				// A fresh draft has saved nothing and shared nothing yet.
 				_versionsSaved = 0;
 				_versionsShared = 0;
-				_reviewGone = false;
-				_reviewSeenOpen = false;
 			}
 
 			_logger.LogInformation(
@@ -866,13 +858,12 @@ public sealed class HostController : IDisposable
 	// pull request. The PR tracks the head branch, so pushing is all it takes — no second PR is opened. The
 	// lifecycle settles the state on the push: from Approved back to In review (new versions need
 	// re-approval), a self-transition from In review / Changes requested (a change request stands until the
-	// reviewer re-reviews). On success afterPublish only shows a transient "Review updated" acknowledgement —
-	// it does NOT read GitHub right away, because just after a push GitHub's GraphQL can still return the
-	// pre-push head (replication lag) and re-stamp a stale decision; the periodic poll / next window focus
-	// pick up the settled decision once replication catches up. Needs the GitHub feature wired, a connected
-	// account, and a GitHub remote; the token is taken transiently (WithAccessTokenAsync) for the push and
-	// never stored or logged. Shares OnSendForReview's single-flight + off-thread scaffold (RunReviewPublish),
-	// minus the PR-open step, plus a "nothing new to share" guard.
+	// reviewer re-reviews). The push does NOT read GitHub right away — just after a push its GraphQL can still
+	// return the pre-push head (replication lag) and re-stamp a stale decision; the periodic poll / next
+	// window focus pick up the settled decision once replication catches up. Needs the GitHub feature wired, a
+	// connected account, and a GitHub remote; the token is taken transiently (WithAccessTokenAsync) for the
+	// push and never stored or logged. Shares OnSendForReview's single-flight + off-thread scaffold
+	// (RunReviewPublish), minus the PR-open step, plus a "nothing new to share" guard.
 	private void OnUpdateReview()
 	{
 		// Gate the transition AND claim the shared single-flight slot atomically under _sync (see
@@ -966,16 +957,7 @@ public sealed class HostController : IDisposable
 						return Task.FromResult(true);
 					},
 					ct);
-			},
-			afterPublish: () =>
-			{
-				// Acknowledge the push. The lifecycle already settled the state correctly (Approved -> In
-				// review so unreviewed content can not be published; a change request stands). We do NOT
-				// refresh from GitHub here: right after a push its GraphQL can still return the pre-push
-				// head commit (replication lag), which would momentarily re-stamp the stale Approved and
-				// undo that guard. The poll (and the next window focus) pick up the settled decision later.
-				SendTransientStatus("Review updated - the reviewer will see your changes");
-			});
+				});
 	}
 
 	// "Refresh review status": while a document is under review, read GitHub's current review decision for
@@ -995,8 +977,8 @@ public sealed class HostController : IDisposable
 			branch = _branch;
 			// Nothing to refresh unless under review with the feature wired (there's an open PR to check), or
 			// while a send/update is publishing — that flow authoritatively sets the state, so a concurrent
-			// read could clobber it (and afterPublish will refresh once it's done).
-			if (!IsReviewState(fromState) || _publishInFlight || _reviewGone || _auth is null
+			// read could clobber it (just after a push its GraphQL can lag; the poll / next focus pick it up).
+			if (!IsReviewState(fromState) || _publishInFlight || _auth is null
 				|| _publishing is null || _review is null || repoRoot is null || branch is null)
 			{
 				return;
@@ -1041,26 +1023,12 @@ public sealed class HostController : IDisposable
 					// from this background read: flipping to Published (read-only) could strand uncommitted
 					// edits, and flipping to Draft would swap in the destructive Discard chrome — both without
 					// the author asking. Merging / abandoning is a deliberate step (the Publish flow, PoC-10).
-					// Just stop polling this dead PR; the last-known status stands. But only once we've actually
-					// seen THIS review's PR open — otherwise a lag-stale read of a reused branch's prior closed
-					// PR (right after Send, before GitHub indexes the new one) would freeze a live review.
-					bool paused = false;
-					lock (_sync)
-					{
-						if (_branch == branchName && _reviewSeenOpen)
-						{
-							_reviewGone = true;
-							paused = true;
-						}
-					}
-
-					if (paused)
-					{
-						_logger.LogInformation(
-							"Pull request #{Number} for {Branch} is {State} on GitHub — pausing status refresh",
-							status.Number, branchName, status.PrState);
-					}
-
+					// Leave the last-known status; the refresh is a no-op. (If the review is done the poll keeps
+					// reading it merged until the author moves on — a small, self-correcting cost that avoids the
+					// stale-freeze / never-recover bugs a host-side "stop polling" latch kept introducing.)
+					_logger.LogDebug(
+						"Pull request #{Number} for {Branch} is {State} on GitHub — leaving the last-known status",
+						status.Number, branchName, status.PrState);
 					return;
 				}
 
@@ -1071,28 +1039,17 @@ public sealed class HostController : IDisposable
 				// just-pushed content. It self-heals on the next refresh once GitHub indexes the push (the head
 				// no longer matches the approval's commit → In review). Publish (PoC-10) must do its own
 				// head-level freshness check before merging rather than trusting this transient status.
-				string mapped = status.Decision switch
-				{
-					ReviewDecision.Approved => Lifecycle.stateName(Lifecycle.State.Approved),
-					ReviewDecision.ChangesRequested => Lifecycle.stateName(Lifecycle.State.ChangesRequested),
-					_ => Lifecycle.stateName(Lifecycle.State.InReview),
-				};
+				string mapped = DecisionStateName(status.Decision);
 
 				bool changed = false;
 				lock (_sync)
 				{
-					if (_branch == branchName)
+					// Apply the decision only if the document is still the same review draft that we queried
+					// for, no publish started meanwhile (its committed state wins), and the decision moved.
+					if (_branch == branchName && !_publishInFlight && IsReviewState(_state) && _state != mapped)
 					{
-						// The PR is confirmed open — arm the merged/closed latch for future reads.
-						_reviewSeenOpen = true;
-
-						// Apply the decision only if the document is still the same review draft, no publish
-						// started meanwhile (its committed state wins), and the decision actually moved.
-						if (!_publishInFlight && IsReviewState(_state) && _state != mapped)
-						{
-							_state = mapped;
-							changed = true;
-						}
+						_state = mapped;
+						changed = true;
 					}
 				}
 
@@ -1129,6 +1086,72 @@ public sealed class HostController : IDisposable
 		});
 	}
 
+	// Reply to the webview's request for the author's open reviews (the browse list). A best-effort network
+	// read on a background thread, correlated to the request by id. The token is taken transiently and never
+	// stored or logged; a failure returns a plain reason with an empty list rather than leaving the request
+	// unanswered. No git vocabulary reaches the author.
+	private void OnListReviews(IpcMessage message)
+	{
+		const string connectFirst = "Connect a GitHub account to see your reviews.";
+		string? id = message.Id;
+		IGitHubAuth? auth = _auth;
+		IGitHubReview? review = _review;
+		if (auth is null || review is null)
+		{
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
+			return;
+		}
+
+		_ = Task.Run(async () =>
+		{
+			using CancellationTokenSource timeout = new();
+			// Bounded below the webview's ipc.request timeout (30s) so the host always replies before the
+			// waiter gives up — otherwise a slow-but-successful load would surface as a failure and the real
+			// reply would be dropped against an already-abandoned request id.
+			timeout.CancelAfter(PrListTimeout);
+			PrListPayload payload;
+			try
+			{
+				if (!auth.IsSignedIn())
+				{
+					payload = new PrListPayload([], connectFirst);
+				}
+				else
+				{
+					IReadOnlyList<ReviewSummary> reviews = await auth.WithAccessTokenAsync(
+						(token, ct) => review.ListReviewsAsync(token, ct), timeout.Token);
+					payload = new PrListPayload([.. reviews.Select(ToListItem)], null);
+				}
+			}
+			catch (Exception ex)
+			{
+				// Best-effort browse: a failure (HttpRequestException / a request timeout) is reported plainly,
+				// never as a token or a stack trace, so the panel shows a reason instead of hanging.
+				_logger.LogWarning(ex, "Could not list the user's reviews");
+				payload = new PrListPayload([], "Couldn't load your reviews. Check your connection and try again.");
+			}
+
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
+		});
+	}
+
+	// One review-list row: the wire status name for styling and its author-facing label (Lifecycle.labelOf,
+	// the same source as the status bar) so the panel never re-implements the state vocabulary.
+	private static PrListItemPayload ToListItem(ReviewSummary summary)
+	{
+		string state = DecisionStateName(summary.Decision);
+		return new PrListItemPayload(
+			summary.Number, summary.Title, summary.Url, summary.Repo,
+			summary.Role == ReviewRole.Author ? "author" : "reviewer", state, Lifecycle.labelOf(state));
+	}
+
+	private static string DecisionStateName(ReviewDecision decision) => decision switch
+	{
+		ReviewDecision.Approved => Lifecycle.stateName(Lifecycle.State.Approved),
+		ReviewDecision.ChangesRequested => Lifecycle.stateName(Lifecycle.State.ChangesRequested),
+		_ => Lifecycle.stateName(Lifecycle.State.InReview),
+	};
+
 	// Whether a wire state name is one of the under-review states (an open PR exists to query / update).
 	// Derived from Lifecycle.stateName so a rename of a review state's wire name can't silently desync.
 	private static bool IsReviewState(string state) =>
@@ -1149,8 +1172,7 @@ public sealed class HostController : IDisposable
 		long seq,
 		string action,
 		string errorMessage,
-		Func<CancellationToken, Task<bool>> publish,
-		Action? afterPublish = null)
+		Func<CancellationToken, Task<bool>> publish)
 	{
 		_ = Task.Run(async () =>
 		{
@@ -1159,7 +1181,6 @@ public sealed class HostController : IDisposable
 			// only by the OS socket timeout (see PushBranch).
 			using CancellationTokenSource timeout = new();
 			timeout.CancelAfter(SendForReviewTimeout);
-			bool published = false;
 			try
 			{
 				if (!await publish(timeout.Token))
@@ -1167,8 +1188,7 @@ public sealed class HostController : IDisposable
 					return;
 				}
 
-				bool advanced = TryAdvanceReview(fromState, branchName, next, seq);
-				if (advanced)
+				if (TryAdvanceReview(fromState, branchName, next, seq))
 				{
 					_logger.LogInformation("{Action}: {Branch}", action, branchName);
 				}
@@ -1181,10 +1201,12 @@ public sealed class HostController : IDisposable
 						"{Action} completed, but the document moved on — not advancing: {Branch}", action, branchName);
 				}
 
+				// Settle on the lifecycle label — the terminal status frame, so the author is never left
+				// staring at the transient "Updating…/Sending…" message. For Update review (a self-transition)
+				// the "Updating the review…" transient clearing to the settled state is the confirmation, and
+				// a no-op instead shows the distinct "No new versions…" line. GitHub's own decision (if it
+				// changed) is picked up by the periodic poll / next window focus.
 				SendLifecycleStatus();
-				// afterPublish only when this document is still the one that was pushed — otherwise it would
-				// stamp a status/refresh onto whatever the author switched to.
-				published = advanced;
 			}
 			catch (Exception ex)
 			{
@@ -1197,13 +1219,6 @@ public sealed class HostController : IDisposable
 			finally
 			{
 				ClearPublishInFlight();
-			}
-
-			// Runs after the single-flight claim is released (so a follow-up status refresh isn't blocked by
-			// it), only on a genuine push. Used by Update review to sync the status from GitHub post-push.
-			if (published)
-			{
-				afterPublish?.Invoke();
 			}
 		});
 	}
@@ -1668,8 +1683,6 @@ public sealed class HostController : IDisposable
 			// A newly loaded document carries no draft, so no saved / shared versions either.
 			_versionsSaved = 0;
 			_versionsShared = 0;
-			_reviewGone = false;
-			_reviewSeenOpen = false;
 			// Publish the document fields as one matched set under the lock, so a still-running autosave
 			// timer can never snapshot a torn (new path, old text) pair and write across documents.
 			_text = text;

@@ -33,6 +33,20 @@ public enum PullRequestState
 /// <see cref="Number"/>.</summary>
 public sealed record ReviewStatus(ReviewDecision Decision, int Number, PullRequestState PrState);
 
+/// <summary>The signed-in user's relationship to a review: they <see cref="Author"/>ed it, or they were
+/// asked to <see cref="Reviewer"/> it.</summary>
+public enum ReviewRole
+{
+    Author,
+    Reviewer,
+}
+
+/// <summary>One open pull request in the user's review list: its <see cref="Number"/>, <see cref="Title"/>,
+/// web <see cref="Url"/>, <see cref="Repo"/> (<c>owner/name</c>), the user's <see cref="Role"/>, and its
+/// current review <see cref="Decision"/>.</summary>
+public sealed record ReviewSummary(
+    int Number, string Title, string Url, string Repo, ReviewRole Role, ReviewDecision Decision);
+
 /// <summary>
 /// The GitHub review operations behind the "Send for review" flow. The access token is passed in (the host
 /// gets it transiently via <see cref="IGitHubAuth.WithAccessTokenAsync{T}"/>) and used only as the Bearer
@@ -84,6 +98,14 @@ public interface IGitHubReview
         string repo,
         string branch,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The open pull requests the signed-in user is involved in — as author or requested reviewer —
+    /// most recently updated first, across all their repositories. Empty when there are none. Throws on a
+    /// transport / API failure (the host surfaces a plain "couldn't load your reviews"). A browse affordance,
+    /// so the per-item decision is GitHub's own <c>reviewDecision</c> (best-effort; the authoritative status
+    /// for the open document is <see cref="GetReviewStatusAsync"/>).</summary>
+    Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
+        string accessToken, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -202,16 +224,13 @@ public sealed class GitHubReviewClient : IGitHubReview
         return count;
     }
 
-    // The GraphQL query for a branch's open PR and each reviewer's latest OPINIONATED review. We aggregate
-    // these ourselves rather than reading GitHub's `reviewDecision`, because reviewDecision is null unless
-    // the repo/branch has a required-reviews protection rule — so on an ordinary repo (no branch protection)
-    // an approval or change request would never surface. `latestOpinionatedReviews` excludes COMMENTED and
-    // PENDING, so a reviewer who approves and then comments still reads as their standing decision (APPROVED)
-    // rather than the comment clobbering it.
     // The recent PRs for the branch (newest first — we prefer an open one, see below), each with its
-    // open/merged/closed state, head commit, and each reviewer's latest opinionated review with the commit it
-    // targeted. `first:10` covers a branch that has spawned a few PRs across review cycles; `first:100` on the
-    // reviews is far more than any real spec PR carries (no paging fallback beyond either bound).
+    // open/merged/closed state, head commit, and each reviewer's latest OPINIONATED review with the commit it
+    // targeted. We aggregate the reviews ourselves rather than reading GitHub's `reviewDecision`, which is
+    // null unless the repo/branch has a required-reviews rule — so an approval / change request would never
+    // surface on an ordinary repo. `latestOpinionatedReviews` excludes COMMENTED / PENDING, so a reviewer who
+    // approves then comments still reads as APPROVED. `first:10` covers a branch that spawned a few PRs across
+    // cycles; `first:100` on the reviews is far more than any real spec PR (no paging fallback beyond either).
     private const string ReviewStatusQuery =
         "query($owner:String!,$repo:String!,$branch:String!){repository(owner:$owner,name:$repo){"
         + "pullRequests(headRefName:$branch,first:10,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"
@@ -224,30 +243,14 @@ public sealed class GitHubReviewClient : IGitHubReview
         string branch,
         CancellationToken cancellationToken = default)
     {
-        using CancellationTokenSource timeout =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(RequestTimeout);
-
-        using HttpRequestMessage request =
-            NewRequest(HttpMethod.Post, new Uri("https://api.github.com/graphql"), accessToken);
-        string json = JsonSerializer.Serialize(
-            new { query = ReviewStatusQuery, variables = new { owner, repo, branch } });
-        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
-
-        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
-        string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException($"GitHub rejected the review-status query (HTTP {(int)response.StatusCode}).");
-        }
-
-        using JsonDocument document = JsonDocument.Parse(responseBody);
+        using JsonDocument document = await PostGraphQlAsync(
+            accessToken, new { query = ReviewStatusQuery, variables = new { owner, repo, branch } },
+            "review-status", cancellationToken);
         JsonElement root = document.RootElement;
         // A partial GraphQL response carries a top-level `errors` array (a field resolved to null, throttling,
         // an eventual-consistency lag). Its `data` may still look navigable but be incomplete, which would
-        // silently downgrade a real decision — so treat any errors as a fault and leave the last-known status.
-        if (TryProperty(root, "errors", out JsonElement errors)
-            && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+        // silently downgrade a real decision — so treat ANY errors as a fault and leave the last-known status.
+        if (HasGraphQlErrors(root))
         {
             throw new HttpRequestException("GitHub returned errors for the review-status query.");
         }
@@ -281,6 +284,97 @@ public sealed class GitHubReviewClient : IGitHubReview
 
         return new ReviewStatus(AggregateDecision(node), NumberOf(node, "number"), PrStateOf(node));
     }
+
+    // The signed-in user's open PRs as author and, separately, as requested reviewer — two searches so the
+    // user's ROLE comes from which qualifier matched, not a broad `involves:@me` (which also pulls in mere
+    // mentions / assignments). Each carries updatedAt so the merged list can be sorted most-recent-first.
+    private const string ReviewListQuery =
+        "query{authored:search(query:\"is:pr is:open author:@me sort:updated-desc\",type:ISSUE,first:20)"
+        + "{nodes{... on PullRequest{number title url reviewDecision updatedAt repository{nameWithOwner}}}}"
+        + "toReview:search(query:\"is:pr is:open review-requested:@me sort:updated-desc\",type:ISSUE,"
+        + "first:20){nodes{... on PullRequest{number title url reviewDecision updatedAt "
+        + "repository{nameWithOwner}}}}}";
+
+    public async Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
+        string accessToken, CancellationToken cancellationToken = default)
+    {
+        using JsonDocument document =
+            await PostGraphQlAsync(accessToken, new { query = ReviewListQuery }, "reviews", cancellationToken);
+        JsonElement root = document.RootElement;
+
+        // No usable data: distinguish a total failure (200 with errors + data:null — GitHub's shape for a
+        // secondary rate-limit / scope problem) from a genuinely empty result. Throwing the former lets the
+        // host show a load-failure reason instead of the misleading "You have no open reviews." Data present
+        // → be lenient about a PARTIAL `errors` entry (one unresolvable node); render whatever resolved.
+        if (!TryProperty(root, "data", out JsonElement data) || data.ValueKind == JsonValueKind.Null)
+        {
+            return HasGraphQlErrors(root)
+                ? throw new HttpRequestException("GitHub returned errors for the reviews query.")
+                : [];
+        }
+
+        // Data resolved: be lenient about a PARTIAL `errors` entry (e.g. one unresolvable node) — render
+        // whatever resolved rather than blanking the whole list.
+
+        // Collect authored (role = Author) then review-requested (role = Reviewer). A url is seen at most
+        // once — you can't be asked to review your own PR — but dedupe defensively. Sort most-recent-first
+        // across both groups by updatedAt (an ISO-8601 timestamp, so an ordinal string compare is correct).
+        Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl = [];
+        CollectReviews(data, "authored", ReviewRole.Author, byUrl);
+        CollectReviews(data, "toReview", ReviewRole.Reviewer, byUrl);
+
+        return
+        [
+            .. byUrl.Values
+                .OrderByDescending(r => r.UpdatedAt, StringComparer.Ordinal)
+                .Select(r => r.Summary),
+        ];
+    }
+
+    private static void CollectReviews(
+        JsonElement data,
+        string searchAlias,
+        ReviewRole role,
+        Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl)
+    {
+        if (!TryProperty(data, searchAlias, out JsonElement search)
+            || !TryProperty(search, "nodes", out JsonElement nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (JsonElement node in nodes.EnumerateArray())
+        {
+            // A search on ISSUE can include nodes with no PR fields (the inline fragment didn't match);
+            // skip anything without a url so a malformed node can't surface as a blank list row. First
+            // match (authored) wins a url over a later group.
+            string url = StringOf(node, "url");
+            if (url.Length == 0 || byUrl.ContainsKey(url))
+            {
+                continue;
+            }
+
+            string repo = TryProperty(node, "repository", out JsonElement repoNode)
+                ? StringOf(repoNode, "nameWithOwner")
+                : string.Empty;
+
+            byUrl[url] = (
+                new ReviewSummary(
+                    NumberOf(node, "number"), StringOf(node, "title"), url, repo, role,
+                    DecisionOf(StringOf(node, "reviewDecision"))),
+                StringOf(node, "updatedAt"));
+        }
+    }
+
+    // GitHub's own computed decision for the browse list (null / REVIEW_REQUIRED → In review). The open
+    // document's authoritative status still comes from GetReviewStatusAsync's per-review aggregation.
+    private static ReviewDecision DecisionOf(string reviewDecision) => reviewDecision switch
+    {
+        "APPROVED" => ReviewDecision.Approved,
+        "CHANGES_REQUESTED" => ReviewDecision.ChangesRequested,
+        _ => ReviewDecision.InReview,
+    };
 
     private static PullRequestState PrStateOf(JsonElement node) => StringOf(node, "state") switch
     {
@@ -344,6 +438,37 @@ public sealed class GitHubReviewClient : IGitHubReview
         value = default;
         return false;
     }
+
+    private static readonly Uri GraphQlEndpoint = new("https://api.github.com/graphql");
+
+    // POST a GraphQL request under the per-request timeout and return the parsed response document (the
+    // caller owns it — `using`). Shared by the two review reads; each then applies its own errors / data
+    // policy. Throws on a transport / non-2xx failure. <paramref name="what"/> names the query for the error.
+    private async Task<JsonDocument> PostGraphQlAsync(
+        string accessToken, object body, string what, CancellationToken cancellationToken)
+    {
+        using CancellationTokenSource timeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(RequestTimeout);
+
+        using HttpRequestMessage request = NewRequest(HttpMethod.Post, GraphQlEndpoint, accessToken);
+        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"GitHub rejected the {what} query (HTTP {(int)response.StatusCode}).");
+        }
+
+        return JsonDocument.Parse(responseBody);
+    }
+
+    // Whether a GraphQL response carries a non-empty top-level `errors` array (a partial or total failure).
+    private static bool HasGraphQlErrors(JsonElement root) =>
+        TryProperty(root, "errors", out JsonElement errors)
+        && errors.ValueKind == JsonValueKind.Array
+        && errors.GetArrayLength() > 0;
 
     // Build a REST request with the standard GitHub headers (JSON accept, Bearer auth, User-Agent, and a
     // pinned API version so a future rolling-default bump can't silently change the contract).

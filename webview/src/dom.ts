@@ -12,3 +12,17 @@ export function closestElement(target: EventTarget | null, selector: string): HT
   const match = target.closest(selector);
   return match instanceof HTMLElement ? match : null;
 }
+
+/** Show/hide an element; a `null` element (not in the markup) is a no-op, so callers query once. */
+export function setHidden(element: HTMLElement | null, hidden: boolean): void {
+  if (element) {
+    element.hidden = hidden;
+  }
+}
+
+/** Set an element's text; a `null` element (not in the markup) is a no-op. */
+export function setText(element: HTMLElement | null, text: string): void {
+  if (element) {
+    element.textContent = text;
+  }
+}

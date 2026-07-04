@@ -232,6 +232,83 @@ public sealed class GitHubReviewTests
         });
     }
 
+    private static async Task<IReadOnlyList<ReviewSummary>> ListReviews(StubHttpMessageHandler handler)
+    {
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+        return await client.ListReviewsAsync("gho_token");
+    }
+
+    [Test]
+    public async Task ListReviewsAsync_maps_role_from_the_search_and_sorts_most_recent_first()
+    {
+        // Role comes from WHICH search matched (authored → Author, review-requested → Reviewer). The merged
+        // list is sorted by updatedAt descending, so the newer to-review PR precedes the older authored one.
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.OK,
+            """{"data":{"authored":{"nodes":[{"number":42,"title":"Clarify refunds","url":"https://github.com/octo/spec/pull/42","reviewDecision":"CHANGES_REQUESTED","updatedAt":"2026-07-01T00:00:00Z","repository":{"nameWithOwner":"octo/spec"}}]},"toReview":{"nodes":[{"number":7,"title":"Payment terms","url":"https://github.com/octo/other/pull/7","reviewDecision":null,"updatedAt":"2026-07-03T00:00:00Z","repository":{"nameWithOwner":"octo/other"}}]}}}""");
+
+        IReadOnlyList<ReviewSummary> reviews = await ListReviews(handler);
+
+        Assert.That(reviews, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            // The to-review PR (updated 07-03) sorts ahead of the authored one (07-01).
+            Assert.That(reviews[0].Role, Is.EqualTo(ReviewRole.Reviewer));
+            Assert.That(reviews[0].Decision, Is.EqualTo(ReviewDecision.InReview));
+            Assert.That(reviews[1].Role, Is.EqualTo(ReviewRole.Author));
+            Assert.That(reviews[1].Repo, Is.EqualTo("octo/spec"));
+            Assert.That(reviews[1].Decision, Is.EqualTo(ReviewDecision.ChangesRequested));
+            Assert.That(reviews[1].Url, Is.EqualTo("https://github.com/octo/spec/pull/42"));
+        });
+    }
+
+    [Test]
+    public async Task ListReviewsAsync_skips_a_node_with_no_pr_fields()
+    {
+        // A search on ISSUE can include a node the PullRequest fragment didn't match (no url) — skip it.
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.OK,
+            """{"data":{"authored":{"nodes":[{},{"number":7,"title":"T","url":"https://github.com/o/r/pull/7","reviewDecision":"APPROVED","updatedAt":"2026-07-03T00:00:00Z","repository":{"nameWithOwner":"o/r"}}]},"toReview":{"nodes":[]}}}""");
+
+        IReadOnlyList<ReviewSummary> reviews = await ListReviews(handler);
+
+        Assert.That(reviews, Has.Count.EqualTo(1));
+        Assert.That(reviews[0].Decision, Is.EqualTo(ReviewDecision.Approved));
+    }
+
+    [Test]
+    public void ListReviewsAsync_throws_on_a_non_success_status()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.Unauthorized, "{}");
+
+        Assert.ThrowsAsync<HttpRequestException>(() => ListReviews(handler));
+    }
+
+    [Test]
+    public void ListReviewsAsync_throws_on_a_total_graphql_failure()
+    {
+        // 200 with errors and data:null (GitHub's shape for a secondary rate-limit / scope problem) is a
+        // total failure — throwing lets the host show a reason rather than "you have no open reviews".
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.OK, """{"errors":[{"message":"rate limited"}],"data":null}""");
+
+        Assert.ThrowsAsync<HttpRequestException>(() => ListReviews(handler));
+    }
+
+    [Test]
+    public async Task ListReviewsAsync_still_returns_results_on_a_partial_graphql_error()
+    {
+        // errors present but data resolved — render what came back rather than blanking the list.
+        using StubHttpMessageHandler handler = new(
+            HttpStatusCode.OK,
+            """{"errors":[{"message":"one node failed"}],"data":{"authored":{"nodes":[{"number":7,"title":"T","url":"https://github.com/o/r/pull/7","reviewDecision":"APPROVED","updatedAt":"2026-07-03T00:00:00Z","repository":{"nameWithOwner":"o/r"}}]},"toReview":{"nodes":[]}}}""");
+
+        IReadOnlyList<ReviewSummary> reviews = await ListReviews(handler);
+
+        Assert.That(reviews, Has.Count.EqualTo(1));
+    }
+
     private static async Task<int> RequestReviewers(StubHttpMessageHandler handler, params string[] reviewers)
     {
         using HttpClient http = new(handler);

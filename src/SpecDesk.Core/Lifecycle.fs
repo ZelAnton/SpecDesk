@@ -17,19 +17,18 @@ type State =
     | ChangesRequested
     | Approved
 
-/// An author action (or a reviewer event) that may advance the lifecycle. `SaveVersion` is the
-/// explicit commit ("Save a version") — the only thing that creates a commit; plain autosave to
-/// disk is a side effect the host performs and is not modelled here. `UpdateReview` pushes the
-/// newly-saved versions to the open pull request; it re-opens review from `Approved` (new versions
-/// need re-approval) but is a self-transition from `InReview` / `ChangesRequested` (a change request
-/// stands until the reviewer re-reviews). Otherwise the review state follows GitHub's decision — see `next`.
+/// An author action that may advance the lifecycle. `SaveVersion` is the explicit commit ("Save a
+/// version") — the only thing that creates a commit; plain autosave to disk is a side effect the host
+/// performs and is not modelled here. `UpdateReview` pushes the newly-saved versions to the open pull
+/// request; it re-opens review from `Approved` (new versions need re-approval) but is a self-transition
+/// from `InReview` / `ChangesRequested` (a change request stands until the reviewer re-reviews). The
+/// reviewer's verdict (approve / request changes) is a GitHub event, not an author action: the host
+/// reflects it onto the review state directly from a status refresh, so it is not a `Command` here.
 type Command =
     | Edit
     | SaveVersion
     | SendForReview
     | UpdateReview
-    | RequestChanges
-    | Approve
     | Publish
     | Discard
 
@@ -48,13 +47,13 @@ let next (state: State) (command: Command) : Result<State, string> =
     //     versions need re-approval. Done locally (not left to the refresh) so an author can't publish unseen
     //     content if the follow-up GitHub read happens to fail; the refresh agrees (the stale approval no
     //     longer targets the new head commit).
+    // The reviewer's verdict moves between InReview / ChangesRequested / Approved, but that is driven by
+    // GitHub (the host writes the state on a status refresh), not by a Command — so those transitions are
+    // deliberately absent here.
     | InReview, SaveVersion -> Ok InReview
     | InReview, UpdateReview -> Ok InReview
-    | InReview, RequestChanges -> Ok ChangesRequested
-    | InReview, Approve -> Ok Approved
     | ChangesRequested, SaveVersion -> Ok ChangesRequested
     | ChangesRequested, UpdateReview -> Ok ChangesRequested
-    | ChangesRequested, Approve -> Ok Approved
     | Approved, SaveVersion -> Ok Approved
     | Approved, UpdateReview -> Ok InReview
     | Approved, Publish -> Ok Published
@@ -93,8 +92,6 @@ let private parseCommand (name: string) : Command option =
     | "saveVersion" -> Some SaveVersion
     | "sendForReview" -> Some SendForReview
     | "updateReview" -> Some UpdateReview
-    | "requestChanges" -> Some RequestChanges
-    | "approve" -> Some Approve
     | "publish" -> Some Publish
     | "discard" -> Some Discard
     | _ -> None

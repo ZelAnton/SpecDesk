@@ -22,6 +22,7 @@ public static class MessageKinds
 	public const string BranchNameRequest = "branch.name.request";
 	public const string VersionNoteRequest = "version.note.request";
 	public const string PrSuggestedRequest = "pr.suggested.request";
+	public const string PrListRequest = "pr.list.request";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
@@ -38,6 +39,7 @@ public static class MessageKinds
 	public const string BranchNameSuggested = "branch.name.suggested";
 	public const string VersionNoteSuggested = "version.note.suggested";
 	public const string PrSuggested = "pr.suggested";
+	public const string PrList = "pr.list";
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
@@ -111,6 +113,21 @@ public sealed record PrSuggestedPayload(string Title, string Body, string? Block
 /// <summary>Payload of <c>version.note.suggested</c> (native→webview): the generated, editable
 /// version note to prefill the "Save a version" prompt.</summary>
 public sealed record VersionNoteSuggestedPayload(string Note);
+
+/// <summary>One open review in the author's review list (native→webview, inside <see cref="PrListPayload"/>).
+/// <paramref name="Repo"/> is <c>owner/name</c>; <paramref name="Role"/> is <c>author</c> (they opened it) or
+/// <c>reviewer</c> (they were asked to review); <paramref name="Status"/> is the wire review-state name
+/// (<c>inReview</c> / <c>changesRequested</c> / <c>approved</c>) for styling, and <paramref name="Label"/> is
+/// its author-facing text — host-authoritative (from the same source as the status bar), so the panel never
+/// re-implements the vocabulary. No git vocabulary reaches the author.</summary>
+public sealed record PrListItemPayload(
+    int Number, string Title, string Url, string Repo, string Role, string Status, string Label);
+
+/// <summary>Payload of <c>pr.list</c> (native→webview, correlated to <c>pr.list.request</c> by id): the open
+/// pull requests the signed-in user is involved in (as author or requested reviewer), most recently updated
+/// first. <paramref name="Error"/> is a plain-language reason the list couldn't be loaded (not connected, a
+/// transport failure) — non-null means <paramref name="Items"/> is empty and the webview shows the reason.</summary>
+public sealed record PrListPayload(IReadOnlyList<PrListItemPayload> Items, string? Error);
 
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>

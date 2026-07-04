@@ -13,6 +13,7 @@ import {
   parseGitHubCode,
   parseImageInserted,
   parsePreview,
+  parsePrList,
   parsePrSuggested,
   parseStatus,
   parseVersionNoteSuggested,
@@ -24,12 +25,13 @@ import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
-import { isReviewState, LifecycleChrome } from "./lifecycle-chrome.js";
+import { LifecycleChrome } from "./lifecycle-chrome.js";
 import { log } from "./log.js";
 import { Preview } from "./preview.js";
-import { Kinds } from "./protocol.js";
+import { isReviewState, Kinds } from "./protocol.js";
 import { rafThrottle } from "./raf.js";
 import { ReviewController } from "./review.js";
+import { ReviewsPanel } from "./reviews-panel.js";
 import { ScrollSync } from "./scroll-sync.js";
 import { SegmentedControl, type SegmentedOption } from "./segmented-control.js";
 import { SignInController } from "./signin.js";
@@ -50,6 +52,7 @@ function wire(): void {
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
   const exportLogBtn = document.querySelector<HTMLButtonElement>("#export-log-btn");
   const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
+  const reviewsBtn = document.querySelector<HTMLButtonElement>("#reviews-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
   const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
@@ -139,22 +142,19 @@ function wire(): void {
   // rapid focus/poll overlap can't fan out queries and a focus refresh is never dropped.
   const REVIEW_POLL_INTERVAL_MS = 45_000;
   let reviewPollTimer: number | undefined;
-  // Assume focused at start (the app window has focus when it loads) rather than trusting a possibly-false
-  // document.hasFocus() at wire time; the blur handler corrects it the moment focus is actually lost. This
-  // guarantees polling can arm when a document enters review — which only happens on a user click anyway.
-  let windowFocused = true;
 
-  // Poll only while under review AND the window is focused — an unfocused window can't show a change the
-  // author isn't looking at, and the focus refresh already catches any decision on return, so polling in the
-  // background would just burn GitHub API budget. Called whenever `underReview` or focus changes.
+  // Poll while under review, but each tick only fires when the window actually has focus — an unfocused
+  // window can't show a change the author isn't looking at, and the focus handler already catches any
+  // decision on return, so background polling would just burn GitHub API budget. Checking focus at tick time
+  // (not a cached flag) is robust to a missed focus/blur event. Called whenever `underReview` changes.
   function syncReviewPolling(): void {
-    const shouldPoll = underReview && windowFocused;
-    if (shouldPoll && reviewPollTimer === undefined) {
-      reviewPollTimer = window.setInterval(
-        () => ipc.send(Kinds.reviewRefresh),
-        REVIEW_POLL_INTERVAL_MS,
-      );
-    } else if (!shouldPoll && reviewPollTimer !== undefined) {
+    if (underReview && reviewPollTimer === undefined) {
+      reviewPollTimer = window.setInterval(() => {
+        if (document.hasFocus()) {
+          ipc.send(Kinds.reviewRefresh);
+        }
+      }, REVIEW_POLL_INTERVAL_MS);
+    } else if (!underReview && reviewPollTimer !== undefined) {
       window.clearInterval(reviewPollTimer);
       reviewPollTimer = undefined;
     }
@@ -561,18 +561,13 @@ function wire(): void {
   });
 
   // While the document is under review, refresh the review status from GitHub whenever the window regains
-  // focus — the author typically switches to GitHub to see/act on a review, then back. Throttled, and a
-  // no-op unless the document is genuinely under review (polling covers the window-stays-focused case).
+  // focus — the author typically switches to GitHub to see/act on a review, then back. The host single-
+  // flights and no-ops unless genuinely under review; the poll (focus-gated at tick time) covers the
+  // window-stays-focused case.
   window.addEventListener("focus", () => {
-    windowFocused = true;
     if (underReview) {
       ipc.send(Kinds.reviewRefresh); // just came back — check for a decision made while away
     }
-    syncReviewPolling(); // resume polling now the window is visible again
-  });
-  window.addEventListener("blur", () => {
-    windowFocused = false;
-    syncReviewPolling(); // pause polling while the author can't see the status
   });
 
   // GitHub account affordance (PoC-5): the host drives the "Connect to GitHub" button + the sign-in code
@@ -583,6 +578,17 @@ function wire(): void {
     signOut: () => ipc.send(Kinds.githubSignOut),
     openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
   });
+
+  // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
+  const reviewsPanel = new ReviewsPanel({
+    requestReviews: () =>
+      requestSuggestion(Kinds.prListRequest, parsePrList, {
+        items: [],
+        error: "Couldn't load your reviews. Check your connection and try again.",
+      }),
+    openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+  });
+  reviewsBtn?.addEventListener("click", () => void reviewsPanel.open());
   ipc.on(Kinds.githubCode, (message) => {
     const payload = parseGitHubCode(message.payload);
     if (payload) {
@@ -596,6 +602,13 @@ function wire(): void {
       // "Send for review" is a dead end without GitHub configured (no Connect affordance), so the chrome
       // hides it unless sign-in is available. Sign-in *state* (signed in or not) is the host's gate.
       lifecycleChrome.setGitHubAvailable(payload.available);
+      // "My reviews" browses the account's reviews — only meaningful once connected.
+      if (reviewsBtn) {
+        reviewsBtn.hidden = !payload.signedIn;
+      }
+      if (!payload.signedIn) {
+        reviewsPanel.close();
+      }
     }
   });
 

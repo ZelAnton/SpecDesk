@@ -18,8 +18,11 @@ import {
   type GitHubAccountPayload,
   type GitHubCodePayload,
   type ImageInsertedPayload,
+  isReviewState,
   type LineSpan,
   type PreviewPayload,
+  type PrListItemPayload,
+  type PrListPayload,
   type PrSuggestedPayload,
   STATUS_STATES,
   type StatusPayload,
@@ -240,4 +243,52 @@ export function parsePrSuggested(value: unknown): PrSuggestedPayload | null {
   return value.blocked === undefined
     ? { title: value.title, body: value.body }
     : { title: value.title, body: value.body, blocked: value.blocked };
+}
+
+function parsePrListItem(value: unknown): PrListItemPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.number) ||
+    !isString(value.title) ||
+    !isString(value.url) ||
+    !isString(value.repo) ||
+    (value.role !== "author" && value.role !== "reviewer") ||
+    // A review item's status is only ever a review-open state — reject published/draft at the boundary.
+    !isReviewState(value.status) ||
+    !isString(value.label)
+  ) {
+    return null;
+  }
+  return {
+    number: value.number,
+    title: value.title,
+    url: value.url,
+    repo: value.repo,
+    role: value.role,
+    status: value.status,
+    label: value.label,
+  };
+}
+
+export function parsePrList(value: unknown): PrListPayload | null {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return null;
+  }
+  // `error` is absent (or, defensively, JSON null) when the list loaded; a non-string, non-null value is a
+  // malformed frame.
+  if (value.error !== undefined && value.error !== null && !isString(value.error)) {
+    return null;
+  }
+  // Skip an individual item that fails validation rather than discarding the whole list — one malformed
+  // row shouldn't turn the author's reviews into a generic failure. (parseArray is all-or-nothing.)
+  const items: PrListItemPayload[] = [];
+  for (const raw of value.items) {
+    const item = parsePrListItem(raw);
+    if (item !== null) {
+      items.push(item);
+    }
+  }
+  // `error` is optional (exactOptionalPropertyTypes forbids an explicit undefined), so add it only when it's
+  // a real (non-null) string.
+  return isString(value.error) ? { items, error: value.error } : { items };
 }

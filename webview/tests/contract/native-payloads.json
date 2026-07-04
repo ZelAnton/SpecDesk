@@ -38,6 +38,28 @@
     "title": "Clarify the refund window",
     "body": "Review requested for billing.md via SpecDesk."
   },
+  "pr.list": {
+    "items": [
+      {
+        "number": 42,
+        "title": "Clarify the refund window",
+        "url": "https://github.com/octo/spec-repo/pull/42",
+        "repo": "octo/spec-repo",
+        "role": "author",
+        "status": "changesRequested",
+        "label": "Changes requested"
+      },
+      {
+        "number": 7,
+        "title": "Payment terms",
+        "url": "https://github.com/octo/other/pull/7",
+        "repo": "octo/other",
+        "role": "reviewer",
+        "status": "inReview",
+        "label": "In review"
+      }
+    ]
+  },
   "diff.result": {
     "entries": [
       {

@@ -40,6 +40,14 @@ public sealed class ContractFixtureTests
 		// Ready to send (Blocked absent): the optional field is exercised by both decoders.
 		(MessageKinds.PrSuggested,
 			new PrSuggestedPayload("Clarify the refund window", "Review requested for billing.md via SpecDesk.", null)),
+		// One authored + one to-review item (Error absent — the optional field is exercised by both decoders).
+		(MessageKinds.PrList, new PrListPayload(
+		[
+			new PrListItemPayload(42, "Clarify the refund window", "https://github.com/octo/spec-repo/pull/42",
+				"octo/spec-repo", "author", "changesRequested", "Changes requested"),
+			new PrListItemPayload(7, "Payment terms", "https://github.com/octo/other/pull/7",
+				"octo/other", "reviewer", "inReview", "In review"),
+		], null)),
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.

@@ -90,4 +90,24 @@ internal sealed class FakeGitHubReview : IGitHubReview
         GetReviewStatusCalls++;
         return Task.FromResult(ReviewStatusValue);
     }
+
+    /// <summary>What <see cref="ListReviewsAsync"/> returns; a test sets it. Defaults to empty.</summary>
+    public IReadOnlyList<ReviewSummary> ReviewsValue { get; set; } = [];
+
+    /// <summary>When true, <see cref="ListReviewsAsync"/> throws (a transport / API failure).</summary>
+    public bool ThrowOnListReviews { get; set; }
+
+    public int ListReviewsCalls { get; private set; }
+
+    public Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
+        string accessToken, CancellationToken cancellationToken = default)
+    {
+        ListReviewsCalls++;
+        if (ThrowOnListReviews)
+        {
+            throw new HttpRequestException("boom");
+        }
+
+        return Task.FromResult(ReviewsValue);
+    }
 }
