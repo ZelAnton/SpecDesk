@@ -20,8 +20,9 @@ type State =
 /// An author action (or a reviewer event) that may advance the lifecycle. `SaveVersion` is the
 /// explicit commit ("Save a version") — the only thing that creates a commit; plain autosave to
 /// disk is a side effect the host performs and is not modelled here. `UpdateReview` pushes the
-/// newly-saved versions to the open pull request; it (not `SaveVersion`) is what re-opens review
-/// after changes were requested, so the author-facing status flips only once the push lands.
+/// newly-saved versions to the open pull request; it re-opens review from `Approved` (new versions
+/// need re-approval) but is a self-transition from `InReview` / `ChangesRequested` (a change request
+/// stands until the reviewer re-reviews). Otherwise the review state follows GitHub's decision — see `next`.
 type Command =
     | Edit
     | SaveVersion
@@ -39,15 +40,20 @@ let next (state: State) (command: Command) : Result<State, string> =
     | Draft, SaveVersion -> Ok Draft
     | Draft, SendForReview -> Ok InReview
     | Draft, Discard -> Ok Published
-    // Saving a version while under review is a local commit only — it never changes the review state.
-    // Sharing those versions (and re-opening review after changes were requested) is the explicit
-    // UpdateReview push below, so the author-facing status never flips ahead of GitHub.
+    // SaveVersion under review is a purely local commit — never a status change. UpdateReview (the push that
+    // shares saved versions to the PR) is where the two verdicts diverge, matching how GitHub ages a review:
+    //   • From In review / Changes requested it is a self-transition — a change request is a block that
+    //     stands until the reviewer re-reviews; pushing fixes doesn't clear it (GitHub keeps it too).
+    //   • From Approved it returns to In review — the approval was of the versions that were reviewed, so new
+    //     versions need re-approval. Done locally (not left to the refresh) so an author can't publish unseen
+    //     content if the follow-up GitHub read happens to fail; the refresh agrees (the stale approval no
+    //     longer targets the new head commit).
     | InReview, SaveVersion -> Ok InReview
     | InReview, UpdateReview -> Ok InReview
     | InReview, RequestChanges -> Ok ChangesRequested
     | InReview, Approve -> Ok Approved
     | ChangesRequested, SaveVersion -> Ok ChangesRequested
-    | ChangesRequested, UpdateReview -> Ok InReview
+    | ChangesRequested, UpdateReview -> Ok ChangesRequested
     | ChangesRequested, Approve -> Ok Approved
     | Approved, SaveVersion -> Ok Approved
     | Approved, UpdateReview -> Ok InReview

@@ -124,11 +124,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call and is never stored on the host side or written to logs. (The button shows only while drafting.)
 - PoC-5 — update a review with newer versions: once a document is **In review**, save further versions and
   click **Update review** to push them to the same pull request — no second request is opened. It's always
-  explicit (nothing is pushed on its own) and re-opens review after changes were requested, with the status
-  settling on **In review** only once the push lands. If nothing new has been saved since the last update it
-  says so and pushes nothing, so an accidental click can't churn the review. Like *Send for review* it needs
-  a connected account and a GitHub remote, reports any problem in plain words, and never stores or logs the
-  access token. (The button shows only while a review is open.)
+  explicit (nothing is pushed on its own). The status itself follows GitHub's review decision (see below),
+  so a change request stays **Changes requested** until the reviewer re-reviews. If nothing new has been
+  saved since the last update it says so and pushes nothing, so an accidental click can't churn the review.
+  Like *Send for review* it needs a connected account and a GitHub remote, reports any problem in plain
+  words, and never stores or logs the access token. (The button shows only while a review is open.)
+- PoC-5 — the review status now reflects GitHub: while a document is under review, the status shows the
+  live decision — **In review**, **Changes requested**, or **Approved** — read from GitHub. It refreshes
+  automatically while you're on the window (polled, and when you return to it — the usual "check the review
+  on GitHub, come back" rhythm), so a reviewer approving or asking for changes is picked up without a manual
+  step. A change request stays until the reviewer re-reviews; an approval covers only the versions that were
+  reviewed, so updating the review with new versions returns it to **In review** (you never treat unseen
+  content as approved). If the pull request is merged or closed on GitHub, SpecDesk keeps the last-known
+  status rather than changing the document from under you — merging is a deliberate step. Reading the status
+  is best-effort: a hiccup leaves the last-known one.
 - PoC-5 — confirm the review's title and description before sending: **Send for review** now opens an
   inline prompt seeded with a suggested title (your last version note, or the document name) and a short
   description, which you can edit before the review opens — the outward-facing text is yours to confirm.

@@ -36,9 +36,12 @@ let ``saving a version while under review is a local commit that never changes t
     Assert.That(next Approved SaveVersion, Is.EqualTo(ok Approved))
 
 [<Test>]
-let ``updating the review re-opens it from every review state`` () =
+let ``updating the review re-opens it from Approved but holds a change request`` () =
+    // From In review / Changes requested a push is a self-transition — a change request is a block that
+    // stands until the reviewer re-reviews. From Approved it returns to In review — the approval was of the
+    // reviewed versions, so new versions need re-approval before the doc can be published.
     Assert.That(next InReview UpdateReview, Is.EqualTo(ok InReview))
-    Assert.That(next ChangesRequested UpdateReview, Is.EqualTo(ok InReview))
+    Assert.That(next ChangesRequested UpdateReview, Is.EqualTo(ok ChangesRequested))
     Assert.That(next Approved UpdateReview, Is.EqualTo(ok InReview))
 
 [<Test>]
@@ -66,7 +69,7 @@ let ``publishing is only allowed from approved`` () =
 let ``tryStep facade returns the next state name`` () =
     Assert.That(tryStep "published" "edit", Is.EqualTo "draft")
     Assert.That(tryStep "draft" "discard", Is.EqualTo "published")
-    Assert.That(tryStep "changesRequested" "updateReview", Is.EqualTo "inReview")
+    Assert.That(tryStep "changesRequested" "updateReview", Is.EqualTo "changesRequested")
 
 [<Test>]
 let ``tryStep facade returns empty on an illegal or unknown transition`` () =

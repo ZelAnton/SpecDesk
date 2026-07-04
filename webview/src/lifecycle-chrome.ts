@@ -36,6 +36,12 @@ export interface LifecycleChromeDeps {
 /** The states in which a review is open, so Update review (push the new versions to the PR) applies. */
 const REVIEW_STATES: readonly StatusState[] = ["inReview", "changesRequested", "approved"];
 
+/** Whether a state has an open review on GitHub — the single predicate for review-scoped behaviour
+ * (Update-review button visibility, status polling / focus refresh), so those can't drift apart. */
+export function isReviewState(state: StatusState): boolean {
+  return REVIEW_STATES.includes(state);
+}
+
 export class LifecycleChrome {
   private readonly deps: LifecycleChromeDeps;
   private state: StatusState = "published";
@@ -93,9 +99,7 @@ export class LifecycleChrome {
       this.deps.sendForReviewBtn.hidden = !(this.state === "draft" && this.githubAvailable);
     }
     if (this.deps.updateReviewBtn) {
-      this.deps.updateReviewBtn.hidden = !(
-        REVIEW_STATES.includes(this.state) && this.githubAvailable
-      );
+      this.deps.updateReviewBtn.hidden = !(isReviewState(this.state) && this.githubAvailable);
     }
   }
 }

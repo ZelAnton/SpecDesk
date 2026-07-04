@@ -86,12 +86,14 @@ stateDiagram-v2
 	Editing --> VersionSaved: Save a version (commit)
 	VersionSaved --> Editing: type again (unsaved changes)
 	VersionSaved --> InReview: Send for review (push + open PR)
+	InReview --> Approved: reviewer approves the current versions
 	InReview --> ChangesRequested: reviewer requests changes
-	ChangesRequested --> InReview: Save a version → Update review (push)
-	InReview --> InReview: Save a version → Update review (push)
-	InReview --> Approved: reviewer approves
+	ChangesRequested --> Approved: reviewer approves
+	Approved --> ChangesRequested: reviewer requests changes
+	InReview --> InReview: Update review (push new versions)
+	ChangesRequested --> ChangesRequested: Update review (the change request stands until re-review)
+	Approved --> InReview: Update review (new versions need re-approval)
 	Approved --> Published: Publish (merge)  [if allowed]
-	Approved --> InReview: further versions (re-opens review)
 	Editing --> Published: Discard (delete branch)  [author abandons]
 	VersionSaved --> Published: Discard (delete branch)  [author abandons]
 ```
@@ -171,10 +173,21 @@ Offered right after the first **Save a version**, and always available as a butt
 
 Reviewers leave inline comments (see [07-review-experience.md](07-review-experience.md)). The
 author sees them in the same editor, replies, and edits. After saving a new version while In
-review, the app offers **Update review** (push the new versions to the PR). Status flips
-**Changes requested → In review** on update. While editing, the author can also see and compare
-against other open reviews touching the same file — see
+review, the app offers **Update review** (push the new versions to the PR). While editing, the
+author can also see and compare against other open reviews touching the same file — see
 [07-review-experience.md](07-review-experience.md) Part C.
+
+The status the author sees while under review is read live from GitHub's reviews (In review / Changes
+requested / Approved) — a single source of truth. The two verdicts age differently, on purpose: a
+**change request stays** Changes requested until the reviewer actually re-reviews (pushing fixes does
+not clear someone else's block), whereas an **approval is of the versions that were reviewed** — saving
+and updating with new versions returns the status to **In review** so the author never treats unseen
+content as approved. If the pull request is **merged or closed** on GitHub out of band, SpecDesk does not
+silently change the document's state from a background read (which could strand in-progress edits) — it
+keeps the last-known status and stops polling; turning a merged review into Published is the deliberate
+Publish step. The status refreshes while under review — polled and whenever the window regains focus (the
+"check GitHub, come back" rhythm); reading it is best-effort, so a network hiccup just leaves the
+last-known status in place.
 
 ### 7. Publish
 

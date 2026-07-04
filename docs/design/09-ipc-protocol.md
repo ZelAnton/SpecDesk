@@ -32,8 +32,9 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `image.paste` | `{ base64, originalName?, mime }` | image dropped/pasted |
 | `action.autosave` | `{ text, version }` | autosave the working copy to disk — **no commit** (also happens automatically on idle) |
 | `doc.saveVersion` | `{ note }` | **explicit commit** of the working copy with the author's (generated, edited) version note |
-| `action.sendForReview` | `{}` | push + open PR |
+| `action.sendForReview` | `{ title, body }` | push + open PR with the author-confirmed title/description (blank title → generated; empty body honoured) |
 | `action.update` | `{}` | push the newly-saved versions to the open PR |
+| `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled and on window focus, throttled |
 | `action.publish` | `{}` | merge the PR (if permitted) |
 | `doc.discard` | `{}` | abandon the draft |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |

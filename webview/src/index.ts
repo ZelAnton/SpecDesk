@@ -24,7 +24,7 @@ import { FormattedEditor } from "./formatted.js";
 import { HeightSync } from "./height-sync.js";
 import { attachImageCapture } from "./image-capture.js";
 import { ipc, postReady } from "./ipc.js";
-import { LifecycleChrome } from "./lifecycle-chrome.js";
+import { isReviewState, LifecycleChrome } from "./lifecycle-chrome.js";
 import { log } from "./log.js";
 import { Preview } from "./preview.js";
 import { Kinds } from "./protocol.js";
@@ -73,6 +73,9 @@ function wire(): void {
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
   // "start typing → offer to begin a draft" behaviour in both editors.
   let editing = false;
+  // Whether the document is under review (In review / Changes requested / Approved). While it is, a
+  // window-focus refreshes the review status from GitHub — a reviewer may have acted out of band.
+  let underReview = false;
   // The active view mode. Code = source only; Split = source editor + formatted (WYSIWYG) editor,
   // both editable and synced live; Formatted = WYSIWYG only. Declared before the editor callbacks
   // below so their closures read the live value.
@@ -126,6 +129,34 @@ function wire(): void {
     } catch (error) {
       log.warn(`Could not fetch a suggestion (${kind})`, String(error));
       return fallback;
+    }
+  }
+
+  // Review-status refresh cadence. While a document is under review the status is polled — a reviewer can
+  // act while the SpecDesk window stays focused, so a focus event alone would miss it — and also refreshed
+  // whenever the window regains focus (the "check GitHub, come back" gesture). Both just send review.refresh;
+  // the host single-flights and coalesces (a request arriving mid-read queues exactly one follow-up), so
+  // rapid focus/poll overlap can't fan out queries and a focus refresh is never dropped.
+  const REVIEW_POLL_INTERVAL_MS = 45_000;
+  let reviewPollTimer: number | undefined;
+  // Assume focused at start (the app window has focus when it loads) rather than trusting a possibly-false
+  // document.hasFocus() at wire time; the blur handler corrects it the moment focus is actually lost. This
+  // guarantees polling can arm when a document enters review — which only happens on a user click anyway.
+  let windowFocused = true;
+
+  // Poll only while under review AND the window is focused — an unfocused window can't show a change the
+  // author isn't looking at, and the focus refresh already catches any decision on return, so polling in the
+  // background would just burn GitHub API budget. Called whenever `underReview` or focus changes.
+  function syncReviewPolling(): void {
+    const shouldPoll = underReview && windowFocused;
+    if (shouldPoll && reviewPollTimer === undefined) {
+      reviewPollTimer = window.setInterval(
+        () => ipc.send(Kinds.reviewRefresh),
+        REVIEW_POLL_INTERVAL_MS,
+      );
+    } else if (!shouldPoll && reviewPollTimer !== undefined) {
+      window.clearInterval(reviewPollTimer);
+      reviewPollTimer = undefined;
     }
   }
 
@@ -476,6 +507,8 @@ function wire(): void {
       // Read-only until the author clicks Edit (which forks a working branch). A freshly loaded
       // document is Published: the chrome offers Edit and hides the draft-only actions.
       editing = false;
+      underReview = false; // a freshly loaded doc has no open review — stop polling/focus-refreshing.
+      syncReviewPolling();
       lifecycleChrome.setLifecycle("published");
       // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
       showPlainStatus(payload.path);
@@ -498,6 +531,14 @@ function wire(): void {
     }
     // Editing is only possible once a working branch exists (draft state).
     editing = payload.state !== "published";
+    const wasUnderReview = underReview;
+    underReview = isReviewState(payload.state);
+    syncReviewPolling();
+    if (underReview && !wasUnderReview) {
+      // Just entered review (e.g. Send for review) — read the live decision now rather than waiting up to a
+      // full poll interval for the first refresh.
+      ipc.send(Kinds.reviewRefresh);
+    }
     lifecycleChrome.setLifecycle(payload.state);
     if (editing) {
       formatToolbar.refresh();
@@ -517,6 +558,21 @@ function wire(): void {
       // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
       showPlainStatus(payload.message);
     }
+  });
+
+  // While the document is under review, refresh the review status from GitHub whenever the window regains
+  // focus — the author typically switches to GitHub to see/act on a review, then back. Throttled, and a
+  // no-op unless the document is genuinely under review (polling covers the window-stays-focused case).
+  window.addEventListener("focus", () => {
+    windowFocused = true;
+    if (underReview) {
+      ipc.send(Kinds.reviewRefresh); // just came back — check for a decision made while away
+    }
+    syncReviewPolling(); // resume polling now the window is visible again
+  });
+  window.addEventListener("blur", () => {
+    windowFocused = false;
+    syncReviewPolling(); // pause polling while the author can't see the status
   });
 
   // GitHub account affordance (PoC-5): the host drives the "Connect to GitHub" button + the sign-in code

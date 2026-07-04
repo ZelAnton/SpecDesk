@@ -8,6 +8,31 @@ namespace SpecDesk.GitHub;
 /// the author (the GitHub web page for the PR).</summary>
 public sealed record PullRequest(int Number, string Url);
 
+/// <summary>Where a review stands, in author-facing terms: awaiting reviewers (<see cref="InReview"/>),
+/// a reviewer asked for changes (<see cref="ChangesRequested"/>), or it's approved (<see cref="Approved"/>).
+/// Maps GitHub's computed review decision; no git/PR vocabulary reaches the author.</summary>
+public enum ReviewDecision
+{
+    InReview,
+    ChangesRequested,
+    Approved,
+}
+
+/// <summary>Whether the branch's pull request is still <see cref="Open"/> (its <see cref="ReviewStatus.Decision"/>
+/// is meaningful), or has been <see cref="Merged"/> (the spec shipped) or <see cref="Closed"/> without
+/// merging (the review was abandoned) out of band on GitHub.</summary>
+public enum PullRequestState
+{
+    Open,
+    Merged,
+    Closed,
+}
+
+/// <summary>The live status of the most recent pull request for a branch: whether it is still open
+/// (<see cref="PrState"/>), its review <see cref="Decision"/> (meaningful only while open), and the PR
+/// <see cref="Number"/>.</summary>
+public sealed record ReviewStatus(ReviewDecision Decision, int Number, PullRequestState PrState);
+
 /// <summary>
 /// The GitHub review operations behind the "Send for review" flow. The access token is passed in (the host
 /// gets it transiently via <see cref="IGitHubAuth.WithAccessTokenAsync{T}"/>) and used only as the Bearer
@@ -43,6 +68,21 @@ public interface IGitHubReview
         string repo,
         int pullNumber,
         IReadOnlyList<string> reviewers,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>The current <see cref="ReviewStatus"/> of the most recent pull request whose head is
+    /// <paramref name="branch"/> in <paramref name="owner"/>/<paramref name="repo"/> — of ANY state, so a
+    /// merged / closed PR is reported (via <see cref="ReviewStatus.PrState"/>), not hidden. <c>null</c> only
+    /// when the branch has never had a pull request. The review decision is aggregated from the reviews
+    /// client-side (GitHub's own <c>reviewDecision</c> is null on repos without required-review branch
+    /// protection, so it can't be relied on). Throws on a transport / API failure (including a partial
+    /// GraphQL <c>errors</c> response) — the host refreshes best-effort, so a failure leaves the last-known
+    /// status untouched.</summary>
+    Task<ReviewStatus?> GetReviewStatusAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string branch,
         CancellationToken cancellationToken = default);
 }
 
@@ -160,6 +200,149 @@ public sealed class GitHubReviewClient : IGitHubReview
         }
 
         return count;
+    }
+
+    // The GraphQL query for a branch's open PR and each reviewer's latest OPINIONATED review. We aggregate
+    // these ourselves rather than reading GitHub's `reviewDecision`, because reviewDecision is null unless
+    // the repo/branch has a required-reviews protection rule — so on an ordinary repo (no branch protection)
+    // an approval or change request would never surface. `latestOpinionatedReviews` excludes COMMENTED and
+    // PENDING, so a reviewer who approves and then comments still reads as their standing decision (APPROVED)
+    // rather than the comment clobbering it.
+    // The recent PRs for the branch (newest first — we prefer an open one, see below), each with its
+    // open/merged/closed state, head commit, and each reviewer's latest opinionated review with the commit it
+    // targeted. `first:10` covers a branch that has spawned a few PRs across review cycles; `first:100` on the
+    // reviews is far more than any real spec PR carries (no paging fallback beyond either bound).
+    private const string ReviewStatusQuery =
+        "query($owner:String!,$repo:String!,$branch:String!){repository(owner:$owner,name:$repo){"
+        + "pullRequests(headRefName:$branch,first:10,orderBy:{field:CREATED_AT,direction:DESC}){nodes{"
+        + "number state headRefOid latestOpinionatedReviews(first:100){nodes{state commit{oid}}}}}}}";
+
+    public async Task<ReviewStatus?> GetReviewStatusAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string branch,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(RequestTimeout);
+
+        using HttpRequestMessage request =
+            NewRequest(HttpMethod.Post, new Uri("https://api.github.com/graphql"), accessToken);
+        string json = JsonSerializer.Serialize(
+            new { query = ReviewStatusQuery, variables = new { owner, repo, branch } });
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"GitHub rejected the review-status query (HTTP {(int)response.StatusCode}).");
+        }
+
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        JsonElement root = document.RootElement;
+        // A partial GraphQL response carries a top-level `errors` array (a field resolved to null, throttling,
+        // an eventual-consistency lag). Its `data` may still look navigable but be incomplete, which would
+        // silently downgrade a real decision — so treat any errors as a fault and leave the last-known status.
+        if (TryProperty(root, "errors", out JsonElement errors)
+            && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0)
+        {
+            throw new HttpRequestException("GitHub returned errors for the review-status query.");
+        }
+
+        // Navigate data.repository.pullRequests.nodes[0]; a cleanly-missing level (the repo / branch not
+        // resolving) is "no open review" rather than a fault.
+        if (!TryProperty(root, "data", out JsonElement data)
+            || !TryProperty(data, "repository", out JsonElement repository)
+            || !TryProperty(repository, "pullRequests", out JsonElement pulls)
+            || !TryProperty(pulls, "nodes", out JsonElement nodes)
+            || nodes.ValueKind != JsonValueKind.Array
+            || nodes.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        // Prefer the branch's OPEN pull request — a live review is what the author is acting on. The branch
+        // can carry more than one PR (e.g. a reused branch across cycles, or a duplicate opened elsewhere);
+        // picking the newest-created regardless of state could hand back a closed duplicate over the live
+        // review. Fall back to the newest PR (nodes[0]) only when none is open — that's the merged/closed
+        // case the host uses to pause polling.
+        JsonElement node = nodes[0];
+        foreach (JsonElement candidate in nodes.EnumerateArray())
+        {
+            if (PrStateOf(candidate) == PullRequestState.Open)
+            {
+                node = candidate;
+                break;
+            }
+        }
+
+        return new ReviewStatus(AggregateDecision(node), NumberOf(node, "number"), PrStateOf(node));
+    }
+
+    private static PullRequestState PrStateOf(JsonElement node) => StringOf(node, "state") switch
+    {
+        "MERGED" => PullRequestState.Merged,
+        "CLOSED" => PullRequestState.Closed,
+        _ => PullRequestState.Open,
+    };
+
+    // Derive the review decision from each reviewer's latest opinionated review. The two verdicts are treated
+    // asymmetrically, on purpose:
+    //   • CHANGES_REQUESTED counts regardless of which commit it targeted — a block persists across pushes
+    //     until the reviewer actually re-reviews (GitHub keeps it too; a dismiss-stale repo turns it DISMISSED,
+    //     which carries no standing, so it correctly clears there).
+    //   • APPROVED counts ONLY if it targeted the current head commit — an approval is of the content that was
+    //     reviewed, so pushing new versions returns the status to In review rather than marking unseen content
+    //     "Approved" (which the author could then publish). This mirrors "dismiss stale approvals on push" for
+    //     every repo, the safe default for an approval.
+    // Any change request outranks an approval (a single block wins); else a live approval means approved; else
+    // still in review. COMMENTED / PENDING are already excluded from this connection; DISMISSED carries no
+    // standing.
+    private static ReviewDecision AggregateDecision(JsonElement node)
+    {
+        string headOid = StringOf(node, "headRefOid");
+        if (!TryProperty(node, "latestOpinionatedReviews", out JsonElement latestReviews)
+            || !TryProperty(latestReviews, "nodes", out JsonElement reviews)
+            || reviews.ValueKind != JsonValueKind.Array)
+        {
+            return ReviewDecision.InReview;
+        }
+
+        bool changesRequested = false;
+        bool approved = false;
+        foreach (JsonElement review in reviews.EnumerateArray())
+        {
+            switch (StringOf(review, "state"))
+            {
+                case "CHANGES_REQUESTED":
+                    changesRequested = true;
+                    break;
+                case "APPROVED"
+                    when headOid.Length > 0
+                        && TryProperty(review, "commit", out JsonElement commit)
+                        && StringOf(commit, "oid") == headOid:
+                    approved = true;
+                    break;
+            }
+        }
+
+        return changesRequested ? ReviewDecision.ChangesRequested
+            : approved ? ReviewDecision.Approved
+            : ReviewDecision.InReview;
+    }
+
+    private static bool TryProperty(JsonElement element, string name, out JsonElement value)
+    {
+        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out value))
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 
     // Build a REST request with the standard GitHub headers (JSON accept, Bearer auth, User-Agent, and a

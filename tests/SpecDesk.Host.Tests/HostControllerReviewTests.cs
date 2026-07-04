@@ -676,6 +676,107 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    [Test]
+    public void RefreshReviewStatus_reflects_the_GitHub_review_decision()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+
+        // A reviewer approved on GitHub; a window-focus refresh picks it up.
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 42, PullRequestState.Open);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+
+        Assert.That(WaitForStatusState("approved"), Is.True);
+    }
+
+    [Test]
+    public void RefreshReviewStatus_moves_to_changes_requested()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.ChangesRequested, 42, PullRequestState.Open);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+
+        Assert.That(WaitForStatusState("changesRequested"), Is.True);
+    }
+
+    [Test]
+    public void RefreshReviewStatus_keeps_the_status_and_pauses_polling_once_a_seen_open_pr_is_gone()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+
+        // A first refresh confirms the PR is open.
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 1, PullRequestState.Open);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True);
+
+        // The PR is then merged on GitHub. SpecDesk must NOT force the doc to Published from a background read
+        // (that could strand uncommitted edits); it keeps the last-known status and stops querying the dead
+        // PR — merging is a deliberate step (the Publish flow).
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 1, PullRequestState.Merged);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 2), Is.True);
+        Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+
+        // Further refreshes are no-ops — no more GitHub queries for the dead PR.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Thread.Sleep(50);
+        Assert.That(review.GetReviewStatusCalls, Is.EqualTo(2));
+    }
+
+    [Test]
+    public void RefreshReviewStatus_does_not_freeze_on_a_stale_closed_pr_read_before_the_review_is_open()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+
+        // Right after Send, on a reused branch name, GitHub can lag and return the branch's PRIOR closed PR
+        // before it indexes the just-opened one. That stale read must NOT pause the live review.
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 9, PullRequestState.Closed);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True);
+
+        // Once GitHub indexes the real, open PR, a later refresh still picks up the decision (not frozen).
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 10, PullRequestState.Open);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitForStatusState("approved"), Is.True, "a stale pre-open read must not freeze the review");
+    }
+
+    [Test]
+    public void RefreshReviewStatus_with_no_open_pr_leaves_the_status_unchanged()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+
+        // No open PR (e.g. merged/closed elsewhere) — the last-known In review status stands.
+        review.ReviewStatusValue = null;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+
+        Assert.That(WaitUntil(() => review.GetReviewStatusCalls == 1), Is.True, "the refresh should query GitHub");
+        Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+    }
+
+    [Test]
+    public void RefreshReviewStatus_from_a_non_review_state_does_not_query_GitHub()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        // A plain draft (never sent) — there's no open review to refresh.
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+
+        Thread.Sleep(50);
+        Assert.That(review.GetReviewStatusCalls, Is.EqualTo(0));
+    }
+
     private bool WaitForStatusState(string state) => WaitUntil(() => LatestStatus()?.State == state);
 
     private static bool WaitUntil(Func<bool> condition)

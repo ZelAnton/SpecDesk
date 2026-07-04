@@ -37,6 +37,12 @@ internal sealed class FakeGitHubReview : IGitHubReview
 
     public IReadOnlyList<string>? RequestedReviewers { get; private set; }
 
+    /// <summary>What <see cref="GetReviewStatusAsync"/> returns — an open PR's decision, or null for "no
+    /// open PR". Defaults to null; a test sets it to drive the review-status refresh.</summary>
+    public ReviewStatus? ReviewStatusValue { get; set; }
+
+    public int GetReviewStatusCalls { get; private set; }
+
     /// <summary>When set, the call blocks (after recording its arguments) until released — so a test
     /// can keep one round-trip in flight and assert a concurrent send is single-flighted away.</summary>
     public ManualResetEventSlim? ReleaseGate { get; init; }
@@ -76,5 +82,12 @@ internal sealed class FakeGitHubReview : IGitHubReview
         }
 
         return Task.FromResult(reviewers.Count);
+    }
+
+    public Task<ReviewStatus?> GetReviewStatusAsync(
+        string accessToken, string owner, string repo, string branch, CancellationToken cancellationToken = default)
+    {
+        GetReviewStatusCalls++;
+        return Task.FromResult(ReviewStatusValue);
     }
 }
