@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-04
+
+First tagged release — the PoC-0 … PoC-5 milestones: the native↔webview editor, the
+Markdown pipeline, the local version lifecycle, and the full GitHub review round-trip
+(connect an account, Send for review, Update review, live status, and browse your reviews).
+
 ### Added
 - Initial multi-language scaffold: a .NET solution (`SpecDesk.slnx`) with C# and F# projects
   under `src/`/`tests/`, plus a TypeScript `webview/` bundle (esbuild).

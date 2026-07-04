@@ -15,6 +15,9 @@
 		<RepositoryType>git</RepositoryType>
 		<SatelliteResourceLanguages>en</SatelliteResourceLanguages>
 
+		<!-- Product version, kept in step with the CHANGELOG release + the git tag (vX.Y.Z). -->
+		<Version>0.1.0</Version>
+
 		<!-- Audit direct AND transitive dependencies against the NuGet advisory
 		     database on restore. NU1901-1904 (vulnerability) findings stay
 		     warnings here on purpose: with TreatWarningsAsErrors a freshly
