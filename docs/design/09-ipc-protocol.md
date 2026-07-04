@@ -15,9 +15,10 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 ```
 
 - `kind` — dotted message name, grouped by domain (`doc.*`, `diff.*`, `image.*`, `branch.*`,
-  `version.*`, …); the cross-cutting channels `ready` / `log` / `error` / `status` stay bare. (The
-  `action.*` rows below are pre-convention placeholders for not-yet-built actions; each takes a
-  domain name when it is implemented.)
+  `version.*`, `github.*`, `pr.*`, …); the cross-cutting channels `ready` / `log` / `error` / `status`
+  stay bare. (A remaining `action.*` row is a pre-convention placeholder for a not-yet-built action; it
+  takes a domain name when implemented — as `sendForReview` / `update` did, now `doc.sendForReview` /
+  `doc.updateReview`.)
 - `id` — present only when a correlated reply is expected; otherwise `null`.
 - `version` — monotonic counter for editor content; lets the receiver drop stale work.
 - `payload` — message-specific object.
@@ -30,19 +31,21 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `editor.selection` | `{ from, to }` | current selection/cursor |
 | `scroll.sync` | `{ side, sourceLine }` | a pane scrolled (throttled) |
 | `image.paste` | `{ base64, originalName?, mime }` | image dropped/pasted |
-| `action.autosave` | `{ text, version }` | autosave the working copy to disk — **no commit** (also happens automatically on idle) |
+| `doc.save` | `{}` | save the working copy to disk — **no commit** (the host also autosaves internally off `editor.changed`, with no separate message) |
+| `doc.edit` | `{ branchName }` | begin a draft (fork a working branch); empty/absent name → generated |
 | `doc.saveVersion` | `{ note }` | **explicit commit** of the working copy with the author's (generated, edited) version note |
-| `action.sendForReview` | `{ title, body }` | push + open PR with the author-confirmed title/description (blank title → generated; empty body honoured) |
-| `action.update` | `{}` | push the newly-saved versions to the open PR |
-| `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled and on window focus, throttled |
-| `action.publish` | `{}` | merge the PR (if permitted) |
+| `doc.sendForReview` | `{ title, body }` | push + open PR with the author-confirmed title/description (blank title → generated; empty body honoured) |
+| `doc.updateReview` | `{}` | push the newly-saved versions to the open PR |
+| `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled (focus-gated) and on window focus |
+| `action.publish` | `{}` | merge the PR (if permitted) — *not yet built (PoC-10)* |
+| `github.signIn` / `github.signInCancel` / `github.signOut` | `{}` | connect / cancel-connecting / disconnect a GitHub account (device flow) |
 | `doc.discard` | `{}` | abandon the draft |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
 | `comment.resolve` | `{ id }` | resolve a thread |
 | `pr.list.request` | `{}` | request the user's open reviews (author / reviewer); host replies with `pr.list`, correlated by `id` |
 | `pr.forFile` | `{ path }` | request the open PRs touching a given file (comparison) |
-| `pr.open` | `{ refOrUrl }` | open a PR by selection or URL |
+| `pr.open` | `{ refOrUrl }` | load a PR *into the editor* for review — *not yet built*; PoC-5's My reviews panel opens a review on GitHub (from the list or a pasted URL) via `link.open` instead |
 | `diff.request` | `{}` (editor `version` on the envelope) | diff the working copy against its last saved version — replies with structured blocks via `diff.result` (the live "show changes" overlay) |
 | `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
@@ -59,7 +62,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.diff.rendered` | `{ html, mode }` | rendered/raw diff of the open PR to display |
 | `pr.compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
 | `version.note.suggested` | `{ note }` | editable generated version note (the commit message in plain words) |
-| `pr.suggested` | `{ title, body }` | editable generated PR text |
+| `pr.suggested` | `{ title, body, blocked? }` | editable generated PR text; `blocked` (a plain reason: not connected / not a GitHub repo / no saved version) means the send can't proceed — the webview shows it and does NOT open the prompt |
 | `pr.list` | `{ items, error? }` | the user's open reviews (`items[]`: `{ number, title, url, repo, role, status, label }`; `label` is the host-authoritative status text) — reply to `pr.list.request`; `error` (plain reason) means the list couldn't be loaded |
 | `pr.forFile` | `{ path, items }` | open PRs touching the given file |
 | `comments.synced` | `{ list }` | current comment set for the doc |
@@ -71,6 +74,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `tree` | `{ nodes }` | spec file tree |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
+| `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |
+| `github.account` | `{ available, signedIn, login?, message? }` | GitHub connection state for the account affordance (`available` false → the affordance hides; `message` is a transient/failed sign-in line) |
 | `confirm.request` | `{ id, action, summary }` | ask the author to confirm a mutating action |
 
 ## Ordering & correctness rules

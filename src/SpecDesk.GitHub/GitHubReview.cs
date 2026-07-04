@@ -271,7 +271,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         // can carry more than one PR (e.g. a reused branch across cycles, or a duplicate opened elsewhere);
         // picking the newest-created regardless of state could hand back a closed duplicate over the live
         // review. Fall back to the newest PR (nodes[0]) only when none is open — that's the merged/closed
-        // case the host uses to pause polling.
+        // case, which the host reflects by leaving the last-known status (it does not force a transition).
         JsonElement node = nodes[0];
         foreach (JsonElement candidate in nodes.EnumerateArray())
         {

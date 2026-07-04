@@ -221,7 +221,8 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 - **Goal:** one button takes a saved version to an open PR on GitHub; status reflects review state.
 - **Retires risk:** wiring Spike‑A's auth into the app and the full author round-trip; the first time real GitHub state drives the UI.
 - **Build:**
-  - Fold the Spike‑A auth decision into `SpecDesk.GitHub` (Octokit) as production code.
+  - Fold the Spike‑A auth decision into `SpecDesk.GitHub` as production code — a hand-rolled BCL
+    `HttpClient` REST/GraphQL client (no third-party GitHub SDK).
   - **Send for review** (offered right after the first **Save a version**, and always available as
     a button): push branch + open PR with a generated, editable title/description assembled from
     the saved version notes (deterministic template).

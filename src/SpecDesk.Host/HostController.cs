@@ -1076,8 +1076,8 @@ public sealed class HostController : IDisposable
 					_refreshPending = false;
 				}
 
-				// A refresh was requested mid-flight — run exactly one more so a focus/afterPublish read that
-				// arrived during this one isn't lost (it may have wanted a newer decision than this read saw).
+				// A refresh was requested mid-flight — run exactly one more so a focus/poll read that arrived
+				// during this one isn't lost (it may have wanted a newer decision than this read saw).
 				if (again)
 				{
 					OnRefreshReviewStatus();
