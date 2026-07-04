@@ -78,8 +78,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
   `version` they were computed from; the webview ignores any whose `version` is older than the
   latest local edit.
 - **Correlation:** replies correlate to their request in one of two ways. One-shot RPCs set `id`
-  and the reply echoes it (`branch.name.request` / `version.note.request` → `*.suggested`,
-  `image.paste` → `image.inserted`). Live-recompute requests instead correlate by `version`
+  and the reply echoes it (`branch.name.request` / `version.note.request` / `pr.suggested.request`
+  → `*.suggested`, `image.paste` → `image.inserted`). Live-recompute requests instead correlate by `version`
   (`editor.changed` → `preview.html`,
   `diff.request` → `diff.result`): a newer edit supersedes any in-flight result. Unsolicited
   events (status, toast, chat.delta) carry neither.

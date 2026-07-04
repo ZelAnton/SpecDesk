@@ -23,7 +23,7 @@ export class PromptBar {
    * work (prefill the fields, unhide the bar, focus). A no-op if the bar is already opening or open, so
    * repeated triggers never stack requests.
    */
-  async open(suggest: () => Promise<string>, reveal: (suggested: string) => void): Promise<void> {
+  async open<T>(suggest: () => Promise<T>, reveal: (suggested: T) => void): Promise<void> {
     if (this.opening || this.isOpen) {
       return;
     }

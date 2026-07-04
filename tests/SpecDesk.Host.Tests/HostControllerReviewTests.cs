@@ -324,6 +324,116 @@ public sealed class HostControllerReviewTests
     }
 
     [Test]
+    public void SendForReview_uses_the_authors_confirmed_title_and_body()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocSendForReview, new SendForReviewPayload("My review title", "My review body")));
+
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.Title, Is.EqualTo("My review title"));
+            Assert.That(review.Body, Is.EqualTo("My review body"));
+        });
+    }
+
+    [Test]
+    public void SendForReview_falls_back_to_the_generated_title_but_honours_a_cleared_body()
+    {
+        // FakeVersioning's LastNoteValue ("Clarify the refund window") is the generated title. A blank title
+        // falls back to it (GitHub rejects an empty title); a body the author cleared is honoured as empty
+        // (the description is optional).
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocSendForReview, new SendForReviewPayload("   ", "")));
+
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.Title, Is.EqualTo("Clarify the refund window"));
+            Assert.That(review.Body, Is.EqualTo(string.Empty));
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_replies_with_the_generated_title_and_body_echoing_the_request_id()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-1"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.Id, Is.EqualTo("req-1"));
+            Assert.That(payload!.Blocked, Is.Null); // ready to send
+            Assert.That(payload!.Title, Is.EqualTo("Clarify the refund window"));
+            Assert.That(payload!.Body, Does.Contain("billing.md"));
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_not_signed_in_replies_blocked_so_the_prompt_stays_closed()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: false), new FakeGitHubReview());
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "r"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Connect"));
+    }
+
+    [Test]
+    public void SuggestPrText_while_a_send_is_in_flight_replies_blocked_so_the_prompt_stays_closed()
+    {
+        using ManualResetEventSlim gate = new(initialState: false);
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ReleaseGate = gate };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        // A send reaches the (blocked) PR call and stays in flight, so _publishInFlight is set.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitUntil(() => review.Calls == 1), Is.True, "the send should reach the PR call");
+
+        // Asking for a suggestion now is blocked — the prompt must not open to compose a doomed second send.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "r"));
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("already being sent"));
+
+        gate.Set();
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+    }
+
+    [Test]
+    public void SuggestPrText_without_a_saved_version_replies_blocked()
+    {
+        FakeVersioning versioning = new() { HasCommitsValue = false };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview());
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "r"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Save a version"));
+    }
+
+    [Test]
     public void Discard_during_an_in_flight_send_is_ignored_so_the_open_pr_is_not_orphaned()
     {
         using ManualResetEventSlim gate = new(initialState: false);

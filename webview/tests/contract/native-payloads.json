@@ -34,6 +34,10 @@
   "version.note.suggested": {
     "note": "Clarify the refund window is 30 days"
   },
+  "pr.suggested": {
+    "title": "Clarify the refund window",
+    "body": "Review requested for billing.md via SpecDesk."
+  },
   "diff.result": {
     "entries": [
       {

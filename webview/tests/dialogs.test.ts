@@ -17,6 +17,12 @@ function setupDom(): void {
       <button id="version-note-confirm"></button>
       <button id="version-note-cancel"></button>
     </div>
+    <div id="pr-text-bar" hidden>
+      <input id="pr-title-input" />
+      <textarea id="pr-body-textarea"></textarea>
+      <button id="pr-text-confirm"></button>
+      <button id="pr-text-cancel"></button>
+    </div>
   `;
 }
 
@@ -50,18 +56,39 @@ function button(id: string): HTMLButtonElement {
   return el;
 }
 
-function mount(suggest: { branch?: string; version?: string } = {}) {
+function mount(
+  suggest: {
+    branch?: string;
+    version?: string;
+    pr?: { title: string; body: string; blocked?: string };
+  } = {},
+) {
   const onBranchName = vi.fn();
   const onVersionNote = vi.fn();
+  const onPrText = vi.fn();
+  const onPrBlocked = vi.fn();
   const suggestBranchName = vi.fn(async () => suggest.branch ?? "");
   const suggestVersionNote = vi.fn(async () => suggest.version ?? "");
+  const suggestPrText = vi.fn(async () => suggest.pr ?? { title: "", body: "" });
   const dialogs = new Dialogs({
     suggestBranchName,
     onBranchName,
     suggestVersionNote,
     onVersionNote,
+    suggestPrText,
+    onPrBlocked,
+    onPrText,
   });
-  return { dialogs, onBranchName, onVersionNote, suggestBranchName, suggestVersionNote };
+  return {
+    dialogs,
+    onBranchName,
+    onVersionNote,
+    onPrText,
+    onPrBlocked,
+    suggestBranchName,
+    suggestVersionNote,
+    suggestPrText,
+  };
 }
 
 beforeEach(setupDom);
@@ -161,6 +188,9 @@ describe("Dialogs — draft-name bar", () => {
       onBranchName: vi.fn(),
       suggestVersionNote: vi.fn(async () => ""),
       onVersionNote: vi.fn(),
+      suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
+      onPrBlocked: vi.fn(),
+      onPrText: vi.fn(),
     });
     const first = dialogs.openBranchName();
     const second = dialogs.openBranchName();
@@ -183,6 +213,9 @@ describe("Dialogs — draft-name bar", () => {
       onBranchName: vi.fn(),
       suggestVersionNote: vi.fn(async () => ""),
       onVersionNote: vi.fn(),
+      suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
+      onPrBlocked: vi.fn(),
+      onPrText: vi.fn(),
     });
     const opening = dialogs.openBranchName(); // request in flight
     dialogs.closeAll(); // e.g. a new document loads before the suggestion resolves
@@ -296,6 +329,9 @@ describe("Dialogs — version-note bar", () => {
       onBranchName: vi.fn(),
       suggestVersionNote,
       onVersionNote: vi.fn(),
+      suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
+      onPrBlocked: vi.fn(),
+      onPrText: vi.fn(),
     });
     const first = dialogs.openVersionNote();
     const second = dialogs.openVersionNote();
@@ -323,6 +359,9 @@ describe("Dialogs — version-note bar", () => {
       onBranchName: vi.fn(),
       suggestVersionNote,
       onVersionNote: vi.fn(),
+      suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
+      onPrBlocked: vi.fn(),
+      onPrText: vi.fn(),
     });
     const opening = dialogs.openVersionNote(); // request in flight
     dialogs.closeAll(); // e.g. a new document loads before the suggestion resolves
@@ -332,11 +371,93 @@ describe("Dialogs — version-note bar", () => {
   });
 });
 
+describe("Dialogs — send-for-review (PR title/body) prompt", () => {
+  it("opens prefilled with the host's suggested title and body, focused on the title", async () => {
+    const { dialogs, suggestPrText } = mount({
+      pr: { title: "Clarify refunds", body: "Body text." },
+    });
+
+    await dialogs.openPrText();
+
+    expect(suggestPrText).toHaveBeenCalledTimes(1);
+    expect(div("pr-text-bar").hidden).toBe(false);
+    expect(input("pr-title-input").value).toBe("Clarify refunds");
+    expect(textarea("pr-body-textarea").value).toBe("Body text.");
+    expect(document.activeElement).toBe(input("pr-title-input"));
+  });
+
+  it("confirm sends the trimmed title and body, then closes", async () => {
+    const { dialogs, onPrText } = mount({ pr: { title: "T", body: "B" } });
+    await dialogs.openPrText();
+    input("pr-title-input").value = "  Edited title  ";
+    textarea("pr-body-textarea").value = "  Edited body  ";
+
+    button("pr-text-confirm").click();
+
+    expect(onPrText).toHaveBeenCalledWith({ title: "Edited title", body: "Edited body" });
+    expect(div("pr-text-bar").hidden).toBe(true);
+  });
+
+  it("Enter in the title sends; Ctrl+Enter in the body sends", async () => {
+    const { dialogs, onPrText } = mount({ pr: { title: "T", body: "B" } });
+
+    await dialogs.openPrText();
+    input("pr-title-input").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+    );
+    expect(onPrText).toHaveBeenCalledTimes(1);
+
+    await dialogs.openPrText();
+    textarea("pr-body-textarea").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
+    );
+    expect(onPrText).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancel closes without sending", async () => {
+    const { dialogs, onPrText } = mount({ pr: { title: "T", body: "B" } });
+    await dialogs.openPrText();
+
+    button("pr-text-cancel").click();
+
+    expect(onPrText).not.toHaveBeenCalled();
+    expect(div("pr-text-bar").hidden).toBe(true);
+  });
+
+  it("opening the send prompt closes an open version-note bar, and vice versa (one at a time)", async () => {
+    const { dialogs } = mount({ version: "v", pr: { title: "T", body: "B" } });
+
+    await dialogs.openVersionNote();
+    expect(div("version-note-bar").hidden).toBe(false);
+    await dialogs.openPrText();
+    expect(div("version-note-bar").hidden).toBe(true); // send prompt closed the version bar
+    expect(div("pr-text-bar").hidden).toBe(false);
+
+    await dialogs.openVersionNote();
+    expect(div("pr-text-bar").hidden).toBe(true); // version prompt closed the send bar
+    expect(div("version-note-bar").hidden).toBe(false);
+  });
+
+  it("does not open when the host reports the send is blocked; shows the reason instead", async () => {
+    const reason = "Save a version before sending it for review.";
+    const { dialogs, onPrBlocked, onPrText } = mount({
+      pr: { title: "", body: "", blocked: reason },
+    });
+
+    await dialogs.openPrText();
+
+    expect(onPrBlocked).toHaveBeenCalledWith(reason);
+    expect(div("pr-text-bar").hidden).toBe(true); // the prompt stays closed
+    expect(onPrText).not.toHaveBeenCalled();
+  });
+});
+
 describe("Dialogs — closing", () => {
-  it("closeAll hides both bars; closeVersionNote leaves the draft-name bar alone", async () => {
+  it("closeAll hides every bar; closeVersionNote leaves the draft-name bar alone", async () => {
     const { dialogs } = mount();
     div("branch-name-bar").hidden = false;
     div("version-note-bar").hidden = false;
+    div("pr-text-bar").hidden = false;
 
     dialogs.closeVersionNote();
     expect(div("version-note-bar").hidden).toBe(true);
@@ -346,5 +467,19 @@ describe("Dialogs — closing", () => {
     dialogs.closeAll();
     expect(div("branch-name-bar").hidden).toBe(true);
     expect(div("version-note-bar").hidden).toBe(true);
+    expect(div("pr-text-bar").hidden).toBe(true);
+  });
+
+  it("closePrText hides the send prompt but leaves the draft-name prompt open", async () => {
+    // Leaving editing closes the draft-only prompts (version note, send-for-review) but must NOT close the
+    // "name this draft" prompt, which is legitimately open in the published state before a draft exists.
+    const { dialogs } = mount();
+    div("branch-name-bar").hidden = false;
+    div("pr-text-bar").hidden = false;
+
+    dialogs.closePrText();
+
+    expect(div("pr-text-bar").hidden).toBe(true);
+    expect(div("branch-name-bar").hidden).toBe(false);
   });
 });

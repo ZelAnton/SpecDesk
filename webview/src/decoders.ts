@@ -20,6 +20,7 @@ import {
   type ImageInsertedPayload,
   type LineSpan,
   type PreviewPayload,
+  type PrSuggestedPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -225,4 +226,18 @@ export function parseVersionNoteSuggested(value: unknown): VersionNoteSuggestedP
     return null;
   }
   return { note: value.note };
+}
+
+export function parsePrSuggested(value: unknown): PrSuggestedPayload | null {
+  if (!isRecord(value) || !isString(value.title) || !isString(value.body)) {
+    return null;
+  }
+  if (value.blocked !== undefined && !isString(value.blocked)) {
+    return null;
+  }
+  // `blocked` is optional (exactOptionalPropertyTypes forbids an explicit undefined), so add it only when
+  // present.
+  return value.blocked === undefined
+    ? { title: value.title, body: value.body }
+    : { title: value.title, body: value.body, blocked: value.blocked };
 }

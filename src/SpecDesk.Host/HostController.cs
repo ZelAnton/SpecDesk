@@ -225,7 +225,10 @@ public sealed class HostController : IDisposable
 				OnSaveVersion(message);
 				break;
 			case MessageKinds.DocSendForReview:
-				OnSendForReview();
+				OnSendForReview(message);
+				break;
+			case MessageKinds.PrSuggestedRequest:
+				OnSuggestPrText(message);
 				break;
 			case MessageKinds.DocUpdateReview:
 				OnUpdateReview();
@@ -708,8 +711,13 @@ public sealed class HostController : IDisposable
 	// document to In review. Needs the GitHub feature wired, a connected account, and a GitHub remote;
 	// the access token is taken transiently (WithAccessTokenAsync) for the push + API call and is never
 	// stored or logged here. The network round-trip runs on a background task — it can take seconds.
-	private void OnSendForReview()
+	private void OnSendForReview(IpcMessage message)
 	{
+		// The author-confirmed PR title/body (edited from the suggestion in the send prompt). Absent for a
+		// bare send — the publish delegate then falls back to the fully generated text, so the round-trip
+		// stays robust whether or not the confirm step ran.
+		SendForReviewPayload? prText = SafeGetPayload<SendForReviewPayload>(message);
+
 		// Gate the lifecycle transition AND claim the single-flight slot atomically under _sync, so a
 		// stale state read or a double-click can't slip a second round-trip through. fromState/_branch are
 		// re-checked before the transition is committed (the document may have moved on); seq records how
@@ -773,40 +781,24 @@ public sealed class HostController : IDisposable
 			"Couldn't send this for review. Check your connection and try again.",
 			async ct =>
 			{
-				if (!_auth.IsSignedIn())
+				// Re-check readiness at send time (the prompt already gated on it, but the state could have
+				// moved) — one shared policy for the prompt and the send, and it hands back the title seed.
+				(string? blocked, GitHubRepo? repo, string? lastNote) = CheckSendReadiness(root, branchName, baseName);
+				if (blocked is not null)
 				{
-					SendError("Connect your GitHub account first, then send for review.");
-					return false;
-				}
-
-				GitHubRepo? repo = ResolveGitHubReviewRepo(root);
-				if (repo is null)
-				{
-					SendError("This document isn't in a GitHub repository, so it can't be sent for review.");
-					return false;
-				}
-
-				// The PR title seed and the "is there anything to review" check are the remaining local-git
-				// reads (one repo-gated batch).
-				string? lastNote;
-				bool hasCommits;
-				lock (_repoGate)
-				{
-					lastNote = _publishing.LastVersionNote(root, branchName);
-					hasCommits = _publishing.HasCommitsToReview(root, branchName, baseName);
-				}
-
-				if (!hasCommits)
-				{
-					// The draft is level with its base (no saved version), so GitHub would reject the PR as
-					// "no commits between base and head" — turn that into actionable plain language rather
-					// than a misleading network error. Committing stays the author's explicit "Save a version".
-					SendError("Save a version before sending it for review.");
+					SendError(blocked);
 					return false;
 				}
 
 				SendTransientStatus("Sending for review…");
-				(string title, string body) = ReviewRequestContent(lastNote, docPath);
+				// Use the author's confirmed text. A blank title degrades to the generated seed — GitHub
+				// rejects an empty title. The body degrades ONLY when it is absent (a bare send with no
+				// payload, or a payload missing the field) — a description the author cleared is honoured as
+				// empty (it's optional). The prompt only opens once readiness passes, so a failed suggestion
+				// can't reach here with a spuriously-blank body.
+				(string genTitle, string genBody) = ReviewRequestContent(lastNote, docPath);
+				string title = string.IsNullOrWhiteSpace(prText?.Title) ? genTitle : prText!.Title;
+				string body = prText?.Body is null ? genBody : prText.Body;
 				// The explicit @user/@team reviewers to request (a plain .spectool.toml read, no repo access);
 				// "codeowners" is filtered out upstream and left to GitHub's own auto-request.
 				string[] reviewers = WorkflowConfig.reviewersForHost(WorkflowSeeds.TryReadRepoToml(root));
@@ -825,7 +817,7 @@ public sealed class HostController : IDisposable
 						}
 
 						PullRequest opened = await _review.OpenPullRequestAsync(
-							token, repo.Owner, repo.Name, branchName, baseName, title, body, innerCt);
+							token, repo!.Owner, repo.Name, branchName, baseName, title, body, innerCt);
 						// Assign reviewers within the same token scope, best-effort (never fails the send).
 						await RequestReviewersBestEffort(token, repo, opened, reviewers, innerCt);
 						return opened;
@@ -1038,6 +1030,47 @@ public sealed class HostController : IDisposable
 		return GitHubRemote.TryParse(remoteUrl);
 	}
 
+	// The single readiness policy shared by the pre-send prompt (OnSuggestPrText) and the send itself:
+	// whether a review can be sent for this draft right now (signed in, a GitHub remote, at least one saved
+	// version), as plain-language checks over local git/store reads (no network). Returns the blocking
+	// reason and a null repo when not ready, or (null, the parsed repo) when ready — so the prompt never
+	// opens for a send that would be rejected, and both paths speak the same words. Callers guarantee
+	// _auth/_publishing are non-null.
+	private (string? Blocked, GitHubRepo? Repo, string? LastNote) CheckSendReadiness(
+		string root, string branch, string baseBranch)
+	{
+		if (!_auth!.IsSignedIn())
+		{
+			return ("Connect your GitHub account first, then send for review.", null, null);
+		}
+
+		// Resolve the GitHub remote first so a non-GitHub repo returns its specific message without a wasted
+		// (and possibly throwing) has-commits/last-note read. Then the remaining two local-git reads batch
+		// under one lock. (Two lock acquisitions on the GitHub path, one on the non-GitHub path; the only
+		// concurrent _repoGate contender during a prompt-open is the quick disk autosave.)
+		if (ResolveGitHubReviewRepo(root) is not { } repo)
+		{
+			return ("This document isn't in a GitHub repository, so it can't be sent for review.", null, null);
+		}
+
+		bool hasCommits;
+		string? lastNote;
+		lock (_repoGate)
+		{
+			hasCommits = _publishing!.HasCommitsToReview(root, branch, baseBranch);
+			lastNote = _publishing.LastVersionNote(root, branch);
+		}
+
+		if (!hasCommits)
+		{
+			// The draft is level with its base (no saved version) — GitHub would reject the PR as "no commits
+			// between base and head"; ask the author to save a version rather than surfacing that raw.
+			return ("Save a version before sending it for review.", null, null);
+		}
+
+		return (null, repo, lastNote);
+	}
+
 	// Release the shared single-flight claim taken by OnSendForReview / OnUpdateReview (success, failure,
 	// or an early gate exit).
 	private void ClearPublishInFlight()
@@ -1106,6 +1139,75 @@ public sealed class HostController : IDisposable
 			// rejection, a request timeout, an unexpected error) with a diagnostic, and stay In review.
 			_logger.LogWarning(ex, "Could not request reviewers on pull request #{Number}", pr.Number);
 		}
+	}
+
+	// Reply to the webview's request for the suggested PR title/body to prefill the "send for review"
+	// confirm prompt. The title seeds from the branch's last version note (the last commit message),
+	// falling back to the document name; the body is a short plain-language line. Correlated by the
+	// request id (the webview awaits it). Mirrors the send flow's own generation, so the prompt shows
+	// exactly what a bare send would use.
+	private void OnSuggestPrText(IpcMessage message)
+	{
+		string? id = message.Id;
+		string? repoRoot;
+		string? branch;
+		string? baseBranch;
+		string? path;
+		bool sendLegal;
+		bool publishInFlight;
+		lock (_sync)
+		{
+			repoRoot = _repoRoot;
+			branch = _branch;
+			baseBranch = _baseBranch;
+			path = _currentPath;
+			sendLegal = Lifecycle.tryStep(_state, "sendForReview").Length > 0;
+			publishInFlight = _publishInFlight;
+		}
+
+		string title = string.Empty;
+		string body = string.Empty;
+		string? blocked;
+		try
+		{
+			if (_auth is null || _publishing is null || _review is null)
+			{
+				blocked = "Connect a GitHub account to send a document for review.";
+			}
+			else if (repoRoot is null || branch is null || baseBranch is null || path is null || !sendLegal)
+			{
+				// No draft to send (or the document already moved past Draft). The Send button is draft-only,
+				// so this is a defensive reply rather than a reachable UI path.
+				blocked = "Start a draft before sending it for review.";
+			}
+			else if (publishInFlight)
+			{
+				// A send is already publishing this draft — don't open the prompt to compose text that a
+				// second in-flight send would just drop.
+				blocked = "This document is already being sent for review.";
+			}
+			else
+			{
+				(blocked, GitHubRepo? repo, string? lastNote) = CheckSendReadiness(repoRoot, branch, baseBranch);
+				if (repo is not null)
+				{
+					// Ready — seed the prompt with the same text a bare send would generate.
+					(title, body) = ReviewRequestContent(lastNote, path);
+				}
+			}
+		}
+		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException or IOException)
+		{
+			// A repo/store read faulted — reply with a blocking message rather than leaving the request
+			// unanswered (which would hang the prompt for the full IPC timeout). The author can retry.
+			_logger.LogError(ex, "Could not prepare the review suggestion");
+			blocked = "Couldn't prepare the review. Try again.";
+		}
+
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.PrSuggested,
+			new PrSuggestedPayload(title, body, blocked),
+			id: id));
 	}
 
 	// Reply to the webview's request for a version note to prefill the "Save a version" prompt. The
@@ -1190,9 +1292,16 @@ public sealed class HostController : IDisposable
 		{
 			_send(json);
 		}
+		catch (ObjectDisposedException ex)
+		{
+			// The window is being torn down — expected and quiet.
+			_logger.LogDebug(ex, "Dropped an outbound IPC frame (window torn down)");
+		}
 		catch (Exception ex)
 		{
-			_logger.LogDebug(ex, "Dropped an outbound IPC frame (webview transport unavailable)");
+			// Any other transport fault is a real problem worth surfacing above Debug (the pre-Emit code let
+			// it reach OnMessage's Error net); still swallowed so a background task can't fault on it.
+			_logger.LogWarning(ex, "Dropped an outbound IPC frame (webview transport error)");
 		}
 	}
 

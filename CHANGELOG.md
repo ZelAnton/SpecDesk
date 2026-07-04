@@ -129,6 +129,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says so and pushes nothing, so an accidental click can't churn the review. Like *Send for review* it needs
   a connected account and a GitHub remote, reports any problem in plain words, and never stores or logs the
   access token. (The button shows only while a review is open.)
+- PoC-5 — confirm the review's title and description before sending: **Send for review** now opens an
+  inline prompt seeded with a suggested title (your last version note, or the document name) and a short
+  description, which you can edit before the review opens — the outward-facing text is yours to confirm.
+  Enter (or **Send for review**) submits; a blank title falls back to the generated one, and the
+  description is optional.
 - PoC-5 — assign reviewers when sending for review: reviewers listed under `[review] reviewers` in
   `.spectool.toml` (e.g. `["@alice", "@org/team"]`) are requested on the pull request as soon as it opens.
   The special value `"codeowners"` defers to the repository's own CODEOWNERS (GitHub requests them

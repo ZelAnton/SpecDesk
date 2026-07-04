@@ -20,6 +20,7 @@ public static class MessageKinds
 	public const string DocDiscard = "doc.discard";
 	public const string BranchNameRequest = "branch.name.request";
 	public const string VersionNoteRequest = "version.note.request";
+	public const string PrSuggestedRequest = "pr.suggested.request";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
@@ -35,6 +36,7 @@ public static class MessageKinds
 	public const string ImageInserted = "image.inserted";
 	public const string BranchNameSuggested = "branch.name.suggested";
 	public const string VersionNoteSuggested = "version.note.suggested";
+	public const string PrSuggested = "pr.suggested";
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
@@ -89,6 +91,21 @@ public sealed record BranchNameSuggestedPayload(string Name);
 /// <summary>Payload of <c>doc.saveVersion</c> (webview→native): the author's version note (the
 /// commit message in plain words) for the explicit "Save a version" commit.</summary>
 public sealed record SaveVersionPayload(string Note);
+
+/// <summary>Payload of <c>doc.sendForReview</c> (webview→native): the author-confirmed, outward-facing
+/// pull-request <paramref name="Title"/> and <paramref name="Body"/>, edited from the host's suggestion
+/// before submit. Either may be blank (the author cleared it) — the host falls back to a generated title
+/// so GitHub never rejects an empty title, and allows an empty body. Absent (a bare send) also falls back
+/// to the generated text, so the round-trip stays robust if the confirm step is skipped.</summary>
+public sealed record SendForReviewPayload(string Title, string Body);
+
+/// <summary>Payload of <c>pr.suggested</c> (native→webview): whether the review can be sent right now and,
+/// if so, the generated, editable pull-request <paramref name="Title"/> and <paramref name="Body"/> to
+/// prefill the "send for review" confirm prompt. <paramref name="Blocked"/> is a plain-language reason the
+/// send can't proceed (not connected, not a GitHub repo, no saved version) — non-null means the webview
+/// shows it and does NOT open the prompt, so the author never composes text into a send that would be
+/// rejected. Null means ready: open the prompt with the title/body. Reviewer-facing but git-vocabulary-free.</summary>
+public sealed record PrSuggestedPayload(string Title, string Body, string? Blocked);
 
 /// <summary>Payload of <c>version.note.suggested</c> (native→webview): the generated, editable
 /// version note to prefill the "Save a version" prompt.</summary>

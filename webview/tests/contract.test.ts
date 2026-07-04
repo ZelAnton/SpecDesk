@@ -17,6 +17,7 @@ import {
   parseGitHubCode,
   parseImageInserted,
   parsePreview,
+  parsePrSuggested,
   parseStatus,
   parseVersionNoteSuggested,
 } from "../src/decoders.js";
@@ -67,6 +68,14 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
   it("version.note.suggested", () => {
     const payload = parseVersionNoteSuggested(fixture["version.note.suggested"]);
     expect(payload?.note).toBe("Clarify the refund window is 30 days");
+  });
+
+  it("pr.suggested (ready to send: blocked absent)", () => {
+    const payload = parsePrSuggested(fixture["pr.suggested"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.title).toBe("Clarify the refund window");
+    expect(payload?.body).toContain("billing.md");
+    expect(payload?.blocked).toBeUndefined();
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {

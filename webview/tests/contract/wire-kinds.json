@@ -23,6 +23,8 @@
   "link.open",
   "log",
   "log.export",
+  "pr.suggested",
+  "pr.suggested.request",
   "preview.html",
   "ready",
   "status",

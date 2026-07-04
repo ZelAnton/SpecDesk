@@ -13,6 +13,7 @@ import {
   parseGitHubCode,
   parseImageInserted,
   parsePreview,
+  parsePrSuggested,
   parseStatus,
   parseVersionNoteSuggested,
 } from "./decoders.js";
@@ -102,33 +103,65 @@ function wire(): void {
   // both editors exist (below); referenced earlier only inside callbacks that fire after that.
   let review: ReviewController;
 
-  // The two inline prompt bars (draft name on Edit, version note on Save version). They reach the host
-  // only through these callbacks — the integrator keeps the ipc/Kinds knowledge (see dialogs.ts).
+  // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
+  // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
+  function showPlainStatus(text: string): void {
+    if (statusEl) {
+      statusEl.textContent = text;
+      delete statusEl.dataset.state;
+    }
+  }
+
+  // One-shot request→reply for a host suggestion (draft name / version note / review text): await the
+  // reply, decode it, and fall back on a malformed reply or a transport fault. One place for the shared
+  // request/parse/failure shape so the three suggest callbacks can't drift.
+  async function requestSuggestion<T>(
+    kind: string,
+    parse: (payload: unknown) => T | null,
+    fallback: T,
+  ): Promise<T> {
+    try {
+      const reply = await ipc.request(kind);
+      return parse(reply.payload) ?? fallback;
+    } catch (error) {
+      log.warn(`Could not fetch a suggestion (${kind})`, String(error));
+      return fallback;
+    }
+  }
+
+  // The inline prompt bars (draft name on Edit, version note on Save version, review text on Send). They
+  // reach the host only through these callbacks — the integrator keeps the ipc/Kinds knowledge (dialogs.ts).
   const dialogs = new Dialogs({
-    suggestBranchName: async () => {
-      try {
-        const reply = await ipc.request(Kinds.branchNameRequest);
-        return parseBranchNameSuggested(reply.payload)?.name ?? "";
-      } catch (error) {
-        log.warn("Could not fetch a suggested draft name", String(error));
-        return "";
-      }
-    },
+    suggestBranchName: () =>
+      requestSuggestion(
+        Kinds.branchNameRequest,
+        (p) => parseBranchNameSuggested(p)?.name ?? null,
+        "",
+      ),
     onBranchName: (branchName) => ipc.send(Kinds.docEdit, { branchName }),
-    suggestVersionNote: async () => {
-      try {
-        const reply = await ipc.request(Kinds.versionNoteRequest);
-        return parseVersionNoteSuggested(reply.payload)?.note ?? "";
-      } catch (error) {
-        log.warn("Could not fetch a suggested version note", String(error));
-        return "";
-      }
-    },
+    suggestVersionNote: () =>
+      requestSuggestion(
+        Kinds.versionNoteRequest,
+        (p) => parseVersionNoteSuggested(p)?.note ?? null,
+        "",
+      ),
     onVersionNote: (note) => {
       ipc.send(Kinds.docSaveVersion, { note });
       // Saving a version advances the base the overlay diffs against, so any showing overlay is now stale.
       review.clear();
     },
+    // On a failed suggestion (malformed reply or transport fault) return a blocked result so the prompt
+    // stays closed rather than opening empty — the host reply is the sole authority on readiness.
+    suggestPrText: () =>
+      requestSuggestion(Kinds.prSuggestedRequest, parsePrSuggested, {
+        title: "",
+        body: "",
+        blocked: "Couldn't prepare the review. Try again.",
+      }),
+    // The send can't proceed (not connected, not a GitHub repo, no saved version): show the plain reason
+    // the same way a host error is shown, and leave the prompt closed.
+    onPrBlocked: (reason) => showPlainStatus(reason),
+    onPrText: ({ title, body }) => ipc.send(Kinds.docSendForReview, { title, body }),
   });
 
   // Cross-pane highlight sync: a single active source line (the caret line) and a single hovered
@@ -306,9 +339,9 @@ function wire(): void {
     onOpen: () => ipc.send(Kinds.docOpen),
     onEdit: () => void dialogs.openBranchName(),
     onSaveVersion: () => void dialogs.openVersionNote(),
-    // Push the draft to GitHub and open a review (the host gates on a connected account and a GitHub
-    // remote, and surfaces any problem as a plain status message).
-    onSendForReview: () => ipc.send(Kinds.docSendForReview),
+    // Open the send-for-review prompt so the author confirms/edits the outward-facing PR title/body; on
+    // confirm it sends doc.sendForReview with that text (see onPrText).
+    onSendForReview: () => void dialogs.openPrText(),
     // Push the newly-saved versions to the already-open review (the host gates on a connected account and
     // a GitHub remote, and surfaces any problem as a plain status message).
     onUpdateReview: () => ipc.send(Kinds.docUpdateReview),
@@ -444,11 +477,8 @@ function wire(): void {
       // document is Published: the chrome offers Edit and hides the draft-only actions.
       editing = false;
       lifecycleChrome.setLifecycle("published");
-      if (statusEl) {
-        statusEl.textContent = payload.path;
-        // The path is not a lifecycle state — clear the dot's state colour (a status message follows).
-        delete statusEl.dataset.state;
-      }
+      // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
+      showPlainStatus(payload.path);
       dialogs.closeAll();
     }
   });
@@ -473,16 +503,19 @@ function wire(): void {
       formatToolbar.refresh();
     }
     if (!editing) {
+      // Leaving editing (e.g. Discard) — close the draft-only prompts (version note, send-for-review) so a
+      // stale confirm can't fire against the now-published doc. NOT the "name this draft" prompt, which is
+      // legitimately open in the published state before a draft exists.
       dialogs.closeVersionNote();
+      dialogs.closePrText();
     }
   });
 
   ipc.on(Kinds.error, (message) => {
     const payload = parseError(message.payload);
-    if (payload && statusEl) {
-      statusEl.textContent = payload.message;
-      // An error message is not a lifecycle state — drop the dot's state colour.
-      delete statusEl.dataset.state;
+    if (payload) {
+      // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
+      showPlainStatus(payload.message);
     }
   });
 

@@ -17,6 +17,7 @@ export const Kinds = {
   docDiscard: "doc.discard",
   branchNameRequest: "branch.name.request",
   versionNoteRequest: "version.note.request",
+  prSuggestedRequest: "pr.suggested.request",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -31,6 +32,7 @@ export const Kinds = {
   imageInserted: "image.inserted",
   branchNameSuggested: "branch.name.suggested",
   versionNoteSuggested: "version.note.suggested",
+  prSuggested: "pr.suggested",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -164,6 +166,23 @@ export interface SaveVersionPayload {
 /** Payload of `version.note.suggested` (native→webview): generated, editable note to prefill the prompt. */
 export interface VersionNoteSuggestedPayload {
   note: string;
+}
+
+/** Payload of `doc.sendForReview` (webview→native): the author-confirmed PR title/body (edited from the
+ *  suggestion). Either may be blank — the host falls back to a generated title, allows an empty body. */
+export interface SendForReviewPayload {
+  title: string;
+  body: string;
+}
+
+/** Payload of `pr.suggested` (native→webview): whether the review can be sent now and, if so, the
+ *  generated, editable PR title/body to prefill the "send for review" confirm prompt. `blocked` is a
+ *  plain-language reason the send can't proceed (not connected / not a GitHub repo / no saved version) —
+ *  when present, the webview shows it and does NOT open the prompt. Absent means ready. */
+export interface PrSuggestedPayload {
+  title: string;
+  body: string;
+  blocked?: string;
 }
 
 /** Payload of `status` (native→webview): the lifecycle state surfaced to the author. */

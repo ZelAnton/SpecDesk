@@ -37,6 +37,9 @@ public sealed class ContractFixtureTests
 			new BranchNameSuggestedPayload("spec/refund-window")),
 		(MessageKinds.VersionNoteSuggested,
 			new VersionNoteSuggestedPayload("Clarify the refund window is 30 days")),
+		// Ready to send (Blocked absent): the optional field is exercised by both decoders.
+		(MessageKinds.PrSuggested,
+			new PrSuggestedPayload("Clarify the refund window", "Review requested for billing.md via SpecDesk.", null)),
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.

@@ -1,9 +1,10 @@
 /**
- * The two inline prompt bars: "name this draft" (branch) shown on Edit, and "save a version" (the
- * commit message) shown on Save version. Both follow the same pattern — open with a host-suggested
- * value the author can edit, confirm/cancel, Esc backs out — so they live together here, out of the
- * index.ts integrator. This owns its own DOM and listeners; it talks to the host only through the
- * injected callbacks (the integrator keeps the ipc/Kinds knowledge), which also keeps it unit-testable.
+ * The inline prompt bars: "name this draft" (branch) on Edit, "save a version" (the commit message) on
+ * Save version, and "send for review" (the PR title/body) on Send for review. All follow the same
+ * pattern — open with a host-suggested value the author can edit, confirm/cancel, Esc backs out — so they
+ * live together here, out of the index.ts integrator. This owns its own DOM and listeners; it talks to the
+ * host only through the injected callbacks (the integrator keeps the ipc/Kinds knowledge), which also
+ * keeps it unit-testable.
  */
 
 import { PromptBar } from "./prompt-bar.js";
@@ -15,6 +16,19 @@ export function sanitizeDraftName(value: string): string {
   return value.replace(/\\/g, "/").replace(/[^A-Za-z0-9._/-]/g, "_");
 }
 
+/** The editable pull-request text shown in the send-for-review prompt (host-suggested, author-edited). */
+export interface PrText {
+  title: string;
+  body: string;
+}
+
+/** The host's reply to a send-for-review request: the suggested text, or a `blocked` reason the send
+ *  can't proceed (not connected / not a GitHub repo / no saved version) — when present the prompt does
+ *  NOT open, so the author never composes text into a send that would be rejected. */
+export interface PrSuggestion extends PrText {
+  blocked?: string;
+}
+
 export interface DialogsCallbacks {
   /** Fetch the host's suggested draft (branch) name to prefill the prompt; resolves "" on failure. */
   suggestBranchName: () => Promise<string>;
@@ -24,6 +38,13 @@ export interface DialogsCallbacks {
   suggestVersionNote: () => Promise<string>;
   /** The author confirmed a version note (already trimmed) — make the explicit "save a version" commit. */
   onVersionNote: (note: string) => void;
+  /** Fetch the host's send readiness + suggested PR title/body; resolves with a `blocked` reason (and the
+   *  prompt is not opened) when the send can't proceed, or empty text on transport failure. */
+  suggestPrText: () => Promise<PrSuggestion>;
+  /** The send can't proceed — show the plain reason to the author (the prompt is not opened). */
+  onPrBlocked: (reason: string) => void;
+  /** The author confirmed the PR title/body — push the branch and open the review with this text. */
+  onPrText: (text: PrText) => void;
 }
 
 export class Dialogs {
@@ -46,10 +67,18 @@ export class Dialogs {
   private readonly versionNoteCancel =
     document.querySelector<HTMLButtonElement>("#version-note-cancel");
 
+  private readonly prTextBar = document.querySelector<HTMLElement>("#pr-text-bar");
+  private readonly prTitleInput = document.querySelector<HTMLInputElement>("#pr-title-input");
+  private readonly prBodyTextarea =
+    document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
+  private readonly prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
+  private readonly prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+
   // The open/close state machine (re-entrancy latch + supersession token) for each bar lives in
-  // PromptBar, so that subtle handling is written once and the two bars cannot drift apart.
+  // PromptBar, so that subtle handling is written once and the bars cannot drift apart.
   private readonly branchBar = new PromptBar(this.branchNameBar);
   private readonly versionBar = new PromptBar(this.versionNoteBar);
+  private readonly prBar = new PromptBar(this.prTextBar);
 
   constructor(private readonly callbacks: DialogsCallbacks) {
     this.branchNameConfirm?.addEventListener("click", () => this.confirmBranchName());
@@ -104,6 +133,29 @@ export class Dialogs {
         this.closeVersionNote();
       }
     });
+
+    this.prTextConfirm?.addEventListener("click", () => this.confirmPrText());
+    this.prTextCancel?.addEventListener("click", () => this.prBar.close());
+    // Title: Enter sends (the body is prefilled and optional), Esc cancels.
+    this.prTitleInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.confirmPrText();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.prBar.close();
+      }
+    });
+    // Body: Enter inserts a newline (default), Ctrl/Cmd+Enter sends, Esc cancels.
+    this.prBodyTextarea?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        this.confirmPrText();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.prBar.close();
+      }
+    });
   }
 
   // —— Draft-name (branch) prompt ——————————————————————————————————————————————————————————————————
@@ -139,6 +191,8 @@ export class Dialogs {
    *  the `!hidden` guard misses — without it a late reply would re-run the reset-to-single-line block
    *  below and silently discard a multi-line note the author had expanded into and started writing. */
   async openVersionNote(): Promise<void> {
+    // Only one draft prompt at a time — close the send-for-review bar if it's open (both are draft-state).
+    this.prBar.close();
     await this.versionBar.open(
       () => this.callbacks.suggestVersionNote(),
       (suggested) => {
@@ -166,10 +220,53 @@ export class Dialogs {
     this.versionBar.close();
   }
 
-  /** Close both prompt bars (e.g. when a new document loads). */
+  // —— Send-for-review (PR title/body) prompt ————————————————————————————————————————————————————————
+
+  /** Reveal the send-for-review prompt, prefilled with the host's suggested PR title + body, for the
+   *  author to confirm/edit the outward-facing text before the review opens. No-op if already open. */
+  async openPrText(): Promise<void> {
+    // Only one draft prompt at a time — close the version-note bar if it's open (both are draft-state).
+    this.versionBar.close();
+    await this.prBar.open(
+      () => this.callbacks.suggestPrText(),
+      (suggested) => {
+        if (suggested.blocked) {
+          // The send can't proceed — show the reason and do NOT open the prompt, so the author never
+          // composes text into a send that would be rejected.
+          this.callbacks.onPrBlocked(suggested.blocked);
+          return;
+        }
+        if (this.prTitleInput) {
+          this.prTitleInput.value = suggested.title;
+        }
+        if (this.prBodyTextarea) {
+          this.prBodyTextarea.value = suggested.body;
+        }
+        if (this.prTextBar) {
+          this.prTextBar.hidden = false;
+        }
+        this.prTitleInput?.focus();
+        this.prTitleInput?.select();
+      },
+    );
+  }
+
+  closePrText(): void {
+    this.prBar.close();
+  }
+
+  private confirmPrText(): void {
+    const title = this.prTitleInput?.value.trim() ?? "";
+    const body = this.prBodyTextarea?.value.trim() ?? "";
+    this.prBar.close();
+    this.callbacks.onPrText({ title, body });
+  }
+
+  /** Close every prompt bar (e.g. when a new document loads). */
   closeAll(): void {
     this.branchBar.close();
     this.versionBar.close();
+    this.prBar.close();
   }
 
   private versionNoteMultiline(): boolean {

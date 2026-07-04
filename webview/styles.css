@@ -348,6 +348,7 @@ button {
    `#id { display: flex }` would out-specify the user-agent `[hidden] { display: none }` and leak it. */
 #branch-name-bar:not([hidden]),
 #version-note-bar:not([hidden]),
+#pr-text-bar:not([hidden]),
 #github-signin-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
@@ -369,7 +370,8 @@ button {
   border-bottom-color: var(--warn-border);
 }
 
-/* Connecting a GitHub account is an in-progress, informational step (info tint). */
+/* Sending for review and connecting a GitHub account are both GitHub steps — the info tint. */
+#pr-text-bar,
 #github-signin-bar {
   background: var(--info-bg);
   border-bottom-color: var(--info-border);
@@ -404,7 +406,9 @@ button {
 
 #branch-name-bar input,
 #version-note-bar input,
-#version-note-bar textarea {
+#version-note-bar textarea,
+#pr-text-bar input,
+#pr-text-bar textarea {
   flex: 1;
   min-width: 0;
   padding: 0.3rem 0.5rem;
@@ -415,12 +419,19 @@ button {
   border-radius: var(--r-sm);
 }
 
-#version-note-bar textarea {
+#version-note-bar textarea,
+#pr-text-bar textarea {
   resize: vertical;
+}
+
+/* The description spans the full width on its own row below the title (min-width forces the wrap). */
+#pr-text-bar textarea {
+  flex-basis: 100%;
 }
 
 #branch-name-bar button,
 #version-note-bar button,
+#pr-text-bar button,
 #github-signin-bar button {
   height: 28px;
   padding: 0 0.7rem;
@@ -437,6 +448,7 @@ button {
    is lower specificity and would lose the fill at rest. */
 #branch-name-bar #branch-name-confirm,
 #version-note-bar #version-note-confirm,
+#pr-text-bar #pr-text-confirm,
 #github-signin-bar #github-open-btn {
   color: var(--on-accent);
   background: var(--accent);
@@ -445,6 +457,7 @@ button {
 
 #branch-name-bar #branch-name-confirm:hover,
 #version-note-bar #version-note-confirm:hover,
+#pr-text-bar #pr-text-confirm:hover,
 #github-signin-bar #github-open-btn:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);

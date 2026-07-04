@@ -59,6 +59,16 @@
       <button id="version-note-confirm" type="button">Save</button>
       <button id="version-note-cancel" type="button">Cancel</button>
     </div>
+    <!-- Inline prompt for the review's outward-facing text (PoC-5), revealed by "Send for review": the
+         host seeds a title (the last version note) and a short description; the author confirms or edits
+         them before the review opens. Plain words — no git/PR vocabulary. -->
+    <div id="pr-text-bar" hidden>
+      <label for="pr-title-input">Title for reviewers</label>
+      <input id="pr-title-input" type="text" autocomplete="off" />
+      <textarea id="pr-body-textarea" rows="3" autocomplete="off" placeholder="A short description (optional)"></textarea>
+      <button id="pr-text-confirm" type="button">Send for review</button>
+      <button id="pr-text-cancel" type="button">Cancel</button>
+    </div>
     <!-- Sign-in code bar (PoC-5), revealed while connecting a GitHub account: shows the one-time code to
          enter at GitHub, a button to open the page, and a waiting/result line. Plain words only. -->
     <div id="github-signin-bar" hidden>

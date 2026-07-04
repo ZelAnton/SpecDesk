@@ -160,12 +160,12 @@ Offered right after the first **Save a version**, and always available as a butt
   picks from a list),
 - status becomes **In review**.
 
-> **Implementation status (MVP):** the reviewer assignment and the round-trip are wired; the
-> author-facing **edit-before-submit** of the PR title/description is not yet — the title is the
-> last version note (falling back to the document name) and the body is a fixed template, opened
-> without a confirm dialog. The `pr.suggested` IPC seam
-> ([09-ipc-protocol.md](09-ipc-protocol.md)) is reserved for it. Wiring the editable prompt (mirroring
-> the branch-name / version-note prompts) is a pending enhancement.
+> **Implementation status:** the round-trip, reviewer assignment, and the author-facing
+> **edit-before-submit** of the PR title/description are all wired. Send for review opens an inline
+> prompt (the `pr.suggested` seam, [09-ipc-protocol.md](09-ipc-protocol.md)) seeded with the title (the
+> last version note, falling back to the document name) and a short description; the author confirms or
+> edits them, then the review opens with that text. A blank title falls back to the generated one
+> (GitHub rejects an empty title); an empty description is honoured.
 
 ### 6. Respond to feedback
 
