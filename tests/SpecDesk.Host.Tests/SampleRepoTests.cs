@@ -83,6 +83,32 @@ public sealed class SampleRepoTests
     }
 
     [Test]
+    public void A_crash_after_welcome_md_appears_but_before_the_rest_of_the_seed_completes_is_retried()
+    {
+        string repoRoot = TempDir();
+        string bundled = TempDir();
+        File.WriteAllText(Path.Combine(bundled, "welcome.md"), "ORIGINAL");
+        File.WriteAllText(Path.Combine(bundled, ".spectool.toml"), "[images]\n");
+        FakeVersioning versioning = new() { Versioned = false };
+
+        // Simulate a crash mid-copy: the filesystem-dependent copy order landed welcome.md first, then
+        // the process died before the sibling file, the completion marker, and Initialize ever ran.
+        File.WriteAllText(Path.Combine(repoRoot, "welcome.md"), "ORIGINAL");
+
+        string welcome = SampleRepo.EnsureSeeded(repoRoot, bundled, versioning, NullLogger.Instance);
+
+        Assert.Multiple(() =>
+        {
+            // A naive "does welcome.md exist" check would have skipped re-seeding here, permanently
+            // leaving the sibling file missing. The completion marker (absent) proves the seed was
+            // incomplete, so the copy — and Initialize — run to completion on this call instead.
+            Assert.That(File.Exists(Path.Combine(repoRoot, ".spectool.toml")), Is.True);
+            Assert.That(File.ReadAllText(welcome), Is.EqualTo("ORIGINAL"));
+            Assert.That(versioning.InitializeCalls, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
     public void With_no_bundled_samples_directory_it_skips_the_copy_but_still_initializes()
     {
         string repoRoot = TempDir();

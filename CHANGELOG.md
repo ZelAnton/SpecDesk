@@ -184,6 +184,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version as already shared, so its own later "Update review" falsely reported "No new versions". The
   check now also compares the existing per-checkout generation counter, which a discard/recreate always
   advances, so a stale push can no longer land on a draft it didn't itself publish.
+- `SampleRepo.EnsureSeeded` treated `welcome.md`'s mere existence as proof that the bundled sample copy
+  had fully completed, but `Directory.GetFiles` makes no copy-order guarantee, so a crash partway through
+  copying (after `welcome.md` happened to land but before every sibling file did) would permanently skip
+  re-seeding on every later launch, leaving the repo committed with a partial tree. Completion is now
+  recorded by a dedicated marker file, written last via a temp file + atomic rename, and re-seeding is
+  gated on that marker (or an already-versioned repo) instead of `welcome.md` alone, so an interrupted
+  copy is retried in full on the next launch.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
