@@ -259,6 +259,38 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Ready_FiredAgainWhileADraftIsOpen_DoesNotReloadTheDocumentOrResetTheLifecycle()
+    {
+        // Regression test for M-15: a WebView2 recovery / page reload re-fires "ready". Before the fix,
+        // OnReady unconditionally reloaded _initialDocPath from disk on every "ready", which would
+        // discard the author's in-progress draft and re-stamp the document back to Published.
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+
+        StatusPayload? draftStatus = LatestStatus();
+        Assert.That(draftStatus!.State, Is.EqualTo("draft"));
+        int docLoadedCountBeforeSecondReady = CountKind(MessageKinds.DocLoaded);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+
+        StatusPayload? statusAfterSecondReady = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                CountKind(MessageKinds.DocLoaded),
+                Is.EqualTo(docLoadedCountBeforeSecondReady),
+                "a second ready must not reload the document");
+            Assert.That(
+                statusAfterSecondReady!.State,
+                Is.EqualTo("draft"),
+                "a second ready must not re-stamp the lifecycle back to Published");
+            Assert.That(statusAfterSecondReady.Branch, Is.EqualTo(draftStatus.Branch));
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
+        });
+    }
+
+    [Test]
     public void Compare_EmitsTheChangedBlocksEchoingTheVersion()
     {
         FakeVersioning versioning = new() { HeadContent = "# Billing" };
@@ -398,6 +430,16 @@ public sealed class HostControllerLifecycleTests
             })
             ? FindKind(kind)
             : null;
+    }
+
+    private int CountKind(string kind)
+    {
+        lock (_gate)
+        {
+            return _sent
+                .Select(IpcSerializer.TryDeserialize)
+                .Count(m => m is not null && m.Kind == kind);
+        }
     }
 
     private IpcMessage? FindKind(string kind)
