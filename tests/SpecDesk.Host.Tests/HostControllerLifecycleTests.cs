@@ -259,6 +259,97 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Restart_WithADraftBranchAlreadyCheckedOut_ResumesAsDraftInsteadOfPublished()
+    {
+        // Regression test for M-16: the lifecycle state lived only in this object's memory, so a restart
+        // (crash / force-quit / relaunch) mid-draft always re-stamped the reopened document Published,
+        // even though the repo's working tree was still checked out on the draft branch left by the
+        // previous, now-gone process — losing track of the draft and, on the next "Edit", forcing a fresh
+        // checkout that would silently reset whatever had been autosaved to disk before the restart.
+        const string draftBranch = "spec/billing-20260101";
+        // Nothing has called BeginEdit on THIS instance — the branch is already checked out as if a
+        // previous session (now gone) left it there. NewController fires "ready", simulating this
+        // process's very first load of the document.
+        FakeVersioning versioning = new() { Branch = draftBranch };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.Not.Null, "the resumed draft must reach the webview as a status update");
+            Assert.That(
+                status!.State, Is.EqualTo("draft"), "must not falsely report Published after a restart mid-draft");
+            Assert.That(status.Branch, Is.EqualTo(draftBranch));
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(0), "resuming a draft must not force a fresh checkout");
+        });
+
+        // Clicking "Edit" again must be a no-op (the lifecycle is already Draft) rather than re-running
+        // BeginEdit's forced checkout — which would silently reset any autosaved-but-uncommitted content
+        // left over from before the restart.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+
+        StatusPayload? afterEditClick = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "Edit from an already-resumed draft must not re-checkout");
+            Assert.That(afterEditClick!.State, Is.EqualTo("draft"));
+            Assert.That(afterEditClick.Branch, Is.EqualTo(draftBranch));
+        });
+    }
+
+    [Test]
+    public void Restart_WithADetachedHeadCheckedOut_ResumesAsPublishedInsteadOfADraftOnNoBranch()
+    {
+        // Regression test for R-01: ResolveInitialLifecycle used to detect detached HEAD via
+        // `currentBranch is null`, but the real LibGit2DocumentVersioning.CurrentBranch returned
+        // libgit2's own "(no branch)" placeholder for a detached HEAD (never null) — that guard was
+        // dead, and the resolver mistook "(no branch)" for a genuine (and bogus) draft branch to resume.
+        // FakeVersioning.Branch = null simulates the FIXED CurrentBranch contract for a detached HEAD.
+        FakeVersioning versioning = new() { Branch = null };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                status is null || status.State == "published",
+                "a detached HEAD on first load must resume as Published, never a draft on a fabricated"
+                    + " branch name");
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "resolving as Published must not force a checkout");
+        });
+    }
+
+    [Test]
+    public void Restart_WithTheLibgit2NoBranchPlaceholderReported_ResumesAsPublishedInsteadOfADraft()
+    {
+        // Regression test for R-01 (re-review): the previous regression test only exercised
+        // `currentBranch is null`, which the OLD buggy guard already handled correctly — it never
+        // proved the ALSO-ADDED `or "(no branch)"` guard in ResolveInitialLifecycle does anything. This
+        // pins that specific guard: if some IDocumentVersioning implementation ever forwards libgit2's
+        // own placeholder verbatim (instead of translating it to null, as the fixed
+        // LibGit2DocumentVersioning.CurrentBranch now does), the resolver must still recognize it as
+        // "no real branch to resume" rather than mistaking "(no branch)" for a genuine draft branch name.
+        // Removing the `or "(no branch)"` disjunct from ResolveInitialLifecycle would fail this test
+        // (the fake's literal "(no branch)" would compare unequal to the base branch "main" and the
+        // resolver would wrongly resume a "draft" on that fabricated name).
+        FakeVersioning versioning = new() { Branch = "(no branch)" };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                status is null || status.State == "published",
+                "the libgit2 \"(no branch)\" placeholder must resume as Published, never a draft on a"
+                    + " fabricated branch name");
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "resolving as Published must not force a checkout");
+        });
+    }
+
+    [Test]
     public void Ready_FiredAgainWhileADraftIsOpen_DoesNotReloadTheDocumentOrResetTheLifecycle()
     {
         // Regression test for M-15: a WebView2 recovery / page reload re-fires "ready". Before the fix,

@@ -244,6 +244,61 @@ const diffField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+// A pending image-insert marker (T-034/M-21): the position an in-flight paste/drop was captured at is
+// registered here and remapped through every subsequent edit — typing, another marker's own resolution,
+// … — via ChangeSet.mapPos, so the async host round-trip inserts wherever that position has moved to
+// instead of the stale value captured at paste time. `assoc: 1` on the mapping means a marker sitting
+// exactly where ANOTHER marker's insert just landed sticks AFTER that inserted text, so several images
+// captured at the same original position still resolve into distinct, non-clobbering locations no matter
+// which host reply arrives first.
+//
+// A whole-document setText is a single blunt change (the entire old text deleted, the entire new text
+// inserted), so ChangeSet.mapPos through it is meaningless for a marker — every position ends up mapped
+// to one edge of the change. setText therefore never lets a marker go through the ordinary docChanged
+// mapping above: a genuinely different document (loading another file) drops pending markers outright
+// via clearMarkersEffect (there is nothing left in the new document for them to mean); mirroring the
+// SAME logical content (the Split mirror, a mode-switch hydration) instead restores the pre-transaction
+// positions verbatim via restoreMarkersEffect (clamped to the new length) — content is unchanged or only
+// locally edited by the sibling pane, so the captured position is still the closest available estimate,
+// unlike the blunt mapPos result.
+const setMarkerEffect = StateEffect.define<{ id: number; pos: number | null }>();
+const clearMarkersEffect = StateEffect.define<null>();
+const restoreMarkersEffect = StateEffect.define<Map<number, number>>();
+
+const markerField = StateField.define<Map<number, number>>({
+  create: () => new Map(),
+  update(markers, tr) {
+    let next = markers;
+    if (tr.docChanged && markers.size > 0) {
+      next = new Map();
+      for (const [id, pos] of markers) {
+        next.set(id, tr.changes.mapPos(pos, 1));
+      }
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(clearMarkersEffect)) {
+        next = new Map();
+      } else if (effect.is(restoreMarkersEffect)) {
+        const maxPos = tr.state.doc.length;
+        next = new Map();
+        for (const [id, pos] of effect.value) {
+          next.set(id, Math.min(pos, maxPos));
+        }
+      } else if (effect.is(setMarkerEffect)) {
+        if (next === markers) {
+          next = new Map(next);
+        }
+        if (effect.value.pos === null) {
+          next.delete(effect.value.id);
+        } else {
+          next.set(effect.value.id, effect.value.pos);
+        }
+      }
+    }
+    return next;
+  },
+});
+
 /**
  * Editor theme (§6 of the design concept): structural chrome only — background, gutter, active line,
  * cursor and selection — all reading from the design tokens, so the editor follows light/dark with
@@ -348,6 +403,8 @@ export class MarkdownEditor {
   private hoverLineValue: number | null = null;
   // The review/compare overlay marks, remembered so a whole-document setText re-applies them.
   private diffValue: DiffMark[] | null = null;
+  // Monotonic id source for tracked image-insert markers (see markerField / trackPosition).
+  private nextMarkerId = 0;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -417,6 +474,7 @@ export class MarkdownEditor {
           hoverLineField,
           activeLineField,
           diffField,
+          markerField,
           updates,
           // Ctrl/Cmd-click a link in the source opens it in the OS browser (the host re-validates the
           // scheme), matching the formatted view. Registered as a CodeMirror dom handler (not a
@@ -505,12 +563,26 @@ export class MarkdownEditor {
   }
 
   /**
-   * Replace the whole document. By default triggers a normal change/render (used when a file is
-   * opened). Pass `silent` to suppress the change notification — used when mirroring text in from the
-   * formatted editor in split, so the mirror doesn't echo back out as a new edit.
+   * Replace the whole document. By default triggers a normal change/render and drops any pending
+   * image-insert markers — this is the "a genuinely different document is now current" path (a file
+   * was opened/loaded), so mapping a marker through the wholesale replace would land it at an
+   * arbitrary position in a document it was never captured against. insertAtMarker/discardMarker
+   * already no-op gracefully once a marker is gone, so an in-flight round-trip simply drops its insert.
+   *
+   * Pass `silent` for the OTHER use of a whole-document replace: mirroring the SAME logical content in
+   * from the sibling surface (the Split mirror, or hydrating a pane on a mode switch) — not a document
+   * change, so pending markers are kept, restored to their pre-transaction positions (clamped to the
+   * new length) rather than dropped or blindly mapped through the blunt whole-document change. This
+   * also suppresses the change notification so the mirror doesn't echo back out as a new edit.
    */
   setText(text: string, silent = false): void {
     this.suppressChange = silent;
+    // Silent = mirroring the same logical content (Split mirror / mode-switch hydration): keep pending
+    // image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than dropped.
+    // Non-silent = a genuinely different document (a file was opened) — drop any pending markers.
+    const markerEffect = silent
+      ? restoreMarkersEffect.of(this.view.state.field(markerField))
+      : clearMarkersEffect.of(null);
     // Re-apply the synced highlights in the same transaction: a whole-document replace would otherwise
     // map the active-line decoration to position 0 and clear the hover one (it drops on docChanged).
     this.view.dispatch({
@@ -519,6 +591,7 @@ export class MarkdownEditor {
         setActiveLineEffect.of(this.activeLineValue),
         setHoverLineEffect.of(this.hoverLineValue),
         setDiffEffect.of(this.diffValue),
+        markerEffect,
       ],
     });
     // Clear in case the text was identical and no docChanged fired to consume the flag.
@@ -551,6 +624,44 @@ export class MarkdownEditor {
       changes: { from: clamped, insert: text },
       selection: { anchor: clamped + text.length },
     });
+  }
+
+  /**
+   * Register `pos` as a tracked marker (T-034/M-21) and return its id. The position is remapped
+   * through every subsequent edit — typing, another marker's resolution, … — until {@link
+   * insertAtMarker} (or {@link discardMarker}) consumes it. Use this instead of a raw captured
+   * position whenever the eventual insert follows an async round-trip (image paste/drop): by the
+   * time the reply arrives, a plain number captured up front may point at the wrong place, or —
+   * for several images captured at the same spot — collide with another pending insert.
+   */
+  trackPosition(pos: number): number {
+    const id = this.nextMarkerId++;
+    const clamped = Math.max(0, Math.min(pos, this.view.state.doc.length));
+    this.view.dispatch({ effects: setMarkerEffect.of({ id, pos: clamped }) });
+    return id;
+  }
+
+  /**
+   * Insert text at the marker's current (remapped) position, place the cursor after it, and clear
+   * the marker. A no-op if the marker no longer exists (already resolved/discarded, or dropped by a
+   * whole-document {@link setText} in the meantime) — an in-flight round-trip that loses its race
+   * with a document switch simply drops its insert rather than landing somewhere meaningless.
+   */
+  insertAtMarker(id: number, text: string): void {
+    const pos = this.view.state.field(markerField).get(id);
+    if (pos === undefined) {
+      return;
+    }
+    this.view.dispatch({
+      changes: { from: pos, insert: text },
+      selection: { anchor: pos + text.length },
+      effects: setMarkerEffect.of({ id, pos: null }),
+    });
+  }
+
+  /** Discard a tracked marker without inserting (e.g. the host round-trip failed or was empty). */
+  discardMarker(id: number): void {
+    this.view.dispatch({ effects: setMarkerEffect.of({ id, pos: null }) });
   }
 
   /**

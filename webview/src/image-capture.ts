@@ -11,8 +11,13 @@ export interface CapturedImage {
   base64: string;
   originalName: string;
   mime: string;
-  /** Document position at which to insert the resulting link. */
-  pos: number;
+  /**
+   * Id of a position marker tracked by the editor (see {@link MarkdownEditor.trackPosition}), to
+   * resolve via {@link MarkdownEditor.insertAtMarker} once the async host round-trip returns the
+   * markdown to insert. NOT a raw position: by the time the reply arrives, typing (or another
+   * image's own insert) may have moved where this one belongs.
+   */
+  markerId: number;
 }
 
 /** Strip the `data:<mime>;base64,` prefix from a data URL, leaving the raw base64. Pure. */
@@ -31,16 +36,23 @@ function readAsBase64(file: File): Promise<string> {
 }
 
 async function emit(
+  editor: MarkdownEditor,
   files: File[],
   pos: number,
   onImage: (image: CapturedImage) => void,
 ): Promise<void> {
-  for (const file of files) {
+  // Register a tracked marker per file up front, synchronously, before any async gap (the base64
+  // read below can span several event-loop turns in jsdom/WebView2 alike). Several files pasted/
+  // dropped together start at the very same `pos` — trackPosition still gives each its own id, so
+  // they resolve independently (see editor.ts's marker field) instead of sharing one stale position.
+  const jobs = files.map((file) => ({ file, markerId: editor.trackPosition(pos) }));
+  for (const { file, markerId } of jobs) {
     const base64 = await readAsBase64(file).catch(() => null);
     if (base64 === null) {
       log.warn("Could not read pasted image", { name: file.name, mime: file.type });
+      editor.discardMarker(markerId);
     } else {
-      onImage({ base64, originalName: file.name, mime: file.type, pos });
+      onImage({ base64, originalName: file.name, mime: file.type, markerId });
     }
   }
 }
@@ -84,7 +96,7 @@ export function attachImageCapture(
       return;
     }
     event.preventDefault();
-    void emit(files, editor.selectionHead(), onImage);
+    void emit(editor, files, editor.selectionHead(), onImage);
   });
 
   dom.addEventListener("drop", (event) => {
@@ -98,6 +110,6 @@ export function attachImageCapture(
     }
     event.preventDefault();
     const pos = editor.posAtCoords(event.clientX, event.clientY) ?? editor.selectionHead();
-    void emit(files, pos, onImage);
+    void emit(editor, files, pos, onImage);
   });
 }
