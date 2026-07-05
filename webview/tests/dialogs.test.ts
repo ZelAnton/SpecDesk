@@ -139,6 +139,17 @@ describe("Dialogs — draft-name bar", () => {
     expect(onBranchName).toHaveBeenCalledTimes(1); // Escape did not report
   });
 
+  it("Escape with focus on a dialog button also closes the bar", async () => {
+    const { dialogs, onBranchName } = mount();
+    await dialogs.openBranchName();
+    button("branch-name-confirm").focus();
+    button("branch-name-confirm").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(div("branch-name-bar").hidden).toBe(true);
+    expect(onBranchName).not.toHaveBeenCalled();
+  });
+
   it("live-sanitizes the input as it is typed", async () => {
     const { dialogs } = mount();
     await dialogs.openBranchName();
@@ -294,6 +305,17 @@ describe("Dialogs — version-note bar", () => {
     expect(onVersionNote).not.toHaveBeenCalled();
   });
 
+  it("Escape with focus on a dialog button also closes the bar", async () => {
+    const { dialogs, onVersionNote } = mount();
+    await dialogs.openVersionNote();
+    button("version-note-confirm").focus();
+    button("version-note-confirm").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(div("version-note-bar").hidden).toBe(true);
+    expect(onVersionNote).not.toHaveBeenCalled();
+  });
+
   it("does not stack requests when already open", async () => {
     const { dialogs, suggestVersionNote } = mount({ version: "v" });
     await dialogs.openVersionNote();
@@ -422,6 +444,17 @@ describe("Dialogs — send-for-review (PR title/body) prompt", () => {
 
     expect(onPrText).not.toHaveBeenCalled();
     expect(div("pr-text-bar").hidden).toBe(true);
+  });
+
+  it("Escape with focus on a dialog button also closes the bar", async () => {
+    const { dialogs, onPrText } = mount({ pr: { title: "T", body: "B" } });
+    await dialogs.openPrText();
+    button("pr-text-confirm").focus();
+    button("pr-text-confirm").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(div("pr-text-bar").hidden).toBe(true);
+    expect(onPrText).not.toHaveBeenCalled();
   });
 
   it("opening the send prompt closes an open version-note bar, and vice versa (one at a time)", async () => {

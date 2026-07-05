@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Escape now closes/cancels an open inline prompt bar (draft name, version note, send-for-review)
+  regardless of which of its own elements holds focus. Previously the Escape handling lived only on
+  the text input/textarea, so a keyboard user focused on the Confirm/Cancel button got no reaction.
 - `PromptBar.open()` (webview) no longer drops a reopen requested during the "closing in flight" window.
   Previously, calling `close()` while an `open()`'s suggestion request was still in flight invalidated
   that request but left its `opening` latch set until the stale request's own `finally` ran; a fresh

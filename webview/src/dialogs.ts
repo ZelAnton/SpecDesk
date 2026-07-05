@@ -81,6 +81,28 @@ export class Dialogs {
   private readonly prBar = new PromptBar(this.prTextBar);
 
   constructor(private readonly callbacks: DialogsCallbacks) {
+    // Escape closes/cancels a bar no matter which of its own elements holds focus (button or text
+    // field) — bound on the bar container itself so it fires regardless of the focused descendant,
+    // not only from the text-input/textarea listeners below.
+    this.branchNameBar?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.branchBar.close();
+      }
+    });
+    this.versionNoteBar?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeVersionNote();
+      }
+    });
+    this.prTextBar?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.prBar.close();
+      }
+    });
+
     this.branchNameConfirm?.addEventListener("click", () => this.confirmBranchName());
     this.branchNameCancel?.addEventListener("click", () => this.branchBar.close());
     // Live-clean the draft name to a valid ref as it is typed, keeping the caret in place.
