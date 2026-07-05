@@ -125,6 +125,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   change. The pipeline now parses `~~…~~` as strikethrough (rendering as `<del>…</del>`), projected as
   its own `Ast.Strikethrough` case (kept distinct from bold, which shares the same delimiter count)
   and flattened mark-free like the other inline styles.
+- Pasted-image insertion had two related robustness gaps in `ImageEngine.fs`. First, de-duplication
+  matched an existing file only by its hash8-suffixed name, never its content, and the write itself was
+  a single non-atomic `File.WriteAllBytes` — a crash or power loss mid-write could leave a truncated
+  file under that exact name, which every later insert of the same image would then silently "reuse"
+  forever. The write now goes through a same-directory temp file plus rename, so the final name only
+  ever appears once the write is complete. Second, an image folder pattern that expands to a path
+  containing a space, parenthesis, or `#` produced an invalid or wrongly-resolved Markdown link (e.g.
+  `![image](../my images/x.png)`, which most renderers stop parsing at the space). Such characters (and
+  a literal `%`, escaped first to keep the scheme unambiguous) are now percent-encoded in the emitted
+  link, while the on-disk path and returned `RelativePath` stay as before.
 
 ## [0.1.0] - 2026-07-04
 

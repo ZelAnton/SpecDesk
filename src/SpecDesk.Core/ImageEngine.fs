@@ -77,11 +77,46 @@ let private traversesReparsePoint (rootFull: string) (candidate: string) : bool 
 
     found
 
+/// Percent-encode the characters that make a relative path unsafe as a BARE CommonMark link
+/// destination, or that a plain URL resolver would otherwise mis-handle: ASCII whitespace and `(`/`)`
+/// can end a bare CommonMark destination early (unescaped/unbalanced parens, or any whitespace), and
+/// `#` would be read as a URL fragment separator rather than a literal path character. `%` itself is
+/// escaped FIRST — any percent-encoding scheme must, or a literal `%` already in the path becomes
+/// ambiguous with the escapes this introduces. The native/webview readers already expect this: they
+/// pass the link's URL straight through into `app://repo/<path>`, and `AppAssetResolver.ResolveRelative`
+/// un-escapes it (`Uri.UnescapeDataString`) before touching the filesystem.
+let internal percentEncodeForLink (path: string) : string =
+    path
+    |> Seq.map (fun c ->
+        match c with
+        | '%' -> "%25"
+        | '(' -> "%28"
+        | ')' -> "%29"
+        | '#' -> "%23"
+        | c when Char.IsWhiteSpace c -> Uri.EscapeDataString(string c)
+        | c -> string c)
+    |> String.concat ""
+
 let private buildResult (docDirAbs: string) (filePath: string) (alt: string) (reused: bool) : InsertResult =
     let relative = toForwardSlashes (Path.GetRelativePath(docDirAbs, filePath))
-    { Markdown = $"![{alt}]({relative})"
+    { Markdown = $"![{alt}]({percentEncodeForLink relative})"
       RelativePath = relative
       Reused = reused }
+
+/// Write `bytes` to `target` atomically: write to a same-directory temp file first, then rename it
+/// into place. `File.Move` (same volume, the common case here) is atomic, so `target` only ever exists
+/// in a complete state — a crash or power loss mid-write leaves an orphaned temp file behind, never a
+/// truncated file under `target`'s own hash8-suffixed name that a later insert's dedup lookup (which
+/// only matches on that suffix, never re-verifies content) would otherwise mistake for a genuine,
+/// complete previous write and "reuse" forever.
+let internal writeFileAtomically (target: string) (bytes: byte[]) : unit =
+    let tempPath = target + "." + Guid.NewGuid().ToString("N") + ".tmp"
+    try
+        File.WriteAllBytes(tempPath, bytes)
+        File.Move(tempPath, target)
+    finally
+        if File.Exists tempPath then
+            File.Delete tempPath
 
 /// Process, name, de-duplicate, and write the image; return its document-relative link.
 let insertImage
@@ -161,7 +196,7 @@ let insertImage
                 if not (isInside rootFull (Path.GetFullPath target)) then
                     Error "The resolved image path is outside the repository."
                 else
-                    File.WriteAllBytes(target, processed.Bytes)
+                    writeFileAtomically target processed.Bytes
                     Ok(buildResult docDirAbs target altText false)
 
 /// C#-friendly entry for the host: plain inputs (nulls allowed), config parsed from raw TOML text.
