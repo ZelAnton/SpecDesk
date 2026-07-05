@@ -84,3 +84,18 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     expect(host.querySelector(".cm-diff-removed-marker")?.textContent).toContain("gone block");
   });
 });
+
+describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
+  // The real CodeMirror dispatch path (not just the pure formatMarkdown computation): a document with a
+  // leading blank line, caret at position 0 (Ctrl+Home), then every block-format toolbar button. Before
+  // the fix this threw `RangeError: Invalid change range 1 to 0` straight out of view.dispatch.
+  for (const command of ["h1", "h2", "bullet", "ordered", "quote", "code"] as const) {
+    it(`does not throw for ${command}`, () => {
+      const { ed } = mount();
+      ed.setText("\n# Title\n\npara\n");
+      ed.setEditable(true);
+      // A fresh setText leaves the caret at document position 0 (no explicit selection given).
+      expect(() => ed.applyFormat(command)).not.toThrow();
+    });
+  }
+});

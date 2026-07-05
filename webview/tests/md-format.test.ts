@@ -112,4 +112,24 @@ describe("formatMarkdown — block prefixes", () => {
     // caret inside "Title", no selection → the whole line gets the heading prefix
     expect(apply("Title", "h1", 2, 2).text).toBe("# Title");
   });
+
+  // S-15 regression guards: `doc.lastIndexOf("\n", from - 1)` for `from === 0` used to resolve the
+  // search position -1 by clamping it to 0 — so on a document that itself STARTS with a newline (a
+  // leading blank line), it wrongly matched that very first "\n" and returned `blockStart = 1`, one
+  // past `blockEnd = 0` (`newlineAfter` finds the SAME leading "\n" from the other side). CodeMirror
+  // then threw `RangeError: Invalid change range 1 to 0` the instant the toolbar dispatched it — for
+  // every block command, not just headings. Trigger: Ctrl+Home in a document with a leading blank line,
+  // then click any block-format button.
+  describe("caret at document position 0 with a leading blank line (S-15)", () => {
+    for (const command of ["h1", "h2", "bullet", "ordered", "quote", "code"] as const) {
+      it(`does not throw for ${command}`, () => {
+        expect(() => formatMarkdown("\n# Title\n\npara\n", 0, 0, command)).not.toThrow();
+      });
+
+      it(`produces a valid (non-inverted) edit range for ${command}`, () => {
+        const edit = formatMarkdown("\n# Title\n\npara\n", 0, 0, command);
+        expect(edit.from).toBeLessThanOrEqual(edit.to);
+      });
+    }
+  });
 });

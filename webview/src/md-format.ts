@@ -111,7 +111,13 @@ function toggleInline(doc: string, from: number, to: number, marker: string): Fo
 
 /** Toggle a line-level construct (heading / list / quote / fenced code) over the selected lines. */
 function toggleBlock(doc: string, from: number, to: number, command: FormatCommand): FormatEdit {
-  const blockStart = doc.lastIndexOf("\n", from - 1) + 1;
+  // `doc.lastIndexOf("\n", from - 1)` is the standard "find the start of the current line" idiom, but
+  // at `from === 0` the search position `-1` is clamped by the platform to `0` instead of "before the
+  // string" — so if `doc[0]` is itself a newline (a leading blank line), it wrongly matches THAT
+  // newline and returns 0, giving `blockStart = 1` (one character INTO the document, past its very
+  // first byte) instead of 0. Guarding `from === 0` directly (the caret can't be preceded by a line
+  // start earlier than the document start) sidesteps the clamping and keeps `blockStart <= blockEnd`.
+  const blockStart = from === 0 ? 0 : doc.lastIndexOf("\n", from - 1) + 1;
   // If the selection ends exactly at a line break, don't pull in the following (empty-prefix) line.
   const endRef = to > from && doc[to - 1] === "\n" ? to - 1 : to;
   const newlineAfter = doc.indexOf("\n", endRef);

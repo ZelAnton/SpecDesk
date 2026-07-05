@@ -104,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries an `align` attribute (parsed from markdown-it's own per-column `text-align` style), and the
   table serializer writes the matching separator marker back, so a text-only cell edit no longer
   strips the table's alignment.
+- Clicking a formatting-toolbar button (heading, list, quote, code) with the caret at the very start of
+  a document that itself begins with a blank line (e.g. right after Ctrl+Home) crashed with
+  `RangeError: Invalid change range 1 to 0`. The "find the current line's start" computation searched
+  for a newline just before the caret; at the document's first position that search point clamps to 0
+  instead of "before the string", so it wrongly matched the document's own leading newline and produced
+  an inverted edit range. The caret-at-0 case is now handled directly, so every block-format command
+  works from the very start of such a document instead of throwing.
 
 ## [0.1.0] - 2026-07-04
 
