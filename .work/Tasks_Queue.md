@@ -5,23 +5,6 @@
 
 ## Серьёзные находки (Serious)
 
-### [T-006] Исправить S-06: гейт жизненного цикла в OnDiscard не атомарен с проверкой publish-in-flight — статус: начала выполняться
-`src/SpecDesk.Host/HostController.cs:509` вычисляет `Lifecycle.tryStep(_state,"discard")` из
-незаблокированного чтения; `lock(_sync)` на `:517-530` проверяет только `_publishInFlight`. В
-`RunReviewPublish`, `TryAdvanceReview`, `SendLifecycleStatus` и `ClearPublishInFlight` (:1191-1222) —
-три отдельных захвата `_sync`, поэтому есть окно, когда состояние уже `InReview`, а флаг уже снят;
-"Отменить" с устаревшим чтением, увидевшим "Черновик", удаляет локальную ветку, на которой только что
-открылся PR. `OnSendForReview`/`OnUpdateReview` уже атомарно проверяют переход состояния и захватывают
-флаг под одной блокировкой — `OnDiscard` не следует этой дисциплине.
-
-Критерии готовности:
-- `tryStep` для "discard" вычисляется в том же блоке `_sync`, что и проверка `_publishInFlight` (по
-  образцу `OnSendForReview`/`OnUpdateReview`).
-- "Отменить", гонящееся с только что открывшимся PR (в момент завершения "Отправить на проверку"),
-  больше не может удалить локальную ветку, за которой стоит этот PR.
-- Добавлен регрессионный/гоночный тест (либо целевой unit-тест на атомарность проверки).
-- Запись в `CHANGELOG.md`.
-
 ### [T-007] Исправить S-08: семантический diff не видит правки чекбоксов, сносок и списков определений — статус: не начата
 `src/SpecDesk.Markdown/Projection.fs:14-30, 41-66`. `Pipeline.fs` включает `UseTaskLists`,
 `UseFootnotes`, `UseDefinitionLists`, но инлайны `TaskList`, `FootnoteLink`/`FootnoteGroup` и блоки

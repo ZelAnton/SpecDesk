@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Reflection;
+using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
 using SpecDesk.GitHub;
@@ -454,6 +457,82 @@ public sealed class HostControllerReviewTests
         gate.Set();
         Assert.That(WaitForStatusState("inReview"), Is.True);
         Assert.That(versioning.DiscardCalled, Is.False);
+    }
+
+    [Test]
+    public void Discard_reads_the_lifecycle_state_and_the_publish_flag_atomically()
+    {
+        // Regression guard for S-06: OnDiscard used to compute its lifecycle-transition check
+        // (Lifecycle.tryStep) from an UNLOCKED read of _state, then separately re-enter _sync only to
+        // check _publishInFlight. A send that fully settles (TryAdvanceReview advances _state to
+        // In review, then ClearPublishInFlight clears the flag — two further, separate lock(_sync)
+        // acquisitions of its own) between those two reads would leave a stale but still-valid `next`
+        // unrechecked: the flag-only check would find it already false and let Discard through, deleting
+        // the local branch a just-opened PR now depends on. The fix re-derives tryStep inside the SAME
+        // lock(_sync) as the flag check, so it always sees a state consistent with that check.
+        //
+        // Reproduced deterministically (no timing luck) by holding _sync itself via reflection: this
+        // blocks OnDiscard's entire gate check (now one critical section) before it can read anything,
+        // then flips _state/_publishInFlight to look exactly like a send that has just fully settled,
+        // then releases _sync. With the fix, OnDiscard's check runs AFTER that change and sees it; with
+        // the old, split-read code, the (now-untestable) unlocked read would have already captured the
+        // stale Draft-derived `next` before ever reaching this lock.
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        object sync = typeof(HostController)
+            .GetField("_sync", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(controller)!;
+        FieldInfo stateField = typeof(HostController).GetField("_state", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        FieldInfo publishInFlightField =
+            typeof(HostController).GetField("_publishInFlight", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+        Task discard;
+        Monitor.Enter(sync);
+        try
+        {
+            Assert.That(stateField.GetValue(controller), Is.EqualTo("draft"), "the draft should still be Draft here");
+
+            discard = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard)));
+            Assert.That(
+                SpinUntil(() => discard.Status == TaskStatus.Running, TimeSpan.FromSeconds(2)),
+                Is.True);
+            Thread.Sleep(50);
+
+            // Stand in for a send that has JUST fully settled: state advanced to In review (where
+            // "discard" is not a legal transition), flag cleared — while OnDiscard's whole check is still
+            // blocked waiting for _sync.
+            stateField.SetValue(controller, "inReview");
+            publishInFlightField.SetValue(controller, false);
+        }
+        finally
+        {
+            Monitor.Exit(sync);
+        }
+
+        Assert.That(discard.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.DiscardCalled, Is.False, "discard is not a legal transition from In review");
+            Assert.That(stateField.GetValue(controller), Is.EqualTo("inReview"));
+        });
+    }
+
+    private static bool SpinUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        Stopwatch sw = Stopwatch.StartNew();
+        while (sw.Elapsed < timeout)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            Thread.Sleep(5);
+        }
+
+        return condition();
     }
 
     [Test]

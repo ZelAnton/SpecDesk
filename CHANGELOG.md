@@ -43,6 +43,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with stale text; tagging the snapshot with the generation `_text` was actually written against closes
   that regardless of timing. `OnDiscard` also no longer detours through a separate `LoadFile` call —
   reading the reverted file while still holding `_repoGate` keeps that read from racing anything.
+- "Discard" (`HostController.OnDiscard`) computed its lifecycle-transition check from an unlocked read
+  of `_state`, then separately re-entered `_sync` only to check `_publishInFlight` — unlike
+  `OnSendForReview`/`OnUpdateReview`, which already gate both atomically. A "Send for review" that fully
+  settles (advancing `_state` to In review, then clearing `_publishInFlight`, in two further separate
+  `lock(_sync)` acquisitions of its own) between those two reads could leave a stale-but-still-valid
+  `next` unrechecked, so the flag-only check would find it already false and let Discard delete the
+  local branch a just-opened pull request now depends on. `tryStep` is now re-derived inside the same
+  `lock(_sync)` as the `_publishInFlight` check, matching the existing pattern.
 
 ## [0.1.0] - 2026-07-04
 

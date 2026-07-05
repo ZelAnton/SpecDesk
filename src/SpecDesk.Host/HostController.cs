@@ -564,16 +564,31 @@ public sealed class HostController : IDisposable
 	// the document from disk so the editor reflects the published version again.
 	private void OnDiscard()
 	{
-		string next = Lifecycle.tryStep(_state, "discard");
-		if (next.Length == 0)
-		{
-			return;
-		}
-
+		// Gate the lifecycle transition AND the publish-in-flight check atomically under _sync, matching
+		// OnSendForReview/OnUpdateReview's discipline. Computing tryStep from an unlocked read of _state,
+		// then separately re-entering _sync only to check _publishInFlight (as this used to do), leaves a
+		// window: a review publish's background task settles _state (TryAdvanceReview) and clears
+		// _publishInFlight (ClearPublishInFlight) in two separate, later lock(_sync) acquisitions of its
+		// own — if this method's unlocked tryStep read the PRE-push state (still permitting "discard")
+		// before that background task started, but this method's lock acquisition happens only after the
+		// ENTIRE publish round-trip (including ClearPublishInFlight) has already finished, the stale
+		// `next` survives unrechecked and the only-_publishInFlight check passes (false again by then) —
+		// Discard then deletes the local branch a just-opened PR now depends on. Re-deriving tryStep here,
+		// inside the same critical section as the flag check, closes that: a stale read is impossible
+		// because both the state and the flag are read together, under the one lock a concurrent
+		// TryAdvanceReview/ClearPublishInFlight also uses.
+		string? repoRoot;
+		string? path;
 		string? branch;
 		string? baseBranch;
 		lock (_sync)
 		{
+			string next = Lifecycle.tryStep(_state, "discard");
+			if (next.Length == 0)
+			{
+				return;
+			}
+
 			if (_publishInFlight)
 			{
 				// A Send for review is publishing this draft right now. Discarding would delete the local
@@ -583,17 +598,16 @@ public sealed class HostController : IDisposable
 				return;
 			}
 
+			repoRoot = _repoRoot;
+			path = _currentPath;
 			branch = _branch;
 			baseBranch = _baseBranch;
 		}
 
-		if (_repoRoot is null || _currentPath is null || branch is null || baseBranch is null)
+		if (repoRoot is null || path is null || branch is null || baseBranch is null)
 		{
 			return;
 		}
-
-		string repoRoot = _repoRoot;
-		string path = _currentPath;
 
 		try
 		{
