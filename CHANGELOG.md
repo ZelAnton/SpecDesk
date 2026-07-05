@@ -135,6 +135,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `![image](../my images/x.png)`, which most renderers stop parsing at the space). Such characters (and
   a literal `%`, escaped first to keep the scheme unambiguous) are now percent-encoded in the emitted
   link, while the on-disk path and returned `RelativePath` stay as before.
+- Pasting or dropping an SVG that starts with a UTF-8 byte-order mark (BOM) — common from editors and
+  export tools — was rejected with "Could not read the image". The BOM decodes to U+FEFF, which plain
+  `TrimStart()` does not remove (.NET does not treat it as whitespace), so neither the `<svg` nor the
+  `<?xml` prefix check matched and the file fell through to the raster decode path, which cannot read
+  SVG at all. The BOM is now stripped before that check, so a BOM-prefixed SVG is recognized and passed
+  through unchanged, like any other SVG.
 
 ## [0.1.0] - 2026-07-04
 

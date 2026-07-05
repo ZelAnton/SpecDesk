@@ -59,11 +59,16 @@ let private encoderFor (ext: string) : SKEncodedImageFormat option =
 // Re-encode quality for the lossy formats (JPEG/WebP); ignored by the lossless PNG encoder.
 let private encodeQuality = 90
 
-let private looksLikeSvg (bytes: byte[]) : bool =
+let internal looksLikeSvg (bytes: byte[]) : bool =
     if bytes.Length = 0 then
         false
     else
-        let head = Encoding.UTF8.GetString(bytes, 0, min bytes.Length 256).TrimStart()
+        // A UTF-8 BOM (EF BB BF) decodes to U+FEFF, which plain TrimStart() does NOT remove — .NET's
+        // Char.IsWhiteSpace does not treat it as whitespace (it's a format character, not a space). Many
+        // editors/exporters prepend one to a saved SVG, and without stripping it first neither the
+        // `<svg` nor the `<?xml` prefix check matched, so a BOM-prefixed SVG fell through to the raster
+        // decode path and was rejected outright ("Could not read the image").
+        let head = Encoding.UTF8.GetString(bytes, 0, min bytes.Length 256).TrimStart(char 0xFEFF).TrimStart()
 
         head.StartsWith("<svg", StringComparison.OrdinalIgnoreCase)
         || (head.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase)
