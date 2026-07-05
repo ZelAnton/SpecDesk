@@ -56,30 +56,73 @@ let private docContext (docSlug: string) (date: DateTimeOffset) : Tokens.TokenCo
       Hash8 = ""
       OriginalName = None }
 
-/// A token-expanded result still containing an unexpanded `{token}` means the pattern referenced
-/// something we cannot supply here (e.g. the `{summary}` placeholder reserved for the AI agent).
-/// Fall back to the default in that case so the author never gets a literal brace in a branch name
-/// or commit message.
-let private expandOrDefault (pattern: string) (fallback: string) (ctx: Tokens.TokenContext) : string =
-    let expanded = Tokens.expand ctx pattern
-    if expanded.Contains "{" || expanded.Trim().Length = 0 then
-        Tokens.expand ctx fallback
+/// Whether a string is a syntactically valid git ref name (a conservative subset of
+/// git-check-ref-format — enough to catch what a bad `{date:FMT}` can actually produce, not a full
+/// reimplementation): no whitespace/control characters or `~^:?*[\`, no `..` run or `@{`, and no
+/// leading/trailing/doubled `/`. `{date:}` (an empty format) expands via `DateTimeOffset.ToString("")`
+/// to the general format (e.g. "07/04/2026 09:30:00 +00:00") — spaces and colons a bare "still has a
+/// brace?" check does not catch, but this does.
+let private isValidGitRef (value: string) : bool =
+    if value.Length = 0 then
+        false
+    elif value.StartsWith "/" || value.EndsWith "/" || value.Contains "//" then
+        false
+    elif value.Contains ".." || value.EndsWith "." || value.Contains "@{" then
+        false
     else
-        expanded
+        value
+        |> Seq.forall (fun c -> not (Char.IsWhiteSpace c) && not (Char.IsControl c) && "~^:?*[\\".IndexOf(c) < 0)
+
+/// No constraint — used for the commit-message template, which (unlike a branch name) is free text
+/// and has no git-ref character restrictions.
+let private anyText (_: string) : bool = true
+
+/// Expand `pattern`, treating it as unusable (falling through to try the fallback, see
+/// `expandOrDefault`) when: expansion throws (e.g. `{date:q}` — "q" is not a recognized .NET date
+/// format specifier, so `DateTimeOffset.ToString` raises `FormatException`; a crafted `.spectool.toml`
+/// pattern must never crash the caller — see `ImageEngine.insertForHost` for the matching guard on the
+/// image side), the result still contains an unexpanded `{token}` (e.g. the `{summary}` placeholder
+/// reserved for the AI agent), the result is blank, or `isValid` rejects it (the branch-name case).
+let private tryExpand (isValid: string -> bool) (ctx: Tokens.TokenContext) (pattern: string) : string option =
+    try
+        let expanded = Tokens.expand ctx pattern
+
+        if expanded.Contains "{" || expanded.Trim().Length = 0 || not (isValid expanded) then
+            None
+        else
+            Some expanded
+    with _ ->
+        None
+
+/// Expand `pattern`, falling back to expanding `fallback` if that is unusable per `tryExpand`, and to
+/// the raw (unexpanded) `fallback` string as a last resort if even that fails validation or throws —
+/// invalid config must never break the workflow (design 10), for the pattern OR the built-in default.
+let private expandOrDefault
+    (isValid: string -> bool)
+    (pattern: string)
+    (fallback: string)
+    (ctx: Tokens.TokenContext)
+    : string =
+    match tryExpand isValid ctx pattern with
+    | Some expanded -> expanded
+    | None ->
+        match tryExpand isValid ctx fallback with
+        | Some expanded -> expanded
+        | None -> fallback
 
 /// C#-facing facade: the working-branch name for a document, from the repo config (TOML text or
 /// null) and the document slug / current date.
 let branchNameForHost (tomlText: string | null) (docSlug: string) (date: DateTimeOffset) : string =
     let config = parse (Option.ofObj tomlText)
     let ctx = docContext docSlug date
-    expandOrDefault config.BranchPattern defaults.BranchPattern ctx
+    expandOrDefault isValidGitRef config.BranchPattern defaults.BranchPattern ctx
 
 /// C#-facing facade: the suggested version note (commit message) for a document — the editable
 /// seed shown when the author saves a version.
 let commitMessageForHost (tomlText: string | null) (docSlug: string) (date: DateTimeOffset) : string =
     let config = parse (Option.ofObj tomlText)
     let ctx = docContext docSlug date
-    expandOrDefault config.CommitTemplate defaults.CommitTemplate ctx
+    expandOrDefault anyText config.CommitTemplate defaults.CommitTemplate ctx
 
 /// C#-facing facade: the published base branch a draft forks from. A present-but-blank
 /// `default-base = ""` degrades to the built-in default rather than an empty ref (which would make

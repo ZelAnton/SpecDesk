@@ -70,3 +70,34 @@ let ``defaultBaseForHost falls back to the default for a blank value`` () =
 let ``reviewersForHost is empty for a codeowners-only or absent config`` () =
     Assert.That(WorkflowConfig.reviewersForHost null, Is.Empty)
     Assert.That(WorkflowConfig.reviewersForHost "[review]\nreviewers = [\"codeowners\"]\n", Is.Empty)
+
+// S-09 regressions: a `{date:FMT}` with an unrecognized .NET format specifier used to throw
+// FormatException straight out of expandOrDefault (only TOML *parsing* was guarded), and `{date:}`
+// (empty format) used to expand via the general format ("07/04/2026 09:30:00 +00:00" — spaces and a
+// colon) and pass through unchecked. Either one used to reach BeginEdit as a git-illegal ref, so
+// "Edit" silently no-op'd (OnEdit's catch doesn't filter FormatException) and OnSuggestBranchName never
+// replied (the webview's request timed out at 30s) — invalid config must never break the workflow.
+
+[<Test>]
+let ``an unrecognized date format specifier falls back to the default instead of throwing`` () =
+    // "q" is not a recognized .NET standard or custom date/time format specifier.
+    let toml = "[branch]\npattern = \"spec/{docSlug}-{date:q}\"\n"
+    Assert.That(WorkflowConfig.branchNameForHost toml "billing" date, Is.EqualTo "spec/billing-20260614")
+
+[<Test>]
+let ``an empty date format falls back to the default instead of producing a space/colon-laden ref`` () =
+    let toml = "[branch]\npattern = \"spec/{docSlug}-{date:}\"\n"
+    Assert.That(WorkflowConfig.branchNameForHost toml "billing" date, Is.EqualTo "spec/billing-20260614")
+
+[<Test>]
+let ``a branch pattern producing spaces or colons falls back to the default`` () =
+    // Even without a bad {date:FMT}, a maintainer-authored pattern can smuggle in ref-illegal
+    // characters directly; the branch case must reject them the same way.
+    let toml = "[branch]\npattern = \"spec: {docSlug}\"\n"
+    Assert.That(WorkflowConfig.branchNameForHost toml "billing" date, Is.EqualTo "spec/billing-20260614")
+
+[<Test>]
+let ``the commit-message template is not subject to the git-ref character check`` () =
+    // A commit message legitimately contains spaces/colons — only the branch-name path validates refs.
+    let toml = "[commit]\ntemplate = \"Update: {docSlug} notes\"\n"
+    Assert.That(WorkflowConfig.commitMessageForHost toml "billing" date, Is.EqualTo "Update: billing notes")

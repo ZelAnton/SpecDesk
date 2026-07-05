@@ -60,6 +60,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TaskListMarker`/`FootnoteRef` cases and `Ast.Block` gained `DefinitionList`/`Footnotes` cases (with
   `DefinitionItem`/`Footnote` records for their bodies); `Projection.fs` now projects all four instead of
   dropping them, and `AstDiff.fs`'s exhaustive `kindTag`/`blockText` matches cover the new cases.
+- A `.spectool.toml` `[branch] pattern` with a `{date:FMT}` whose format specifier .NET does not
+  recognize (e.g. `{date:q}`) threw `FormatException` straight out of `WorkflowConfig.expandOrDefault`
+  — only TOML *parsing* was guarded, not token expansion — so "Edit" silently did nothing (its catch
+  doesn't filter `FormatException`) and `OnSuggestBranchName`/`OnSuggestVersionNote` never replied (the
+  webview's request timed out after 30s). Separately, `{date:}` (an empty format) expanded via the
+  general date format (e.g. "07/04/2026 09:30:00 +00:00") — spaces and a colon, invalid in a git ref —
+  and passed through unvalidated. Expansion is now wrapped in the same try/with style guard
+  `ImageEngine.insertForHost` already uses on the image side, and a branch-name expansion is validated
+  against a conservative git-ref-character check before being accepted; either failure falls back to
+  the default pattern (itself validated the same way) instead of breaking the workflow. The
+  commit-message template is unaffected — it is free text, not a ref.
 
 ## [0.1.0] - 2026-07-04
 
