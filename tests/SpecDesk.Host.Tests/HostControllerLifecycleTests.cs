@@ -322,6 +322,34 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Restart_WithTheLibgit2NoBranchPlaceholderReported_ResumesAsPublishedInsteadOfADraft()
+    {
+        // Regression test for R-01 (re-review): the previous regression test only exercised
+        // `currentBranch is null`, which the OLD buggy guard already handled correctly — it never
+        // proved the ALSO-ADDED `or "(no branch)"` guard in ResolveInitialLifecycle does anything. This
+        // pins that specific guard: if some IDocumentVersioning implementation ever forwards libgit2's
+        // own placeholder verbatim (instead of translating it to null, as the fixed
+        // LibGit2DocumentVersioning.CurrentBranch now does), the resolver must still recognize it as
+        // "no real branch to resume" rather than mistaking "(no branch)" for a genuine draft branch name.
+        // Removing the `or "(no branch)"` disjunct from ResolveInitialLifecycle would fail this test
+        // (the fake's literal "(no branch)" would compare unequal to the base branch "main" and the
+        // resolver would wrongly resume a "draft" on that fabricated name).
+        FakeVersioning versioning = new() { Branch = "(no branch)" };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                status is null || status.State == "published",
+                "the libgit2 \"(no branch)\" placeholder must resume as Published, never a draft on a"
+                    + " fabricated branch name");
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "resolving as Published must not force a checkout");
+        });
+    }
+
+    [Test]
     public void Ready_FiredAgainWhileADraftIsOpen_DoesNotReloadTheDocumentOrResetTheLifecycle()
     {
         // Regression test for M-15: a WebView2 recovery / page reload re-fires "ready". Before the fix,
