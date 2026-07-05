@@ -148,6 +148,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lost everything from the `#` onward). Separately, `\"` was never un-escaped, so a value that DID
   round-trip still kept its literal backslashes in commit text. Quote tracking is now escape-aware, and
   quoted values un-escape `\"`, `\\`, `\n`, `\t`, and `\r`.
+- Editing only the *formatting* of a list item or table cell (e.g. toggling bold, with no word actually
+  added or removed) reported an empty diff base for the whole list/table. `childDiff` compares rows/items
+  by their flattened (mark-stripped) text, so a formatting-only edit leaves every child looking identical
+  and finds nothing to highlight — but the top-level diff still classifies the container as changed (its
+  real, mark-aware content differs), and the wire entry carried neither a per-row diff nor a base to
+  word-diff against. The container's whole-block plain text is now supplied as a fallback in that case, so
+  the review overlay has something to compare against instead of an empty base.
 
 ## [0.1.0] - 2026-07-04
 

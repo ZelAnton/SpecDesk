@@ -154,7 +154,25 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
             // much changed, fall back to a whole-block wash).
             match childTexts before.Content, childTexts after.Content with
             | Some baseChildren, Some headChildren ->
-                emit DiffKind.Changed after (childDiff baseChildren headChildren) "" ""
+                let children = childDiff baseChildren headChildren
+                if Array.isEmpty children then
+                    // The container-level AstDiff classified this as Changed (its real, mark-aware content
+                    // differs), but childDiff's own per-child comparison runs on FLATTENED (mark-stripped)
+                    // text — so a formatting-only edit inside one item/row (e.g. toggling bold, with no
+                    // word actually added/removed) leaves every child looking identical and childDiff finds
+                    // nothing to highlight. Fall back to the same whole-block plain-text base a non-container
+                    // Changed block carries, so the webview still has something to word-diff against instead
+                    // of an empty base (which otherwise reads as "everything is new" and washes the whole
+                    // container) — matching text on both sides here means nothing gets highlighted, which is
+                    // the correct, minimal signal for a style-only edit.
+                    emit
+                        DiffKind.Changed
+                        after
+                        [||]
+                        (AstDiff.blockText before.Content)
+                        (slice baseLines before.LineStart before.LineEnd)
+                else
+                    emit DiffKind.Changed after children "" ""
             | _ ->
                 emit
                     DiffKind.Changed

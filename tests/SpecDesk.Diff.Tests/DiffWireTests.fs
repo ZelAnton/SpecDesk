@@ -84,3 +84,39 @@ let ``a changed paragraph carries no children (whole-block wash)`` () =
     let w = toWire "## Overview\n\nBody.\n" "### Overview\n\nBody.\n"
     Assert.That(kinds w, Is.EqualTo "changed")
     Assert.That(w.[0].Children.Length, Is.EqualTo 0)
+
+// M-06 regression guards: `Inlines.flatten` strips formatting marks, and `childDiff` compares children
+// by their FLATTENED text — so a formatting-only edit inside one item/cell (no word actually added or
+// removed) leaves every child looking identical to childDiff, even though the container's real,
+// mark-aware AST differs enough for the top-level diff to classify it as Changed. Without a fallback,
+// that combination used to emit an empty `Children` AND an empty `BaseText`/`BaseSource`, leaving the
+// webview nothing to word-diff against — which it read as "everything is new" and washed the whole
+// list/table instead of the (non-existent) single changed row.
+
+[<Test>]
+let ``a formatting-only edit inside a list item falls back to the whole-list base text, not empty`` () =
+    // "two" → "**two**": same flattened text, so childDiff finds nothing — the whole-list plain text
+    // must be carried in BaseText instead of "".
+    let w = toWire "- one\n- two\n- three\n" "- one\n- **two**\n- three\n"
+    Assert.That(kinds w, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.Length, Is.EqualTo 0)
+    Assert.That(w.[0].BaseText, Is.Not.Empty)
+    Assert.That(w.[0].BaseText, Does.Contain "two")
+    Assert.That(w.[0].BaseSource, Does.Contain "two")
+
+[<Test>]
+let ``a formatting-only edit inside a table cell falls back to the whole-table base text, not empty`` () =
+    let w = toWire "| A | B |\n| - | - |\n| 1 | 2 |\n" "| A | B |\n| - | - |\n| **1** | 2 |\n"
+    Assert.That(kinds w, Is.EqualTo "changed")
+    Assert.That(w.[0].Children.Length, Is.EqualTo 0)
+    Assert.That(w.[0].BaseText, Is.Not.Empty)
+    Assert.That(w.[0].BaseText, Does.Contain "1")
+
+[<Test>]
+let ``a real text edit inside a list item still emits a per-child diff, not a whole-list fallback`` () =
+    // Sanity check that the fallback is specific to the "childDiff found nothing" case — an ACTUAL text
+    // change still takes the normal per-child path (already covered above, restated here alongside the
+    // formatting-only case for contrast).
+    let w = toWire "- one\n- two\n- three\n" "- one\n- two changed\n- three\n"
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    Assert.That(w.[0].BaseText, Is.Empty)
