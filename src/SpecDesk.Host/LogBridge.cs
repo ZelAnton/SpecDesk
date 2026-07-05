@@ -82,7 +82,7 @@ public sealed class LogBridge
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			_logger.LogError(ex, "Failed to export log to {Path}", destination);
-			_notify($"Could not export log: {ex.Message}");
+			_notify("Could not export the log.");
 		}
 	}
 

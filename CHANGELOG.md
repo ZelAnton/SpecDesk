@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `LogBridge.Export` now reports a plain-language message ("Could not export the log.") on failure
+  instead of surfacing the raw exception text to the author.
 - `LogBridge.Receive` now strips embedded CR/LF sequences from the webview-supplied `Message`/`Data`
   log fields before they reach the log template. Previously a crafted payload with line breaks could
   forge additional, falsely-formatted log entries in the shared rolling log.
