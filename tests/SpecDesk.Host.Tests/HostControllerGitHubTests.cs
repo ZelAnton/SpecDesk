@@ -79,6 +79,54 @@ public sealed class HostControllerGitHubTests
         }
     }
 
+    // A fake IGitHubAuth whose device code is unique per StartSignInAsync call (CODE-1, CODE-2, ...), so a
+    // test can tell which flow's frame is which. Its first flow blocks until cancelled (mirroring
+    // FakeGitHubAuth.BlockUntilCancelled); every later flow authorizes immediately — this lets a test cancel
+    // flow 1, start flow 2, and check that flow 1's stale cancellation fallout never surfaces after that.
+    private sealed class SequencedGitHubAuth : IGitHubAuth
+    {
+        private int _callIndex;
+
+        public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+        {
+            int index = Interlocked.Increment(ref _callIndex);
+            return Task.FromResult(new DeviceCodePrompt(
+                $"CODE-{index}", new Uri("https://github.com/login/device"),
+                TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5), $"device-code-{index}"));
+        }
+
+        public async Task<SignInResult> AwaitAuthorizationAsync(
+            DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+        {
+            if (prompt.UserCode == "CODE-1")
+            {
+                // Mirror the real library: once polling, a cancel is folded into TimedOut, not thrown.
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    return SignInResult.TimedOut();
+                }
+            }
+
+            return SignInResult.Authorized("octocat");
+        }
+
+        public bool IsSignedIn() => false;
+
+        public string? SignedInLogin() => null;
+
+        public Task<T> WithAccessTokenAsync<T>(
+            Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Not exercised by this test.");
+
+        public void SignOut()
+        {
+        }
+    }
+
     private static (HostController Controller, List<string> Sent, object Gate) Build(IGitHubAuth? auth)
     {
         List<string> sent = [];
@@ -246,6 +294,83 @@ public sealed class HostControllerGitHubTests
                 // its own cancellation back to a plain signed-out state).
                 Assert.That(payload.Message, Is.Null);
             });
+        }
+    }
+
+    // Poll briefly for at least `count` messages of the given kind, returning the last one seen. Used where
+    // a scenario emits the same kind more than once (a second sign-in's own GitHubCode) and the test must
+    // look past the first occurrence rather than stop at it (WaitForKind always returns the first match).
+    private static IpcMessage? WaitForNthKind(List<string> sent, object gate, string kind, int count)
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            lock (gate)
+            {
+                IpcMessage? last = null;
+                int seen = 0;
+                foreach (string json in sent)
+                {
+                    IpcMessage? message = IpcSerializer.TryDeserialize(json);
+                    if (message is not null && message.Kind == kind)
+                    {
+                        seen++;
+                        last = message;
+                    }
+                }
+
+                if (seen >= count)
+                {
+                    return last;
+                }
+            }
+
+            Thread.Sleep(20);
+        }
+
+        return null;
+    }
+
+    [Test]
+    public void A_cancelled_signIns_fallback_does_not_close_a_newer_signIns_code_prompt()
+    {
+        // Regression for M-14: start a sign-in, cancel it, then start a newer one before the cancelled
+        // flow's background task unwinds. The stale flow's "signed out" fallback must stay quiet — only
+        // the newer flow's own outcome may reach the webview.
+        SequencedGitHubAuth auth = new();
+        (HostController controller, List<string> sent, object gate) = Build(auth);
+        using (controller)
+        {
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubCode), Is.Not.Null);
+
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignInCancel));
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+
+            IpcMessage? newerCode = WaitForNthKind(sent, gate, MessageKinds.GitHubCode, count: 2);
+            Assert.That(newerCode, Is.Not.Null);
+            Assert.That(newerCode!.GetPayload<GitHubCodePayload>()!.UserCode, Is.EqualTo("CODE-2"));
+
+            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+            Assert.That(account, Is.Not.Null);
+            GitHubAccountPayload payload = account!.GetPayload<GitHubAccountPayload>()!;
+            Assert.Multiple(() =>
+            {
+                // The newer flow's own outcome must win, never the stale flow's signed-out fallback.
+                Assert.That(payload.SignedIn, Is.True);
+                Assert.That(payload.Login, Is.EqualTo("octocat"));
+            });
+
+            // Give the stale flow's own background task a further beat to (mis)behave, then confirm exactly
+            // one GitHubAccount frame ever reached the webview — the cancelled flow's fallback never fired.
+            Thread.Sleep(100);
+            int accountFrames;
+            lock (gate)
+            {
+                accountFrames = sent.Count(json =>
+                    IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.GitHubAccount);
+            }
+
+            Assert.That(accountFrames, Is.EqualTo(1));
         }
     }
 }

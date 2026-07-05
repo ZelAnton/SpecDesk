@@ -187,6 +187,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version as already shared, so its own later "Update review" falsely reported "No new versions". The
   check now also compares the existing per-checkout generation counter, which a discard/recreate always
   advances, so a stale push can no longer land on a draft it didn't itself publish.
+- A cancelled GitHub sign-in's background task could close a *newer* sign-in's device-code prompt.
+  `OnGitHubSignIn` cancels the previous flow's token before starting a new one but does not wait for it
+  to unwind, and that stale flow's cancellation fallback (`SendCurrentAccount`, folding its own
+  cancellation to a plain signed-out state) fired unconditionally whenever its token was cancelled — even
+  after a newer flow had already replaced `_signInCts` and shown its own code. The stale flow's
+  unconditional "signed out" frame then reached the webview after the newer flow's `GitHubCode`, closing
+  its still-pending prompt. The fallback now only emits when `ReferenceEquals(_signInCts, cts)` still
+  holds for that flow, so a stale, already-superseded cancellation stays quiet.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
