@@ -1220,3 +1220,58 @@
   инкремента.
 - Открытых R-записей нет (все SUMMARY-R по T-019/T-020/T-021 закрыты: 18:33, 18:51, 19:15); открытых
   F-записей нет; последний прогон пуст. Решение согласовано и готово к публикации (чекпоинт с push).
+
+### [SUMMARY-R-2026-07-05 19:43] Итог ревью задачи — статус: готово к следующей задаче
+- Активная задача: [T-022] Исправить M-09: документация IGitHubAuth расходится с реальным поведением при
+  ошибке сохранения токена
+- Прогонов выполнено: 2 (оба подряд без новых серьёзных находок → остановка)
+- Открытых проблем: 0
+- Область ревью: изменение в рабочей копии jj (`src/SpecDesk.GitHub/IGitHubAuth.cs` — только XML-doc
+  метода `AwaitAuthorizationAsync`, `CHANGELOG.md`, плюс служебный `.work/status.md`). Открытых/исправленных/
+  отклонённых R-записей на входе не было — Фаза 1 без работы. Изменение только документационное; поведение
+  не менялось.
+- Вывод: все критерии готовности выполнены; правка точна и полна относительно реализации.
+  1. Doc ↔ реализация. Прежний комментарий (строки 105–107 до правки) утверждал, что сбой сохранения токена
+     после успешной авторизации «surfaces as a thrown exception (not a result)». Реально
+     `GitHubDeviceFlowAuth.CompleteAuthorizationAsync` (:118–135) оборачивает `_store.Save(...)` в
+     `catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)`
+     и возвращает `SignInResult.StorageFailed()` — НЕ бросает. Новый комментарий (:99–102) прямо говорит:
+     StorageFailed (disk / permissions / encryption fault) «is returned as a SignInResult, never thrown». Это
+     верно и точно ограничено ровно тем набором исключений, что реально ловится: disk→IOException
+     (и наследники DirectoryNotFoundException/PathTooLongException), permissions→UnauthorizedAccessException,
+     encryption→CryptographicException. `FileTokenStore.Save` (:36–41) бросает именно эти категории; DPAPI
+     `Protect` даёт CryptographicException. Формулировка «never thrown» не переширена — она согласована с
+     scope «disk/permissions/encryption».
+  2. Полнота «never thrown past StartSignInAsync». Проверены все пути `AwaitAuthorizationAsync` (:60–113):
+     тело обёрнуто в `catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)` →
+     возврат TimedOut (отмена хостом не бросает). Транзиентные сбои поллинга в `DeviceFlowApi.ExchangeAsync`
+     (:193–222) и `GetLoginAsync` (:301–328) отображаются в `Transient`, а per-request-timeout ловится
+     `when (!ct.IsCancellationRequested)` — наружу выходит лишь реальная отмена вызывающего, которую и
+     перехватывает внешний catch. Так что для целевой Windows-платформы утверждение doc корректно; един­ственный
+     теоретический незакрытый тип (PlatformNotSupportedException на не-Windows) вне scope «disk/permissions/
+     encryption» и вне v1-таргета — не дефект.
+  3. Согласованность с хостом (критерий 2 задачи). Хостовый вызывающий (`HostController.cs:1726–1741`) уже
+     опирается на result-контракт: не оборачивает `AwaitAuthorizationAsync` в try/catch, ждущий брошенного
+     storage-исключения (широкий `catch` :1749 относится к up-front `StartSignInAsync`), а маршрутизирует
+     `result.Outcome` через `SignInMessage` (:1803–1810), где `StorageFailed` даёт «Signed in to GitHub, but
+     couldn't save it on this device.». Doc теперь совпадает и с реализацией, и с фактическим поведением
+     хоста — единый контракт.
+  4. Смежные doc-комментарии. Проверены все упоминания persist/storage/save в `SpecDesk.GitHub`: enum-doc
+     `StorageFailed` (`IGitHubAuth.cs:48–52`), doc класса и комментарий catch в `GitHubDeviceFlowAuth.cs`
+     (:6–7, :128), `TokenStore.cs` — все описывают storage-fault как ИСХОД (не throw) и уже были согласованы.
+     Иных устаревших комментариев, которые следовало бы поправить той же задачей, не осталось.
+  5. Тестовое покрытие StorageFailed-контракта уже есть и достаточно для doc-only правки:
+     `GitHubDeviceFlowAuthTests.Authorized_but_a_failed_token_save_reports_storage_failed_and_stays_signed_out`
+     (:71–88) заставляет `InMemoryTokenStore.Save` бросить `IOException` (один из ловимых типов) и утверждает
+     `Outcome == StorageFailed`, `store.Saved == null`, `IsSignedIn() == false` — ровно тот контракт, что
+     документирован. Поведение кода не менялось, новых тестов не требуется.
+  6. CHANGELOG. Запись добавлена только в `## [Unreleased]` → `### Fixed` (строки 170–173), точно описывает
+     суть (doc заявлял throw; реализация всегда возвращала SignInResult(StorageFailed); doc приведён к
+     реальному контракту; вызывающим не нужен неработающий try/catch). Заголовок релиза
+     `## [0.1.0] - 2026-07-04` цел (ровно два version-заголовка: строки 8 и 175) — повторяющийся у прошлых
+     задач дефект «снос заголовка релиза» не воспроизведён.
+  7. Сборка. Правка — только XML-doc; все `<see cref>` (`SignInOutcome.Authorized/Failed/StorageFailed/
+     TimedOut/Unreachable`, `SignInResult`, `StartSignInAsync`) резолвятся в реальные члены, поэтому CS1574
+     при warnings-as-errors не возникает.
+- Новых серьёзных проблем за 2 прогона не найдено; открытых R-записей нет. Задача решена полностью —
+  можно переходить к следующей задаче.

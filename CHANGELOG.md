@@ -167,6 +167,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes that attribute for a `<dd>` — only for the `<dt>` term — so the internal line map ended up with
   more entries than the rendered HTML had matching attributes for, a mismatch no other supported block
   family has. Only a definition's term is anchored now, matching what Markdig actually renders.
+- `IGitHubAuth.AwaitAuthorizationAsync`'s doc comment claimed a token-persistence failure after a
+  successful authorization surfaced as a thrown exception; the implementation always returned it as a
+  normal `SignInResult` (`SignInOutcome.StorageFailed`), never throwing. The doc now states the actual,
+  already-correct contract, so callers don't wrap this call in a try/catch that can never trigger.
 
 ## [0.1.0] - 2026-07-04
 
