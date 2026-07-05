@@ -7,7 +7,7 @@
 
 ## Незначительные находки (Minor)
 
-### [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore — статус: не начата
+### [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore — статус: начала выполняться
 `src/SpecDesk.Git/LibGit2DocumentVersioning.cs:55, 122` (`Initialize`, `SaveVersion`) —
 `Commands.Stage(repo, "*")` стейджит всё без гарантии соблюдения `.gitignore` сверх поведения libgit2
 по умолчанию; репозиторий с директорией build-артефактов может закоммитить её в версию.
