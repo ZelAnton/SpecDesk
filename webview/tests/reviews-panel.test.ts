@@ -116,6 +116,18 @@ describe("ReviewsPanel", () => {
     expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
   });
 
+  it("falls back to an error state when requestReviews rejects", async () => {
+    const panel = new ReviewsPanel({
+      requestReviews: () => Promise.reject(new Error("transport failure")),
+      openUrl: vi.fn(),
+    });
+
+    await panel.open();
+
+    expect(el("reviews-status").textContent).toBe("Couldn't load your reviews. Try again later.");
+    expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
+  });
+
   it("opens a valid pull-request link by URL and rejects anything else", () => {
     const openUrl = vi.fn();
     // Constructed for its side effect: it wires the url-open button's click listener.
