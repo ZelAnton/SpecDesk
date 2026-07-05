@@ -111,6 +111,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of "before the string", so it wrongly matched the document's own leading newline and produced
   an inverted edit range. The caret-at-0 case is now handled directly, so every block-format command
   works from the very start of such a document instead of throwing.
+- Pasting clipboard content that carried both an image and non-empty plain text (an Excel cell, a Word
+  snippet, a screenshot with alt/HTML text, …) inserted BOTH — the pasted text (from CodeMirror's own
+  default paste handling) and a stray image link, since the image capture listener had no way to know
+  the paste had already been handled by the time it ran. It now skips capturing an image whenever the
+  clipboard also carries non-empty `text/plain`, deferring to whatever CodeMirror already inserted so a
+  single paste yields exactly one representation.
 
 ## [0.1.0] - 2026-07-04
 

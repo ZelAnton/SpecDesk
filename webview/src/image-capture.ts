@@ -53,6 +53,18 @@ export function attachImageCapture(
   const dom = editor.contentDOM;
 
   dom.addEventListener("paste", (event) => {
+    // CodeMirror's own default paste handling is wired on this same contentDOM, registered earlier
+    // (during EditorView construction, before this listener is attached) — so for a clipboard that also
+    // carries non-empty plain text (an Excel cell, a Word snippet, an image with alt/HTML text, …), it
+    // inserts that text FIRST and calls preventDefault() itself. Listener registration order does not
+    // stop this handler from still running afterwards, so without this guard it would ALSO insert an
+    // image link for the very same paste — leaving both a pasted line of text and a stray image
+    // reference in the document. Deferring to whatever CodeMirror's default handling already inserted
+    // keeps a paste to exactly one representation.
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (text.length > 0) {
+      return;
+    }
     const items = event.clipboardData?.items;
     if (!items) {
       return;
