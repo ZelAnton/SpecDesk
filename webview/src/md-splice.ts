@@ -51,22 +51,65 @@ function headLines(lines: string[], block: MdBlock): string[] {
 }
 
 /**
+ * Every source line of `original` that belongs to no ProseMirror node at all — the same "non-node"
+ * content {@link headLines}/{@link tailLines} preserve per block (blank runs and, crucially, link
+ * reference definitions, which markdown-it resolves into its reference map with no emitted token) —
+ * but computed directly from each block's own node span rather than by walking blocks pairwise, so it
+ * still finds that content even when the document has no real top-level token at all (a lone reference
+ * definition and nothing else): in that case `contentLineStart`/`contentLineEnd` are both unset, so the
+ * whole block's span counts as "covered by nothing" and every one of its lines is returned.
+ */
+function nonNodeLines(original: string): string[] {
+  const lines = original.split("\n");
+  const covered = new Array<boolean>(lines.length).fill(false);
+  for (const block of splitTopLevelBlocks(original)) {
+    const start = block.contentLineStart ?? block.lineStart;
+    const end = block.contentLineEnd ?? start;
+    for (let line = start; line < end; line++) {
+      covered[line] = true;
+    }
+  }
+  return lines.filter((_, i) => !covered[i]);
+}
+
+/**
+ * Safety net for the whole-document fallback below: `serializer.serialize(edited)` walks only
+ * `edited`'s NODES, so a link reference definition — which has no node at all — vanishes silently the
+ * moment an unrelated block is added or removed elsewhere in the same edit (the trivial repro: press
+ * Enter in the WYSIWYG view to start a new paragraph in any document that has one). Re-append whatever
+ * non-node content `original` had, verbatim, as a trailing section, so it survives the fallback
+ * (repositioned to the end of the file) instead of disappearing outright. A no-op — byte-for-byte the
+ * plain serialize — when there is nothing to preserve, which keeps every existing whole-document-fallback
+ * fixture (none of which use reference definitions) unaffected.
+ */
+function withPreservedNonNodeContent(original: string, serialized: string): string {
+  const preserved = nonNodeLines(original).filter((line) => line.trim().length > 0);
+  if (preserved.length === 0) {
+    return serialized;
+  }
+  const body = serialized.endsWith("\n") ? serialized : `${serialized}\n`;
+  return `${body}\n${preserved.join("\n")}\n`;
+}
+
+/**
  * Produce Markdown for `edited` (the current formatted-view document) that differs from `original`
  * only where the author changed a top-level block. `edited` MUST come from parsing `original` with
  * the shared {@link parser} and editing the result, so node↔block order is preserved.
  *
  * Falls back to a whole-document serialize (correct, but reflows untouched blocks) when the source
  * blocks and parsed nodes don't line up 1:1, or when a top-level block was added/removed — an
- * LCS-based alignment for add/remove is a follow-up.
+ * LCS-based alignment for add/remove is a follow-up. Content with no ProseMirror node at all (link
+ * reference definitions) is still preserved on that fallback path, just repositioned to the end — see
+ * {@link withPreservedNonNodeContent}.
  */
 export function serializeWithSplice(original: string, edited: PmNode): string {
   const originalDoc = parser.parse(original);
   if (originalDoc === null) {
-    return serializer.serialize(edited);
+    return withPreservedNonNodeContent(original, serializer.serialize(edited));
   }
   const blocks = splitTopLevelBlocks(original);
   if (originalDoc.childCount !== blocks.length || edited.childCount !== originalDoc.childCount) {
-    return serializer.serialize(edited);
+    return withPreservedNonNodeContent(original, serializer.serialize(edited));
   }
 
   const lines = original.split("\n");

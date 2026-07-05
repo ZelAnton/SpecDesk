@@ -115,6 +115,24 @@ describe("serializeWithSplice", () => {
     expect(out).toBe("| A | B |\n| --- | --- |\n| X | 2 |\n");
   });
 
+  it("editing one cell's text preserves the table's column alignment (S-14 acceptance case)", () => {
+    // Fixing a typo in a right-/center-aligned column used to rewrite the whole table with no
+    // alignment at all — pm-markdown had nowhere to carry the alignment through the schema.
+    const original = "| A | B |\n| ---: | :---: |\n| 1 | 2 |\n";
+    const doc = parse(original);
+    const cell = (text: string, header: boolean, align: string): PmNode =>
+      schema.node("table_cell", { header, align }, [schema.text(text)]);
+    const editedTable = schema.node("table", null, [
+      schema.node("table_row", null, [cell("A", true, "right"), cell("B", true, "center")]),
+      schema.node("table_row", null, [cell("1 fixed", false, "right"), cell("2", false, "center")]),
+    ]);
+    const edited = withChildReplaced(doc, 0, editedTable);
+
+    const out = serializeWithSplice(original, edited);
+
+    expect(out).toBe("| A | B |\n| ---: | :---: |\n| 1 fixed | 2 |\n");
+  });
+
   it("preserves a link reference definition when its adjacent block is edited", () => {
     // The ref-def folds into the heading's source block but has no ProseMirror node; re-serializing
     // the heading must keep it verbatim rather than dropping it.
@@ -136,6 +154,79 @@ describe("serializeWithSplice", () => {
     const out = serializeWithSplice(RICH, edited);
     expect(out).toContain("Appended paragraph.");
     expect(out.length).toBeGreaterThan(0);
+  });
+
+  // S-12 regression guards: the whole-document fallback above serializes only `edited`'s NODES, so a
+  // link reference definition — which markdown-it resolves into its reference map with no node at all —
+  // used to vanish outright the instant an unrelated block was added or removed elsewhere in the same
+  // edit. The trivial repro from the finding: press Enter in the WYSIWYG view to start a new paragraph
+  // in any document that has a reference definition.
+
+  it("the whole-document fallback preserves a reference definition when a block is added", () => {
+    const md = "[a]: http://x\n\nSee [a] link.\n";
+    const doc = parse(md);
+    const children: PmNode[] = [];
+    doc.forEach((c) => {
+      children.push(c);
+    });
+    children.push(paragraph("New paragraph."));
+    const edited = schema.node("doc", null, children);
+
+    const out = serializeWithSplice(md, edited);
+
+    expect(out).toContain("[a]: http://x");
+    expect(out).toContain("New paragraph.");
+  });
+
+  it("the whole-document fallback preserves a reference definition when a block is removed", () => {
+    const md = "[a]: http://x\n\n# H\n\nSee [a] link.\n\nAnother paragraph.\n";
+    const doc = parse(md);
+    const children: PmNode[] = [];
+    doc.forEach((c) => {
+      children.push(c);
+    });
+    children.pop(); // drop the last paragraph — the block count no longer lines up 1:1
+    const edited = schema.node("doc", null, children);
+
+    const out = serializeWithSplice(md, edited);
+
+    expect(out).toContain("[a]: http://x");
+  });
+
+  it("pressing Enter to start a new paragraph keeps a reference definition (S-12 acceptance case)", () => {
+    const md = "[a]: http://x\n\nSee [a] link.\n";
+    const doc = parse(md);
+    const children: PmNode[] = [];
+    doc.forEach((c) => {
+      children.push(c);
+    });
+    children.splice(1, 0, paragraph("New line."));
+    const edited = schema.node("doc", null, children);
+
+    const out = serializeWithSplice(md, edited);
+
+    expect(out).toContain("[a]: http://x");
+    expect(out).toContain("New line.");
+  });
+
+  it("preserves a reference definition in a document with no other top-level content", () => {
+    // The degenerate whole-document-fallback case: `original` has no ProseMirror node for the definition
+    // to hang off of at all (the parsed doc is a single, auto-filled empty paragraph), so the fallback's
+    // preservation logic must treat the WHOLE original text as "non-node" content, not just a gap
+    // between two real nodes.
+    const md = "[a]: http://x\n";
+    const doc = parse(md);
+    const children: PmNode[] = [];
+    doc.forEach((c) => {
+      children.push(c);
+    });
+    children.push(paragraph("New content."));
+    const edited = schema.node("doc", null, children);
+
+    const out = serializeWithSplice(md, edited);
+
+    expect(out).toContain("[a]: http://x");
+    expect(out).toContain("New content.");
   });
 
   // S-13 regression guards: a leading gap used to make `blocks.length` permanently one MORE than

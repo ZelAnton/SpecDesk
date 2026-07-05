@@ -89,6 +89,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   load (and after Discard re-reads the reverted file) and re-applies it at every disk-write site
   (Save, the idle disk-autosave, Save a version), so a CRLF file's untouched lines stay CRLF instead
   of every line in the next "Save a version"/PR diff being a spurious line-ending change.
+- Editing a document in the formatted (WYSIWYG) view could silently delete every link reference
+  definition (`[id]: url`) it contained. `md-splice.ts`'s whole-document fallback — taken whenever a
+  top-level block is added or removed, e.g. simply pressing Enter to start a new paragraph — serialized
+  only the ProseMirror document's nodes; a reference definition has no node at all (markdown-it resolves
+  it into its reference map instead), so it vanished outright, turning any reference-style link that used
+  it into a plain inline link and dropping unused definitions entirely. The fallback now re-appends
+  whatever such non-node content the original file had, verbatim, as a trailing section, so a definition
+  survives the fallback (repositioned to the end of the file) instead of disappearing.
 
 ## [0.1.0] - 2026-07-04
 
