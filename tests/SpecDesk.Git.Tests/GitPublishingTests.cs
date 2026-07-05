@@ -176,4 +176,61 @@ public sealed class GitPublishingTests
     {
         Assert.DoesNotThrow(() => LibGit2DocumentVersioning.ThrowIfRejected(null, null));
     }
+
+    [Test]
+    public void ResolveCredentials_returns_the_access_token_for_an_https_github_com_url()
+    {
+        Credentials credentials = LibGit2DocumentVersioning.ResolveCredentials(
+            "https://github.com/owner/repo.git/info/refs?service=git-receive-pack", "the-token");
+
+        UsernamePasswordCredentials userPass = AsUsernamePassword(credentials);
+        Assert.That(userPass.Username, Is.EqualTo("x-access-token"));
+        Assert.That(userPass.Password, Is.EqualTo("the-token"));
+    }
+
+    [Test]
+    public void ResolveCredentials_refuses_a_look_alike_host()
+    {
+        // A pushurl re-pointed at a host that merely contains "github.com" must not receive the token, nor
+        // fall back to the current user's Windows credentials.
+        Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ResolveCredentials("https://github.com.evil.example/x", "the-token"));
+    }
+
+    [Test]
+    public void ResolveCredentials_refuses_a_plain_http_github_com_url()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ResolveCredentials("http://github.com/owner/repo.git", "the-token"));
+    }
+
+    [Test]
+    public void ResolveCredentials_refuses_a_non_github_host_instead_of_falling_back_to_windows_credentials()
+    {
+        // Before the fix this returned `new DefaultCredentials()` (GIT_CREDENTIAL_DEFAULT), silently
+        // handing the current Windows user's Negotiate/NTLM session to whatever host the remote's pushurl
+        // names. It must now refuse outright instead.
+        Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ResolveCredentials("https://attacker.example/repo.git", "the-token"));
+    }
+
+    [Test]
+    public void ResolveCredentials_refuses_a_non_http_url()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ResolveCredentials("ssh://git@github.com/owner/repo.git", "the-token"));
+    }
+
+    [Test]
+    public void ResolveCredentials_refuses_a_null_url()
+    {
+        Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ResolveCredentials(null, "the-token"));
+    }
+
+    private static UsernamePasswordCredentials AsUsernamePassword(Credentials credentials)
+    {
+        Assert.That(credentials, Is.InstanceOf<UsernamePasswordCredentials>());
+        return (UsernamePasswordCredentials)credentials;
+    }
 }

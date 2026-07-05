@@ -26,10 +26,12 @@ public interface IGitPublishing
     /// <summary>Push a local branch to the remote over HTTPS, authenticating with the GitHub access
     /// token. The token is handed only to an HTTPS <c>github.com</c> target — the URL libgit2 presents for
     /// authentication, which reflects the remote's <c>pushurl</c>, not merely the fetch URL — so a remote
-    /// re-pointed at a look-alike host cannot exfiltrate it. Cancellation aborts a stalled transfer. Throws
-    /// when the remote or branch is missing, on a transport / auth failure, or when the remote rejects the
-    /// ref update (non-fast-forward, a protected branch, a rejecting pre-receive hook) — this never returns
-    /// successfully while leaving the remote unchanged.</summary>
+    /// re-pointed at a look-alike host cannot exfiltrate it; any other target (a look-alike host, an SSH
+    /// remote, a local-file remote) is refused outright rather than falling back to the current user's
+    /// Windows credentials. Cancellation aborts a stalled transfer. Throws when the remote or branch is
+    /// missing, when authentication is refused for a non-GitHub target, on a transport / auth failure, or
+    /// when the remote rejects the ref update (non-fast-forward, a protected branch, a rejecting
+    /// pre-receive hook) — this never returns successfully while leaving the remote unchanged.</summary>
     void PushBranch(
         string repoRoot,
         string branchName,

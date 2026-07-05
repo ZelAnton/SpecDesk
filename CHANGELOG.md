@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of returning as if the push had succeeded. Previously `Network.Push` returned normally on a
   server-side rejection, so the host reported "Sent/updated for review" and advanced the lifecycle
   even though the reviewer never received the commits.
+- `PushBranch` (`SpecDesk.Git`) no longer falls back to `DefaultCredentials()` for a non-GitHub push
+  endpoint. That value hands over the current Windows user's Negotiate/NTLM session; a repository whose
+  `pushurl` is re-pointed at an attacker-controlled host (e.g. a shared/zipped copy with an edited
+  `.git/config`) would have triggered an NTLM challenge/response from the author's session. Any
+  endpoint other than HTTPS `github.com` is now refused outright before a credential is ever offered.
 
 ## [0.1.0] - 2026-07-04
 

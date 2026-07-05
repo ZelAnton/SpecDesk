@@ -233,17 +233,8 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         string? rejectionMessage = null;
         PushOptions options = new()
         {
-            // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username (the
-            // convention is "x-access-token"); the token never appears in a URL. The callback's `url` is
-            // the endpoint libgit2 is authenticating against — which reflects the remote's pushurl, not
-            // just the fetch URL the caller validated — so we only release the token to an HTTPS github.com
-            // host. Anything else (a pushurl re-pointed at a look-alike, an SSH remote, a local-file
-            // remote) gets no credential; the push then either proceeds without one or fails, but the
-            // token is never sent off to a non-github.com host.
-            CredentialsProvider = (url, _, _) =>
-                IsGitHubHttps(url)
-                    ? new UsernamePasswordCredentials { Username = "x-access-token", Password = accessToken }
-                    : new DefaultCredentials(),
+            // See ResolveCredentials for why this only ever hands the token to an HTTPS github.com host.
+            CredentialsProvider = (url, _, _) => ResolveCredentials(url, accessToken),
             // Abort a stalled transfer when the caller cancels (the host bounds the send with a timeout).
             // The initial connect/handshake phase isn't surfaced through this callback, so a stall there
             // is bounded only by the OS socket timeout — a known LibGit2Sharp limitation.
@@ -274,6 +265,25 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
                 $"The remote rejected the push of '{rejectedReference}': {rejectionMessage}");
         }
     }
+
+    // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username (the
+    // convention is "x-access-token"); the token never appears in a URL. `url` is the endpoint libgit2 is
+    // actually authenticating against — which reflects the remote's pushurl, not merely the fetch URL the
+    // caller validated — so we only release the token to an HTTPS github.com host.
+    //
+    // Anything else (a pushurl re-pointed at a look-alike, an SSH remote, a local-file remote, a bare
+    // "http://" mirror of github.com) must NOT fall back to `DefaultCredentials()`: that value is
+    // `GIT_CREDENTIAL_DEFAULT`, which hands over the current Windows user's Negotiate/NTLM session — an
+    // NTLM challenge/response an attacker-controlled host could capture or relay. Refusing outright (rather
+    // than returning `null`, whose native-interop null-handling is undocumented) is the only choice that
+    // deterministically never negotiates a credential with a non-GitHub host — extracted as its own method
+    // so this decision is directly unit-testable (the local-bare-repo test fixture never invokes
+    // `CredentialsProvider` at all, since local-file transport skips authentication entirely).
+    internal static Credentials ResolveCredentials(string? url, string accessToken) =>
+        IsGitHubHttps(url)
+            ? new UsernamePasswordCredentials { Username = "x-access-token", Password = accessToken }
+            : throw new InvalidOperationException(
+                $"Refusing to authenticate against a non-GitHub push endpoint '{url}'.");
 
     // Whether a URL libgit2 is authenticating against is an HTTPS github.com endpoint — the only target
     // the OAuth token may be sent to. Kept here (rather than reusing SpecDesk.GitHub's richer parser) so
