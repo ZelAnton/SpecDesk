@@ -137,13 +137,6 @@ coverage/
 /src/SpecDesk.Host/wwwroot/
 
 ## -------
-## Agent instruction files — kept local, never published to the remote.
-## -------
-/CLAUDE.md
-/AGENTS.md
-.claude/
-
-## -------
 ## Design — raw Claude Design export archive. The extracted, reviewable docs/design/ files are
 ## tracked; the binary .7z that produced them is not.
 ## -------
