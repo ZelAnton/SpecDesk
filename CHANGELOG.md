@@ -155,6 +155,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real, mark-aware content differs), and the wire entry carried neither a per-row diff nor a base to
   word-diff against. The container's whole-block plain text is now supplied as a fallback in that case, so
   the review overlay has something to compare against instead of an empty base.
+- The semantic diff's block matching (an O(m·n) LCS, plus scoring every same-kind base×head pair by text
+  similarity) had no size limit — a pathologically large document (a changelog/glossary with thousands
+  of near-identical entries) could make comparing two versions take many seconds or exhaust memory,
+  since neither cost is bounded by the document's actual size. Above 4,000,000 base×head node pairs, the
+  diff now skips that matching entirely and reports a flat "everything removed, everything added"
+  listing instead — correct but coarse, and a deliberate, documented trade-off against hanging or running
+  out of memory on documents far beyond any realistic size.
 
 ## [0.1.0] - 2026-07-04
 

@@ -30,6 +30,24 @@ type DocumentDiff = DiffEntry list
 /// Changed) rather than an unrelated Removed + Added.
 let private changeSimilarityThreshold = 0.5
 
+/// Above this many (base × head) node pairs, the O(m·n) LCS array and the O(m·n) "every same-kind pair"
+/// similarity scoring below would use unbounded memory and CPU on a pathologically large document (a
+/// changelog/glossary with thousands of near-identical entries, or a many-thousand-row table) — enough
+/// to hang the host or exhaust memory outright. `m * n` bounds BOTH costs at once (the LCS array is
+/// exactly `(m+1)*(n+1)` cells; the similarity candidate list is at most `m*n` pairs), so a single guard
+/// on it protects both. Chosen generously above any legitimate document (a comfortably-sized five-figure
+/// document on each side still passes) while keeping the worst case a bounded, sub-second array/loop.
+let internal maxNodePairs = 4_000_000L
+
+/// The unbounded-cost diff falls back to here for a document pair too large to LCS/score safely: no
+/// backbone matching at all — every base node is Removed, every head node is Added. Correct but
+/// coarse (a huge document that hasn't actually changed would, past this size, still read as "all
+/// removed and re-added" rather than "no changes") — an explicit, documented trade-off against hanging
+/// or exhausting memory, not a silent behavior change: {@link diff}'s doc comment states it.
+let private flatDiff (baseArr: Ast.Node[]) (headArr: Ast.Node[]) : DocumentDiff =
+    [ yield! baseArr |> Array.map Removed
+      yield! headArr |> Array.map Added ]
+
 /// How a non-backbone base↔head pairing is classified — a typed tag (not a string) so the assembly
 /// match is exhaustive and a mislabel can't slip through silently.
 type private Pairing =
@@ -82,12 +100,11 @@ let private similarity (ta: Set<string>) (tb: Set<string>) : float =
     let union = Set.union ta tb |> Set.count
     if union = 0 then 0.0 else float (Set.intersect ta tb |> Set.count) / float union
 
-/// Diff two documents' top-level nodes. Content equality drives the unchanged backbone (an LCS, so a
-/// shifted-but-identical node stays Unchanged); the remainder is paired as Moved (identical content,
-/// reordered) then Changed (same kind, similar text), and whatever is left is Added / Removed.
-let diff (baseDoc: Ast.Document) (headDoc: Ast.Document) : DocumentDiff =
-    let baseArr = List.toArray baseDoc
-    let headArr = List.toArray headDoc
+/// The O(m·n) LCS + pairwise-similarity matching — everything {@link diff} does below the size guard.
+/// Content equality drives the unchanged backbone (an LCS, so a shifted-but-identical node stays
+/// Unchanged); the remainder is paired as Moved (identical content, reordered) then Changed (same kind,
+/// similar text), and whatever is left is Added / Removed.
+let private diffBounded (baseArr: Ast.Node[]) (headArr: Ast.Node[]) : DocumentDiff =
     let m = baseArr.Length
     let n = headArr.Length
 
@@ -200,6 +217,19 @@ let diff (baseDoc: Ast.Document) (headDoc: Ast.Document) : DocumentDiff =
     emitBaseGap (prevB + 1) m
     emitHeadGap (prevH + 1) n
     List.ofSeq result
+
+/// Diff two documents' top-level nodes. Above {@link maxNodePairs} base×head pairs, falls back to a flat
+/// Removed+Added listing ({@link flatDiff}) instead of running {@link diffBounded}'s O(m·n) LCS/similarity
+/// — a deliberate, documented trade-off for a pathologically large document (thousands of near-identical
+/// entries, or a many-thousand-row table) rather than risking the host hanging or exhausting memory.
+let diff (baseDoc: Ast.Document) (headDoc: Ast.Document) : DocumentDiff =
+    let baseArr = List.toArray baseDoc
+    let headArr = List.toArray headDoc
+
+    if int64 baseArr.Length * int64 headArr.Length > maxNodePairs then
+        flatDiff baseArr headArr
+    else
+        diffBounded baseArr headArr
 
 /// Whether the diff contains any structural change (anything other than Unchanged).
 let hasChanges (d: DocumentDiff) : bool =

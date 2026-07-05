@@ -18,4 +18,10 @@
 		<PackageReference Include="FSharp.Core" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<!-- The test project exercises maxNodePairs (the M-07 pathological-size guard) directly, so it's
+		     internal rather than private. -->
+		<InternalsVisibleTo Include="SpecDesk.Diff.Tests" />
+	</ItemGroup>
+
 </Project>
