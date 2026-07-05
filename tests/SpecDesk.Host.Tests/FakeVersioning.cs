@@ -16,8 +16,10 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// <summary>The friendly name <see cref="CurrentBranch"/> returns — "main" by default. Settable so a
     /// test can simulate a repo left checked out on a working (draft) branch from a PREVIOUS session,
     /// before the host under test ever calls <see cref="BeginEdit"/> itself (M-16: the host must recover
-    /// that from the repo's actual checkout, not assume Published just because it never saw an Edit).</summary>
-    public string Branch { get; set; } = "main";
+    /// that from the repo's actual checkout, not assume Published just because it never saw an Edit).
+    /// Set to <c>null</c> to simulate a detached HEAD (R-01: the real <see cref="LibGit2DocumentVersioning"/>
+    /// reports <c>null</c>, never libgit2's own "(no branch)" placeholder, for that case).</summary>
+    public string? Branch { get; set; } = "main";
 
     public int BeginEditCalls { get; private set; }
 

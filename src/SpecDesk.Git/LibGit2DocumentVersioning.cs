@@ -62,7 +62,12 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
         using Repository repo = new(repoRoot);
-        return repo.Head.FriendlyName;
+        // A detached HEAD has no friendly branch name to report. libgit2's own FriendlyName fabricates
+        // the placeholder "(no branch)" for that case (never null) — surfacing it here would let a
+        // caller mistake it for a real, resumable branch name (M-16: ResolveInitialLifecycle relies on
+        // null specifically meaning "no branch to resume onto"). BeginEdit above already treats detached
+        // HEAD as its own case for the same reason; keep this the single place that turns it into null.
+        return repo.Info.IsHeadDetached ? null : repo.Head.FriendlyName;
     }
 
     public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)

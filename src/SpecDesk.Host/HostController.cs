@@ -1988,7 +1988,12 @@ public sealed class HostController : IDisposable
 
 		string? toml = WorkflowSeeds.TryReadRepoToml(repoRoot);
 		string baseBranch = WorkflowConfig.defaultBaseForHost(toml);
-		if (currentBranch is null || string.Equals(currentBranch, baseBranch, StringComparison.Ordinal))
+		// R-01: `currentBranch is null` is the documented detached-HEAD signal (see IDocumentVersioning.
+		// CurrentBranch), but also reject libgit2's own "(no branch)" placeholder explicitly in case some
+		// future IDocumentVersioning implementation forwards it verbatim instead of translating it to
+		// null — either way there is no real branch name here to resume a draft onto or later store as
+		// _branch (which OnSaveVersion/OnDiscard would otherwise act on as if it were a real ref).
+		if (currentBranch is null or "(no branch)" || string.Equals(currentBranch, baseBranch, StringComparison.Ordinal))
 		{
 			// Detached HEAD (no friendly branch to resume onto), or HEAD is already on the published
 			// base — either way there is no draft left checked out to recover.

@@ -299,6 +299,29 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Restart_WithADetachedHeadCheckedOut_ResumesAsPublishedInsteadOfADraftOnNoBranch()
+    {
+        // Regression test for R-01: ResolveInitialLifecycle used to detect detached HEAD via
+        // `currentBranch is null`, but the real LibGit2DocumentVersioning.CurrentBranch returned
+        // libgit2's own "(no branch)" placeholder for a detached HEAD (never null) — that guard was
+        // dead, and the resolver mistook "(no branch)" for a genuine (and bogus) draft branch to resume.
+        // FakeVersioning.Branch = null simulates the FIXED CurrentBranch contract for a detached HEAD.
+        FakeVersioning versioning = new() { Branch = null };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                status is null || status.State == "published",
+                "a detached HEAD on first load must resume as Published, never a draft on a fabricated"
+                    + " branch name");
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "resolving as Published must not force a checkout");
+        });
+    }
+
+    [Test]
     public void Ready_FiredAgainWhileADraftIsOpen_DoesNotReloadTheDocumentOrResetTheLifecycle()
     {
         // Regression test for M-15: a WebView2 recovery / page reload re-fires "ready". Before the fix,
