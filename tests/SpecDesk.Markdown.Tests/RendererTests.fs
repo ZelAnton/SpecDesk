@@ -35,6 +35,28 @@ let ``every top-level block emits a line attribute`` () =
     let result = Renderer.render "" md
     Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
 
+// M-08: a definition list was the one enabled block family with no regression test for the
+// LineMap↔data-line count invariant. It turned out NOT to hold generically: `DefinitionTerm`/the body
+// `ParagraphBlock` are both plain LeafBlocks, so the pre-existing generic recursion tagged both — but
+// Markdig's own HTML renderer only ever writes the resulting `data-line-*` attributes onto the `<dt>`;
+// a body paragraph is rendered directly as `<dd>` with no attributes at all, regardless of position.
+// Tagging it anyway added a LineMap entry with nothing in the HTML to match it — exactly the invariant
+// violation this task set out to catch. `DefinitionItem` now gets an explicit case that tags only its
+// DefinitionTerm child(ren), skipping the body — covers a term with a single definition AND a term
+// shared by two consecutive body paragraphs (the term-less continuation item for a second `:` line).
+[<Test>]
+let ``a definition list's terms get a line attribute; bodies (which Markdig never attributes) do not`` () =
+    let md = "Term1\n:   Definition one.\n\nTerm2\n:   Definition two part A.\n:   Definition two part B.\n"
+    let result = Renderer.render "" md
+
+    // The invariant this whole test exists to pin: every LineMap entry has a matching HTML attribute.
+    Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
+    // 2 terms (<dt>) anchored; the 3 body paragraphs (<dd>, one term shared by two) are not.
+    Assert.That(result.LineMap.Length, Is.EqualTo 2)
+    Assert.That(occurrences "<dt" result.Html, Is.EqualTo 2)
+    Assert.That(occurrences "<dd>" result.Html, Is.EqualTo 3)
+    Assert.That(result.Html, Does.Not.Contain "<dd data-line")
+
 // M-01: without `UseEmphasisExtras`, `~~struck~~` parsed as literal text in the native pipeline — the
 // preview showed the tildes verbatim instead of rendering the strikethrough the webview's toolbar emits.
 [<Test>]

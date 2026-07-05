@@ -8,6 +8,7 @@ open System.Collections.Generic
 open System.IO
 open System.Text.RegularExpressions
 open Markdig
+open Markdig.Extensions.DefinitionLists
 open Markdig.Extensions.Footnotes
 open Markdig.Extensions.Tables
 open Markdig.Renderers
@@ -131,6 +132,17 @@ let private stampLineAnchors (text: string) (doc: MarkdownDocument) : LineSpan[]
                 | :? ListItemBlock as item -> tag item item.Line item.Span
                 | _ -> ()
         | :? QuoteBlock as quote -> for child in quote do tagTree child
+        | :? DefinitionItem as item ->
+            // Markdig's own HTML renderer only ever writes `data-line-*` for the `<dt>` (the
+            // DefinitionTerm) — verified empirically: it calls WriteAttributes for the term but renders
+            // a definition's body content directly as `<dd>` without ever doing so for it, term-sharing
+            // continuation items (a second `:` line under the same term) included. Tagging the body here
+            // would add a LineMap entry with no matching attribute in the HTML, desyncing the
+            // LineMap↔data-line count invariant every other block family upholds.
+            for child in item do
+                match child with
+                | :? DefinitionTerm -> tag child child.Line child.Span
+                | _ -> ()
         | :? LeafBlock -> tag block block.Line block.Span
         | :? ContainerBlock as container -> for child in container do tagTree child
         | _ -> ()

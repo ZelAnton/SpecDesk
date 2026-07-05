@@ -162,6 +162,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diff now skips that matching entirely and reports a flat "everything removed, everything added"
   listing instead — correct but coarse, and a deliberate, documented trade-off against hanging or running
   out of memory on documents far beyond any realistic size.
+- A definition list's body (the implicit `<dd>` paragraph under a `Term`/`:` definition) got a
+  `data-line-*` scroll-sync attribute stamped onto it, but Markdig's own HTML renderer never actually
+  writes that attribute for a `<dd>` — only for the `<dt>` term — so the internal line map ended up with
+  more entries than the rendered HTML had matching attributes for, a mismatch no other supported block
+  family has. Only a definition's term is anchored now, matching what Markdig actually renders.
 
 ## [0.1.0] - 2026-07-04
 
