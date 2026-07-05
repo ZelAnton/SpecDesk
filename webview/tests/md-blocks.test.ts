@@ -1,5 +1,15 @@
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { joinBlocks, splitTopLevelBlocks } from "../src/md-blocks.js";
+
+// Independent of md-blocks.ts's own tokenizer instance, so this actually pins the invariant
+// splitTopLevelBlocks relies on rather than restating its internals.
+const referenceTokenizer = new MarkdownIt();
+
+/** The number of real top-level tokens markdown-it itself would report for `md`. */
+function topLevelTokenCount(md: string): number {
+  return referenceTokenizer.parse(md, {}).filter((t) => t.level === 0 && t.map !== null).length;
+}
 
 // A representative spec: headings, a hard-wrapped paragraph, a bullet list, a blockquote, a GFM
 // table, a fenced code block, an ordered list, a thematic break, and a trailing paragraph.
@@ -114,5 +124,54 @@ describe("splitTopLevelBlocks", () => {
       expect(cur.lineStart).toBe(prev.lineEnd + 1);
     }
     expect(blocks.at(-1)?.lineEnd).toBe(RICH.split("\n").length - 1);
+  });
+
+  // S-13 regression guards: a leading gap (blank lines, or a reference definition with no rendered
+  // node) used to become its OWN synthetic block, so `blocks.length` was permanently one MORE than the
+  // document's real top-level token count — desyncing every block-index-keyed consumer (the
+  // block-splice's fidelity check, and formatted.ts's block↔ProseMirror-child mapping).
+
+  for (const [name, md] of [
+    ["leading blank lines", "\n\n# H\n\npara\n"],
+    ["a single leading blank line", "\npara\n"],
+    ["a leading reference definition", "[ref]: http://example.com\n\npara\n"],
+    ["RICH with two leading blank lines prepended", `\n\n${RICH}`],
+  ] as const) {
+    it(`blocks.length matches the real top-level token count: ${name}`, () => {
+      const blocks = splitTopLevelBlocks(md);
+      expect(blocks.length).toBe(topLevelTokenCount(md));
+    });
+  }
+
+  it("folds leading blank lines into the first block's head, not a separate block", () => {
+    const md = "\n\n# H\n\npara\n";
+    const blocks = splitTopLevelBlocks(md);
+    expect(blocks.length).toBe(2);
+    expect(blocks[0]?.lineStart).toBe(0);
+    expect(blocks[0]?.contentLineStart).toBe(2); // "# H" is the third line (0-based index 2)
+    expect(blocks[0]?.text.includes("# H")).toBe(true);
+    expect(joinBlocks(blocks)).toBe(md);
+  });
+
+  it("folds a leading reference definition into the first (only) block's head", () => {
+    const md = "[ref]: http://example.com\n\npara\n";
+    const blocks = splitTopLevelBlocks(md);
+    // The reference definition has no rendered node — the paragraph is the ONLY real top-level token —
+    // so this document is exactly one block, with the ref-def riding as that block's head content.
+    expect(blocks.length).toBe(1);
+    expect(blocks[0]?.lineStart).toBe(0);
+    expect(blocks[0]?.contentLineStart).toBe(2);
+    expect(blocks[0]?.text).toBe(md);
+    expect(joinBlocks(blocks)).toBe(md);
+  });
+
+  it("a document with no top-level token at all still round-trips as a single whole-document block", () => {
+    // Whitespace-only: no real token anywhere, so there is nothing to fold content into — the
+    // whole-document fallback (not the leading-gap fold) applies, and contentLineStart stays unset.
+    const md = "\n\n  \n";
+    const blocks = splitTopLevelBlocks(md);
+    expect(blocks.length).toBe(1);
+    expect(blocks[0]?.contentLineStart).toBeUndefined();
+    expect(joinBlocks(blocks)).toBe(md);
   });
 });

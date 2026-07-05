@@ -20,8 +20,10 @@ function serializeBlock(node: PmNode): string {
  * the trailing blank-line gap PLUS any non-node source the parser dropped (link reference definitions
  * fold into a block's slice but have no ProseMirror node, so re-serializing the node alone would lose
  * them). `contentLineEnd` is the node's source-map end; everything from there to the block end is
- * preserved. Falls back to scanning the trailing blank run when `contentLineEnd` is absent (the
- * synthetic leading-blank block, which never reaches this path — it takes the whole-doc fallback).
+ * preserved. Falls back to scanning the trailing blank run when `contentLineEnd` is absent — which only
+ * happens when the document has no top-level token at all, a case the whole-document fallback above
+ * already takes (`blocks.length` is 1 but `childCount` is 0, so they never match) — kept here only as a
+ * defensive fallback, never actually exercised on that path.
  */
 function tailLines(lines: string[], block: MdBlock): string[] {
   if (block.contentLineEnd !== undefined) {
@@ -32,6 +34,20 @@ function tailLines(lines: string[], block: MdBlock): string[] {
     start--;
   }
   return lines.slice(start, block.lineEnd + 1);
+}
+
+/**
+ * The block's source BEFORE its node content — kept verbatim when the block is re-serialized.
+ * Symmetric to {@link tailLines}: only ever non-empty for the document's first block, when it has
+ * leading head content (blank lines, and reference definitions the parser consumed with no node — see
+ * {@link MdBlock.contentLineStart}). Re-serializing the node alone would otherwise silently drop that
+ * head content instead of just leaving it untouched.
+ */
+function headLines(lines: string[], block: MdBlock): string[] {
+  if (block.contentLineStart === undefined) {
+    return [];
+  }
+  return lines.slice(block.lineStart, block.contentLineStart);
 }
 
 /**
@@ -64,8 +80,11 @@ export function serializeWithSplice(original: string, edited: PmNode): string {
       // Untouched block → keep its exact source (including hard wraps and list markers).
       out.push(...lines.slice(block.lineStart, block.lineEnd + 1));
     } else {
-      // Changed block → re-serialize just this block, then re-attach its original tail verbatim
-      // (blank-line gap + any non-node source such as link reference definitions).
+      // Changed block → re-attach any original head content verbatim (leading blank lines / reference
+      // definitions before the first block's own node, see headLines), re-serialize just this block,
+      // then re-attach its original tail verbatim (blank-line gap + any non-node source such as link
+      // reference definitions).
+      out.push(...headLines(lines, block));
       out.push(...serializeBlock(edited.child(i)).split("\n"));
       out.push(...tailLines(lines, block));
     }

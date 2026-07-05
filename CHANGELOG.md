@@ -71,6 +71,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against a conservative git-ref-character check before being accepted; either failure falls back to
   the default pattern (itself validated the same way) instead of breaking the workflow. The
   commit-message template is unaffected — it is free text, not a ref.
+- A document whose Markdown starts with a leading blank line or a leading link reference
+  definition (no rendered node) made `md-blocks.ts` add a synthetic leading block, so
+  `blocks.length` was permanently one more than the ProseMirror document's `childCount`. In the
+  formatted (WYSIWYG) editor this meant every `getText()` took the whole-document fallback —
+  reflowing hard-wrapped paragraphs, list markers and heading style on the very first edit, or
+  even just switching from Formatted back to Code with no edit at all — and desynced the
+  block-index-keyed active/hover highlight and scroll-sync mapping by one block. Leading blank
+  lines and reference definitions now fold into the first real block's own "head" content instead
+  of forming a block of their own, so `blocks.length` stays 1:1 with `childCount` and an unedited
+  document round-trips byte-for-byte.
 
 ## [0.1.0] - 2026-07-04
 

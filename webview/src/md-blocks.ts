@@ -29,10 +29,19 @@ export interface MdBlock {
    * here to {@link lineEnd} are trailing source the block's ProseMirror node does NOT represent —
    * blank lines, and crucially **link reference definitions** (`[id]: url`), which the parser consumes
    * into its reference map with no node. The block-splice keeps that tail verbatim when a block is
-   * re-serialized, so editing such a block doesn't silently drop the ref-def. Undefined only for the
-   * synthetic leading-blank block (which always takes the whole-document fallback anyway).
+   * re-serialized, so editing such a block doesn't silently drop the ref-def. Undefined only when the
+   * document has no top-level token at all (empty / whitespace-only), the one case with no real node.
    */
   contentLineEnd?: number;
+  /**
+   * The line WHERE the block's own node content actually starts, when it differs from
+   * {@link lineStart}. Only ever set on the document's first block: any lines before the first
+   * top-level token (leading blank lines, and link reference definitions the parser consumes with no
+   * node) ride along as that block's own "head" source — never a separate synthetic block, so
+   * `blocks.length` always equals the document's real top-level token count. Symmetric to
+   * {@link contentLineEnd}, which covers the same kind of content trailing a block.
+   */
+  contentLineStart?: number;
 }
 
 // Used ONLY to find top-level block boundaries — never to render — so its inline rules don't matter
@@ -86,19 +95,32 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
     }
   }
 
-  // Boundaries partition [0, lines.length); a leading gap (or a doc with no block tokens) folds into
-  // the first slice by ensuring 0 is a boundary.
+  // Boundaries partition [0, lines.length). A doc with no block tokens at all (empty / whitespace-only)
+  // gets a single whole-document block. Otherwise, any gap before the first real token's line — leading
+  // blank lines, and reference definitions the parser consumes with no node — rides with that first
+  // block as its own head content rather than becoming a separate synthetic block: pulling boundary 0's
+  // start back to line 0 (instead of unshifting an extra boundary) keeps `blocks.length` equal to the
+  // document's real top-level token count, which the block-splice's fidelity check depends on.
   const boundaries = [...new Set(starts)].sort((a, b) => a - b);
-  if (boundaries[0] !== 0) {
-    boundaries.unshift(0);
+  let firstContentStart: number | undefined;
+  if (boundaries.length === 0) {
+    boundaries.push(0);
+  } else if (boundaries[0] !== 0) {
+    firstContentStart = boundaries[0];
+    boundaries[0] = 0;
   }
 
   const blocks: MdBlock[] = [];
   for (let i = 0; i < boundaries.length; i++) {
     const start = boundaries[i] ?? 0;
     const end = boundaries[i + 1] ?? lines.length;
-    const childLineStarts = childStartsByLine.get(start);
-    const contentLineEnd = contentEndByLine.get(start);
+    // The first block's own node starts at firstContentStart (if there is head content), not at its
+    // (pulled-back-to-0) slice start — contentEndByLine/childStartsByLine are keyed by the token's own
+    // start line, so look those up under the node's real start rather than the block's.
+    const contentKey = i === 0 && firstContentStart !== undefined ? firstContentStart : start;
+    const childLineStarts = childStartsByLine.get(contentKey);
+    const contentLineEnd = contentEndByLine.get(contentKey);
+    const contentLineStart = i === 0 ? firstContentStart : undefined;
     blocks.push({
       text: lines.slice(start, end).join("\n"),
       lineStart: start,
@@ -106,6 +128,7 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
       // Only set when present — exactOptionalPropertyTypes forbids an explicit `undefined`.
       ...(childLineStarts !== undefined ? { childLineStarts } : {}),
       ...(contentLineEnd !== undefined ? { contentLineEnd } : {}),
+      ...(contentLineStart !== undefined ? { contentLineStart } : {}),
     });
   }
   return blocks;

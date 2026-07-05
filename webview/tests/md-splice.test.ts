@@ -137,4 +137,33 @@ describe("serializeWithSplice", () => {
     expect(out).toContain("Appended paragraph.");
     expect(out.length).toBeGreaterThan(0);
   });
+
+  // S-13 regression guards: a leading gap used to make `blocks.length` permanently one MORE than
+  // `originalDoc.childCount`, so `serializeWithSplice` ALWAYS took the whole-document fallback for such
+  // a document — reflowing every hard-wrapped paragraph and list marker even with no real edit.
+
+  it("no-op round-trip is byte-identical for a document with leading blank lines (no whole-document fallback)", () => {
+    const md = `\n\n${RICH}`;
+    expect(serializeWithSplice(md, parse(md))).toBe(md);
+  });
+
+  it("no-op round-trip is byte-identical for a document with a leading reference definition", () => {
+    const md = "[a]: http://x\n\nSee [a] link.\n";
+    expect(serializeWithSplice(md, parse(md))).toBe(md);
+  });
+
+  it("editing the first block of a document with leading blank lines preserves them verbatim", () => {
+    const md = "\n\n# H\n\npara\n";
+    const heading = schema.node("heading", { level: 1 }, [schema.text("H edited")]);
+    const edited = withChildReplaced(parse(md), 0, heading);
+    const out = serializeWithSplice(md, edited);
+    expect(out).toBe("\n\n# H edited\n\npara\n");
+  });
+
+  it("editing the sole block of a document with a leading reference definition preserves it verbatim", () => {
+    const md = "[a]: http://x\n\nSee [a] link.\n";
+    const edited = withChildReplaced(parse(md), 0, paragraph("Edited text."));
+    const out = serializeWithSplice(md, edited);
+    expect(out).toBe("[a]: http://x\n\nEdited text.\n");
+  });
 });

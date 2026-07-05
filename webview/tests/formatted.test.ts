@@ -80,6 +80,12 @@ describe("FormattedEditor (jsdom)", () => {
     ["heading + paragraph", "# H\n\nA paragraph.\n"],
     ["bullet list", "- one\n- two\n- three\n"],
     ["ordered list + code", "1. a\n2. b\n\n```\ncode\n```\n"],
+    // S-13 regression guards: a leading gap (blank lines / a reference definition with no rendered
+    // node) used to add a synthetic block, permanently desyncing blocks.length from doc.childCount, so
+    // getText() ALWAYS took the whole-document fallback here — reflowing an untouched document the
+    // instant applyMode read it while leaving "Форматированный" mode (index.ts applyMode).
+    ["leading blank lines", "\n\n# H\n\npara\n"],
+    ["leading reference definition", "[a]: http://x\n\nSee [a] link.\n"],
   ] as const) {
     it(`setText then getText is byte-identical with no edits: ${name}`, () => {
       const ed = mount();
@@ -87,6 +93,32 @@ describe("FormattedEditor (jsdom)", () => {
       expect(ed.getText()).toBe(md);
     });
   }
+
+  it("maps a source line to the correct block when the document has leading blank lines (no off-by-one)", () => {
+    const { ed, host } = mountWithHost();
+    // Leading blank lines (0, 1) fold into the heading's own block (S-13); blocks stay 1:1 with the
+    // three ProseMirror children (heading, paragraph, bullet list) instead of gaining a synthetic
+    // fourth entry that would shift every later block index by one.
+    ed.setText("\n\n# H\n\npara\n\n- a\n- b\n");
+
+    ed.setActiveLine(0); // a leading blank line — folds into the heading block, not a block of its own
+    let active = host.querySelectorAll(".sd-active-block");
+    expect(active.length).toBe(1);
+    expect(active[0]?.tagName.toLowerCase()).toBe("h1");
+
+    ed.setActiveLine(4); // inside "para" — must NOT resolve to the list (the pre-fix off-by-one)
+    active = host.querySelectorAll(".sd-active-block");
+    expect(active.length).toBe(1);
+    expect(active[0]?.tagName.toLowerCase()).toBe("p");
+    expect(active[0]?.textContent).toContain("para");
+
+    ed.setActiveLine(6); // "- a"
+    active = host.querySelectorAll(".sd-active-block");
+    expect(active.length).toBe(1);
+    expect(active[0]?.tagName.toLowerCase()).toBe("li");
+    expect(active[0]?.textContent).toContain("a");
+    expect(active[0]?.textContent).not.toContain("b");
+  });
 
   it("re-bases the splice baseline on each setText", () => {
     const ed = mount();
