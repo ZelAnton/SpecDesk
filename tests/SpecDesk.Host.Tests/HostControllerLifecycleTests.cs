@@ -259,6 +259,46 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Restart_WithADraftBranchAlreadyCheckedOut_ResumesAsDraftInsteadOfPublished()
+    {
+        // Regression test for M-16: the lifecycle state lived only in this object's memory, so a restart
+        // (crash / force-quit / relaunch) mid-draft always re-stamped the reopened document Published,
+        // even though the repo's working tree was still checked out on the draft branch left by the
+        // previous, now-gone process — losing track of the draft and, on the next "Edit", forcing a fresh
+        // checkout that would silently reset whatever had been autosaved to disk before the restart.
+        const string draftBranch = "spec/billing-20260101";
+        // Nothing has called BeginEdit on THIS instance — the branch is already checked out as if a
+        // previous session (now gone) left it there. NewController fires "ready", simulating this
+        // process's very first load of the document.
+        FakeVersioning versioning = new() { Branch = draftBranch };
+        using HostController controller = NewController(versioning);
+
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(status, Is.Not.Null, "the resumed draft must reach the webview as a status update");
+            Assert.That(
+                status!.State, Is.EqualTo("draft"), "must not falsely report Published after a restart mid-draft");
+            Assert.That(status.Branch, Is.EqualTo(draftBranch));
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(0), "resuming a draft must not force a fresh checkout");
+        });
+
+        // Clicking "Edit" again must be a no-op (the lifecycle is already Draft) rather than re-running
+        // BeginEdit's forced checkout — which would silently reset any autosaved-but-uncommitted content
+        // left over from before the restart.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+
+        StatusPayload? afterEditClick = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                versioning.BeginEditCalls, Is.EqualTo(0), "Edit from an already-resumed draft must not re-checkout");
+            Assert.That(afterEditClick!.State, Is.EqualTo("draft"));
+            Assert.That(afterEditClick.Branch, Is.EqualTo(draftBranch));
+        });
+    }
+
+    [Test]
     public void Ready_FiredAgainWhileADraftIsOpen_DoesNotReloadTheDocumentOrResetTheLifecycle()
     {
         // Regression test for M-15: a WebView2 recovery / page reload re-fires "ready". Before the fix,
