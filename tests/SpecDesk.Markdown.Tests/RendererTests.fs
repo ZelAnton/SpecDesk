@@ -35,6 +35,14 @@ let ``every top-level block emits a line attribute`` () =
     let result = Renderer.render "" md
     Assert.That(occurrences "data-line-start=\"" result.Html, Is.EqualTo result.LineMap.Length)
 
+// M-01: without `UseEmphasisExtras`, `~~struck~~` parsed as literal text in the native pipeline — the
+// preview showed the tildes verbatim instead of rendering the strikethrough the webview's toolbar emits.
+[<Test>]
+let ``strikethrough renders as del, not literal tildes`` () =
+    let result = Renderer.render "" "~~struck~~"
+    Assert.That(result.Html, Does.Contain "<del>struck</del>")
+    Assert.That(result.Html, Does.Not.Contain "~~")
+
 [<Test>]
 let ``raw html is escaped, not emitted as live markup`` () =
     let result = Renderer.render "" "<script>alert(1)</script>"

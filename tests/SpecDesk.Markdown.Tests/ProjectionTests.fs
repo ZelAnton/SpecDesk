@@ -28,6 +28,14 @@ let ``emphasis is projected`` () =
 let ``strong is projected`` () =
     Assert.That(paragraphInlines "**bold**" |> List.contains (Strong [ Text "bold" ]), Is.True)
 
+// M-01: `~~struck~~` is ALSO an EmphasisInline under the hood (Markdig's EmphasisExtras reuses the
+// node type, distinguished only by its `~` delimiter) — without checking DelimiterChar first, this
+// would misproject as Strong (same DelimiterCount as `**bold**`), silently conflating strikethrough
+// with bold in the semantic diff.
+[<Test>]
+let ``strikethrough is projected as its own case, not conflated with strong`` () =
+    Assert.That(paragraphInlines "~~struck~~" |> List.contains (Strikethrough [ Text "struck" ]), Is.True)
+
 [<Test>]
 let ``inline code is projected`` () =
     Assert.That(paragraphInlines "`code`" |> List.contains (Code "code"), Is.True)

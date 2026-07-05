@@ -8,6 +8,10 @@ type Inline =
     | Text of string
     | Emphasis of Inline list
     | Strong of Inline list
+    /// `~~struck~~` (Markdig's `EmphasisExtras` strikethrough, distinguished from `Strong` by its
+    /// `~` delimiter rather than `*`/`_`) — a distinct case so toggling it isn't silently conflated
+    /// with bold in the semantic diff.
+    | Strikethrough of Inline list
     | Code of string
     | Link of text: Inline list * url: string
     | Image of alt: string * url: string

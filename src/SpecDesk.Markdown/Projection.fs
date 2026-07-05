@@ -19,7 +19,16 @@ let rec private inlineOf (inl: Inline) : Ast.Inline option =
     | :? LiteralInline as lit -> Some(Ast.Text(lit.Content.ToString()))
     | :? EmphasisInline as em ->
         let children = inlinesOf em
-        if em.DelimiterCount >= 2 then Some(Ast.Strong children) else Some(Ast.Emphasis children)
+        // Strikethrough is ALSO an EmphasisInline (Markdig's EmphasisExtras reuses the node type),
+        // distinguished only by its `~` delimiter — check that before falling back to the `*`/`_`
+        // Strong/Emphasis distinction by count, or a `~~struck~~` would be silently misprojected as
+        // bold (DelimiterCount is 2 for both).
+        if em.DelimiterChar = '~' then
+            Some(Ast.Strikethrough children)
+        elif em.DelimiterCount >= 2 then
+            Some(Ast.Strong children)
+        else
+            Some(Ast.Emphasis children)
     | :? CodeInline as code -> Some(Ast.Code code.Content)
     | :? LinkInline as link ->
         let url = defaultArg (Option.ofObj link.Url) ""

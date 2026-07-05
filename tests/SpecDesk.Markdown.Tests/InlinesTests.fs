@@ -17,6 +17,14 @@ let ``text and code pass through verbatim and concatenate`` () =
 let ``emphasis and strong flatten to their children`` () =
     Assert.That(Inlines.flatten [ Emphasis [ Text "em" ]; Strong [ Text "bold" ] ], Is.EqualTo "embold")
 
+// M-01: strikethrough must flatten mark-free (like Emphasis/Strong), not carry its `~~` markers —
+// otherwise the native side's flattened text ("~~struck~~") would mismatch the webview's ProseMirror
+// textContent ("struck") for byte-identical Markdown, reporting a phantom word-diff edit on every
+// strikethrough word even when nothing actually changed.
+[<Test>]
+let ``strikethrough flattens to its children, without its markers`` () =
+    Assert.That(Inlines.flatten [ Strikethrough [ Text "struck" ] ], Is.EqualTo "struck")
+
 [<Test>]
 let ``a link flattens to its text, not its url`` () =
     Assert.That(Inlines.flatten [ Link([ Text "label" ], "http://example.com") ], Is.EqualTo "label")

@@ -117,6 +117,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the paste had already been handled by the time it ran. It now skips capturing an image whenever the
   clipboard also carries non-empty `text/plain`, deferring to whatever CodeMirror already inserted so a
   single paste yields exactly one representation.
+- The native Markdown pipeline (preview, semantic diff, comment anchoring) parsed `~~struck~~` as
+  literal text — it didn't enable Markdig's strikethrough extension, even though the formatted
+  editor's toolbar already emits that exact syntax for its strikethrough button. The preview showed
+  literal tildes instead of struck-through text, and comparing the native and formatted views'
+  flattened text reported a phantom word-level edit on every strikethrough word, even with no real
+  change. The pipeline now parses `~~…~~` as strikethrough (rendering as `<del>…</del>`), projected as
+  its own `Ast.Strikethrough` case (kept distinct from bold, which shares the same delimiter count)
+  and flattened mark-free like the other inline styles.
 
 ## [0.1.0] - 2026-07-04
 
