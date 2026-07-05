@@ -125,3 +125,28 @@ let ``diff to an empty head is all Removed`` () =
     let d = diffText "# H\n\npara\n" ""
     Assert.That(d |> List.forall isRemoved, Is.True)
     Assert.That(d.Length, Is.EqualTo 2)
+
+// S-08 regressions: TaskList/FootnoteLink/DefinitionList used to project to `None`/identical content,
+// so these real, rendered edits used to diff as Unchanged — the overlay reported "no changes".
+
+[<Test>]
+let ``toggling a task-list checkbox is Changed, not silently Unchanged`` () =
+    let d = diffText "- [ ] todo\n" "- [x] todo\n"
+    Assert.That(count isChanged d, Is.EqualTo 1)
+    Assert.That(hasChanges d, Is.True)
+
+[<Test>]
+let ``editing a footnote body is Changed, not silently invisible`` () =
+    let baseText = "See note[^1].\n\n[^1]: Original body text here.\n"
+    let headText = "See note[^1].\n\n[^1]: Edited body text here.\n"
+    let d = diffText baseText headText
+    Assert.That(count isChanged d, Is.EqualTo 1)
+    Assert.That(hasChanges d, Is.True)
+
+[<Test>]
+let ``editing a definition-list body is Changed, not silently invisible`` () =
+    let baseText = "Term\n:   Original definition text here.\n"
+    let headText = "Term\n:   Edited definition text here.\n"
+    let d = diffText baseText headText
+    Assert.That(count isChanged d, Is.EqualTo 1)
+    Assert.That(hasChanges d, Is.True)

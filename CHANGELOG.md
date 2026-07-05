@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `next` unrechecked, so the flag-only check would find it already false and let Discard delete the
   local branch a just-opened pull request now depends on. `tryStep` is now re-derived inside the same
   `lock(_sync)` as the `_publishInFlight` check, matching the existing pattern.
+- The semantic diff (`SpecDesk.Diff`/`SpecDesk.Markdown`) could not see a task-list checkbox toggle, a
+  footnote body edit, or a definition-list body edit: `Projection.fs` fell into `| _ -> None` for the
+  `TaskList`/`FootnoteLink` inlines and the `DefinitionList`/`FootnoteGroup` blocks Markdig's pipeline
+  already parses (`Pipeline.fs` enables `UseTaskLists`/`UseFootnotes`/`UseDefinitionLists`), so a
+  `- [ ]` → `- [x]` edit — or a footnote/definition body edit — projected to identical `Ast` content and
+  the "Show changes" overlay reported no changes for a real, rendered edit. `Ast.Inline` gained
+  `TaskListMarker`/`FootnoteRef` cases and `Ast.Block` gained `DefinitionList`/`Footnotes` cases (with
+  `DefinitionItem`/`Footnote` records for their bodies); `Projection.fs` now projects all four instead of
+  dropping them, and `AstDiff.fs`'s exhaustive `kindTag`/`blockText` matches cover the new cases.
 
 ## [0.1.0] - 2026-07-04
 

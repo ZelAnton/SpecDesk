@@ -134,3 +134,83 @@ let ``a list nested inside a list item projects a nested ListBlock`` () =
                 | _ -> false),
             Is.True)
     | other -> Assert.Fail($"expected a single unordered list, got %A{other}")
+
+// S-08 regression guards: TaskList/FootnoteLink/DefinitionList used to fall into `| _ -> None` in
+// inlineOf/blockOf, so toggling a checkbox or editing a footnote/definition body projected to
+// IDENTICAL Ast content — invisible to the diff even though the render visibly changed.
+
+// A task-list item's checkbox marker is the first inline of its (single, nested) paragraph —
+// `single` / `paragraphInlines` assume a top-level Paragraph, so task lists need their own accessor.
+let private taskItemInlines (md: string) : Inline list =
+    match single md with
+    | ListBlock(false, [ [ Paragraph inlines ] ]) -> inlines
+    | other -> failwithf "expected a single-item unordered list with a paragraph, got %A" other
+
+[<Test>]
+let ``an unchecked task-list item projects its checkbox marker`` () =
+    Assert.That(taskItemInlines "- [ ] todo" |> List.contains (TaskListMarker false), Is.True)
+
+[<Test>]
+let ``a checked task-list item projects its checkbox marker`` () =
+    Assert.That(taskItemInlines "- [x] todo" |> List.contains (TaskListMarker true), Is.True)
+
+[<Test>]
+let ``toggling a task-list checkbox changes the projected list content`` () =
+    Assert.That(single "- [ ] todo" <> single "- [x] todo", Is.True)
+
+// Markdig's footnote label retains the leading `^` from `[^1]`.
+[<Test>]
+let ``a footnote reference projects its label`` () =
+    let md = "See note[^1].\n\n[^1]: The note body."
+    Assert.That(
+        Projection.toAst md
+        |> List.exists (fun n -> n.Content = Paragraph [ Text "See note"; FootnoteRef "^1"; Text "." ]),
+        Is.True)
+
+let private footnoteGroup (md: string) : Footnote list option =
+    Projection.toAst md
+    |> List.tryPick (fun n ->
+        match n.Content with
+        | Footnotes notes -> Some notes
+        | _ -> None)
+
+let private hasTextContaining (needle: string) (blocks: Block list) : bool =
+    blocks
+    |> List.exists (function
+        | Paragraph xs -> (Inlines.flatten xs).Contains needle
+        | _ -> false)
+
+[<Test>]
+let ``the footnote group projects the referenced note bodies`` () =
+    let md = "See note[^1].\n\n[^1]: The note body."
+
+    match footnoteGroup md with
+    | Some [ note ] ->
+        Assert.That(note.Label, Is.EqualTo "^1")
+        Assert.That(hasTextContaining "The note body" note.Body, Is.True)
+    | other -> Assert.Fail($"expected one footnote, got %A{other}")
+
+[<Test>]
+let ``editing a footnote body changes the projected footnote group`` () =
+    let original = Projection.toAst "See note[^1].\n\n[^1]: Original body."
+    let edited = Projection.toAst "See note[^1].\n\n[^1]: Edited body."
+    Assert.That(original <> edited, Is.True)
+
+// The definition marker's body must be indented at least 4 columns from the start of the line
+// (":" + 3 spaces here) to be recognized as a DefinitionList rather than folding into a plain
+// paragraph — a CommonMark-style continuation-indent quirk of Markdig's definition-list extension.
+[<Test>]
+let ``a definition list projects its term and definition body`` () =
+    let md = "Term\n:   Definition text"
+
+    match single md with
+    | DefinitionList [ item ] ->
+        Assert.That(item.Terms = [ [ Text "Term" ] ], Is.True)
+        Assert.That(hasTextContaining "Definition text" item.Body, Is.True)
+    | other -> Assert.Fail($"expected a definition list, got %A{other}")
+
+[<Test>]
+let ``editing a definition body changes the projected definition list`` () =
+    let original = Projection.toAst "Term\n:   Original definition"
+    let edited = Projection.toAst "Term\n:   Edited definition"
+    Assert.That(original <> edited, Is.True)

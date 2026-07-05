@@ -7,6 +7,9 @@ open Markdig
 open Markdig.Syntax
 open Markdig.Syntax.Inlines
 open Markdig.Extensions.Tables
+open Markdig.Extensions.TaskLists
+open Markdig.Extensions.Footnotes
+open Markdig.Extensions.DefinitionLists
 
 // `Block`/`Inline` below refer to Markdig's types (from the opens); the F# DU is reached via the
 // `Ast.` prefix throughout to keep the two models unambiguous.
@@ -27,6 +30,8 @@ let rec private inlineOf (inl: Inline) : Ast.Inline option =
     | :? AutolinkInline as auto -> Some(Ast.Link([ Ast.Text auto.Url ], auto.Url))
     | :? HtmlEntityInline as ent -> Some(Ast.Text(ent.Transcoded.ToString()))
     | :? LineBreakInline -> Some Ast.LineBreak
+    | :? TaskList as t -> Some(Ast.TaskListMarker t.Checked)
+    | :? FootnoteLink as fl -> Some(Ast.FootnoteRef(defaultArg (Option.ofObj fl.Footnote.Label) ""))
     | _ -> None
 
 and private inlinesOf (container: ContainerInline | null) : Ast.Inline list =
@@ -63,6 +68,8 @@ let rec private blockOf (block: Block) : Ast.Block option =
         Some(Ast.ListBlock(l.IsOrdered, items))
     | :? QuoteBlock as q -> Some(Ast.Quote(blocksOf q))
     | :? ThematicBreakBlock -> Some Ast.ThematicBreak
+    | :? DefinitionList as dl -> Some(definitionListOf dl)
+    | :? FootnoteGroup as fg -> Some(footnoteGroupOf fg)
     | _ -> None
 
 and private blocksOf (container: ContainerBlock) : Ast.Block list =
@@ -99,6 +106,46 @@ and private tableOf (table: Table) : Ast.Block =
 
     let bodyRows = rows |> List.filter (fun r -> not r.IsHeader) |> List.map rowInlines
     Ast.Table(header, bodyRows)
+
+and private definitionListOf (dl: DefinitionList) : Ast.Block =
+    let items =
+        [ for itemObj in dl do
+              match itemObj with
+              | :? DefinitionItem as item ->
+                  let terms =
+                      [ for child in item do
+                            match child with
+                            | :? DefinitionTerm as term -> yield inlinesOf term.Inline
+                            | _ -> () ]
+
+                  // Everything in the item that is not a DefinitionTerm is the definition body
+                  // (one or more ordinary blocks, typically a paragraph per `: ...` definition).
+                  let body =
+                      [ for child in item do
+                            match child with
+                            | :? DefinitionTerm -> ()
+                            | other ->
+                                match blockOf other with
+                                | Some b -> yield b
+                                | None -> () ]
+
+                  let entry: Ast.DefinitionItem = { Terms = terms; Body = body }
+                  yield entry
+              | _ -> () ]
+
+    Ast.DefinitionList items
+
+and private footnoteGroupOf (fg: FootnoteGroup) : Ast.Block =
+    let notes =
+        [ for child in fg do
+              match child with
+              | :? Footnote as note ->
+                  let label = defaultArg (Option.ofObj note.Label) ""
+                  let entry: Ast.Footnote = { Label = label; Body = blocksOf note }
+                  yield entry
+              | _ -> () ]
+
+    Ast.Footnotes notes
 
 /// The 0-based, inclusive end line of a block, from its source span.
 let private endLine (lines: Lines.Index) (block: Block) : int =

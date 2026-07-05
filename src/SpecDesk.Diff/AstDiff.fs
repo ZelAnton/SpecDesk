@@ -47,6 +47,8 @@ let private kindTag (block: Ast.Block) : string =
     | Ast.Quote _ -> "quote"
     | Ast.Table _ -> "table"
     | Ast.ThematicBreak -> "thematicBreak"
+    | Ast.DefinitionList _ -> "definitionList"
+    | Ast.Footnotes _ -> "footnotes"
 
 /// The visible text of a block, flattened — the basis for change-similarity scoring.
 let rec blockText (block: Ast.Block) : string =
@@ -58,6 +60,12 @@ let rec blockText (block: Ast.Block) : string =
     | Ast.Quote blocks -> blocks |> List.map blockText |> String.concat " "
     | Ast.Table(header, rows) -> header :: rows |> List.collect id |> List.map Inlines.flatten |> String.concat " "
     | Ast.ThematicBreak -> ""
+    | Ast.DefinitionList items ->
+        items
+        |> List.collect (fun item -> (item.Terms |> List.map Inlines.flatten) @ (item.Body |> List.map blockText))
+        |> String.concat " "
+    | Ast.Footnotes notes ->
+        notes |> List.collect (fun note -> note.Body |> List.map blockText) |> String.concat " "
 
 /// Lowercase alphanumeric word tokens of a node's visible text.
 let private tokens (node: Ast.Node) : Set<string> =

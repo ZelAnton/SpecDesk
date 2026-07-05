@@ -15,5 +15,9 @@ let rec flatten (inlines: Ast.Inline list) : string =
         | Ast.Strong xs
         | Ast.Link(xs, _) -> flatten xs
         | Ast.Image(alt, _) -> alt
-        | Ast.LineBreak -> " ")
+        | Ast.LineBreak -> " "
+        // Include the checked state / label so toggling a checkbox or editing a footnote
+        // reference actually changes the flattened text the diff scores similarity on.
+        | Ast.TaskListMarker isChecked -> if isChecked then "[x]" else "[ ]"
+        | Ast.FootnoteRef label -> "[^" + label + "]")
     |> String.concat ""
