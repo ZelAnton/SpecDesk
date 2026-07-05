@@ -128,4 +128,20 @@ public sealed class LogBridgeTests
             Assert.That(notified, Does.Contain("Log exported to"));
         });
     }
+
+    [Test]
+    public void Export_writeFails_notifiesPlainMessage_withoutRawExceptionText()
+    {
+        Directory.CreateDirectory(_dir);
+        // A directory path as the destination makes File.WriteAllText throw (UnauthorizedAccessException
+        // on Windows), which exercises the failure branch without depending on a specific message shape.
+        string? notified = null;
+        LogBridge bridge = Bridge(new StubDialogs { SaveTarget = _dir }, m => notified = m);
+        bridge.Export();
+        Assert.Multiple(() =>
+        {
+            Assert.That(notified, Is.EqualTo("Could not export the log."));
+            Assert.That(notified, Does.Not.Contain(_dir));
+        });
+    }
 }

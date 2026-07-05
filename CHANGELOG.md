@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `LogBridge.Export` now reports a plain-language message ("Could not export the log.") on failure
+  instead of surfacing the raw exception text to the author.
 - `LogBridge.Receive` now strips embedded CR/LF sequences from the webview-supplied `Message`/`Data`
   log fields before they reach the log template. Previously a crafted payload with line breaks could
   forge additional, falsely-formatted log entries in the shared rolling log.
@@ -202,6 +204,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded by a dedicated marker file, written last via a temp file + atomic rename, and re-seeding is
   gated on that marker (or an already-versioned repo) instead of `welcome.md` alone, so an interrupted
   copy is retried in full on the next launch.
+- `OnReady` reloaded `_initialDocPath` from disk on every "ready" event, not just the first. A WebView2
+  recovery or a page reload re-fires "ready", so this could silently switch the author away from the
+  document they currently had open (discarding any in-progress draft on it) and re-stamp the reloaded
+  file back to Published. "Ready" now only auto-loads the initial document once.
 - `PhotinoFileDialogs.OnUiThread` (`Program.cs`) could block its calling thread forever: Photino's
   native `Invoke()` blocks on an untimed condition variable and never checks whether its `PostMessage`
   actually reached a still-alive window, so a window torn down between the check and the post left

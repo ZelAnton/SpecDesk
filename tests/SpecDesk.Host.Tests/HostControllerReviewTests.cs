@@ -23,6 +23,15 @@ public sealed class HostControllerReviewTests
         public string? PickSaveFile(string? suggestedPath) => null;
     }
 
+    // Lets a test drive a genuine reload (DocOpen picking the same path back up) instead of relying on
+    // "ready" firing twice — OnReady only auto-loads the initial document once (see M-15 / T-028).
+    private sealed class ReopenSamePathDialogs(string path) : IFileDialogs
+    {
+        public string? PickOpenFile() => path;
+
+        public string? PickSaveFile(string? suggestedPath) => null;
+    }
+
     private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
 
     // The reviewer handles the configured-reviewers test expects to reach the GitHub layer, verbatim.
@@ -58,7 +67,11 @@ public sealed class HostControllerReviewTests
     // Builds a controller over the temp doc with the given fakes, loads the doc (Ready), and — unless
     // asked not to — starts a draft (Edit) so the document is in the Draft state ready to send.
     private HostController Build(
-        FakeVersioning versioning, IGitHubAuth auth, FakeGitHubReview review, bool startDraft = true)
+        FakeVersioning versioning,
+        IGitHubAuth auth,
+        FakeGitHubReview review,
+        bool startDraft = true,
+        IFileDialogs? dialogs = null)
     {
         void Send(string json)
         {
@@ -69,7 +82,7 @@ public sealed class HostControllerReviewTests
         }
 
         HostController controller = new(
-            StubRender, Send, new NoDialogs(), (_, _, _, _, _) => null,
+            StubRender, Send, dialogs ?? new NoDialogs(), (_, _, _, _, _) => null,
             versioning, NullLogger<HostController>.Instance, _docPath,
             auth: auth, publishing: versioning, review: review);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
@@ -286,7 +299,7 @@ public sealed class HostControllerReviewTests
     // M-13: TryAdvanceReview used to key only on (state, branch name) — both of which a recreated
     // same-named draft can coincidentally reproduce (branch names are date-deterministic, so discarding
     // and starting a new draft the same day regenerates the identical name). LoadFile (triggered here by
-    // a duplicate Ready — see OnReady/OnOpen) resets the draft fields WITHOUT checking _publishInFlight,
+    // re-opening the same path — see OnOpen) resets the draft fields WITHOUT checking _publishInFlight,
     // unlike Discard, which refuses outright while a publish is in flight — so a stale Send-for-review
     // push still resolving in the background can land on a brand-new, never-sent draft that merely
     // happens to share the old one's branch name, wrongly jumping it straight to "In review" and
@@ -298,7 +311,8 @@ public sealed class HostControllerReviewTests
         FakeVersioning versioning = new();
         FakeGitHubReview review = new() { ReleaseGate = gate };
         using HostController controller =
-            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false,
+                dialogs: new ReopenSamePathDialogs(_docPath));
 
         // The first draft, explicitly named so the recreated draft below can reuse the exact same name —
         // in production this coincidence comes from the branch name being date-deterministic, not an
@@ -310,10 +324,10 @@ public sealed class HostControllerReviewTests
         Assert.That(
             WaitUntil(() => review.Calls == 1), Is.True, "the first send should reach the PR call and block there");
 
-        // While that push is still resolving in the background, the document is reloaded (e.g. re-opening
-        // the same file — LoadFile resets the draft fields unconditionally, unlike Discard) and a
+        // While that push is still resolving in the background, the document is reloaded (re-opening the
+        // same path through DocOpen — OnReady itself only auto-loads once, see M-15 / T-028) and a
         // brand-new draft is started, reusing the exact same branch name.
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen));
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit, new EditPayload("spec/reused")));
         SaveAVersion(controller);
 
