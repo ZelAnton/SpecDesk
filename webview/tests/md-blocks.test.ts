@@ -54,11 +54,36 @@ describe("splitTopLevelBlocks", () => {
     ["no trailing newline", "# H\n\npara"],
     ["leading blank lines", "\n\n# H\n\npara\n"],
     ["single paragraph + newline", "para\n"],
+    // S-11 regression guards: split()/join() partition on "\n" only, so a "\r" immediately preceding it
+    // rides along as part of the same line string — a CRLF document must round-trip exactly as its
+    // LF counterpart does, with every "\r" preserved rather than dropped or duplicated.
+    ["CRLF throughout", "# H\r\n\r\npara\r\n"],
+    ["CRLF with a bullet list", "# H\r\n\r\n- one\r\n- two\r\n"],
+    ["CRLF, no trailing newline", "# H\r\n\r\npara"],
   ] as const) {
     it(`round-trips byte-for-byte: ${name}`, () => {
       expect(joinBlocks(splitTopLevelBlocks(md))).toBe(md);
     });
   }
+
+  it("round-trips the rich fixture byte-for-byte with CRLF line endings", () => {
+    const crlf = RICH.replaceAll("\n", "\r\n");
+    expect(joinBlocks(splitTopLevelBlocks(crlf))).toBe(crlf);
+  });
+
+  it("records the same child source lines for a CRLF bullet list as for its LF counterpart", () => {
+    // The child-line bookkeeping is keyed by markdown-it's own line numbers (from its internally
+    // newline-normalized copy), not by anything derived from splitting on "\r\n" — CRLF input must not
+    // shift or duplicate them.
+    const crlf = RICH.replaceAll("\n", "\r\n");
+    const blocks = splitTopLevelBlocks(crlf);
+    const listBlock = blocks.find((b) => b.text.includes("- one"));
+    expect(listBlock?.childLineStarts).toEqual([7, 8, 9]);
+    // Includes the blank separator line before the next block (">a quote"), which after replaceAll is
+    // just a lone "\r" (the original empty line's content), not "\r\n" — same shape as the LF fixture's
+    // trailing blank entry, with "\r" riding along.
+    expect(listBlock?.text).toBe("- one\r\n- two\r\n- three\r\n\r");
+  });
 
   it("keeps a GFM table as a single block, separate from the list", () => {
     const blocks = splitTopLevelBlocks(RICH);

@@ -81,6 +81,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines and reference definitions now fold into the first real block's own "head" content instead
   of forming a block of their own, so `blocks.length` stays 1:1 with `childCount` and an unedited
   document round-trips byte-for-byte.
+- A document checked out with CRLF line endings (`core.autocrlf=true`, the Windows Git installer
+  default) had every line ending rewritten to LF the moment the author typed a single character.
+  CodeMirror's editor model normalizes every line break to "\n" internally, so the text it reports
+  back is always LF-only regardless of what was on disk, and the host wrote that text back verbatim.
+  `HostController` now detects the document's dominant line-ending style from the raw file content at
+  load (and after Discard re-reads the reverted file) and re-applies it at every disk-write site
+  (Save, the idle disk-autosave, Save a version), so a CRLF file's untouched lines stay CRLF instead
+  of every line in the next "Save a version"/PR diff being a spurious line-ending change.
 
 ## [0.1.0] - 2026-07-04
 

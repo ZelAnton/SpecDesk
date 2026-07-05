@@ -167,6 +167,15 @@ public sealed class HostController : IDisposable
 	private string _text = string.Empty;
 	private string? _currentPath;
 	private string? _repoRoot;
+	// The open document's dominant line ending, detected from the RAW file content at load/discard time.
+	// `_text` itself is NOT guaranteed LF-only: it starts as that same raw content (LoadFile/Discard) and
+	// only becomes LF-only once the webview reports an edit (its editor model normalizes every line break
+	// on the way in) — ApplyLineEnding normalizes defensively for exactly this reason, rather than assuming
+	// its input already is LF-only. Re-applied at every disk-write site (OnSave, RunDiskAutosave,
+	// OnSaveVersion) so a CRLF-authored file round-trips without every line in the diff being rewritten by
+	// a single keystroke. Published as one matched set with `_text`/`_currentPath` under `_sync` (LoadFile,
+	// OnDiscard), same discipline as `_textGeneration`. Defaults to "\n" for a brand-new/no-newline document.
+	private string _lineEnding = "\n";
 
 	public HostController(
 		Func<string, string, Renderer.RenderResult> render,
@@ -452,12 +461,14 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		// Snapshot the text and publish the path under _sync (a matched pair, like LoadFile), so the
-		// autosave timer can't observe a torn (path, text) state.
+		// Snapshot the text, its line-ending style, and publish the path under _sync (a matched set,
+		// like LoadFile), so the autosave timer can't observe a torn (path, text) state.
 		string text;
+		string lineEnding;
 		lock (_sync)
 		{
 			text = _text;
+			lineEnding = _lineEnding;
 			_currentPath = path;
 		}
 
@@ -467,7 +478,7 @@ public sealed class HostController : IDisposable
 			// write this file at once.
 			lock (_repoGate)
 			{
-				File.WriteAllText(path, text);
+				File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
 			}
 
 			_logger.LogInformation("Saved {Path} to disk ({Length} chars)", path, text.Length);
@@ -636,6 +647,8 @@ public sealed class HostController : IDisposable
 				_versionsSaved = 0;
 				_versionsShared = 0;
 				_text = revertedText;
+				// Re-detected from the reverted file's raw content, same as LoadFile.
+				_lineEnding = DetectLineEnding(revertedText);
 				// Tag with the (already bumped, above) checkout _text is now current for — see the
 				// _textGeneration field comment for why RunDiskAutosave's snapshot must capture this
 				// companion rather than _draftGeneration directly.
@@ -714,6 +727,7 @@ public sealed class HostController : IDisposable
 	{
 		string text;
 		string path;
+		string lineEnding;
 		long generation;
 		lock (_sync)
 		{
@@ -726,6 +740,7 @@ public sealed class HostController : IDisposable
 			_autosaveTimer = null;
 			text = _text;
 			path = _currentPath;
+			lineEnding = _lineEnding;
 			// Capture _textGeneration (the checkout this text was written against), NOT a live read of
 			// _draftGeneration here — see the _textGeneration field comment for why the two can briefly
 			// disagree, and why only the former is safe to compare against later.
@@ -759,7 +774,7 @@ public sealed class HostController : IDisposable
 						return;
 					}
 
-					File.WriteAllText(path, text);
+					File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
 				}
 
 				_logger.LogDebug("Disk-autosaved {Path} ({Length} chars)", path, text.Length);
@@ -793,6 +808,7 @@ public sealed class HostController : IDisposable
 		string text;
 		string path;
 		string repoRoot;
+		string lineEnding;
 		lock (_sync)
 		{
 			if (_repoRoot is null || _currentPath is null)
@@ -806,6 +822,7 @@ public sealed class HostController : IDisposable
 			text = _text;
 			path = _currentPath;
 			repoRoot = _repoRoot;
+			lineEnding = _lineEnding;
 		}
 
 		if (!IsRepoVersioned(repoRoot))
@@ -823,7 +840,7 @@ public sealed class HostController : IDisposable
 			CommitResult result;
 			lock (_repoGate)
 			{
-				File.WriteAllText(path, text);
+				File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
 				result = _versioning.SaveVersion(repoRoot, note);
 			}
 
@@ -1825,6 +1842,9 @@ public sealed class HostController : IDisposable
 			_text = text;
 			_currentPath = path;
 			_repoRoot = repoRoot;
+			// Detected from the RAW content just read, before anything normalizes it — see the
+			// _lineEnding field comment.
+			_lineEnding = DetectLineEnding(text);
 			// See the _textGeneration field comment: kept consistent with every other _text assignment
 			// site, even though a plain document load never bumps _draftGeneration itself.
 			_textGeneration = Interlocked.Read(ref _draftGeneration);
@@ -2038,6 +2058,51 @@ public sealed class HostController : IDisposable
 		string docDir = Path.GetDirectoryName(Path.GetFullPath(_currentPath)) ?? _repoRoot;
 		string relative = Path.GetRelativePath(_repoRoot, docDir);
 		return relative == "." ? string.Empty : relative.Replace('\\', '/');
+	}
+
+	/// <summary>
+	/// The dominant line ending in raw (on-disk) file content: "\r\n" if CRLF line breaks outnumber
+	/// bare-LF ones, else "\n" — including for a document with no line breaks at all, which has no
+	/// style to preserve and gets the plain default. Counts a `\r\n` pair once towards CRLF and every
+	/// `\n` NOT immediately preceded by `\r` once towards LF, so a mixed file is judged by whichever
+	/// style is actually more common rather than by, say, only its first line.
+	/// </summary>
+	internal static string DetectLineEnding(string rawText)
+	{
+		int crlf = 0;
+		int lfOnly = 0;
+		for (int i = 0; i < rawText.Length; i++)
+		{
+			if (rawText[i] != '\n')
+			{
+				continue;
+			}
+
+			if (i > 0 && rawText[i - 1] == '\r')
+			{
+				crlf++;
+			}
+			else
+			{
+				lfOnly++;
+			}
+		}
+		return crlf > lfOnly ? "\r\n" : "\n";
+	}
+
+	/// <summary>
+	/// Re-apply a document's on-disk line-ending style to <paramref name="text"/> before writing it back.
+	/// Normalizes to a bare "\n" first rather than assuming the input already is: text that came back from
+	/// the webview IS already LF-only (its editor model normalizes every line break on the way in), but
+	/// `_text` can also still hold the RAW, possibly-CRLF file content straight from `LoadFile`/`Discard`
+	/// when `OnSave`/`OnSaveVersion` runs before the webview has reported a single edit — naively replacing
+	/// "\n" with "\r\n" on THAT input would double every "\r" ("\r\n" → "\r\r\n"), corrupting the file
+	/// instead of preserving it. Normalizing unconditionally is correct and idempotent either way.
+	/// </summary>
+	private static string ApplyLineEnding(string text, string lineEnding)
+	{
+		string normalized = text.Contains('\r') ? text.Replace("\r\n", "\n").Replace("\r", "\n") : text;
+		return lineEnding == "\n" ? normalized : normalized.Replace("\n", lineEnding);
 	}
 
 	/// <summary>

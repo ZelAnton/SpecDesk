@@ -166,4 +166,46 @@ describe("serializeWithSplice", () => {
     const out = serializeWithSplice(md, edited);
     expect(out).toBe("[a]: http://x\n\nEdited text.\n");
   });
+
+  // S-11 regression guards: CodeMirror's document model normalizes every line break to "\n" (that fix is
+  // host-side — HostController re-applies the file's on-disk style at every disk-write site), but this
+  // module's own responsibility is narrower: an untouched block must keep its original bytes, "\r"
+  // included, rather than the whole-document fallback silently dropping it.
+
+  it("no-op round-trip is byte-identical for a CRLF document (no whole-document fallback)", () => {
+    const crlf = RICH.replaceAll("\n", "\r\n");
+    expect(serializeWithSplice(crlf, parse(crlf))).toBe(crlf);
+  });
+
+  it("preserves every untouched CRLF block verbatim when one block is edited", () => {
+    const crlf = RICH.replaceAll("\n", "\r\n");
+    const edited = withChildReplaced(parse(crlf), 1, paragraph("Edited intro."));
+    const out = serializeWithSplice(crlf, edited);
+
+    // Every block from "## Section" onward — table, code, lists, hr, trailing — is untouched and must
+    // still carry its original "\r\n", not have it silently dropped.
+    const fromSection = crlf.indexOf("## Section");
+    expect(out.slice(out.indexOf("## Section"))).toBe(crlf.slice(fromSection));
+    expect(out.startsWith("# Title\r\n")).toBe(true);
+  });
+
+  it("re-serializes a CHANGED block as LF, even inside an otherwise-CRLF document", () => {
+    // Documents the one line-ending seam this module does not paper over: `serializeBlock` goes through
+    // the shared ProseMirror `serializer`, which always emits "\n" — a freshly re-emitted block is LF
+    // regardless of the document's surrounding style. This is fine in practice: on the actual save path
+    // (HostController, S-11's real fix) EVERY block's text passes through the webview's CodeMirror model
+    // before reaching disk, which normalizes to "\n" anyway, so re-applying the file's line-ending style
+    // once at the very end (ApplyLineEnding) makes the changed block's own seam here moot — it is
+    // re-normalized regardless. Pinned here so a future change to this behavior is a deliberate choice,
+    // not a silent regression.
+    const crlf = RICH.replaceAll("\n", "\r\n");
+    const edited = withChildReplaced(parse(crlf), 1, paragraph("Edited intro."));
+    const out = serializeWithSplice(crlf, edited);
+
+    // "Edited intro." + the join's own "\n" (the freshly serialized node, LF) + "\r" (the original blank
+    // separator line's tail content, preserved verbatim by tailLines) + "\n" (the join back to the next,
+    // untouched "## Section\r\n..." block) — a visible mix of LF (the new node) and "\r" (the untouched gap).
+    const editedBlock = out.slice(out.indexOf("Edited intro."), out.indexOf("## Section"));
+    expect(editedBlock).toBe("Edited intro.\n\r\n");
+  });
 });
