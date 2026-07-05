@@ -172,6 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normal `SignInResult` (`SignInOutcome.StorageFailed`), never throwing. The doc now states the actual,
   already-correct contract, so callers don't wrap this call in a try/catch that can never trigger.
 
+### Security
+- The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
+  `CurrentUser` scoping — raising the bar against another process running as the same Windows user that
+  happens to know the token file's path from also being able to decrypt it. A token already saved by an
+  earlier version (with no entropy) still decrypts after the upgrade, so existing sessions survive.
+
 ## [0.1.0] - 2026-07-04
 
 First tagged release — the PoC-0 … PoC-5 milestones: the native↔webview editor, the

@@ -7,18 +7,6 @@
 
 ## Незначительные находки (Minor)
 
-### [T-024] Усилить M-11: хранение токена сверх DPAPI CurrentUser — статус: начала выполняться
-`src/SpecDesk.GitHub/TokenStore.cs:36-41`, `TokenProtector.cs:22-40` — файл токена полагается только
-на DPAPI `CurrentUser` (`optionalEntropy = null`), без ужесточения ACL файловой системы; читаем любым
-процессом той же сессии. Приемлемо по §7, но специфичная для приложения энтропия усилила бы защиту
-от другого приложения того же пользователя, знающего путь.
-
-Критерии готовности:
-- В вызовы DPAPI protect/unprotect добавлена специфичная для приложения `optionalEntropy` (сейчас
-  `null`).
-- Существующие тесты round-trip авторизации/токена проходят с добавленной энтропией.
-- Запись в `CHANGELOG.md`.
-
 ### [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore — статус: не начата
 `src/SpecDesk.Git/LibGit2DocumentVersioning.cs:55, 122` (`Initialize`, `SaveVersion`) —
 `Commands.Stage(repo, "*")` стейджит всё без гарантии соблюдения `.gitignore` сверх поведения libgit2
