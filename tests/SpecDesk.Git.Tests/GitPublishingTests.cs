@@ -125,4 +125,55 @@ public sealed class GitPublishingTests
         Assert.Throws<InvalidOperationException>(
             () => _versioning.PushBranch(_work, "no-such-branch", "x-access-token"));
     }
+
+    [Test]
+    public void PushBranch_throws_instead_of_silently_succeeding_when_local_history_has_diverged()
+    {
+        // Publish spec/draft once so the remote has a tip commit to diverge from.
+        _versioning.BeginEdit(_work, "spec/draft", "main");
+        File.WriteAllText(Path.Combine(_work, "spec.md"), "# Version two");
+        _versioning.SaveVersion(_work, "Draft change");
+        _versioning.PushBranch(_work, "spec/draft", "x-access-token");
+
+        // Rewrite local history on top of the same base: reset spec/draft back to its parent and commit a
+        // different change, so its new tip is not a descendant of what the remote already has on
+        // spec/draft. Pushing it is then a non-fast-forward update, which libgit2 refuses client-side
+        // (LibGit2SharpException, not InvalidOperationException) — this path was never silently
+        // successful. The scenario this task is about — the remote's *server-side* rejection (a protected
+        // branch, a refusing pre-receive hook) reported only via `OnPushStatusError` while `Network.Push`
+        // itself returns normally — cannot be reproduced against a local bare repo: libgit2's local
+        // transport neither runs hooks nor accepts a non-bare target to model branch-protection-style
+        // policy. `ThrowIfRejected` below is the unit-testable seam for that path.
+        using (Repository repo = new(_work))
+        {
+            Commit divergedParent = repo.Branches["spec/draft"].Tip.Parents.Single();
+            repo.Refs.UpdateTarget(repo.Refs["refs/heads/spec/draft"], divergedParent.Id);
+            Commands.Checkout(repo, "spec/draft", new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+        }
+
+        File.WriteAllText(Path.Combine(_work, "spec.md"), "# Version two, diverged");
+        _versioning.SaveVersion(_work, "Diverged draft change");
+
+        // Assert.Catch (not Assert.Throws) because the concrete type is NonFastForwardException, a
+        // subclass of LibGit2SharpException.
+        Assert.Catch<LibGit2SharpException>(
+            () => _versioning.PushBranch(_work, "spec/draft", "x-access-token"));
+    }
+
+    [Test]
+    public void ThrowIfRejected_throws_with_the_reference_and_remote_message_when_the_remote_rejected_the_push()
+    {
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
+            () => LibGit2DocumentVersioning.ThrowIfRejected(
+                "refs/heads/spec/draft", "protected branch hook declined"))!;
+
+        Assert.That(ex.Message, Does.Contain("refs/heads/spec/draft"));
+        Assert.That(ex.Message, Does.Contain("protected branch hook declined"));
+    }
+
+    [Test]
+    public void ThrowIfRejected_does_nothing_when_no_reference_was_rejected()
+    {
+        Assert.DoesNotThrow(() => LibGit2DocumentVersioning.ThrowIfRejected(null, null));
+    }
 }

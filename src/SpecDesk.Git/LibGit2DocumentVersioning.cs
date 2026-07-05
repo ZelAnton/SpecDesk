@@ -226,6 +226,11 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         Branch branch = repo.Branches[branchName]
             ?? throw new InvalidOperationException($"The repository has no branch '{branchName}'.");
 
+        // Network.Push returns normally even when the remote rejects the ref update (non-fast-forward, a
+        // protected branch, a pre-receive hook) — libgit2 only reports that through this callback. Without
+        // it, a rejected push would look identical to a successful one to every caller.
+        string? rejectedReference = null;
+        string? rejectionMessage = null;
         PushOptions options = new()
         {
             // GitHub accepts the OAuth token as the password over HTTPS with any non-empty username (the
@@ -243,9 +248,31 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
             // The initial connect/handshake phase isn't surfaced through this callback, so a stall there
             // is bounded only by the OS socket timeout — a known LibGit2Sharp limitation.
             OnPushTransferProgress = (_, _, _) => !cancellationToken.IsCancellationRequested,
+            // Fires once per ref the remote refused to update; capture it so it can be turned into an
+            // exception after Push returns (Push itself never throws for a server-side rejection).
+            OnPushStatusError = pushStatusError =>
+            {
+                rejectedReference = pushStatusError.Reference;
+                rejectionMessage = pushStatusError.Message;
+            },
         };
         // The single-ref form pushes the local branch to the remote ref of the same name.
         repo.Network.Push(remote, branch.CanonicalName, options);
+        ThrowIfRejected(rejectedReference, rejectionMessage);
+    }
+
+    // Extracted from PushBranch so the rejection → exception translation is directly unit-testable: a real
+    // server-side rejection (a protected branch, a refusing pre-receive hook) can only be produced by an
+    // actual GitHub remote or a hook-capable git transport, neither of which the local-bare-repo test
+    // fixture can exercise — this lets the test drive the same code with the plain values the callback
+    // would have captured.
+    internal static void ThrowIfRejected(string? rejectedReference, string? rejectionMessage)
+    {
+        if (rejectedReference is not null)
+        {
+            throw new InvalidOperationException(
+                $"The remote rejected the push of '{rejectedReference}': {rejectionMessage}");
+        }
     }
 
     // Whether a URL libgit2 is authenticating against is an HTTPS github.com endpoint — the only target

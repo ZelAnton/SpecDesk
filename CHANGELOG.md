@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `PushBranch` (`SpecDesk.Git`) now detects when the remote rejects a ref update — non-fast-forward,
+  a protected branch, a refusing pre-receive hook — via `PushOptions.OnPushStatusError`, and throws
+  instead of returning as if the push had succeeded. Previously `Network.Push` returned normally on a
+  server-side rejection, so the host reported "Sent/updated for review" and advanced the lifecycle
+  even though the reviewer never received the commits.
+
 ## [0.1.0] - 2026-07-04
 
 First tagged release — the PoC-0 … PoC-5 milestones: the native↔webview editor, the

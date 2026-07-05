@@ -27,7 +27,9 @@ public interface IGitPublishing
     /// token. The token is handed only to an HTTPS <c>github.com</c> target — the URL libgit2 presents for
     /// authentication, which reflects the remote's <c>pushurl</c>, not merely the fetch URL — so a remote
     /// re-pointed at a look-alike host cannot exfiltrate it. Cancellation aborts a stalled transfer. Throws
-    /// when the remote or branch is missing, or on a transport / auth failure.</summary>
+    /// when the remote or branch is missing, on a transport / auth failure, or when the remote rejects the
+    /// ref update (non-fast-forward, a protected branch, a rejecting pre-receive hook) — this never returns
+    /// successfully while leaving the remote unchanged.</summary>
     void PushBranch(
         string repoRoot,
         string branchName,

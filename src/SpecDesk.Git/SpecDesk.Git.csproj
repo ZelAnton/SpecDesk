@@ -8,4 +8,8 @@
 		<PackageReference Include="LibGit2Sharp" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="SpecDesk.Git.Tests" />
+	</ItemGroup>
+
 </Project>
