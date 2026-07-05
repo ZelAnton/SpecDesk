@@ -70,6 +70,27 @@ describe("PromptBar", () => {
     expect(pb.isOpen).toBe(false);
   });
 
+  it("an open() after a close() during the in-flight request is not swallowed by the stale latch", async () => {
+    const bar = makeBar();
+    const pb = new PromptBar(bar);
+    const resolvers: Array<(value: string) => void> = [];
+    const suggest = vi.fn(() => new Promise<string>((resolve) => resolvers.push(resolve)));
+    const reveal = revealUnhiding(bar);
+
+    const stale = pb.open(suggest, reveal); // request #1, still in flight
+    pb.close(); // e.g. a new document loads before it resolves — invalidates #1, drops the latch
+    const fresh = pb.open(suggest, reveal); // reopened right away — must not be latched out by #1
+    expect(suggest).toHaveBeenCalledTimes(2);
+
+    resolvers[0]?.("stale"); // #1's late reply must not reveal, nor clobber #2's latch
+    resolvers[1]?.("fresh");
+    await Promise.all([stale, fresh]);
+
+    expect(reveal).toHaveBeenCalledTimes(1);
+    expect(reveal).toHaveBeenCalledWith("fresh");
+    expect(pb.isOpen).toBe(true);
+  });
+
   it("close hides the bar", () => {
     const bar = makeBar();
     bar.hidden = false;

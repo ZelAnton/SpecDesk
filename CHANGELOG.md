@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `PromptBar.open()` (webview) no longer drops a reopen requested during the "closing in flight" window.
+  Previously, calling `close()` while an `open()`'s suggestion request was still in flight invalidated
+  that request but left its `opening` latch set until the stale request's own `finally` ran; a fresh
+  `open()` issued in between was silently swallowed (an empty click that only self-healed on the next
+  click). `close()` now drops the latch immediately, and a stale request only clears the latch if it
+  still owns the current generation, so it can never clobber a newer request's latch.
 - `LogBridge.Export` now reports a plain-language message ("Could not export the log.") on failure
   instead of surfacing the raw exception text to the author.
 - `LogBridge.Receive` now strips embedded CR/LF sequences from the webview-supplied `Message`/`Data`
