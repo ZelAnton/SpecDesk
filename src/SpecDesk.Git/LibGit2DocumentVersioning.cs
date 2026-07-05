@@ -52,6 +52,8 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
             repo.Refs.UpdateTarget("HEAD", "refs/heads/main");
         }
 
+        // M-12: same "*" pathspec as SaveVersion below — respects .gitignore by default, doesn't force-add
+        // ignored paths.
         Commands.Stage(repo, "*");
         TryCommit(repo, commitMessage);
     }
@@ -137,6 +139,11 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         // pasted into the editor and written into the repo) must ride along in the same commit, or
         // they would be orphaned — a broken link in the commit and a leftover file after a discard.
         // This suits the single-author local draft model; finer-grained staging is a later concern.
+        // M-12: the "*" pathspec does NOT sweep up .gitignore'd paths — StageOptions.IncludeIgnored
+        // defaults to false, and LibGit2Sharp's Commands.Stage only includes ignored paths in the diff
+        // it stages from when that's set (the same default `git add -A` uses), so a repo whose
+        // .gitignore lists a build-artifact directory keeps it out of every saved version. Confirmed by
+        // SaveVersion_DoesNotCommitAGitignoredBuildArtifactDirectory.
         Commands.Stage(repo, "*");
         Commit? commit = TryCommit(repo, message);
         return commit is null

@@ -1475,3 +1475,251 @@
   npm-набор вне области инкремента.
 - Открытых R-записей нет (все SUMMARY-R по T-022/T-023/T-024 закрыты: 19:43, 20:02, 20:15); открытых
   F-записей нет; последний прогон пуст. Решение согласовано и готово к публикации (чекпоинт с push).
+
+### [SUMMARY-R-2026-07-05 20:37] Итог ревью задачи — статус: готово к следующей задаче
+- Активная задача: [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore
+- Прогонов выполнено: 2 (оба подряд без новых серьёзных находок → остановка)
+- Открытых проблем: 0
+- Область ревью: изменение в рабочей копии jj (`jj diff -r nptuzull`): комментарии у двух вызовов
+  `Commands.Stage(repo, "*")` в `src/SpecDesk.Git/LibGit2DocumentVersioning.cs` (`Initialize`,
+  `SaveVersion`), новый регресс-тест в `tests/SpecDesk.Git.Tests/LibGit2DocumentVersioningTests.cs`,
+  запись в `CHANGELOG.md`, плюс служебный `.work/status.md` (артефакт процесса). Продакшн-поведение
+  НЕ менялось — задача проверочная («verify»). Открытых/исправленных/отклонённых R-записей на входе
+  не было (историческая нумерация закрыта на R-004; следующий свободный — R-005, но серьёзных находок
+  нет, поэтому R-записи не заводились).
+- Вывод: все критерии готовности выполнены; заявленный вывод «бага нет» подтверждён независимо.
+  1. Стейджинг по умолчанию уважает `.gitignore` — ПОДТВЕРЖДЕНО на уровне API и эмпирически.
+     Рефлексией по фактически используемой сборке (LibGit2Sharp 0.31.0, `net472`/`net8.0` из NuGet-кэша):
+     `StageOptions.IncludeIgnored` в дефолтном экземпляре = `False`; используемый перегруз
+     `Commands.Stage(IRepository, string)` (без `StageOptions`) не может включить игнор. Механизм —
+     диффовый: `Commands.Stage` строит diff рабочего дерева против индекса с `DiffModifiers.IncludeUntracked`
+     (значение 2) и добавляет `DiffModifiers.IncludeIgnored` (значение 16) ТОЛЬКО когда
+     `StageOptions.IncludeIgnored == true`; при дефолте игнорируемые пути в diff не попадают → не
+     стейджатся. Это ровно git-дефолт (`git add -A`/`git add .` уважают `.gitignore`, нужен `-f` для
+     форса), а НЕ LibGit2Sharp-специфичный оверрайд, расходящийся с raw libgit2. Эмпирически: реальный
+     регресс-тест прогнан на настоящем нативном libgit2 — `SaveVersion_DoesNotCommitAGitignoredBuildArtifactDirectory`
+     PASSED (1/1, 293 ms).
+  2. Тест реально задействует git/libgit2 и ловит регрессию, без критичных зазоров.
+     Тест пишет НАСТОЯЩИЙ `.gitignore` (`build/\n`) в реальный temp-репо, реально сидит (`Initialize`,
+     где `.gitignore` заодно коммитится в seed), заводит рабочую ветку (`BeginEdit`), создаёт реальный
+     игнорируемый `build/artifact.bin` ПЛЮС настоящую отслеживаемую правку (`spec.md` → «# Version two»,
+     чтобы сейв не был no-op), зовёт реальный `SaveVersion` и проверяет: `result.Committed == true`
+     (правка закоммичена) И `ReadHeadContent(repo, "build/artifact.bin") == null` (игнорируемый файл в
+     HEAD-дереве отсутствует). Регрессию ловит: при `IncludeIgnored = true` diff получил бы флаг 16,
+     игнорируемый файл застейджился бы, `ReadHeadContent` вернул бы непустой контент — ассерт `Is.Null`
+     упал бы (совпадает с заявленной fail-then-pass проверкой). Исключение не даёт файлу выпасть по иной
+     причине: `build/` создаётся ПОСЛЕ `BeginEdit` (форс-checkout его не трогает), `"*"` матчит всё —
+     единственная причина невключения именно `.gitignore`. Изоляция: свежий GUID-темп на `SetUp`,
+     очистка на `TearDown` — не флаки. Разобранные задачей потенциальные зазоры (проверить, что сам
+     `.gitignore` уцелел/отслеживается; что у УЖЕ отслеживаемого-затем-игнорируемого файла не сбивается
+     прежний tracked-контент) КРИТЕРИЯМИ T-025 не требуются: критерии просят лишь «репозиторий с
+     игнорируемой build-директорией — SaveVersion её не коммитит», что и покрыто; `.gitignore` де-факто
+     закоммичен в seed. Не Critical/High.
+  3. Оба код-комментария (и текст CHANGELOG) точны по операционным утверждениям — но с одной мелкой
+     неточностью формулировки. Верно и проверено: «`IncludeIgnored` defaults to false»,
+     «doesn't force-add ignored paths», «the same default `git add -A` uses». Неточность (мелкая,
+     НЕ Critical/High, в отдельную R-запись не выносится): формулировка «libgit2's underlying
+     index-add-all» неверно называет механизм — `Commands.Stage` в LibGit2Sharp реализован через
+     дифф рабочего дерева↔индекс (`DiffModifiers.IncludeUntracked`), а не через `git_index_add_all`.
+     На поведение не влияет, ключевой вывод (уважение `.gitignore`) остаётся верным при любой
+     формулировке; это чисто documentation-precision-нюанс.
+  4. CHANGELOG корректен, релиз-заголовок цел. Запись добавлена только в `## [Unreleased]` → `### Fixed`
+     (строки 174-177); содержание точно по исходу (та же мелкая «index-add-all»-формулировка). Заголовок
+     `## [0.1.0] - 2026-07-04` (строка 185) и весь его контент нетронуты — повторяющийся у прошлых задач
+     дефект «снос заголовка релиза» НЕ воспроизведён. Мелкий стилевой нюанс (запись под `### Fixed`, хотя
+     поведение не менялось) — вне Critical/High; критерии T-025 требовали CHANGELOG-запись безусловно, а
+     формулировка «Confirmed … Pinned with a regression test» это отражает.
+- Новых серьёзных проблем за 2 прогона не найдено; открытых R-записей нет. Задача решена полностью —
+  можно переходить к следующей задаче.
+
+### [SUMMARY-R-2026-07-05 20:41] Итог целевого повторного ревью формулировки — статус: готово к следующей задаче
+- Активная задача: [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore
+- Прогонов выполнено: 2 (узкое подтверждающее ревью; оба прогона без новых серьёзных находок → остановка)
+- Открытых проблем: 0
+- Область ревью: ЦЕЛЕВОЕ повторное ревью одной точечной правки формулировки поверх уже чистого ревью
+  (SUMMARY-R 20:37), а НЕ полное первичное ревью — поэтому контекст/дифф намеренно у́же первого прохода.
+  Инкремент (по `jj evolog -p -r nptuzull`, верхний снапшот) правит РОВНО: одну строку `CHANGELOG.md` и
+  комментарий у `Commands.Stage(repo, "*")` в методе `SaveVersion`
+  (`src/SpecDesk.Git/LibGit2DocumentVersioning.cs`); плюс служебные `.work/Review.md`/`.work/status.md`.
+  Продакшн-логика и тест-код в инкременте НЕ трогались — подтверждает заявление исполнителя «No other
+  change was made». Открытых/исправленных/отклонённых R-записей на входе не было.
+- Повод: прошлое ревью (20:37, пункт 3) отметило НЕ-Critical documentation-precision-неточность —
+  формулировка «index-add-all» неверно называла механизм (`Commands.Stage` в LibGit2Sharp реализован
+  через дифф рабочего дерева↔индекс с `DiffModifiers.IncludeUntracked`, а не `git_index_add_all`).
+- Вывод: правка формулировки корректна и НЕ вносит новой неточности.
+  1. `CHANGELOG.md` (строка 175): было «(libgit2's index-add-all doesn't force-add ignored paths unless
+     explicitly told to)» → стало «(`StageOptions.IncludeIgnored` defaults to false, the same default
+     `git add -A` uses)». «index-add-all» убран; новая формулировка точна и проверена (дефолт
+     `IncludeIgnored=false`; `git add -A` уважает `.gitignore`).
+  2. Комментарий `SaveVersion` (строки 142-145): исходно «index-add-all» НЕ содержал; реворд ДОБАВИЛ
+     явное и точное описание механизма — «LibGit2Sharp's Commands.Stage only includes ignored paths in
+     the diff it stages from when that's set». Совпадает с ранее (20:37) верифицированным рефлексией
+     поведением: `DiffModifiers.IncludeIgnored` добавляется в дифф ТОЛЬКО при `StageOptions.IncludeIgnored
+     == true`; при дефолте игнорируемые пути в дифф не попадают → не стейджатся. Ключевой вывод (уважение
+     `.gitignore` по умолчанию) остаётся верным. Новой неточности нет.
+  3. Комментарий `Initialize` (строки 55-56) не трогался — он «index-add-all» и так не содержал, точен.
+- Оставшийся минорный нюанс (НЕ Critical/High, в отдельную R-запись НЕ выносится): комментарий над тестом
+  `tests/SpecDesk.Git.Tests/LibGit2DocumentVersioningTests.cs:166-169` ВСЁ ЕЩЁ содержит исходную
+  формулировку «libgit2's underlying index-add-all» — реворд её не затронул (исполнитель уточнял только
+  комментарий `SaveVersion` и `CHANGELOG`). Это ровно та же documentation-precision-неточность из пункта 3
+  ревью 20:37: на поведение/сборку не влияет (комментарий; markdown/comment не входят в компиляцию),
+  ключевой вывод корректен; отмечено здесь, чтобы будущий читатель знал, что фраза сохранилась именно в
+  тест-комментарии.
+- Новых серьёзных проблем не найдено; открытых R-записей нет. Целевая правка формулировки принята —
+  можно переходить к следующей задаче.
+
+### [SUMMARY-R-2026-07-05 20:45] Итог второго целевого повторного ревью — статус: готово к следующей задаче
+- Активная задача: [T-025] Проверить M-12: Commands.Stage("*") стейджит всё без гарантии .gitignore
+- Прогонов выполнено: 1 подтверждающий проход (ВТОРОЕ, ещё более узкое целевое повторное ревью:
+  закрытие единственного оставшегося минорного нюанса из SUMMARY-R 20:41 — краткий подтверждающий
+  проход уместен, а не полное перечитывание).
+- Открытых проблем: 0
+- Область ревью: РОВНО одна правка формулировки в комментарии над тестом
+  `tests/SpecDesk.Git.Tests/LibGit2DocumentVersioningTests.cs:166-169`. Инкремент подтверждён по
+  `jj evolog -p -r nptuzull` (верхний снапшот 20:45 vs предыдущий 20:39): среди код/тест/CHANGELOG-файлов
+  изменён ТОЛЬКО этот тест-комментарий; `src/SpecDesk.Git/LibGit2DocumentVersioning.cs` и `CHANGELOG.md`
+  в инкременте НЕ трогались (остальное — служебные `.work/Review.md`/`.work/status.md`). Это подтверждает
+  заявление исполнителя «No other change was made anywhere».
+- Повод: прошлое ревью (20:41) отметило единственный оставшийся минорный нюанс — тест-комментарий всё ещё
+  содержал неточную формулировку «libgit2's underlying index-add-all» (реальный механизм `Commands.Stage`
+  диффовый, а не `git_index_add_all`). В отдельную R-запись он не выносился (НЕ Critical/High).
+- Вывод: правка корректна, новой неточности не вносит, нюанс закрыт.
+  1. Диф правки: было «…stages everything matching the pathspec, but libgit2's underlying index-add-all
+     does NOT force-add ignored paths…» → стало «…stages everything matching the pathspec, but it does
+     NOT force-add ignored paths…». Единственное отличие — неточная фраза «libgit2's underlying
+     index-add-all» заменена на нейтральное «it» (референт — `Commands.Stage(repo, "*")`). Остальной текст
+     комментария (StageOptions.IncludeIgnored=false, «same default behaviour as plain `git add -A`»,
+     утверждение про build-artifact-директорию) идентичен и остаётся точным.
+  2. Новая формулировка точна: механизм намеренно не называется вовсе (ни «index-add-all», ни «diff-based»),
+     поэтому источник прежней неточности устранён без введения нового спорного имени. «it does NOT
+     force-add ignored paths unless explicitly told to (StageOptions.IncludeIgnored…)» верно: дефолт
+     `IncludeIgnored=false`, `git add -A` уважает `.gitignore` — совпадает с ранее верифицированным
+     рефлексией поведением (SUMMARY-R 20:37/20:41). Ключевой вывод (стейджинг по умолчанию уважает
+     `.gitignore`) остаётся корректным.
+  3. Фраза «index-add-all» полностью выведена из кодовой базы: grep по `CHANGELOG.md`,
+     `src/SpecDesk.Git/LibGit2DocumentVersioning.cs` и `tests/.../LibGit2DocumentVersioningTests.cs` — 0
+     совпадений. Комментарий `SaveVersion` (142-145) и `Initialize` (55-56), а также CHANGELOG (строка 175)
+     её не содержат и остаются точными.
+  4. Комментарий не входит в компиляцию — сборочный статус не затрагивается; заявление исполнителя о
+     чистой сборке (0 warnings) правдоподобно и с этой правкой не могло измениться.
+- Новых серьёзных проблем не найдено; открытых R-записей нет. Последний оставшийся минорный нюанс закрыт —
+  можно переходить к следующей задаче.
+
+### [SUMMARY-R-2026-07-05 21:07] Итог ревью задачи — статус: готово к следующей задаче
+- Активная задача: [T-026] Исправить M-13: TryAdvanceReview ключуется по (state, имя ветки), неверно
+  штампует пересозданный одноимённый черновик
+- Прогонов выполнено: 2 (оба подряд без новых серьёзных находок → остановка)
+- Открытых проблем: 0
+- Область ревью: T-026-часть изменения в рабочей копии jj (`jj diff -r nptuzull`) —
+  `src/SpecDesk.Host/HostController.cs` (проброс `generation` через
+  `OnSendForReview`/`OnUpdateReview`/`RunReviewPublish`/`TryAdvanceReview`), новый регресс-тест
+  `SendForReview_does_not_stamp_a_same_named_draft_recreated_while_the_old_push_is_still_resolving`
+  (`tests/SpecDesk.Host.Tests/HostControllerReviewTests.cs`) и запись в `CHANGELOG.md` (строки 178-186).
+  T-025-часть того же коммита (`LibGit2DocumentVersioning.cs`, его тест, M-12 CHANGELOG) уже была
+  отревьюирована и закрыта ранее (SUMMARY-R 20:37/20:41/20:45) — в область данного ревью не входит.
+  Открытых/исправленных/отклонённых R-записей на входе не было (историческая нумерация закрыта на R-004).
+- Вывод: все критерии готовности выполнены; независимо подтверждены все пять запрошенных пунктов.
+  1. Репродукция реальна и достижима. `LoadFile` (:1832) безусловно сбрасывает
+     `_state`→Published/`_branch`→null/`_versionsSaved`/`_versionsShared`→0 БЕЗ проверки
+     `_publishInFlight` — в отличие от `OnDiscard` (:603), который явно отказывается, пока публикация в
+     полёте. `LoadFile` достижима во время публикации через `OnReady` (:349, повторный `Ready`) и
+     `OnOpen` (:449). Критично: `LoadFile` НЕ бампает `_draftGeneration` (:1868-1870), а последующий
+     `OnEdit`→`BeginEdit` бампает его (:541). По `Lifecycle.fs` переход `Draft→Edit` ОТСУТСТВУЕТ (есть
+     только `Published→Edit`), поэтому пересоздать одноимённый draft со `_state=draft`/`_branch=X` во
+     время in-flight send можно ТОЛЬКО через сброс (LoadFile/Discard→Published) + BeginEdit — а он
+     всегда сдвигает generation. Баг подлинный, не предотвращён иным образом.
+  2. Проброс `generation` корректен, новой гонки нет. Захват `generation = Interlocked.Read(ref
+     _draftGeneration)` идёт в ТОЙ ЖЕ `lock(_sync)`-секции, что и `fromState`/`branch`/`seq`
+     (OnSendForReview :930, OnUpdateReview :1055); `TryAdvanceReview` читает `_state`/`_branch`/живой
+     `_draftGeneration` вместе под одним `lock(_sync)` (:1407). Торн-пары `_textGeneration`/
+     `_draftGeneration` (из поля-комментария :100-137) здесь НЕ возникает: она мотивирована тем, что
+     `RunDiskAutosave` снимает снимок на ФОНОВОМ таймер-потоке в окне «бамп под _repoGate ↔ _text
+     догоняет под поздним _sync»; `OnSendForReview`/`OnUpdateReview` же исполняются на однопоточном
+     серийном насосе IPC (как и `OnEdit`/`OnDiscard`/`LoadFile` — единственные писатели
+     `_state`/`_branch`/`_draftGeneration`), поэтому наблюдают всегда согласованный кортеж, а
+     межлоковое окно OnEdit/OnDiscard для них недостижимо. `_draftGeneration` монотонен (только
+     Interlocked.Increment, без сброса), поэтому сравнение снимок↔живое значение точно: ложное
+     совпадение после реального чекаута невозможно (значение не возвращается), ложное расхождение без
+     чекаута невозможно. Любое расхождение смещает строго к «spurious not-advancing» (безопасная
+     сторона, согласно документированной философии метода — недосчёт, не пересчёт); пути к
+     ложному ПРОДВИЖЕНИЮ чужого черновика нет.
+  3. Регресс-тест реально воспроизводит баг, без мок-обхода. Использует настоящий `FakeGitHubReview.
+     ReleaseGate` (блокировка на `OpenPullRequestAsync` после `PushBranch`, `review.Calls==1`
+     подтверждает вход в PR-фазу с уже освобождённым `_repoGate`), настоящий повторный `Ready`→`LoadFile`
+     (Build задаёт `_initialDocPath=_docPath`, файл существует), `FakeVersioning.BeginEdit` эхует
+     переданное имя `spec/reused` (:112), поэтому `_branch` совпадает оба раза. Проверка fail-then-pass
+     обоснована трассировкой: без generation-проверки стейл-push видит `_state==draft &&
+     _branch==spec/reused` → продвигает в `inReview` и штампует `_versionsShared=1` → assert на
+     `LatestStatus().State == "draft"` (:341) падает «Expected draft, But was inReview» (ровно как
+     заявлено); с фиксом `generation` G1≠G2 → не продвигает. Дополнительно вторая половина (собственный
+     send пересозданного draft доходит до `review.Calls==2` и `inReview`) отсекает false negative.
+     Прогнан локально: `dotnet test --filter …` → Passed 1/0/0; сборка чистая при warnings-as-errors.
+  4. Иных вызывающих не пропущено. `TryAdvanceReview` — единственный вызов из `RunReviewPublish`
+     (:1350); `RunReviewPublish` — ровно два вызова (`OnSendForReview` :957, `OnUpdateReview` :1086),
+     оба теперь передают `generation`. Проверено grep'ом по `src`.
+  5. CHANGELOG точен, релиз-заголовок цел. Запись (:178-186) под `## [Unreleased]` → `### Fixed`, верно
+     описывает и путь через `LoadFile` (переоткрытие без проверки publish-in-flight, в отличие от
+     Discard), и суть фикса (сравнение per-checkout generation counter). Заголовок `## [0.1.0] -
+     2026-07-04` (:194) и его контент нетронуты — повторяющийся у прошлых задач дефект «снос заголовка
+     релиза» НЕ воспроизведён.
+- Замеченный НЕ-Critical/High нюанс (в отдельную R-запись не выносится): комментарий
+  `TryAdvanceReview` (:1400-1401) и CHANGELOG формулируют бамп как «discard+recreate всегда бампает
+  минимум дважды», тогда как фактический путь репродукции (LoadFile+recreate) бампает ОДИН раз (через
+  BeginEdit пересоздания). Фикс корректен и при одном бампе (монотонный счётчик), а оба текста тут же
+  явно описывают именно LoadFile-путь, поэтому это documentation-precision-нюанс без влияния на
+  поведение.
+- Новых серьёзных проблем за 2 прогона не найдено; открытых R-записей нет. Задача решена полностью —
+  можно переходить к следующей задаче.
+
+### [SUMMARY-R-2026-07-05 21:10] Итог узкого целевого повторного ревью формулировки — статус: готово к следующей задаче
+- Активная задача: [T-026] Исправить M-13: TryAdvanceReview ключуется по (state, имя ветки), неверно
+  штампует пересозданный одноимённый черновик
+- Прогонов выполнено: 1 подтверждающий проход (УЗКОЕ целевое повторное ревью поверх уже чистого
+  ревью SUMMARY-R 21:07 — краткий подтверждающий проход уместен, а не полное перечитывание).
+- Открытых проблем: 0
+- Область ревью: РОВНО одна правка формулировки комментария `TryAdvanceReview`
+  (`src/SpecDesk.Host/HostController.cs`), закрывающая единственный НЕ-Critical нюанс
+  documentation-precision из SUMMARY-R 21:07. Инкремент подтверждён по `jj evolog -p -r nptuzull`
+  (верхний снапшот 21:10:09, операция 9e2a886e): среди код/тест/CHANGELOG-файлов изменён ТОЛЬКО
+  комментарий-блок `HostController.cs` (:1395-1403); продакшн-логика, регресс-тест и `CHANGELOG.md`
+  в инкременте НЕ трогались — подтверждает заявление исполнителя «No other change was made anywhere».
+  Остальное в снапшоте — служебные `.work/Review.md`/`.work/status.md`. Открытых/исправленных/
+  отклонённых R-записей на входе не было (историческая нумерация закрыта на R-004).
+- Повод: прошлое ревью (21:07) отметило НЕ-Critical documentation-precision-нюанс — комментарий
+  `TryAdvanceReview` формулировал бамп как «a discard+recreate always bumps it at least twice»,
+  тогда как фактический путь репродукции (переоткрытие через дубль-Ready → `LoadFile`, затем свежий
+  `BeginEdit`) бампает `_draftGeneration` РОВНО ОДИН раз (сам `LoadFile` не бампает; бампает только
+  последующий `BeginEdit`).
+- Вывод: правка корректна, точна и НЕ вносит новой неточности; нюанс закрыт.
+  1. Диф правки (две фразы одного комментария):
+     а) мотивирующий пример «discarded and recreated while this push was in flight» →
+        «recreated while this push was in flight (e.g. via a reload — LoadFile resets the draft
+        fields without checking _publishInFlight, unlike Discard — followed by a fresh BeginEdit)»;
+     б) гарантия «a discard+recreate always bumps it at least twice» →
+        «any recreation bumps it at least once more».
+     Строка-зачин («(_state, _branch) alone can't tell "the same draft, untouched" from "a
+     same-named draft that was …») и остальной текст комментария не менялись.
+  2. Новая формулировка (б) точна и совпадает с гарантией, на которую реально опирается фикс.
+     Пересоздать одноимённый draft со `_state=draft` можно ТОЛЬКО через сброс к Published
+     (`LoadFile`/`Discard`) + `BeginEdit` (в `Lifecycle.fs` нет перехода `Draft→Edit`, только
+     `Published→Edit`), а `BeginEdit` всегда бампает `_draftGeneration` (после успешного
+     чекаута, под `_repoGate`). Значит любое пересоздание сдвигает счётчик минимум на 1 (путь
+     LoadFile — ровно 1, путь Discard — 2). Счётчик монотонен (только `Interlocked.Increment`),
+     поэтому снимок, снятый старым push ДО пересоздания, не может совпасть с живым значением —
+     ровно проверка `Interlocked.Read(ref _draftGeneration) != generation` в `TryAdvanceReview`.
+     «At least once more» — точная нижняя граница; прежнее «at least twice» её завышало для
+     LoadFile-пути. Точность гарантии, на которую опирается фикс, восстановлена.
+  3. Новая формулировка (а) точна: `LoadFile` действительно безусловно сбрасывает draft-поля
+     без проверки `_publishInFlight` (в отличие от `Discard`, который отказывается), а
+     последующий `BeginEdit` пересоздаёт draft — это и есть путь, воспроизводимый регресс-тестом.
+     Параграф теперь описывает именно reload+BeginEdit как мотивирующий пример, а не только
+     «discarded and recreated». Новой неточности не введено.
+  4. Парентеза «which bumps on every BeginEdit/Discard checkout change» не менялась и остаётся
+     верной (bump в `OnEdit` после `BeginEdit` и в `OnDiscard` после `Discard`, оба под `_repoGate`).
+  5. Правка — только комментарий, в компиляцию не входит: сборочный статус не затрагивается,
+     заявление исполнителя о чистой сборке (0 warnings) с этой правкой измениться не могло.
+  6. `CHANGELOG.md` (:185-186) не трогался и остаётся точным: формулировка «which a discard/recreate
+     always advances» не заявляет счётчик «дважды», а лишь монотонный сдвиг («always advances» ≥ 1),
+     что корректно и для LoadFile-пути; правки не требовала.
+- Новых серьёзных проблем не найдено; открытых R-записей нет. Единственный оставшийся нюанс
+  documentation-precision из SUMMARY-R 21:07 закрыт — можно переходить к следующей задаче.

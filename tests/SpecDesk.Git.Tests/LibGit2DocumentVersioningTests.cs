@@ -163,6 +163,33 @@ public sealed class LibGit2DocumentVersioningTests
         Assert.That(result.Committed, Is.True, "the pasted asset should be committed, not orphaned");
     }
 
+    // M-12: Commands.Stage(repo, "*") stages everything matching the pathspec, but it does NOT force-add
+    // ignored paths unless explicitly told to (StageOptions.IncludeIgnored, left at its default false
+    // here) — the same default behaviour as plain `git add -A`. A repository with a build-artifact
+    // directory listed in .gitignore must not have it swept into a saved version.
+    [Test]
+    public void SaveVersion_DoesNotCommitAGitignoredBuildArtifactDirectory()
+    {
+        File.WriteAllText(Path.Combine(_repo, ".gitignore"), "build/\n");
+        _versioning.Initialize(_repo, "Seed");
+        _versioning.BeginEdit(_repo, "spec/x", "main");
+
+        string buildDir = Path.Combine(_repo, "build");
+        Directory.CreateDirectory(buildDir);
+        File.WriteAllText(Path.Combine(buildDir, "artifact.bin"), "not part of any draft's tracked content");
+        // A genuine, non-ignored change too, so the save is not a no-op.
+        File.WriteAllText(_doc, "# Version two");
+
+        CommitResult result = _versioning.SaveVersion(_repo, "Update spec");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Committed, Is.True);
+            Assert.That(_versioning.ReadHeadContent(_repo, "build/artifact.bin"), Is.Null,
+                "the ignored build directory must not have been committed");
+        });
+    }
+
     [Test]
     public void SaveVersion_IsANoOpWhenNothingChanged()
     {

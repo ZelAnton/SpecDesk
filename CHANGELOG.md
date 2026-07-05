@@ -171,6 +171,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   successful authorization surfaced as a thrown exception; the implementation always returned it as a
   normal `SignInResult` (`SignInOutcome.StorageFailed`), never throwing. The doc now states the actual,
   already-correct contract, so callers don't wrap this call in a try/catch that can never trigger.
+- Confirmed that `SaveVersion`/`Initialize`'s `Commands.Stage(repo, "*")` already respects `.gitignore`
+  (`StageOptions.IncludeIgnored` defaults to false, the same default `git add -A` uses) — a repository
+  whose `.gitignore` lists a build-artifact directory does not have it swept into a saved version. Pinned
+  with a regression test and a code comment so the behaviour can't silently regress.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
