@@ -41,6 +41,24 @@ let ``a hash inside a quoted value is not treated as a comment`` () =
     let t = Toml.readTable "repo" "[repo]\ntag = \"a#b\"\n"
     Assert.That(Toml.getString t "tag" "", Is.EqualTo "a#b")
 
+// M-05 regression guards: a naive "every `"` toggles the quote tracker" reading treats an escaped `\"`
+// as a real close, so a `#` sitting between the true open and close of a value like
+// `template = "Say \"hi\"" # note` was wrongly read as a comment start, truncating the value.
+
+[<Test>]
+let ``a hash right after a single escaped quote is still inside the string (odd-parity case)`` () =
+    // The naive tracker flips on EVERY literal '"' — after exactly ONE escaped quote its state is
+    // wrong (it thinks the string just closed), which is the precise parity that reproduces the
+    // finding's truncation. An EVEN number of escaped quotes before the '#' happens to come out right
+    // by coincidence even under the naive tracker, so this specific shape is what actually pins the bug.
+    let t = Toml.readTable "repo" "[repo]\ntemplate = \"a\\\"#b\"\n"
+    Assert.That(Toml.getString t "template" "", Is.EqualTo "a\"#b")
+
+[<Test>]
+let ``a real inline comment after a value with escaped quotes is still stripped`` () =
+    let t = Toml.readTable "repo" "[repo]\ntemplate = \"Say \\\"hi\\\"\" # a real comment\n"
+    Assert.That(Toml.getString t "template" "", Is.EqualTo "Say \"hi\"")
+
 [<Test>]
 let ``CRLF line endings are handled`` () =
     let t = Toml.readTable "images" "[images]\r\nquality = 3\r\n"
@@ -77,6 +95,23 @@ let ``getString returns an unquoted value as-is`` () =
 let ``getString falls back when the key is absent`` () =
     let t = Toml.readTable "repo" "[repo]\n"
     Assert.That(Toml.getString t "name" "fallback", Is.EqualTo "fallback")
+
+// M-05 acceptance case: `template = "Say \"hi\""` round-trips to the literal text `Say "hi"` — no
+// leftover backslashes, no truncation at the escaped/real quote boundary.
+[<Test>]
+let ``getString unescapes an escaped quote instead of keeping the backslash`` () =
+    let t = Toml.readTable "commit" "[commit]\ntemplate = \"Say \\\"hi\\\"\"\n"
+    Assert.That(Toml.getString t "template" "", Is.EqualTo "Say \"hi\"")
+
+[<Test>]
+let ``getString unescapes a literal backslash and common escapes`` () =
+    let t = Toml.readTable "commit" "[commit]\ntemplate = \"a\\\\b\\nc\\td\"\n"
+    Assert.That(Toml.getString t "template" "", Is.EqualTo "a\\b\nc\td")
+
+[<Test>]
+let ``getString leaves an unrecognized escape sequence verbatim`` () =
+    let t = Toml.readTable "commit" "[commit]\ntemplate = \"a\\qb\"\n"
+    Assert.That(Toml.getString t "template" "", Is.EqualTo "a\\qb")
 
 // --- getBool ---
 

@@ -9,35 +9,54 @@ open System
 open System.Collections.Generic
 open System.Text.RegularExpressions
 
-/// Drop a `#` comment that is not inside a quoted string.
+/// Drop a `#` comment that is not inside a quoted string. Quote tracking is escape-aware: a `\"` inside
+/// a quoted value (e.g. `template = "Say \"hi\" #1"`) does not toggle the tracker, so the `#` right
+/// after it still counts as inside the string rather than ending it early — the naive "every `"`
+/// toggles" version treated an escaped quote as a real close, so a `#` (or a `]`, for
+/// {@link containsUnquoted}) sitting between the true open and close was wrongly read as bare.
 let private stripInlineComment (value: string) : string =
     let mutable inQuote = false
+    let mutable escaped = false
     let mutable cut = -1
     let mutable i = 0
 
     while i < value.Length && cut < 0 do
-        match value.[i] with
-        | '"' -> inQuote <- not inQuote
-        | '#' when not inQuote -> cut <- i
-        | _ -> ()
+        let c = value.[i]
+
+        if inQuote && escaped then
+            escaped <- false
+        elif inQuote && c = '\\' then
+            escaped <- true
+        elif c = '"' then
+            inQuote <- not inQuote
+        elif c = '#' && not inQuote then
+            cut <- i
 
         i <- i + 1
 
     if cut >= 0 then value.Substring(0, cut) else value
 
-/// Whether `ch` appears in `value` outside any double-quoted string (mirrors stripInlineComment's quote
-/// tracking) — used to find an array's real closing ']' without tripping on a ']' inside a quoted entry,
-/// e.g. a glob character class like "docs/[a-z].md".
+/// Whether `ch` appears in `value` outside any double-quoted string (same escape-aware tracking as
+/// {@link stripInlineComment}) — used to find an array's real closing ']' without tripping on a ']'
+/// inside a quoted entry, e.g. a glob character class like "docs/[a-z].md", or one that itself contains
+/// an escaped quote.
 let private containsUnquoted (ch: char) (value: string) : bool =
     let mutable inQuote = false
+    let mutable escaped = false
     let mutable found = false
     let mutable i = 0
 
     while i < value.Length && not found do
-        match value.[i] with
-        | '"' -> inQuote <- not inQuote
-        | c when c = ch && not inQuote -> found <- true
-        | _ -> ()
+        let c = value.[i]
+
+        if inQuote && escaped then
+            escaped <- false
+        elif inQuote && c = '\\' then
+            escaped <- true
+        elif c = '"' then
+            inQuote <- not inQuote
+        elif c = ch && not inQuote then
+            found <- true
 
         i <- i + 1
 
@@ -118,9 +137,44 @@ let readTable (tableName: string) (text: string) : Dictionary<string, string> =
 
     table
 
+/// Un-escape the common TOML basic-string escapes (`\"`, `\\`, `\n`, `\t`, `\r`) so a quoted value like
+/// `"Say \"hi\""` round-trips to the literal text `Say "hi"` instead of keeping its backslashes. Any
+/// other backslash sequence is left verbatim (backslash + the following character) rather than raising —
+/// malformed/unsupported escapes degrade gracefully, consistent with the rest of this reader.
+let private unescape (value: string) : string =
+    let sb = Text.StringBuilder(value.Length)
+    let mutable i = 0
+
+    while i < value.Length do
+        if value.[i] = '\\' && i + 1 < value.Length then
+            match value.[i + 1] with
+            | '"' ->
+                sb.Append('"') |> ignore
+                i <- i + 2
+            | '\\' ->
+                sb.Append('\\') |> ignore
+                i <- i + 2
+            | 'n' ->
+                sb.Append('\n') |> ignore
+                i <- i + 2
+            | 't' ->
+                sb.Append('\t') |> ignore
+                i <- i + 2
+            | 'r' ->
+                sb.Append('\r') |> ignore
+                i <- i + 2
+            | _ ->
+                sb.Append(value.[i]) |> ignore
+                i <- i + 1
+        else
+            sb.Append(value.[i]) |> ignore
+            i <- i + 1
+
+    sb.ToString()
+
 let private unquote (value: string) : string =
     if value.Length >= 2 && value.StartsWith("\"") && value.EndsWith("\"") then
-        value.Substring(1, value.Length - 2)
+        unescape (value.Substring(1, value.Length - 2))
     else
         value
 

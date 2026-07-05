@@ -141,6 +141,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<?xml` prefix check matched and the file fell through to the raster decode path, which cannot read
   SVG at all. The BOM is now stripped before that check, so a BOM-prefixed SVG is recognized and passed
   through unchanged, like any other SVG.
+- `.spectool.toml`'s hand-rolled reader (`Toml.fs`) mistracked quoted values containing an escaped
+  quote (`\"`): its quote tracker flipped on every literal `"`, treating an escaped one as a real close,
+  so — depending on how many escaped quotes came before it — a `#` or `]` that was actually still
+  inside the string could be read as bare, silently truncating the value (e.g. `template = "a\"#b"`
+  lost everything from the `#` onward). Separately, `\"` was never un-escaped, so a value that DID
+  round-trip still kept its literal backslashes in commit text. Quote tracking is now escape-aware, and
+  quoted values un-escape `\"`, `\\`, `\n`, `\t`, and `\r`.
 
 ## [0.1.0] - 2026-07-04
 
