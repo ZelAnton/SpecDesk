@@ -197,6 +197,42 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    // M-10: OpenPullRequestAsync is bounded by two nested timeouts — GitHubReviewClient's own 30s
+    // per-request cap, and RunReviewPublish's overall 120s SendForReviewTimeout wrapping the whole push +
+    // PR-open round-trip. Either can be the one that actually fires (the 120s budget can be mostly spent
+    // by an earlier, unbounded-except-by-OS-socket push before the PR call even starts), and both surface
+    // as OperationCanceledException. Confirm the two are never told apart into different, confusing error
+    // text — RunReviewPublish's catch is a single broad `catch (Exception ex)` reporting one fixed message
+    // regardless of which timer won the race — and that the cancellation does not wedge the single-flight
+    // claim (a retry once the transient condition clears still succeeds).
+    [Test]
+    public void SendForReview_when_the_pr_open_call_times_out_reports_the_same_generic_error_and_recovers()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowTimeoutOnOpen = true };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        IpcMessage? error = WaitForKind(MessageKinds.Error);
+        Assert.That(error, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            // The same plain message as any other send failure (HttpRequestException, a repo fault, …) —
+            // never a raw "The operation was canceled." or a message that varies by which timeout fired.
+            Assert.That(
+                error!.GetPayload<ErrorPayload>()!.Message,
+                Is.EqualTo("Couldn't send this for review. Check your connection and try again."));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+        });
+
+        // The cancellation must not have wedged the single-flight claim: a retry once the timeout clears
+        // still reaches In review.
+        review.ThrowTimeoutOnOpen = false;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "a retry after the timeout should still work");
+    }
+
     [Test]
     public void SendForReview_recovers_after_a_repo_read_fault_and_is_not_wedged()
     {
@@ -694,6 +730,39 @@ public sealed class HostControllerReviewTests
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
         Assert.That(
             WaitUntil(() => versioning.PushBranchCalls == 2), Is.True, "a retry after the fault should push");
+        Assert.That(WaitForStatusState("inReview"), Is.True);
+    }
+
+    // M-10 counterpart for the update path: RunReviewPublish's 120s SendForReviewTimeout is the only
+    // caller-side bound on PushBranch (the connect/handshake phase is bounded only by the OS socket timeout
+    // — see PushBranch's own note). Confirm a timed-out push is reported through the exact same generic
+    // "couldn't update" message as any other push fault, not a confusing distinct one, and that the
+    // cancellation does not wedge the single-flight claim.
+    [Test]
+    public void UpdateReview_when_the_push_times_out_reports_the_same_generic_error_and_recovers()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = BuildInReview(versioning, new FakeGitHubReview());
+        SaveAVersion(controller);
+
+        versioning.ThrowTimeoutOnPush = true;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+
+        IpcMessage? error = WaitForKind(MessageKinds.Error);
+        Assert.That(error, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                error!.GetPayload<ErrorPayload>()!.Message,
+                Is.EqualTo("Couldn't update the review. Check your connection and try again."));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+        });
+
+        // Not wedged: a retry once the timeout clears still pushes the still-unshared version.
+        versioning.ThrowTimeoutOnPush = false;
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+        Assert.That(
+            WaitUntil(() => versioning.PushBranchCalls == 2), Is.True, "a retry after the timeout should push");
         Assert.That(WaitForStatusState("inReview"), Is.True);
     }
 

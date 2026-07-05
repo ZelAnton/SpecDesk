@@ -1275,3 +1275,62 @@
      при warnings-as-errors не возникает.
 - Новых серьёзных проблем за 2 прогона не найдено; открытых R-записей нет. Задача решена полностью —
   можно переходить к следующей задаче.
+
+### [SUMMARY-R-2026-07-05 20:02] Итог ревью задачи — статус: готово к следующей задаче
+- Активная задача: [T-023] Проверить M-10: двойная отмена по таймауту в GitHub-запросах
+- Прогонов выполнено: 2 (оба подряд без новых серьёзных находок → остановка)
+- Область ревью: изменение в рабочей копии jj (`jj diff -r kttmlwuk`) — 4 файла, ВСЕ вне продакшена:
+  тесты `tests/SpecDesk.Host.Tests/HostControllerReviewTests.cs` (+2 теста), фейки
+  `FakeGitHubReview.cs` (тоггл `ThrowTimeoutOnOpen`) и `FakeVersioning.cs` (тоггл `ThrowTimeoutOnPush`),
+  плюс служебный `.work/status.md`. Продакшен-код и `CHANGELOG.md` не тронуты. Открытых/исправленных/
+  отклонённых R-записей на входе не было — Фаза 1 без работы. Наивысший ранее использованный номер — R-004
+  (все закрыты/удалены).
+- Вывод: вывод исследования подтверждён независимой трассировкой — реального бага нет; все критерии
+  готовности выполнены.
+  1. Классификация ошибки — нет ветвления по типу исключения (критерий 1). Проверены все точки пути
+     send/update/refresh:
+     • `RunReviewPublish` (HostController.cs:1332-1370) — единственный `catch (Exception ex)` логирует и
+       зовёт `SendError(errorMessage)`, где `errorMessage` — ФИКСИРОВАННАЯ строка параметра callsite'а.
+       Двум вызовам переданы ровно те строки, что проверяют тесты: "Couldn't send this for review…"
+       (:951-953) и "Couldn't update the review…" (:1076-1078). Никакого различения таймеров.
+     • `OnRefreshReviewStatus` (:1211-1216) — `catch (Exception ex)` делает только `LogWarning`, НИКАКОГО
+       user-facing сообщения; SendLifecycleStatus зовётся лишь на успехе (`changed`). Классификация к
+       пользователю утечь не может по построению.
+     • `OpenPullRequestAsync`/`PostGraphQlAsync`/`RequestReviewersAsync` (GitHubReview.cs:136-138,451-452,
+       203-205) — каждый строит linked CTS с `CancelAfter(RequestTimeout=30s)`; отменённый
+       `_http.SendAsync(…, timeout.Token)` бросает OCE/TCE и пробрасывается. Единственный catch —
+       `catch (JsonException)` (:176), ограниченный парсингом; ветка не-2xx бросает HttpRequestException,
+       но отменённый send до статус-кода не доходит. Реклассификации нет.
+     • `WithAccessTokenAsync` (GitHubDeviceFlowAuth.cs:167-174) — просто зовёт `use(token, ct)`, без catch.
+     • Глобальный поиск cancellation-специфичных catch по `src/`: единственные
+       `catch (OperationCanceledException) when (…)` — в device-flow SIGN-IN (GitHubDeviceFlowAuth.cs:107,
+       DeviceFlowApi.cs:215/322, HostController.cs:1743) — вне scope M-10.
+     Итог: какой бы из вложенных таймеров ни сработал (внутренний 30s на запрос ИЛИ внешний 120s
+     SendForReviewTimeout, прокинутый в тот же токен), результат — OCE/TCE → тот же широкий catch → та же
+     фиксированная строка. Запутанной/неверной классификации не возникает. `_publishInFlight` всегда
+     снимается в `finally` (`ClearPublishInFlight`), поэтому таймаут не заклинивает фичу.
+  2. Тесты реально воспроизводят сценарий и поймали бы регрессию.
+     • Send-тест: `ThrowTimeoutOnOpen` бросает OCE из `OpenPullRequestAsync` ПОСЛЕ успешного push (порядок
+       throw в фейке — после HTTP-422-тоггла, до `ReleaseGate`), утверждает точную generic-строку и что
+       `LatestStatus().State` остаётся "draft" (транзиентный фрейм "Sending for review…" несёт state=_state
+       ="draft", т.к. state продвигается лишь в `TryAdvanceReview` на успехе), затем ретрай с тогглом=false
+       доходит до "inReview" — доказывает, что не заклинено.
+     • Update-тест: через `BuildInReview`→`SaveAVersion` (seq>shared, гард "nothing new" пройден)
+       `ThrowTimeoutOnPush` бросает OCE из `PushBranch` (throw до инкремента `PushBranchCalls`), утверждает
+       точную "Couldn't update the review…" и state "inReview", затем ретрай пушит (`PushBranchCalls==2`).
+     • Оба теста повторяют УЖЕ ЗЕЛЁНЫЙ паттерн `SendForReview_recovers_after_a_repo_read_fault_and_is_not_
+       wedged` (:236-254; тот фолт тоже идёт через background-lambda→catch→SendError→finally), поэтому
+       новой флейковости "ретрай vs finally-снятие флага" не вносят. Заявленная авторами
+       fail-then-pass-проверка (временно классифицировать cancellation в отдельное сообщение → оба теста
+       падают → откат) — корректный мутационный тест: ассерты `Is.EqualTo(точная строка)` сломались бы.
+  3. Покрытие достаточно для verify-задачи. Критерий "подтверждено тестом ИЛИ трассировкой" выполнен
+     (2 теста + трассировка); неверной классификации не найдено → правки/фикса не требуется; запись в
+     CHANGELOG не нужна, т.к. поведение не менялось (в диффе CHANGELOG отсутствует — согласуется с
+     критерием). Замеченный НЕ-Critical/High момент (в отдельную R-запись не выносится): третий
+     таймаут-сценарий — фоновый refresh (`OnRefreshReviewStatus`, ReviewStatusTimeout 35s + внутренний 30s)
+     — новым тестом не покрыт, НО этот путь структурно молчалив (любой фолт → только LogWarning, ни одного
+     user-facing фрейма), поэтому мисклассификации К ПОЛЬЗОВАТЕЛЮ там не бывает по построению; молчаливость
+     подтверждена инспекцией/трассировкой (это и есть допустимый критерием способ). Отсутствие такого теста
+     — не серьёзный зазор.
+- Новых серьёзных проблем за 2 прогона не найдено; открытых R-записей нет. Задача решена полностью —
+  можно переходить к следующей задаче.

@@ -49,6 +49,13 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// surfaces a plain error, stays put, and does not wedge the single-flight claim" path.</summary>
     public bool ThrowOnPush { get; set; }
 
+    /// <summary>When set, <see cref="PushBranch"/> throws <see cref="OperationCanceledException"/> —
+    /// simulating the overall <c>SendForReviewTimeout</c> (120s) firing while the push is in flight (the
+    /// connect/handshake phase is bounded only by the OS socket timeout; the transfer phase is bounded by
+    /// this cancellation), so a test can confirm a timed-out push is reported through the same plain error
+    /// as any other push fault — not a confusing, differently-worded message.</summary>
+    public bool ThrowTimeoutOnPush { get; set; }
+
     public int PushBranchCalls { get; private set; }
 
     public string? PushedBranch { get; private set; }
@@ -143,6 +150,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         {
             // A transport / auth failure — thrown before recording the call, so it counts as "did not push".
             throw new InvalidOperationException("push boom");
+        }
+
+        if (ThrowTimeoutOnPush)
+        {
+            throw new OperationCanceledException("The operation was canceled.");
         }
 
         PushBranchCalls++;

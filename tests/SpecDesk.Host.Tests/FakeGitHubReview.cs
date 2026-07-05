@@ -27,6 +27,13 @@ internal sealed class FakeGitHubReview : IGitHubReview
 
     public bool ThrowOnOpen { get; init; }
 
+    /// <summary>When set, <see cref="OpenPullRequestAsync"/> throws <see cref="OperationCanceledException"/> —
+    /// simulating either of the two nested timeouts (the per-request 30s cap in <c>GitHubReviewClient</c>, or
+    /// the overall 120s <c>SendForReviewTimeout</c> in <c>HostController</c>) firing while the call is in
+    /// flight, so a test can confirm both are reported through the same plain, non-misleading error rather
+    /// than a confusingly different message depending on which timer won the race.</summary>
+    public bool ThrowTimeoutOnOpen { get; set; }
+
     /// <summary>When set, <see cref="RequestReviewersAsync"/> throws — to exercise the best-effort path
     /// where a reviewer-request failure must not undo the already-open pull request.</summary>
     public bool ThrowOnRequestReviewers { get; init; }
@@ -62,6 +69,11 @@ internal sealed class FakeGitHubReview : IGitHubReview
         if (ThrowOnOpen)
         {
             throw new HttpRequestException("GitHub rejected the pull-request create (HTTP 422).");
+        }
+
+        if (ThrowTimeoutOnOpen)
+        {
+            throw new OperationCanceledException("The operation was canceled.");
         }
 
         // Block in flight until the test releases it (bounded so a wiring bug fails fast, not hangs).
