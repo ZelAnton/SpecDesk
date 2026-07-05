@@ -894,6 +894,10 @@ public sealed class HostController : IDisposable
 		// stale state read or a double-click can't slip a second round-trip through. fromState/_branch are
 		// re-checked before the transition is committed (the document may have moved on); seq records how
 		// many saved versions this push carries, so a later Update review knows what is already shared.
+		// generation additionally guards against a SAME-named branch being discarded and re-created while
+		// this push is in flight (M-13): branch names are date-deterministic, so a recreated draft can match
+		// both fromState and branchName by coincidence, yet must never be stamped with the old push's seq.
+		// See TryAdvanceReview and the _draftGeneration field comment.
 		string next;
 		string? repoRoot;
 		string? branch;
@@ -901,6 +905,7 @@ public sealed class HostController : IDisposable
 		string? path;
 		string fromState;
 		long seq;
+		long generation;
 		lock (_sync)
 		{
 			next = Lifecycle.tryStep(_state, "sendForReview");
@@ -922,6 +927,7 @@ public sealed class HostController : IDisposable
 			baseBranch = _baseBranch;
 			path = _currentPath;
 			seq = _versionsSaved;
+			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
 		}
 
@@ -949,7 +955,7 @@ public sealed class HostController : IDisposable
 		string docPath = path;
 
 		RunReviewPublish(
-			fromState, branchName, next, seq, "Sent for review",
+			fromState, branchName, next, seq, generation, "Sent for review",
 			"Couldn't send this for review. Check your connection and try again.",
 			async ct =>
 			{
@@ -1023,6 +1029,7 @@ public sealed class HostController : IDisposable
 		string fromState;
 		long seq;
 		long shared;
+		long generation;
 		lock (_sync)
 		{
 			next = Lifecycle.tryStep(_state, "updateReview");
@@ -1043,6 +1050,9 @@ public sealed class HostController : IDisposable
 			branch = _branch;
 			seq = _versionsSaved;
 			shared = _versionsShared;
+			// See OnSendForReview / the _draftGeneration field comment: guards TryAdvanceReview against a
+			// same-named branch being discarded and re-created while this push is in flight (M-13).
+			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
 		}
 
@@ -1074,7 +1084,7 @@ public sealed class HostController : IDisposable
 		string branchName = branch;
 
 		RunReviewPublish(
-			fromState, branchName, next, seq, "Updated the review",
+			fromState, branchName, next, seq, generation, "Updated the review",
 			"Couldn't update the review. Check your connection and try again.",
 			ct =>
 			{
@@ -1318,6 +1328,7 @@ public sealed class HostController : IDisposable
 		string branchName,
 		string next,
 		long seq,
+		long generation,
 		string action,
 		string errorMessage,
 		Func<CancellationToken, Task<bool>> publish)
@@ -1336,15 +1347,16 @@ public sealed class HostController : IDisposable
 					return;
 				}
 
-				if (TryAdvanceReview(fromState, branchName, next, seq))
+				if (TryAdvanceReview(fromState, branchName, next, seq, generation))
 				{
 					_logger.LogInformation("{Action}: {Branch}", action, branchName);
 				}
 				else
 				{
-					// The document changed during the push (discard / switch), so the branch was pushed / the
-					// PR opened but this document must NOT be stamped — re-sync the chrome to the real state so
-					// the transient "…" label never lingers.
+					// The document changed during the push (discard / switch, including a same-named draft
+					// recreated in place — M-13), so the branch was pushed / the PR opened but this document
+					// must NOT be stamped — re-sync the chrome to the real state so the transient "…" label
+					// never lingers.
 					_logger.LogInformation(
 						"{Action} completed, but the document moved on — not advancing: {Branch}", action, branchName);
 				}
@@ -1379,12 +1391,22 @@ public sealed class HostController : IDisposable
 	// shared that never left, so the next Update would report "nothing new" and the reviewer would never see
 	// it. Exactly tracking "what HEAD held at push time" would need the counter under _repoGate (the push's
 	// lock), which the _sync/_repoGate ordering rule forbids reading here — not worth it for a no-op re-push.
+	//
+	// M-13: (_state, _branch) alone can't tell "the same draft, untouched" from "a same-named draft that was
+	// recreated while this push was in flight" (e.g. via a reload — LoadFile resets the draft fields
+	// without checking _publishInFlight, unlike Discard — followed by a fresh BeginEdit) — branch names
+	// are date-deterministic, so a same-day recreation reproduces the exact same (state, branch) pair the
+	// old push captured, and would otherwise get wrongly stamped with the OLD push's seq, making the
+	// recreated draft's next Update review falsely report "no new versions". generation (the caller's
+	// snapshot of _draftGeneration, which bumps on every BeginEdit/Discard checkout change) rules this
+	// out: any recreation bumps it at least once more, so a stale snapshot can never match the live value
+	// even when state and branch coincide.
 	// Returns whether the transition was applied.
-	private bool TryAdvanceReview(string fromState, string branchName, string next, long seq)
+	private bool TryAdvanceReview(string fromState, string branchName, string next, long seq, long generation)
 	{
 		lock (_sync)
 		{
-			if (_state != fromState || _branch != branchName)
+			if (_state != fromState || _branch != branchName || Interlocked.Read(ref _draftGeneration) != generation)
 			{
 				return false;
 			}

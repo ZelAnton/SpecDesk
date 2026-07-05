@@ -175,6 +175,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`StageOptions.IncludeIgnored` defaults to false, the same default `git add -A` uses) — a repository
   whose `.gitignore` lists a build-artifact directory does not have it swept into a saved version. Pinned
   with a regression test and a code comment so the behaviour can't silently regress.
+- `TryAdvanceReview` keyed a completing Send/Update-review push only on `(state, branch name)`. Since
+  branch names are date-deterministic, a draft discarded and recreated the same day (e.g. by reopening
+  the document while the previous push was still resolving in the background — `LoadFile` resets the
+  draft fields without checking whether a publish is in flight, unlike Discard, which refuses outright)
+  could reproduce the exact same `(state, branch)` pair the stale push captured. The stale push would
+  then wrongly jump the brand-new, never-sent draft straight to "In review" and stamp its own unrelated
+  version as already shared, so its own later "Update review" falsely reported "No new versions". The
+  check now also compares the existing per-checkout generation counter, which a discard/recreate always
+  advances, so a stale push can no longer land on a draft it didn't itself publish.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

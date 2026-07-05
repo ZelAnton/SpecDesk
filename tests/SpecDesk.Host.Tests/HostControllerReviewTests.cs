@@ -283,6 +283,71 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    // M-13: TryAdvanceReview used to key only on (state, branch name) — both of which a recreated
+    // same-named draft can coincidentally reproduce (branch names are date-deterministic, so discarding
+    // and starting a new draft the same day regenerates the identical name). LoadFile (triggered here by
+    // a duplicate Ready — see OnReady/OnOpen) resets the draft fields WITHOUT checking _publishInFlight,
+    // unlike Discard, which refuses outright while a publish is in flight — so a stale Send-for-review
+    // push still resolving in the background can land on a brand-new, never-sent draft that merely
+    // happens to share the old one's branch name, wrongly jumping it straight to "In review" and
+    // stamping its own unrelated version as already shared.
+    [Test]
+    public void SendForReview_does_not_stamp_a_same_named_draft_recreated_while_the_old_push_is_still_resolving()
+    {
+        using ManualResetEventSlim gate = new(initialState: false);
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ReleaseGate = gate };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        // The first draft, explicitly named so the recreated draft below can reuse the exact same name —
+        // in production this coincidence comes from the branch name being date-deterministic, not an
+        // explicit author choice.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit, new EditPayload("spec/reused")));
+        SaveAVersion(controller);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(
+            WaitUntil(() => review.Calls == 1), Is.True, "the first send should reach the PR call and block there");
+
+        // While that push is still resolving in the background, the document is reloaded (e.g. re-opening
+        // the same file — LoadFile resets the draft fields unconditionally, unlike Discard) and a
+        // brand-new draft is started, reusing the exact same branch name.
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit, new EditPayload("spec/reused")));
+        SaveAVersion(controller);
+
+        // Let the stale push settle (successfully or not) before asserting anything about its effect —
+        // RunReviewPublish always calls SendLifecycleStatus once it resolves, so a new message is
+        // guaranteed regardless of which branch (advance / not-advance) it takes.
+        int sentBeforeRelease;
+        lock (_gate)
+        {
+            sentBeforeRelease = _sent.Count;
+        }
+
+        gate.Set();
+        Assert.That(
+            WaitUntil(() =>
+            {
+                lock (_gate)
+                {
+                    return _sent.Count > sentBeforeRelease;
+                }
+            }),
+            Is.True, "the stale push should settle after being released");
+
+        // The recreated draft never sent anything itself — it must NOT have been jumped to In review.
+        Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+
+        // Confirm its own version is genuinely still unshared: the recreated draft's own Send for review
+        // must still push and open its own pull request rather than silently no-op'ing (the false
+        // negative this bug caused would instead have already stamped it as shared).
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "the recreated draft's own send should still work");
+        Assert.That(review.Calls, Is.EqualTo(2));
+    }
+
     [Test]
     public void SendForReview_from_published_is_ignored()
     {
