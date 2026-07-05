@@ -495,6 +495,14 @@ public sealed class HostController : IDisposable
 				"Editing {Doc} on branch {Branch} (base {Base})", docSlug, session.Branch, session.BaseBranch);
 			SendLifecycleStatus();
 		}
+		catch (DirtyWorkingTreeException ex)
+		{
+			// Another document's draft was autosaved to disk but never saved as a version, and a forced
+			// checkout here would have silently wiped it — BeginEdit refused instead. Plain-language,
+			// no git vocabulary (branch names stay in the log, not the message the author sees).
+			_logger.LogError(ex, "Could not start editing: {DirtyBranch} has unsaved autosaved changes", ex.DirtyBranch);
+			SendError("Another document has unsaved changes. Open it and save or discard that draft, then try again.");
+		}
 		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
 		{
 			_logger.LogError(ex, "Could not start editing");

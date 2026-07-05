@@ -98,13 +98,31 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
             throw new InvalidOperationException("The draft name must differ from the published branch.");
         }
 
+        // Refuse rather than silently discard someone else's uncommitted work: autosave writes the working
+        // copy to disk WITHOUT committing, so a *different* document's draft can leave the tree dirty on
+        // its own branch while this document's edit begins. A forced checkout below resets the ENTIRE
+        // working tree to branchName's commit, not just this document's file — if the tree is currently
+        // dirty on some other branch, that draft's unsaved autosave would be wiped with no way to recover
+        // it. Only skip the check when the dirty tree already belongs to the branch we're about to check
+        // out: resuming/restarting the SAME document's own abandoned session is expected to reset its own
+        // stray state (a separate, narrower concern — see the cross-restart lifecycle gap tracked
+        // elsewhere) and carries no risk of destroying a different document's work.
+        bool alreadyOnTargetBranch =
+            !repo.Info.IsHeadDetached && string.Equals(repo.Head.FriendlyName, branchName, StringComparison.Ordinal);
+        if (!alreadyOnTargetBranch && repo.RetrieveStatus(new StatusOptions { IncludeUntracked = false }).IsDirty)
+        {
+            string dirtyBranch = repo.Info.IsHeadDetached ? repo.Head.Tip?.Sha ?? "HEAD" : repo.Head.FriendlyName;
+            throw new DirtyWorkingTreeException(dirtyBranch);
+        }
+
         Branch working = repo.Branches[branchName] ?? repo.CreateBranch(branchName, tip);
         // Force the checkout: in the new model autosave writes the working copy to disk WITHOUT
-        // committing, so a prior session abandoned without "Save a version" (and without Discard)
-        // leaves the working tree dirty. A plain checkout would throw CheckoutConflictException and
-        // block editing entirely. Beginning an edit means "switch to this branch's tip"; only the
-        // uncommitted stray changes are reset (saved versions on the branch are preserved). Matches
-        // Discard's use of a forced checkout.
+        // committing, so a prior session on the SAME branch, abandoned without "Save a version" (and
+        // without Discard), leaves the working tree dirty. A plain checkout would throw
+        // CheckoutConflictException and block editing entirely. Beginning an edit means "switch to this
+        // branch's tip"; only the uncommitted stray changes are reset (saved versions on the branch are
+        // preserved). Matches Discard's use of a forced checkout. The guard above has already ruled out
+        // the tree being dirty on any OTHER branch.
         Commands.Checkout(repo, working, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
         return new EditSession(working.FriendlyName, baseName);
     }

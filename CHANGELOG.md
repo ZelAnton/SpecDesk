@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pushurl` is re-pointed at an attacker-controlled host (e.g. a shared/zipped copy with an edited
   `.git/config`) would have triggered an NTLM challenge/response from the author's session. Any
   endpoint other than HTTPS `github.com` is now refused outright before a credential is ever offered.
+- `BeginEdit` (`SpecDesk.Git`) now refuses — throwing `DirtyWorkingTreeException` — to start editing a
+  document while the working tree has uncommitted changes that belong to a *different* branch. Editing
+  forces a checkout that resets the whole working tree, not just the document being opened; previously,
+  switching to "Edit" on document B while document A's autosaved-but-not-saved-as-a-version draft was
+  still uncommitted on its own branch silently discarded A's unsaved work. Resuming the same
+  document/branch is unaffected. The host now surfaces a plain-language error ("Another document has
+  unsaved changes...") instead of losing the draft.
 
 ## [0.1.0] - 2026-07-04
 

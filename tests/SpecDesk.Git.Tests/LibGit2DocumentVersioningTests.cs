@@ -83,17 +83,52 @@ public sealed class LibGit2DocumentVersioningTests
     }
 
     [Test]
-    public void BeginEdit_SucceedsWhenTheWorkingTreeIsDirty()
+    public void BeginEdit_SucceedsWhenResumingTheSameBranchWhileItsOwnWorkingTreeIsDirty()
     {
         _versioning.Initialize(_repo, "Seed");
         _versioning.BeginEdit(_repo, "spec/x", "main");
-        // A prior session autosaved to disk but never saved a version: the working tree is dirty
-        // (uncommitted). Starting a new edit must not throw a checkout conflict.
+        // A prior session on the SAME branch autosaved to disk but never saved a version: the working
+        // tree is dirty (uncommitted). Resuming the same document/branch must not throw a checkout
+        // conflict — there is no other draft's work at risk here.
         File.WriteAllText(_doc, "# Uncommitted stray draft");
 
-        Assert.DoesNotThrow(() => _versioning.BeginEdit(_repo, "spec/y", "main"));
+        Assert.DoesNotThrow(() => _versioning.BeginEdit(_repo, "spec/x", "main"));
         // Forked from main with a forced checkout, so the uncommitted stray text is reset.
         Assert.That(File.ReadAllText(_doc), Is.EqualTo("# Version one"));
+    }
+
+    [Test]
+    public void BeginEdit_RefusesToStartADifferentDraftWhileAnotherBranchsWorkingTreeIsDirty()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        _versioning.BeginEdit(_repo, "spec/a", "main");
+        // Document A was autosaved to disk (uncommitted) and left checked out; the author now switches
+        // to editing a different document B. A forced checkout to spec/b would reset the whole working
+        // tree, silently destroying A's unsaved autosave — BeginEdit must refuse instead.
+        File.WriteAllText(_doc, "# Document A, autosaved but not saved as a version");
+
+        DirtyWorkingTreeException ex = Assert.Throws<DirtyWorkingTreeException>(
+            () => _versioning.BeginEdit(_repo, "spec/b", "main"))!;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(ex.DirtyBranch, Is.EqualTo("spec/a"));
+            // Refused before touching the working tree: A's autosaved content survives untouched.
+            Assert.That(File.ReadAllText(_doc), Is.EqualTo("# Document A, autosaved but not saved as a version"));
+            Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("spec/a"));
+        });
+    }
+
+    [Test]
+    public void BeginEdit_SucceedsWhenAnUntrackedFileIsLyingAroundButTheTreeIsOtherwiseClean()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        _versioning.BeginEdit(_repo, "spec/a", "main");
+        // An untracked file (e.g. a stray build artifact, or an image pasted but not yet saved as a
+        // version) must not be mistaken for another draft's unsaved document text.
+        File.WriteAllText(Path.Combine(_repo, "untracked.tmp"), "not part of any draft's tracked content");
+
+        Assert.DoesNotThrow(() => _versioning.BeginEdit(_repo, "spec/b", "main"));
     }
 
     [Test]

@@ -71,6 +71,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// <summary>Canned "last committed version" returned by <see cref="ReadHeadContent"/>.</summary>
     public string? HeadContent { get; set; }
 
+    /// <summary>When set, <see cref="BeginEdit"/> throws <see cref="DirtyWorkingTreeException"/> with this
+    /// branch name — to exercise the "another document's autosaved draft would be wiped by a forced
+    /// checkout" refusal path.</summary>
+    public string? DirtyBranchToThrow { get; set; }
+
     public bool IsVersioned(string repoRoot) => Versioned;
 
     public string? ReadHeadContent(string repoRoot, string repoRelativePath) => HeadContent;
@@ -91,6 +96,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
     {
+        if (DirtyBranchToThrow is not null)
+        {
+            throw new DirtyWorkingTreeException(DirtyBranchToThrow);
+        }
+
         BeginEditCalls++;
         Branch = branchName;
         return new EditSession(branchName, preferredBase);

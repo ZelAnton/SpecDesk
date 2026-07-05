@@ -101,6 +101,30 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Edit_WhenAnotherDraftsWorkingTreeIsDirty_ReportsAPlainLanguageErrorAndStaysPublished()
+    {
+        // BeginEdit refuses (DirtyWorkingTreeException) because another document's autosaved-but-not-
+        // saved-as-a-version draft is sitting uncommitted on a different branch; a forced checkout would
+        // have silently destroyed it. The lifecycle must not advance to Draft, and the author sees a
+        // plain-language message — no git vocabulary (branch names) leaks into it.
+        FakeVersioning versioning = new() { DirtyBranchToThrow = "spec/other-doc-20260614" };
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+
+        IpcMessage? error = WaitForKind(MessageKinds.Error);
+        StatusPayload? status = LatestStatus();
+        Assert.Multiple(() =>
+        {
+            Assert.That(error, Is.Not.Null);
+            Assert.That(error!.GetPayload<ErrorPayload>()!.Message, Does.Not.Contain("spec/other-doc-20260614"));
+            Assert.That(error!.GetPayload<ErrorPayload>()!.Message, Does.Contain("unsaved changes"));
+            // No lifecycle status was ever emitted for this failed attempt — still Published.
+            Assert.That(status, Is.Null);
+        });
+    }
+
+    [Test]
     public void Edit_WithACustomDraftName_UsesTheSanitizedName()
     {
         FakeVersioning versioning = new();

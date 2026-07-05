@@ -11,6 +11,19 @@ public sealed record CommitResult(bool Committed, string? Sha, DateTimeOffset Wh
 /// <param name="BaseBranch">The published branch it was forked from (and returns to on discard).</param>
 public sealed record EditSession(string Branch, string BaseBranch);
 
+/// <summary>Thrown by <see cref="IDocumentVersioning.BeginEdit"/> when the working tree has uncommitted
+/// changes that belong to a branch other than the one being started. A forced checkout resets the whole
+/// working tree, so proceeding would silently discard another document's unsaved autosaved draft; the
+/// caller should ask the author to finish or discard that other draft first.</summary>
+/// <param name="dirtyBranch">The branch (or commit SHA, if detached) whose uncommitted changes would
+/// otherwise have been lost.</param>
+public sealed class DirtyWorkingTreeException(string dirtyBranch)
+    : InvalidOperationException($"The working tree has uncommitted changes on '{dirtyBranch}'.")
+{
+    /// <summary>The branch (or commit SHA, if detached) whose uncommitted changes blocked the edit.</summary>
+    public string DirtyBranch { get; } = dirtyBranch;
+}
+
 /// <summary>
 /// The local git operations behind the document lifecycle (docs/design/04-git-workflow.md), kept
 /// behind an interface so the host is testable without a real repository and so no LibGit2Sharp
@@ -40,7 +53,10 @@ public interface IDocumentVersioning
     /// <summary>Create (if absent) and check out the working branch <paramref name="branchName"/>,
     /// forking it from <paramref name="preferredBase"/> when that branch exists (else from whatever
     /// is currently checked out — a previous session may have left a working branch active).
-    /// Returns the working and resolved base branch names. Throws if the repo has no commits yet.</summary>
+    /// Returns the working and resolved base branch names. Throws if the repo has no commits yet, or —
+    /// as <see cref="DirtyWorkingTreeException"/> — if the working tree has uncommitted changes that
+    /// belong to a different branch than <paramref name="branchName"/> (the forced checkout this performs
+    /// would otherwise silently discard that other, unrelated draft's unsaved autosave).</summary>
     EditSession BeginEdit(string repoRoot, string branchName, string preferredBase);
 
     /// <summary>Save a version: stage every working-tree change (the document and any assets such
