@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Pasting/dropping an image into the editor no longer risks inserting its markdown link at the wrong
+  spot, or losing it entirely, when the host round-trip (which produces the link) is still in flight:
+  the insert position is now tracked through subsequent document edits instead of being captured once
+  and reused stale. This also fixes several images pasted/dropped together — previously captured at
+  the same position and applied in whatever order their host replies happened to arrive, so they could
+  clobber one another; each now resolves to its own, independently tracked position.
 - `LogBridge.Export` now reports a plain-language message ("Could not export the log.") on failure
   instead of surfacing the raw exception text to the author.
 - `LogBridge.Receive` now strips embedded CR/LF sequences from the webview-supplied `Message`/`Data`

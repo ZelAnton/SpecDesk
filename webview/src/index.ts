@@ -461,10 +461,13 @@ function wire(): void {
         });
         const payload = parseImageInserted(reply.payload);
         if (payload?.markdown) {
-          editor.insertAt(image.pos, payload.markdown);
+          editor.insertAtMarker(image.markerId, payload.markdown);
+        } else {
+          editor.discardMarker(image.markerId);
         }
       } catch (error) {
         log.error("Image paste request failed", String(error));
+        editor.discardMarker(image.markerId);
       }
     })();
   });

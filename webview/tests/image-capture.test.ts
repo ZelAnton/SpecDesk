@@ -53,20 +53,33 @@ function dispatchDrop(dom: EventTarget, dataTransfer: DataTransfer): Event {
   return event;
 }
 
-/** A fake editor exposing just the members `attachImageCapture` reads. */
-function fakeEditor(): { editor: MarkdownEditor; dom: HTMLDivElement } {
+/** A fake editor exposing just the members `attachImageCapture` reads. `trackPosition` hands out
+ *  ids in call order and records each call's position, so a test can assert both that every pasted/
+ *  dropped file got its OWN marker id and what position it was registered with. */
+function fakeEditor(): {
+  editor: MarkdownEditor;
+  dom: HTMLDivElement;
+  trackedPositions: number[];
+  discardedIds: number[];
+} {
   const dom = document.createElement("div");
+  const trackedPositions: number[] = [];
+  const discardedIds: number[] = [];
   const editor = {
     contentDOM: dom,
     selectionHead: () => 5,
     posAtCoords: () => 3,
+    trackPosition: (pos: number) => trackedPositions.push(pos) - 1,
+    discardMarker: (id: number) => {
+      discardedIds.push(id);
+    },
   } as unknown as MarkdownEditor;
-  return { editor, dom };
+  return { editor, dom, trackedPositions, discardedIds };
 }
 
 describe("attachImageCapture (jsdom)", () => {
   it("captures a pasted image when the clipboard has no plain text", async () => {
-    const { editor, dom } = fakeEditor();
+    const { editor, dom, trackedPositions } = fakeEditor();
     const onImage = vi.fn<(image: CapturedImage) => void>();
     attachImageCapture(editor, onImage);
     const file = new File(["fake-bytes"], "photo.png", { type: "image/png" });
@@ -78,11 +91,31 @@ describe("attachImageCapture (jsdom)", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(onImage).toHaveBeenCalledTimes(1);
+    // The marker is registered with the caret position (T-034: a tracked marker id, NOT a raw
+    // position — the round-trip resolves it via insertAtMarker regardless of intervening edits).
+    expect(trackedPositions).toEqual([5]);
     expect(onImage.mock.calls[0]?.[0]).toMatchObject({
       originalName: "photo.png",
       mime: "image/png",
-      pos: 5,
+      markerId: 0,
     });
+  });
+
+  it("gives two images pasted together their own marker id (T-034/M-21)", async () => {
+    const { editor, dom, trackedPositions } = fakeEditor();
+    const onImage = vi.fn<(image: CapturedImage) => void>();
+    attachImageCapture(editor, onImage);
+    const first = new File(["a"], "a.png", { type: "image/png" });
+    const second = new File(["b"], "b.png", { type: "image/png" });
+
+    dispatchPaste(dom, clipboard([fileItem(first), fileItem(second)]));
+    await vi.waitFor(() => expect(onImage).toHaveBeenCalledTimes(2));
+
+    // Both files were captured at the very same caret position, yet each got its own tracked marker
+    // id — the position mapping (editor.ts) is what keeps their eventual inserts from colliding.
+    expect(trackedPositions).toEqual([5, 5]);
+    const ids = onImage.mock.calls.map((call) => call[0].markerId);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it("skips the image when the clipboard also carries non-empty plain text (S-16)", async () => {
@@ -116,7 +149,7 @@ describe("attachImageCapture (jsdom)", () => {
   });
 
   it("captures a dropped image at the drop coordinates", async () => {
-    const { editor, dom } = fakeEditor();
+    const { editor, dom, trackedPositions } = fakeEditor();
     const onImage = vi.fn<(image: CapturedImage) => void>();
     attachImageCapture(editor, onImage);
     const file = new File(["fake-bytes"], "diagram.png", { type: "image/png" });
@@ -127,6 +160,7 @@ describe("attachImageCapture (jsdom)", () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(onImage).toHaveBeenCalledTimes(1);
-    expect(onImage.mock.calls[0]?.[0]).toMatchObject({ originalName: "diagram.png", pos: 3 });
+    expect(trackedPositions).toEqual([3]);
+    expect(onImage.mock.calls[0]?.[0]).toMatchObject({ originalName: "diagram.png", markerId: 0 });
   });
 });

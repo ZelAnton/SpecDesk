@@ -85,6 +85,63 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
   });
 });
 
+describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () => {
+  // The bug: the insert position was captured once, at paste time, then used as-is after an async
+  // host round-trip — stale once the document changed in the meantime, and shared across several
+  // images pasted together (so out-of-order replies clobbered each other). trackPosition/
+  // insertAtMarker replace that raw position with a marker remapped through every intervening edit.
+
+  it("inserts at the marker's remapped position after text is typed elsewhere during the round-trip", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    // Captured right after "one" (position 3), as if the image had just been pasted there.
+    const id = ed.trackPosition(3);
+    // The author types more text at the very start while the host round-trip is still in flight.
+    ed.insertAt(0, "XXX ");
+    // The host reply now arrives: insertAtMarker must land after "one" in the CURRENT document
+    // (position 7), not at the now-stale raw offset 3 (which would land inside "XXX ").
+    ed.insertAtMarker(id, "[IMG]");
+
+    expect(ed.getText()).toBe("XXX one[IMG] two three\n");
+  });
+
+  it("resolves two images captured at the same position independently, even out of order", () => {
+    const { ed } = mount();
+    ed.setText("abcdef\n");
+    // Two images pasted together land at the very same initial position (3).
+    const first = ed.trackPosition(3);
+    const second = ed.trackPosition(3);
+
+    // The SECOND image's host reply arrives first.
+    ed.insertAtMarker(second, "[B]");
+    // The first image's reply arrives after — it must not overwrite/collide with [B]; it resolves
+    // to wherever position 3 now maps, i.e. right after what [B] already inserted.
+    ed.insertAtMarker(first, "[A]");
+
+    expect(ed.getText()).toBe("abc[B][A]def\n");
+  });
+
+  it("insertAtMarker is a no-op once the marker was already resolved or discarded", () => {
+    const { ed } = mount();
+    ed.setText("hello\n");
+    const id = ed.trackPosition(2);
+    ed.discardMarker(id);
+    ed.insertAtMarker(id, "[late]");
+
+    expect(ed.getText()).toBe("hello\n");
+  });
+
+  it("drops a pending marker across a whole-document setText instead of inserting into the wrong doc", () => {
+    const { ed } = mount();
+    ed.setText("first document\n");
+    const id = ed.trackPosition(5);
+    ed.setText("a completely different document\n");
+    ed.insertAtMarker(id, "[stale]");
+
+    expect(ed.getText()).toBe("a completely different document\n");
+  });
+});
+
 describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
   // The real CodeMirror dispatch path (not just the pure formatMarkdown computation): a document with a
   // leading blank line, caret at position 0 (Ctrl+Home), then every block-format toolbar button. Before
