@@ -80,6 +80,17 @@ public sealed class HostController : IDisposable
 	// re-stamping it Published. Set once OnReady has run its initial-load attempt, whether or not the
 	// file actually existed, so a later ready never retries it either.
 	private bool _initialDocLoadAttempted;
+	// M-16: guards the git-based lifecycle recovery in LoadFile (see ResolveInitialLifecycle) to only the
+	// FIRST document this process loads — whichever LoadFile call that turns out to be (the auto-loaded
+	// _initialDocPath on OnReady, or the author's first explicit "Open" if the app started with nothing to
+	// auto-load). Only THEN can the in-memory _state/_branch be stale relative to reality (a previous
+	// session's crash/restart left them unset while the repo's checkout moved on). Every later "Open"
+	// during the same running session already has an authoritative in-memory _state — this object tracked
+	// every Edit/Discard/Send for review itself — so consulting git again there would be wrong: the repo's
+	// single current checkout is a repo-wide, not a per-document, fact, and reusing it for a document
+	// opened mid-session (while a draft on a DIFFERENT document is in progress, or its publish is still
+	// resolving in the background) would misattribute someone else's checked-out branch to this one.
+	private bool _lifecycleResolvedOnce;
 	private readonly TimeSpan _autosaveIdle;
 	private readonly PreviewCoordinator _coordinator = new();
 	private readonly LogBridge _logBridge;
@@ -1880,16 +1891,30 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
-		// A freshly loaded document is always at Published — reset any in-progress draft so an
-		// autosave can never commit the newly opened file onto the previous document's branch.
+		// Reset any in-progress draft this HOST OBJECT remembers so an autosave can never commit the
+		// newly opened file onto some other, previously-open document's branch.
 		CancelAutosave();
 		string repoRoot = ResolveRepoRoot(path);
+		// M-16: the FIRST document loaded in this process cannot trust its own (virgin) in-memory
+		// _state — a previous session may have been force-quit / crashed / restarted mid-draft, leaving
+		// a working (draft) branch checked out on disk with no in-memory record of it. Always stamping
+		// Published here would lie to the author ("Published" while HEAD sits on a draft branch) and, if
+		// they then clicked "Edit", would drive BeginEdit's forced checkout against a state it thinks is
+		// fresh — silently resetting the very autosaved content this restores. Resolve that FIRST load's
+		// lifecycle from the repo's actual checked-out branch; every later "Open" this session already
+		// has an authoritative in-memory state of its own (see _lifecycleResolvedOnce).
+		(string state, string? branch, string? baseBranch) = _lifecycleResolvedOnce
+			? (Lifecycle.stateName(Lifecycle.State.Published), null, null)
+			: ResolveInitialLifecycle(repoRoot);
+		_lifecycleResolvedOnce = true;
 		lock (_sync)
 		{
-			_state = Lifecycle.stateName(Lifecycle.State.Published);
-			_branch = null;
-			_baseBranch = null;
-			// A newly loaded document carries no draft, so no saved / shared versions either.
+			_state = state;
+			_branch = branch;
+			_baseBranch = baseBranch;
+			// A newly loaded document carries no LOCAL record of saved / shared versions from a prior
+			// session (even when we just resumed a draft) — the counters only drive "Update review"'s
+			// no-op guard and a fresh session has nothing of its own to compare against yet.
 			_versionsSaved = 0;
 			_versionsShared = 0;
 			// Publish the document fields as one matched set under the lock, so a still-running autosave
@@ -1909,6 +1934,76 @@ public sealed class HostController : IDisposable
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text, DocRelativeDir())));
+
+		// M-16: the webview's own "doc loaded" handler always assumes a freshly loaded document is
+		// Published (there being no prior in-flight lifecycle to speak of, before this fix) and renders
+		// that chrome unconditionally. When this load actually resumed a draft left checked out from a
+		// previous session, that assumption is wrong — follow up with the real status so the resumed
+		// Draft (and its branch) actually reaches the UI, in the same order the author's own "Edit" click
+		// already does (DocLoaded is never emitted by Edit, only by a fresh load). Every ordinary load
+		// (Published — by far the common case) emits nothing extra here, matching prior behavior exactly.
+		if (state != Lifecycle.stateName(Lifecycle.State.Published))
+		{
+			SendLifecycleStatus();
+		}
+	}
+
+	// M-16: the lifecycle state / branch fields live only in this object's memory, so a restart (or
+	// opening a document this process never saw before) has nothing to remember from a previous
+	// session. Reconstruct the starting point from the repository's ACTUAL checked-out branch rather
+	// than always assuming Published: if HEAD is sitting on some branch other than the configured
+	// published base, a previous session began editing and never returned to Published (crash, force
+	// quit, or a restart mid-draft) — resume as Draft on that branch so the status bar reports reality
+	// and a later "Edit" click is correctly refused (Lifecycle.tryStep(Draft, "edit") is invalid) rather
+	// than re-running BeginEdit's forced checkout against a document it thinks has no draft yet. This
+	// only distinguishes Published vs. Draft — recovering directly into a review state (InReview /
+	// ChangesRequested / Approved) would need a GitHub read, which is exactly what a subsequent
+	// "refresh review status" (poll / focus) already performs once the state and branch here make the
+	// document eligible for it.
+	private (string State, string? Branch, string? BaseBranch) ResolveInitialLifecycle(string repoRoot)
+	{
+		string published = Lifecycle.stateName(Lifecycle.State.Published);
+		if (!IsRepoVersioned(repoRoot))
+		{
+			// Not (yet) a git working tree — nothing to resume from; matches the pre-existing behavior
+			// for a plain, unversioned file.
+			return (published, null, null);
+		}
+
+		string? currentBranch;
+		try
+		{
+			lock (_repoGate)
+			{
+				currentBranch = _versioning.CurrentBranch(repoRoot);
+			}
+		}
+		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+		{
+			// A corrupt/unreadable repo read must never block opening the document — fall back to the
+			// old, safe default rather than leaving the document unopenable.
+			_logger.LogWarning(ex, "Could not read the checked-out branch for {Root}; assuming Published", repoRoot);
+			return (published, null, null);
+		}
+
+		string? toml = WorkflowSeeds.TryReadRepoToml(repoRoot);
+		string baseBranch = WorkflowConfig.defaultBaseForHost(toml);
+		// R-01: `currentBranch is null` is the documented detached-HEAD signal (see IDocumentVersioning.
+		// CurrentBranch), but also reject libgit2's own "(no branch)" placeholder explicitly in case some
+		// future IDocumentVersioning implementation forwards it verbatim instead of translating it to
+		// null — either way there is no real branch name here to resume a draft onto or later store as
+		// _branch (which OnSaveVersion/OnDiscard would otherwise act on as if it were a real ref).
+		if (currentBranch is null or "(no branch)" || string.Equals(currentBranch, baseBranch, StringComparison.Ordinal))
+		{
+			// Detached HEAD (no friendly branch to resume onto), or HEAD is already on the published
+			// base — either way there is no draft left checked out to recover.
+			return (published, null, null);
+		}
+
+		_logger.LogInformation(
+			"Resuming a draft left checked out from a previous session: {Branch} (base {Base})",
+			currentBranch, baseBranch);
+		return (Lifecycle.stateName(Lifecycle.State.Draft), currentBranch, baseBranch);
 	}
 
 	private void OnImagePaste(IpcMessage message)

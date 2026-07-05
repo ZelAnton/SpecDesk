@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and reused stale. This also fixes several images pasted/dropped together — previously captured at
   the same position and applied in whatever order their host replies happened to arrive, so they could
   clobber one another; each now resolves to its own, independently tracked position.
+- `HostController.LoadFile` no longer always stamps a freshly opened document as Published. The
+  lifecycle state lived only in memory, so restarting mid-draft (crash, force quit, or a plain relaunch)
+  falsely reported "Published" even though the repository's working tree was still checked out on the
+  draft branch — and clicking "Edit" from that wrong state re-ran the forced checkout, silently
+  resetting whatever had been autosaved to disk before the restart. The very first document a process
+  loads now resolves its starting lifecycle from the repository's actual checked-out branch instead of
+  assuming memory is authoritative; every later "Open" during the same session is unaffected (this
+  object's own in-memory tracking already covers it). `LibGit2DocumentVersioning.CurrentBranch` also
+  now reports a detached HEAD as `null` instead of libgit2's own `"(no branch)"` placeholder, so the
+  first-load recovery above correctly resumes as Published on a detached HEAD rather than mistaking
+  `"(no branch)"` for a genuine draft branch to resume (and later store as the working branch).
 - `LogBridge.Export` now reports a plain-language message ("Could not export the log.") on failure
   instead of surfacing the raw exception text to the author.
 - `LogBridge.Receive` now strips embedded CR/LF sequences from the webview-supplied `Message`/`Data`

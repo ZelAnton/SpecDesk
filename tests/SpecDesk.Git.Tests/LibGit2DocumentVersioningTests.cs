@@ -1,3 +1,4 @@
+using LibGit2Sharp;
 using SpecDesk.Git;
 
 namespace SpecDesk.Git.Tests;
@@ -46,6 +47,28 @@ public sealed class LibGit2DocumentVersioningTests
             Assert.That(_versioning.IsVersioned(_repo), Is.True);
             Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("main"));
         });
+    }
+
+    // Regression test for R-01 (re-review): the fix translates libgit2's own detached-HEAD placeholder
+    // "(no branch)" to null in CurrentBranch (see the comment there), but nothing exercised the real
+    // LibGit2Sharp path — only FakeVersioning, which never calls this code at all. A revert of the
+    // `repo.Info.IsHeadDetached ? null : repo.Head.FriendlyName` line back to a bare
+    // `repo.Head.FriendlyName` would fabricate "(no branch)" again and this test would catch it (it would
+    // then assert Is.Null against "(no branch)" and fail).
+    [Test]
+    public void CurrentBranch_ReturnsNullWhenHeadIsDetached()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        string tipSha;
+        using (Repository repo = new(_repo))
+        {
+            tipSha = repo.Head.Tip.Sha;
+            // Checking out a raw SHA (rather than a branch name) detaches HEAD, exactly like an author
+            // (or a prior SpecDesk session) landing on a specific commit instead of a branch tip.
+            Commands.Checkout(repo, tipSha);
+        }
+
+        Assert.That(_versioning.CurrentBranch(_repo), Is.Null);
     }
 
     [Test]
