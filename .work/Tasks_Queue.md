@@ -5,7 +5,7 @@
 
 ## Серьёзные находки (Serious)
 
-### [T-004] Исправить S-04: запрос app:// с закодированным NUL валит процесс — статус: не начата
+### [T-004] Исправить S-04: запрос app:// с закодированным NUL валит процесс — статус: начала выполняться
 `src/SpecDesk.Host/AppAssetResolver.cs:34` декодирует `uri.AbsolutePath` (`%00` → `\0`), а `:51`
 передаёт результат в `Path.GetFullPath`, который бросает `ArgumentException` на встроенном null.
 `Program.cs:100-123` (`ServeAsset`) перехватывает только `IOException`/`UnauthorizedAccessException`,
