@@ -38,13 +38,27 @@ export const schema = new Schema({
     })
     .addToEnd("table_cell", {
       content: "inline*",
-      attrs: { header: { default: false } },
+      // `align` mirrors markdown-it's own column alignment (from the header separator row, e.g.
+      // `:---:`) — `null` for a plain `---` column (no explicit alignment), else "left"/"right"/"center".
+      // Every cell in a column carries the same value, matching markdown-it's own per-cell attrs (it
+      // stamps the identical style onto every row's `td`/`th` for that column, not just the header).
+      attrs: { header: { default: false }, align: { default: null } },
       isolating: true,
       parseDOM: [
-        { tag: "td", attrs: { header: false } },
-        { tag: "th", attrs: { header: true } },
+        {
+          tag: "td",
+          getAttrs: (dom) => ({ header: false, align: alignFromStyle(dom.getAttribute("style")) }),
+        },
+        {
+          tag: "th",
+          getAttrs: (dom) => ({ header: true, align: alignFromStyle(dom.getAttribute("style")) }),
+        },
       ],
-      toDOM: (node) => [node.attrs.header ? "th" : "td", 0],
+      toDOM: (node) => [
+        node.attrs.header ? "th" : "td",
+        node.attrs.align ? { style: `text-align:${node.attrs.align}` } : {},
+        0,
+      ],
     }),
   // CommonMark marks (em/strong/code/link) plus GFM strikethrough, so the formatting toolbar's
   // strikethrough button has a mark to toggle. Serializes back to `~~…~~`.
@@ -60,14 +74,27 @@ const tokenizer = new MarkdownIt("commonmark", { html: false })
   .enable("table")
   .enable("strikethrough");
 
+/** Extract "left"/"right"/"center" from a `style="text-align:…"` value, else `null`. markdown-it's
+ *  table plugin stamps this style onto a `th`/`td` token only for an explicitly aligned column
+ *  (`:---`/`---:`/`:---:`) — a plain `---` column carries no such attribute at all. */
+function alignFromStyle(style: string | null): string | null {
+  return /text-align:\s*(left|right|center)/.exec(style ?? "")?.[1] ?? null;
+}
+
 export const parser = new MarkdownParser(schema, tokenizer, {
   ...defaultMarkdownParser.tokens,
   table: { block: "table" },
   thead: { ignore: true },
   tbody: { ignore: true },
   tr: { block: "table_row" },
-  th: { block: "table_cell", getAttrs: () => ({ header: true }) },
-  td: { block: "table_cell", getAttrs: () => ({ header: false }) },
+  th: {
+    block: "table_cell",
+    getAttrs: (tok) => ({ header: true, align: alignFromStyle(tok.attrGet("style")) }),
+  },
+  td: {
+    block: "table_cell",
+    getAttrs: (tok) => ({ header: false, align: alignFromStyle(tok.attrGet("style")) }),
+  },
   s: { mark: "strikethrough" },
 });
 
@@ -80,6 +107,22 @@ function cellMarkdown(cell: PmNode): string {
     .replace(/\s*\n\s*/g, " ")
     .replace(/\|/g, "\\|")
     .trim();
+}
+
+/** The GFM separator-row marker for a column's alignment — `null`/anything else (no explicit
+ *  alignment) is a plain "---"; mirrors {@link alignFromStyle}'s three explicit values so a table's
+ *  alignment survives a round-trip through an edit instead of always collapsing to unaligned. */
+function alignMarker(align: unknown): string {
+  switch (align) {
+    case "left":
+      return ":---";
+    case "right":
+      return "---:";
+    case "center":
+      return ":---:";
+    default:
+      return "---";
+  }
 }
 
 export const serializer = new MarkdownSerializer(
@@ -103,7 +146,13 @@ export const serializer = new MarkdownSerializer(
         state.write(`| ${cells.join(" | ")} |`);
         if (rowIndex === 0) {
           state.ensureNewLine();
-          state.write(`| ${cells.map(() => "---").join(" | ")} |`);
+          // Every cell in a column carries the same `align` (see the table_cell attr comment) — read it
+          // straight off this header row rather than needing a separate per-column lookup.
+          const aligns: string[] = [];
+          row.forEach((cell) => {
+            aligns.push(alignMarker(cell.attrs.align));
+          });
+          state.write(`| ${aligns.join(" | ")} |`);
         }
       });
       state.closeBlock(node);

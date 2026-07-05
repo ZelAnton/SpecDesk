@@ -97,6 +97,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it into a plain inline link and dropping unused definitions entirely. The fallback now re-appends
   whatever such non-node content the original file had, verbatim, as a trailing section, so a definition
   survives the fallback (repositioned to the end of the file) instead of disappearing.
+- Fixing a typo in a table cell in the formatted (WYSIWYG) view rewrote the whole table with no column
+  alignment at all, even when the original had one (e.g. a right-aligned numbers column). The schema
+  had nowhere to keep a column's GFM alignment (`:---`, `---:`, `:---:`), so re-serializing an edited
+  table always emitted a plain `---` separator regardless of what the source had. `table_cell` now
+  carries an `align` attribute (parsed from markdown-it's own per-column `text-align` style), and the
+  table serializer writes the matching separator marker back, so a text-only cell edit no longer
+  strips the table's alignment.
 
 ## [0.1.0] - 2026-07-04
 
