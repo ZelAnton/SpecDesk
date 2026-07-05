@@ -51,6 +51,28 @@
   Contracts 7). Открытых R-записей нет — детальное ревью закрыто по всем трём
   задачам. Можно продолжать (чекпоинт с push).
 
+### [SUMMARY-R-2026-07-05 05:20] Итог ревью задачи — статус: готово к следующей задаче
+- Активная задача: [T-004] Исправить S-04: запрос app:// с закодированным NUL валит процесс
+- Прогонов выполнено: 2
+- Открытых проблем: 0
+- Вывод: все критерии готовности выполнены двухслойной защитой. (1) `AppAssetResolver.ResolveRelative`
+  отбраковывает путь с недопустимыми символами (встроенный NUL из `%00`) через
+  `Path.GetInvalidPathChars()` ДО вызова `Path.GetFullPath`, устраняя `ArgumentException` в источнике;
+  containment- и reparse-проверки не затронуты (проверка `../`-траверсала и percent-encoded траверсала
+  по-прежнему проходит). (2) `Program.ServeAsset` (нативный WebView2-колбэк) стал `internal` для
+  тестируемости и получил catch-all `catch (Exception)`, который логирует через `Serilog.Log.Error` и
+  падает в тот же broken-resource ответ (`Stream.Null` + `text/plain`), гарантируя, что никакое
+  исключение не уйдёт в message pump независимо от причины. Порядок catch-клауз корректен
+  (фильтр IOException/UnauthorizedAccessException раньше общего), `out contentType` присваивается на всех
+  путях, поведение File.OpenRead-ошибок сохранено. Запрос `app://repo/a%00.png` возвращает безопасный
+  broken-resource ответ, а не валит процесс. Добавлены тесты на некорректные символы пути
+  (`Resolve_PercentEncodedNul_...`, `ResolveRelative_EmbeddedNul_...`) и на инвариант "ServeAsset никогда
+  не бросает наружу" (`ProgramServeAssetTests`: адверсариальные/отсутствующие входы + happy path);
+  `InternalsVisibleTo` для доступа к internal-методу присутствует, `Program` доступен из
+  `SpecDesk.Host.Tests` по вложенности пространств имён. Cross-language parity-тест (`ContainmentParityTests`)
+  не затронут — он проверяет `IsInside`, а не `ResolveRelative`. Запись добавлена в `CHANGELOG.md`
+  (`## [Unreleased]` → `### Fixed`). Новых серьёзных проблем не найдено. Можно переходить к следующей задаче.
+
 ### [SUMMARY-R-2026-07-05 04:56] Итог ревью задачи — статус: готово к следующей задаче
 - Активная задача: [T-003] Исправить S-03: принудительный checkout в BeginEdit уничтожает
   автосохранённую работу другого документа

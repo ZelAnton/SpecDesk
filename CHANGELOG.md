@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still uncommitted on its own branch silently discarded A's unsaved work. Resuming the same
   document/branch is unaffected. The host now surfaces a plain-language error ("Another document has
   unsaved changes...") instead of losing the draft.
+- `app://` asset requests containing an embedded NUL byte (e.g. a spec with `![x](a%00.png)`, which
+  renders to `app://repo/a%00.png`) no longer crash the process. `AppAssetResolver` now rejects invalid
+  path characters up front instead of letting `Path.GetFullPath` throw; `Program.ServeAsset` (the native
+  WebView2 callback) also gained a catch-all safety net, so no exception can escape into the message
+  pump regardless of cause — both fall back to the existing broken-resource response.
 
 ## [0.1.0] - 2026-07-04
 

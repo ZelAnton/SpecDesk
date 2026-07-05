@@ -70,6 +70,23 @@ public sealed class AppAssetResolverTests
 		Assert.That(AppAssetResolver.Resolve(Root, url), Is.Null);
 	}
 
+	// A percent-encoded NUL (as in `![x](a%00.png)` rendered to `app://repo/a%00.png`) decodes to an
+	// embedded '\0'. Path.GetFullPath throws ArgumentException on that rather than returning a path;
+	// the resolver must reject it up front instead of letting that exception escape.
+	[Test]
+	public void Resolve_PercentEncodedNul_ReturnsNullInsteadOfThrowing()
+	{
+		Assert.That(() => AppAssetResolver.Resolve(Root, "app://repo/a%00.png"), Throws.Nothing);
+		Assert.That(AppAssetResolver.Resolve(Root, "app://repo/a%00.png"), Is.Null);
+	}
+
+	[Test]
+	public void ResolveRelative_EmbeddedNul_ReturnsNullInsteadOfThrowing()
+	{
+		Assert.That(() => AppAssetResolver.ResolveRelative(Root, "a\0.png"), Throws.Nothing);
+		Assert.That(AppAssetResolver.ResolveRelative(Root, "a\0.png"), Is.Null);
+	}
+
 	[TestCase("not-a-url")]
 	[TestCase("relative/only.png")]
 	public void Resolve_NonAbsoluteOrGarbageUrl_ReturnsNull(string url)

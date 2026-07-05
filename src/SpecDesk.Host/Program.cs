@@ -96,25 +96,35 @@ internal static class Program
 	// Serve files referenced as app://<authority>/<path> from the current repo root. A rejected
 	// (traversal), missing, or unreadable file — or no open document yet — returns Stream.Null, so
 	// the resource simply fails to load. This runs as a native WebView2 callback, so it must never
-	// let an exception escape into the message pump.
-	private static Stream ServeAsset(string? root, string url, out string contentType)
+	// let an exception escape into the message pump. Internal (rather than private) so tests can
+	// drive it directly — this is the one method actually responsible for that invariant.
+	internal static Stream ServeAsset(string? root, string url, out string contentType)
 	{
 		if (!string.IsNullOrEmpty(root))
 		{
-			ResolvedAsset? asset = AppAssetResolver.Resolve(root, url);
-			if (asset is not null)
+			try
 			{
-				try
+				ResolvedAsset? asset = AppAssetResolver.Resolve(root, url);
+				if (asset is not null)
 				{
 					Stream stream = File.OpenRead(asset.FilePath);
 					contentType = asset.ContentType;
 					return stream;
 				}
-				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-				{
-					// File vanished between resolution and open (TOCTOU), is locked, or is not
-					// readable. Fall through to the broken-resource response below.
-				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// File vanished between resolution and open (TOCTOU), is locked, or is not
+				// readable. Fall through to the broken-resource response below.
+			}
+			catch (Exception ex)
+			{
+				// This callback runs inside a native WebView2 P/Invoke, so per the comment above an
+				// exception must never escape into the message pump — regardless of cause. Everything
+				// expected is handled above; anything else reaching here is a bug, so log it (rather
+				// than silently swallow it) before still falling through to the broken-resource
+				// response, exactly like every other rejection this method makes.
+				Serilog.Log.Error(ex, "Unexpected failure serving app:// asset {Url}", url);
 			}
 		}
 

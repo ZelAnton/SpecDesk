@@ -47,6 +47,16 @@ public static class AppAssetResolver
 			return null;
 		}
 
+		// A decoded request (e.g. `app://repo/a%00.png`, which Uri.UnescapeDataString turns into an
+		// embedded NUL) can contain characters Path.GetFullPath below does not accept — it throws
+		// ArgumentException on them rather than returning a path, which is not "safe by construction"
+		// the way the containment check is. Reject up front instead: an invalid path is exactly as
+		// unservable as one that escapes the root, so this is a rejection, not a special case.
+		if (relative.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+		{
+			return null;
+		}
+
 		string rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 		string candidate = Path.GetFullPath(Path.Combine(rootFull, relative));
 		if (!IsInside(rootFull, candidate))
