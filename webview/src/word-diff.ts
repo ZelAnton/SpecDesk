@@ -33,6 +33,14 @@ function tokenize(s: string): string[] {
   return s.match(/\s+|\S+/g) ?? [];
 }
 
+/** Above this LCS-table cell count (token count, not raw chars) the O(tokens²) table is too expensive to
+ *  allocate/fill even when the strings look small in raw characters — e.g. an alternating "x x x x..."
+ *  pattern turns a modest-length string into thousands of single-character tokens, so a char-length cap
+ *  alone (the caller's whole-block-size guard) does not bound the real cost. Reports a full-rewrite
+ *  result (empty ops, changeRatio 1) so callers threshold it into the same whole-block wash as any other
+ *  too-large diff, without ever allocating the table. */
+const MAX_LCS_CELLS = 4_000_000;
+
 /**
  * Word-level diff of base→head via a token LCS. Returns the head-coordinate ops plus a change ratio the
  * caller can threshold (a near-total rewrite is better shown as a whole-block wash than word confetti).
@@ -42,6 +50,10 @@ export function wordDiff(base: string, head: string): WordDiff {
   const b = tokenize(head);
   const m = a.length;
   const n = b.length;
+
+  if ((m + 1) * (n + 1) > MAX_LCS_CELLS) {
+    return { ops: [], changeRatio: 1 };
+  }
 
   // LCS length table over token equality, as a flat (m+1)·(n+1) array (strict-index friendly).
   const width = n + 1;
@@ -103,7 +115,6 @@ export function wordDiff(base: string, head: string): WordDiff {
     headPos += tb.length;
     j++;
   }
-  flushDel();
 
   const total = base.length + head.length;
   const changeRatio = total === 0 ? 0 : (addedChars + deletedChars) / total;

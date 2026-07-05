@@ -46,4 +46,21 @@ describe("wordDiff", () => {
     );
     expect(d.changeRatio).toBeLessThan(0.5);
   });
+
+  it("bails out on the token-count guard for a pathological alternating input, instead of building the huge LCS table", () => {
+    // "x x x x ... " tokenizes into one single-character token per "x" plus one per separating space, so
+    // a string that is short in raw characters still explodes into thousands of tokens (M-25's worst
+    // case) — a char-length cap alone would let this through and allocate/fill an O(tokens²) table.
+    const base = "x ".repeat(3000);
+    const head = "y ".repeat(3000);
+    const start = Date.now();
+    const d = wordDiff(base, head);
+    const elapsedMs = Date.now() - start;
+
+    // The guard reports a full-rewrite result (forcing the caller's whole-block wash) without ever
+    // allocating the (m+1)*(n+1) table, so this returns near-instantly regardless of machine speed.
+    expect(elapsedMs).toBeLessThan(1000);
+    expect(d.ops.length).toBe(0);
+    expect(d.changeRatio).toBe(1);
+  });
 });

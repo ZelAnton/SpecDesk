@@ -238,6 +238,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first time closing begins; `OnUiThread` abandons the wait (returning as if cancelled) once that grace
   period elapses instead of hanging indefinitely, while a dialog still in flight when closing starts
   keeps its normal, unbounded wait until then.
+- `wordDiff`'s (webview) pathological-input guard now caps the actual LCS-table cost (the product of
+  token counts), not just raw character length: an adversarial input alternating single-character tokens
+  and whitespace (e.g. "x x x x...") could turn a modest-length string into thousands of tokens, blowing
+  past the char-length cap and allocating/filling a many-million-cell table. Also removed an unreachable
+  second `flushDel()` call left over from an earlier refactor, which recomputed nothing but was dead code.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
