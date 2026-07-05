@@ -43,15 +43,23 @@ public sealed class LogBridge
 			_ => LogLevel.Debug,
 		};
 
+		string message = SanitizeForLog(payload.Message);
 		if (payload.Data is null)
 		{
-			_logger.Log(level, "[webview] {Message}", payload.Message);
+			_logger.Log(level, "[webview] {Message}", message);
 		}
 		else
 		{
-			_logger.Log(level, "[webview] {Message} {Data}", payload.Message, payload.Data);
+			_logger.Log(level, "[webview] {Message} {Data}", message, SanitizeForLog(payload.Data));
 		}
 	}
+
+	/// <summary>Strip line breaks from an untrusted webview-supplied field before it reaches the log
+	/// template, so a payload cannot forge extra log entries by embedding CR/LF sequences.</summary>
+	private static string SanitizeForLog(string value) =>
+		value.Replace("\r\n", " ", StringComparison.Ordinal)
+			.Replace('\r', ' ')
+			.Replace('\n', ' ');
 
 	/// <summary>Offer to save the current log file elsewhere. Reports the outcome (cancelled / exported /
 	/// failed) via the notify callback. This also exercises the save dialog, whose exception (if any) the

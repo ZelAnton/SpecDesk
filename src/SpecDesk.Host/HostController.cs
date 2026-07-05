@@ -1750,8 +1750,11 @@ public sealed class HostController : IDisposable
 				{
 					// The author dismissed the sign-in. AwaitAuthorizationAsync folds our own cancellation
 					// into TimedOut (it never throws once polling), so check the token here and fall back to
-					// the signed-out affordance rather than showing the "code expired" message.
-					SendCurrentAccount();
+					// the signed-out affordance rather than showing the "code expired" message. But only if
+					// this is still the current flow: a newer sign-in may have already replaced _signInCts (it
+					// cancels the previous flow's token as part of starting), and this stale flow's fallback
+					// must not close the newer flow's device-code prompt.
+					EmitSignedOutIfStillCurrent(cts);
 				}
 				else if (result.Outcome == SignInOutcome.Authorized)
 				{
@@ -1765,8 +1768,9 @@ public sealed class HostController : IDisposable
 			catch (OperationCanceledException) when (token.IsCancellationRequested)
 			{
 				// Cancelled during the up-front device-code request (StartSignInAsync still throws on cancel,
-				// unlike the poll) — fall back to the signed-out affordance.
-				SendCurrentAccount();
+				// unlike the poll) — fall back to the signed-out affordance, but only if a newer flow hasn't
+				// already replaced this one (see the comment above).
+				EmitSignedOutIfStillCurrent(cts);
 			}
 			catch (Exception ex)
 			{
@@ -1796,6 +1800,24 @@ public sealed class HostController : IDisposable
 		lock (_sync)
 		{
 			_signInCts?.Cancel();
+		}
+	}
+
+	// The cancelled-flow fallback for OnGitHubSignIn: emit the signed-out affordance only if this flow's
+	// cts is still the current one. A newer sign-in replaces _signInCts before cancelling the previous
+	// token, so a stale flow unwinding after that replacement must stay quiet rather than clobber the
+	// newer flow's device-code prompt with an unrelated "signed out" frame.
+	private void EmitSignedOutIfStillCurrent(CancellationTokenSource cts)
+	{
+		bool stillCurrent;
+		lock (_sync)
+		{
+			stillCurrent = ReferenceEquals(_signInCts, cts);
+		}
+
+		if (stillCurrent)
+		{
+			SendCurrentAccount();
 		}
 	}
 
