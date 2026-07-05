@@ -202,6 +202,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded by a dedicated marker file, written last via a temp file + atomic rename, and re-seeding is
   gated on that marker (or an already-versioned repo) instead of `welcome.md` alone, so an interrupted
   copy is retried in full on the next launch.
+- `PhotinoFileDialogs.OnUiThread` (`Program.cs`) could block its calling thread forever: Photino's
+  native `Invoke()` blocks on an untimed condition variable and never checks whether its `PostMessage`
+  actually reached a still-alive window, so a window torn down between the check and the post left
+  nothing to ever wake the wait. The window's closing handler now arms a short (2s) grace period the
+  first time closing begins; `OnUiThread` abandons the wait (returning as if cancelled) once that grace
+  period elapses instead of hanging indefinitely, while a dialog still in flight when closing starts
+  keeps its normal, unbounded wait until then.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

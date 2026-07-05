@@ -15,6 +15,16 @@ internal static class Program
 	private static readonly string BundledSamples =
 		Path.Combine(AppContext.BaseDirectory, "samples");
 
+	// Photino's native Invoke() (Photino.Windows.cpp: PostMessage + an untimed condition-variable
+	// wait) gives no guarantee that a posted callback still runs — or even that the caller is ever
+	// woken — once the window starts tearing down; a PostMessage racing DestroyWindow can silently
+	// fail and the calling thread then blocks forever (see PhotinoFileDialogs.OnUiThread below).
+	// Rather than a blind timeout that could cut off a legitimate, arbitrarily long modal dialog
+	// while the window is still open, RegisterWindowClosingHandler arms this grace period only once
+	// closing has actually begun: any dialog already in flight gets a fair chance to finish, and
+	// anything that never completes is abandoned instead of hanging forever.
+	private static readonly TimeSpan DialogClosingGrace = TimeSpan.FromSeconds(2);
+
 	[STAThread]
 	private static void Main()
 	{
@@ -44,6 +54,11 @@ internal static class Program
 			? id
 			: GitHubAuthOptions.DefaultClientId;
 		using HttpClient gitHubHttp = new();
+
+		// Cancelled (with the grace period above) once the window starts closing; see
+		// PhotinoFileDialogs.OnUiThread for how this bounds the native Invoke() race.
+		using CancellationTokenSource dialogClosingCts = new();
+
 		IGitHubAuth? gitHubAuth = gitHubClientId.Length > 0
 			? new GitHubDeviceFlowAuth(
 				GitHubAuthOptions.ForClient(gitHubClientId),
@@ -59,7 +74,10 @@ internal static class Program
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
 			// call from the background render task as well as from the message handler.
 			send: json => window!.SendWebMessage(json),
-			dialogs: new PhotinoFileDialogs(() => window!, loggerFactory.CreateLogger("SpecDesk.Host.Dialogs")),
+			dialogs: new PhotinoFileDialogs(
+				() => window!,
+				loggerFactory.CreateLogger("SpecDesk.Host.Dialogs"),
+				dialogClosingCts.Token),
 			inserter: new ImageInsertAdapter(loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine")).Insert,
 			versioning: versioning,
 			logger: loggerFactory.CreateLogger<HostController>(),
@@ -76,6 +94,14 @@ internal static class Program
 			.SetUseOsDefaultSize(false)
 			.SetSize(1280, 800)
 			.Center()
+			// Fires synchronously on the UI thread as soon as WM_CLOSE is dispatched, ahead of the
+			// native window (and its message queue) being torn down — see DialogClosingGrace above.
+			// Never veto the close; this only arms the grace period for in-flight dialogs.
+			.RegisterWindowClosingHandler((_, _) =>
+			{
+				dialogClosingCts.CancelAfter(DialogClosingGrace);
+				return false;
+			})
 			// Custom scheme handlers must be registered before the page loads. The asset root
 			// follows the open document's repo (null until the first document loads).
 			.RegisterCustomSchemeHandler(
@@ -134,7 +160,8 @@ internal static class Program
 }
 
 /// <summary>Photino-backed native file pickers for <see cref="HostController"/>.</summary>
-internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger logger) : IFileDialogs
+internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger logger, CancellationToken closing)
+	: IFileDialogs
 {
 	private static readonly (string Name, string[] Extensions)[] Filters =
 	[
@@ -182,6 +209,31 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger log
 				completion.SetResult(null);
 			}
 		});
-		return completion.Task.GetAwaiter().GetResult();
+		return WaitOrAbandon(completion.Task, name, logger, closing);
+	}
+
+	// Photino's native Invoke() (Photino.Windows.cpp) blocks the calling thread on an untimed
+	// condition variable and never checks whether its PostMessage actually reached a still-alive
+	// window; if the window is destroyed first, the posted callback never runs and the wait above
+	// would otherwise never return. `closing` is cancelled — after a short grace period, so an
+	// already in-flight dialog still gets to finish — once the window starts tearing down (see
+	// Program.DialogClosingGrace / RegisterWindowClosingHandler), so this abandons the wait instead
+	// of blocking forever. Internal so it can be unit-tested without a real native window.
+	internal static string? WaitOrAbandon(
+		Task<string?> completion, string name, ILogger logger, CancellationToken closing)
+	{
+		try
+		{
+			completion.Wait(closing);
+		}
+		catch (OperationCanceledException)
+		{
+			// The window is closing and the native callback never signalled completion in time.
+			// Whatever result eventually arrives (if ever) is simply discarded.
+			logger.LogWarning(
+				"Native dialog {Dialog} abandoned: window is closing and Invoke never completed", name);
+			return null;
+		}
+		return completion.GetAwaiter().GetResult();
 	}
 }
