@@ -74,6 +74,12 @@ public sealed class HostController : IDisposable
 	private readonly IGitHubReview? _review;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
+	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
+	// re-fires "ready", and without this latch OnReady would reload _initialDocPath from disk again —
+	// discarding whatever document the author has since opened (and any in-progress draft on it) and
+	// re-stamping it Published. Set once OnReady has run its initial-load attempt, whether or not the
+	// file actually existed, so a later ready never retries it either.
+	private bool _initialDocLoadAttempted;
 	private readonly TimeSpan _autosaveIdle;
 	private readonly PreviewCoordinator _coordinator = new();
 	private readonly LogBridge _logBridge;
@@ -346,9 +352,14 @@ public sealed class HostController : IDisposable
 
 	private void OnReady()
 	{
-		if (_initialDocPath is not null && File.Exists(_initialDocPath))
+		// Only the first "ready" may auto-load the initial document — see _initialDocLoadAttempted.
+		if (!_initialDocLoadAttempted)
 		{
-			LoadFile(_initialDocPath);
+			_initialDocLoadAttempted = true;
+			if (_initialDocPath is not null && File.Exists(_initialDocPath))
+			{
+				LoadFile(_initialDocPath);
+			}
 		}
 
 		// Tell the webview the current GitHub connection so it can render (or hide) the account affordance.

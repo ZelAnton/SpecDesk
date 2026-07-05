@@ -202,6 +202,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded by a dedicated marker file, written last via a temp file + atomic rename, and re-seeding is
   gated on that marker (or an already-versioned repo) instead of `welcome.md` alone, so an interrupted
   copy is retried in full on the next launch.
+- `OnReady` reloaded `_initialDocPath` from disk on every "ready" event, not just the first. A WebView2
+  recovery or a page reload re-fires "ready", so this could silently switch the author away from the
+  document they currently had open (discarding any in-progress draft on it) and re-stamp the reloaded
+  file back to Published. "Ready" now only auto-loads the initial document once.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
