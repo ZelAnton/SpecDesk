@@ -61,6 +61,12 @@ export class ReviewsPanel {
       if (this.panel && !this.panel.hidden) {
         this.render(payload);
       }
+    } catch {
+      // The host query rejected (correlation timeout, transport failure, etc.) — fall back to an error state
+      // instead of leaving the panel stuck on "Loading your reviews…" forever.
+      if (this.panel && !this.panel.hidden) {
+        setText(this.status, "Couldn't load your reviews. Try again later.");
+      }
     } finally {
       this.loading = false;
     }
