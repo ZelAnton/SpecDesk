@@ -97,6 +97,45 @@ public sealed class HostController : IDisposable
 	private Timer? _autosaveTimer;
 	private bool _dirty;
 
+	// Monotonic "which repo checkout is this" token. Bumped only under _repoGate, immediately after a
+	// repo mutation that changes what is checked out (BeginEdit in OnEdit; Discard in OnDiscard) —
+	// never under _sync alone, and never in CancelAutosave (called by both, but before either's
+	// checkout — bumping there would be observable together with _text/_state that haven't caught up).
+	// Read with Interlocked from RunDiskAutosave's re-check, which runs while holding _repoGate itself:
+	// _repoGate must never be held while also taking _sync (see the _repoGate comment below), so that
+	// re-check cannot take _sync to read _text/_state freshly — it can only compare against this counter.
+	//
+	// That comparison is only meaningful if the snapshot's captured "generation" reflects the checkout
+	// _text was actually written against — NOT whatever this live counter happens to read at snapshot
+	// time. Between a checkout's bump (still holding _repoGate) and _text catching up under a LATER,
+	// separate _sync block (e.g. OnDiscard re-reading the reverted file — I/O — before resetting _text),
+	// this counter has already moved even though _text has not. A snapshot landing in that window would,
+	// if it captured this field directly, carry the NEW generation paired with the OLD text — a torn
+	// pair whose later re-check trivially matches. See _textGeneration below for the companion field
+	// that closes this, and RunDiskAutosave for how the two are used together.
+	private long _draftGeneration;
+
+	// _sync-guarded companion to _draftGeneration: set to whatever _draftGeneration currently reads,
+	// in the SAME _sync critical section as every assignment to _text (OnEditorChanged, LoadFile,
+	// OnDiscard's post-revert reset). RunDiskAutosave's snapshot captures THIS field (under _sync,
+	// alongside text/path) as its "generation" — not _draftGeneration directly — so the captured value
+	// always reflects the checkout _text was current for, never a checkout whose bump has landed but
+	// whose _text update has not. Any checkout that happens after _text was last written (i.e. any
+	// _repoGate-scoped bump to _draftGeneration since) leaves _textGeneration strictly behind — so
+	// RunDiskAutosave's later re-check (comparing the captured value against the LIVE _draftGeneration
+	// inside _repoGate) reports a mismatch regardless of exactly when, during the checkout's repoGate
+	// section, the snapshot was taken. This is what actually closes the window a snapshot that read
+	// _draftGeneration directly could not: the two fields change together under _sync, so a snapshot can
+	// never observe "new checkout, old text" — only "old checkout, old text" (correctly stale) or "new
+	// checkout, new text" (also filtered by IsEditingState(), since a fresh checkout via BeginEdit
+	// changes _state, and OnDiscard's reset sets it to Published).
+	//
+	// A plain "open a different document" (LoadFile without a Discard or BeginEdit) does not bump
+	// _draftGeneration at all: it never touches the checked-out branch, so a late write for the document
+	// it replaces still lands, correctly, on that document's own unchanged branch; LoadFile still updates
+	// _textGeneration alongside _text there, consistent with every other assignment site.
+	private long _textGeneration;
+
 	// Monotonic count of versions committed on the current draft ("Save a version"), and how many of
 	// those have been pushed to an open review. Guarded by _sync; both reset when the draft changes (begin
 	// edit / open a document / discard). "Has versions not yet shared" ⟺ _versionsSaved > _versionsShared —
@@ -324,9 +363,13 @@ public sealed class HostController : IDisposable
 		string text = payload.Text;
 		// Publish _text under _sync so the autosave timer's _sync snapshot sees it consistently with
 		// _currentPath (the two must stay a matched pair, or autosave could write across documents).
+		// _textGeneration tags this text with the checkout it was written against — see its field
+		// comment — so a later disk-autosave snapshot of this text carries a generation that a stale
+		// re-check can actually compare against.
 		lock (_sync)
 		{
 			_text = text;
+			_textGeneration = Interlocked.Read(ref _draftGeneration);
 		}
 
 		string docDir = DocRelativeDir();
@@ -478,6 +521,13 @@ public sealed class HostController : IDisposable
 			lock (_repoGate)
 			{
 				session = _versioning.BeginEdit(_repoRoot, branchName, baseBranch);
+				// Bump while STILL holding _repoGate, immediately after the checkout succeeds — not
+				// later, under _sync alone (see the _draftGeneration field comment). A disk-autosave
+				// callback from a just-discarded draft on this same document could still be queued for
+				// this very gate; bumping here guarantees that by the time it is able to enter _repoGate
+				// itself, the generation has already changed, regardless of when its (path, text)
+				// snapshot was taken.
+				Interlocked.Increment(ref _draftGeneration);
 			}
 
 			lock (_sync)
@@ -542,23 +592,59 @@ public sealed class HostController : IDisposable
 			return;
 		}
 
+		string repoRoot = _repoRoot;
+		string path = _currentPath;
+
 		try
 		{
 			CancelAutosave();
+
+			// Deliberately NOT calling LoadFile here: it re-reads the file and resets _text/_state in a
+			// LATER, separate lock(_sync) block, after ResolveRepoRoot. Reading the reverted content
+			// while still holding _repoGate (right here) means the read that _text below is set from is
+			// never racing a second, independent disk read.
+			string revertedText;
 			lock (_repoGate)
 			{
-				_versioning.Discard(_repoRoot, branch, baseBranch);
+				_versioning.Discard(repoRoot, branch, baseBranch);
+				// Bump before the read: even if the read below throws, the revert already happened, so
+				// a queued autosave must not be allowed to treat its stale snapshot as still current.
+				Interlocked.Increment(ref _draftGeneration);
+				revertedText = File.ReadAllText(path);
+			}
+
+			lock (_sync)
+			{
+				_state = Lifecycle.stateName(Lifecycle.State.Published);
+				_branch = null;
+				_baseBranch = null;
+				// A discarded draft leaves nothing saved or shared.
+				_versionsSaved = 0;
+				_versionsShared = 0;
+				_text = revertedText;
+				// Tag with the (already bumped, above) checkout _text is now current for — see the
+				// _textGeneration field comment for why RunDiskAutosave's snapshot must capture this
+				// companion rather than _draftGeneration directly.
+				_textGeneration = Interlocked.Read(ref _draftGeneration);
 			}
 
 			_logger.LogInformation("Discarded draft on {Branch}", branch);
-			// LoadFile resets the lifecycle to Published and re-reads the now-reverted document.
-			LoadFile(_currentPath);
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.DocLoaded,
+				new DocLoadedPayload(path, revertedText, DocRelativeDir())));
 			SendLifecycleStatus();
 		}
 		catch (LibGit2SharpException ex)
 		{
 			_logger.LogError(ex, "Could not discard draft");
 			SendError("Could not discard your draft.");
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// The revert itself succeeded (this only runs after _versioning.Discard returned); only the
+			// immediate re-read of the reverted file failed (vanished, locked, unreadable).
+			_logger.LogError(ex, "Discarded draft on {Branch}, but could not reload {Path}", branch, path);
+			SendError("Discarded your draft, but could not reload the file.");
 		}
 	}
 
@@ -607,11 +693,14 @@ public sealed class HostController : IDisposable
 
 	// Write the in-memory text to disk so a quiet moment never loses the author's typing. This is
 	// purely a disk save — it does NOT commit (committing is the explicit "Save a version") and does
-	// NOT clear the dirty flag. Runs on the timer thread, so it must not throw.
-	private void RunDiskAutosave()
+	// NOT clear the dirty flag. Runs on the timer thread, so it must not throw. Internal (rather than
+	// private) so a test can invoke it directly, decoupled from the real Timer, to deterministically
+	// reproduce the race with a concurrent Discard this method's generation re-check guards against.
+	internal void RunDiskAutosave()
 	{
 		string text;
 		string path;
+		long generation;
 		lock (_sync)
 		{
 			if (_repoRoot is null || _currentPath is null || !IsEditingState())
@@ -623,6 +712,10 @@ public sealed class HostController : IDisposable
 			_autosaveTimer = null;
 			text = _text;
 			path = _currentPath;
+			// Capture _textGeneration (the checkout this text was written against), NOT a live read of
+			// _draftGeneration here — see the _textGeneration field comment for why the two can briefly
+			// disagree, and why only the former is safe to compare against later.
+			generation = _textGeneration;
 		}
 
 		// Outer net: this runs on the Timer thread, which has no last-resort catch of its own (unlike the
@@ -636,6 +729,22 @@ public sealed class HostController : IDisposable
 				// working tree, and writing the file mid-stage would race it.
 				lock (_repoGate)
 				{
+					// Re-check the draft's identity immediately before writing: this callback may have
+					// been queued waiting for _repoGate while Discard (or a new Edit) ran and released it
+					// first, in which case the snapshot above is for a draft that no longer exists — write
+					// it now and it resurrects discarded content on the (now different) checked-out
+					// branch. Lock-free by design: _repoGate must never be held while also taking _sync.
+					// Comparing against the LIVE _draftGeneration (not _textGeneration, which is what the
+					// snapshot captured) is deliberate: it is the authoritative value a checkout's own
+					// _repoGate section bumps, so it is guaranteed current here regardless of whether that
+					// checkout's later _sync-guarded _text update has happened yet.
+					if (Interlocked.Read(ref _draftGeneration) != generation)
+					{
+						_logger.LogDebug(
+							"Disk autosave for {Path} skipped: the draft changed while this write was queued", path);
+						return;
+					}
+
 					File.WriteAllText(path, text);
 				}
 
@@ -1487,6 +1596,12 @@ public sealed class HostController : IDisposable
 			_autosaveTimer?.Dispose();
 			_autosaveTimer = null;
 			_dirty = false;
+			// Deliberately does NOT bump _draftGeneration: this runs before the repoGate-guarded repo
+			// mutation (Discard) or before BeginEdit's checkout, well before _text is reset to match.
+			// Bumping here would let a snapshot taken in the resulting gap capture the ALREADY-bumped
+			// generation together with the STILL-stale _text — a torn pair that would then pass its own
+			// later re-check. See OnDiscard/OnEdit: the generation bumps exactly where the repo mutation
+			// and the _text reset are closest together, not here.
 		}
 	}
 
@@ -1696,6 +1811,9 @@ public sealed class HostController : IDisposable
 			_text = text;
 			_currentPath = path;
 			_repoRoot = repoRoot;
+			// See the _textGeneration field comment: kept consistent with every other _text assignment
+			// site, even though a plain document load never bumps _draftGeneration itself.
+			_textGeneration = Interlocked.Read(ref _draftGeneration);
 		}
 
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);

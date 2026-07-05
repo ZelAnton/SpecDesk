@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path characters up front instead of letting `Path.GetFullPath` throw; `Program.ServeAsset` (the native
   WebView2 callback) also gained a catch-all safety net, so no exception can escape into the message
   pump regardless of cause — both fall back to the existing broken-resource response.
+- Disk autosave (`HostController.RunDiskAutosave`) could resurrect a just-discarded draft as an
+  uncommitted change on the published branch: it snapshots `(path, text)` under `_sync`, then writes
+  under `_repoGate` without re-checking anything, and `Timer.Dispose()` does not wait for an
+  already-firing callback. If that callback was queued behind `_repoGate` (e.g. an image insert
+  holding it) while "Discard" ran and released the gate first, the queued write landed after Discard's
+  revert. A monotonic `_draftGeneration` token, bumped under `_repoGate` immediately after a checkout
+  (`OnEdit`/`OnDiscard`), is now re-checked against a `_textGeneration` companion tag — carried
+  alongside `_text` and updated in the same `_sync` block every time `_text` is assigned — instead of
+  against a live read of the counter. A live read could already reflect a checkout's bump before that
+  checkout's own later `_text` update had caught up, letting a snapshot taken in that gap slip through
+  with stale text; tagging the snapshot with the generation `_text` was actually written against closes
+  that regardless of timing. `OnDiscard` also no longer detours through a separate `LoadFile` call —
+  reading the reverted file while still holding `_repoGate` keeps that read from racing anything.
 
 ## [0.1.0] - 2026-07-04
 
