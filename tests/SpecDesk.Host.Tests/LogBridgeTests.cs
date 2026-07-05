@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using SpecDesk.Contracts;
 
 namespace SpecDesk.Host.Tests;
 
@@ -12,6 +14,23 @@ public sealed class LogBridgeTests
         public string? PickOpenFile() => null;
 
         public string? PickSaveFile(string? suggestedPath) => SaveTarget;
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Lines { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Lines.Add(formatter(state, exception));
     }
 
     private string _dir = string.Empty;
@@ -31,6 +50,28 @@ public sealed class LogBridgeTests
 
     private LogBridge Bridge(IFileDialogs dialogs, Action<string> notify) =>
         new(NullLogger.Instance, dialogs, notify, _dir);
+
+    private LogBridge Bridge(ILogger logger) =>
+        new(logger, new StubDialogs(), _ => { }, _dir);
+
+    [Test]
+    public void Receive_messageAndDataWithEmbeddedNewlines_producesSingleLogLine()
+    {
+        RecordingLogger logger = new();
+        LogBridge bridge = Bridge(logger);
+
+        bridge.Receive(new LogPayload("error", "line one\nline two\r\nline three", "data\nmore data"));
+
+        Assert.That(logger.Lines, Has.Count.EqualTo(1));
+        string line = logger.Lines[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(line, Does.Not.Contain("\n"));
+            Assert.That(line, Does.Not.Contain("\r"));
+            Assert.That(line, Does.Contain("line one line two line three"));
+            Assert.That(line, Does.Contain("data more data"));
+        });
+    }
 
     [Test]
     public void ReadCurrentLog_missingDirectory_returnsPlaceholder()
