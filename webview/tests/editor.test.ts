@@ -131,7 +131,7 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
     expect(ed.getText()).toBe("hello\n");
   });
 
-  it("drops a pending marker across a whole-document setText instead of inserting into the wrong doc", () => {
+  it("drops a pending marker across a non-silent whole-document setText (a different file was loaded) instead of inserting into the wrong doc", () => {
     const { ed } = mount();
     ed.setText("first document\n");
     const id = ed.trackPosition(5);
@@ -139,6 +139,37 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
     ed.insertAtMarker(id, "[stale]");
 
     expect(ed.getText()).toBe("a completely different document\n");
+  });
+
+  // R-01 (T-034 review): a SILENT whole-document setText (the Split mirror / a mode-switch hydration)
+  // carries the SAME logical content across — not a different document — so a pending marker must
+  // survive it, unlike the docLoaded case above. Before the fix, setText unconditionally dropped every
+  // pending marker, so pasting an image into one Split pane while the other pane's edit silently
+  // mirrored back (or a mode switch re-hydrated a pane) during the async host round-trip silently lost
+  // the image reference with no error and no trace.
+  it("keeps a pending marker across a silent whole-document setText (Split mirror / mode switch), so a paste survives a round-trip alongside it", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    // Captured right after "one" (position 3), as if the image had just been pasted there.
+    const id = ed.trackPosition(3);
+    // The sibling pane mirrors the SAME content back in silently (Split's onFormattedChange /
+    // applyMode's silent hydration) — content unchanged, so the marker must not be dropped.
+    ed.setText("one two three\n", true);
+    // The host reply now arrives: insertAtMarker must still land after "one".
+    ed.insertAtMarker(id, "[IMG]");
+
+    expect(ed.getText()).toBe("one[IMG] two three\n");
+  });
+
+  it("clamps a restored marker to the new (shorter) document length after a silent setText", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    const id = ed.trackPosition(13); // just before the trailing newline
+    // The sibling pane mirrors in a shorter edit (e.g. the author deleted trailing words there).
+    ed.setText("one\n", true);
+    ed.insertAtMarker(id, "[IMG]");
+
+    expect(ed.getText()).toBe("one\n[IMG]");
   });
 });
 

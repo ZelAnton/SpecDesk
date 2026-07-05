@@ -251,8 +251,19 @@ const diffField = StateField.define<DecorationSet>({
 // exactly where ANOTHER marker's insert just landed sticks AFTER that inserted text, so several images
 // captured at the same original position still resolve into distinct, non-clobbering locations no matter
 // which host reply arrives first.
+//
+// A whole-document setText is a single blunt change (the entire old text deleted, the entire new text
+// inserted), so ChangeSet.mapPos through it is meaningless for a marker — every position ends up mapped
+// to one edge of the change. setText therefore never lets a marker go through the ordinary docChanged
+// mapping above: a genuinely different document (loading another file) drops pending markers outright
+// via clearMarkersEffect (there is nothing left in the new document for them to mean); mirroring the
+// SAME logical content (the Split mirror, a mode-switch hydration) instead restores the pre-transaction
+// positions verbatim via restoreMarkersEffect (clamped to the new length) — content is unchanged or only
+// locally edited by the sibling pane, so the captured position is still the closest available estimate,
+// unlike the blunt mapPos result.
 const setMarkerEffect = StateEffect.define<{ id: number; pos: number | null }>();
 const clearMarkersEffect = StateEffect.define<null>();
+const restoreMarkersEffect = StateEffect.define<Map<number, number>>();
 
 const markerField = StateField.define<Map<number, number>>({
   create: () => new Map(),
@@ -267,6 +278,12 @@ const markerField = StateField.define<Map<number, number>>({
     for (const effect of tr.effects) {
       if (effect.is(clearMarkersEffect)) {
         next = new Map();
+      } else if (effect.is(restoreMarkersEffect)) {
+        const maxPos = tr.state.doc.length;
+        next = new Map();
+        for (const [id, pos] of effect.value) {
+          next.set(id, Math.min(pos, maxPos));
+        }
       } else if (effect.is(setMarkerEffect)) {
         if (next === markers) {
           next = new Map(next);
@@ -546,25 +563,35 @@ export class MarkdownEditor {
   }
 
   /**
-   * Replace the whole document. By default triggers a normal change/render (used when a file is
-   * opened). Pass `silent` to suppress the change notification — used when mirroring text in from the
-   * formatted editor in split, so the mirror doesn't echo back out as a new edit.
+   * Replace the whole document. By default triggers a normal change/render and drops any pending
+   * image-insert markers — this is the "a genuinely different document is now current" path (a file
+   * was opened/loaded), so mapping a marker through the wholesale replace would land it at an
+   * arbitrary position in a document it was never captured against. insertAtMarker/discardMarker
+   * already no-op gracefully once a marker is gone, so an in-flight round-trip simply drops its insert.
+   *
+   * Pass `silent` for the OTHER use of a whole-document replace: mirroring the SAME logical content in
+   * from the sibling surface (the Split mirror, or hydrating a pane on a mode switch) — not a document
+   * change, so pending markers are kept, restored to their pre-transaction positions (clamped to the
+   * new length) rather than dropped or blindly mapped through the blunt whole-document change. This
+   * also suppresses the change notification so the mirror doesn't echo back out as a new edit.
    */
   setText(text: string, silent = false): void {
     this.suppressChange = silent;
+    // Silent = mirroring the same logical content (Split mirror / mode-switch hydration): keep pending
+    // image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than dropped.
+    // Non-silent = a genuinely different document (a file was opened) — drop any pending markers.
+    const markerEffect = silent
+      ? restoreMarkersEffect.of(this.view.state.field(markerField))
+      : clearMarkersEffect.of(null);
     // Re-apply the synced highlights in the same transaction: a whole-document replace would otherwise
     // map the active-line decoration to position 0 and clear the hover one (it drops on docChanged).
-    // Also drop any pending image-insert markers: mapping them through a wholesale replace would land
-    // them at an arbitrary position in a document they were never captured against (e.g. a different
-    // file loaded while a paste round-trip was still in flight). insertAtMarker/discardMarker already
-    // no-op gracefully once a marker is gone, so the in-flight round-trip simply drops its insert.
     this.view.dispatch({
       changes: { from: 0, to: this.view.state.doc.length, insert: text },
       effects: [
         setActiveLineEffect.of(this.activeLineValue),
         setHoverLineEffect.of(this.hoverLineValue),
         setDiffEffect.of(this.diffValue),
-        clearMarkersEffect.of(null),
+        markerEffect,
       ],
     });
     // Clear in case the text was identical and no docChanged fired to consume the flag.
