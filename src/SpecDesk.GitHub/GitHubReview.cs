@@ -114,11 +114,6 @@ public interface IGitHubReview
 /// </summary>
 public sealed class GitHubReviewClient : IGitHubReview
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-
-    // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is fine).
-    private static readonly ProductInfoHeaderValue UserAgent = new("SpecDesk", "1.0");
-
     private readonly HttpClient _http;
 
     public GitHubReviewClient(HttpClient http) => _http = http;
@@ -133,9 +128,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         string body,
         CancellationToken cancellationToken = default)
     {
-        using CancellationTokenSource timeout =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 
         // Escape the path segments defensively; owner/repo come from a parsed github.com remote, but
         // never build a request URL from interpolated identifiers without escaping.
@@ -171,7 +164,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         {
             using JsonDocument document = JsonDocument.Parse(responseBody);
             JsonElement root = document.RootElement;
-            return new PullRequest(NumberOf(root, "number"), StringOf(root, "html_url"));
+            return new PullRequest(GitHubHttp.NumberOf(root, "number"), GitHubHttp.StringOf(root, "html_url"));
         }
         catch (JsonException)
         {
@@ -200,9 +193,7 @@ public sealed class GitHubReviewClient : IGitHubReview
             return 0;
         }
 
-        using CancellationTokenSource timeout =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 
         Uri endpoint = new(
             $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/requested_reviewers");
@@ -282,7 +273,7 @@ public sealed class GitHubReviewClient : IGitHubReview
             }
         }
 
-        return new ReviewStatus(AggregateDecision(node), NumberOf(node, "number"), PrStateOf(node));
+        return new ReviewStatus(AggregateDecision(node), GitHubHttp.NumberOf(node, "number"), PrStateOf(node));
     }
 
     // The signed-in user's open PRs as author and, separately, as requested reviewer — two searches so the
@@ -349,21 +340,21 @@ public sealed class GitHubReviewClient : IGitHubReview
             // A search on ISSUE can include nodes with no PR fields (the inline fragment didn't match);
             // skip anything without a url so a malformed node can't surface as a blank list row. First
             // match (authored) wins a url over a later group.
-            string url = StringOf(node, "url");
+            string url = GitHubHttp.StringOf(node, "url");
             if (url.Length == 0 || byUrl.ContainsKey(url))
             {
                 continue;
             }
 
             string repo = TryProperty(node, "repository", out JsonElement repoNode)
-                ? StringOf(repoNode, "nameWithOwner")
+                ? GitHubHttp.StringOf(repoNode, "nameWithOwner")
                 : string.Empty;
 
             byUrl[url] = (
                 new ReviewSummary(
-                    NumberOf(node, "number"), StringOf(node, "title"), url, repo, role,
-                    DecisionOf(StringOf(node, "reviewDecision"))),
-                StringOf(node, "updatedAt"));
+                    GitHubHttp.NumberOf(node, "number"), GitHubHttp.StringOf(node, "title"), url, repo, role,
+                    DecisionOf(GitHubHttp.StringOf(node, "reviewDecision"))),
+                GitHubHttp.StringOf(node, "updatedAt"));
         }
     }
 
@@ -376,7 +367,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         _ => ReviewDecision.InReview,
     };
 
-    private static PullRequestState PrStateOf(JsonElement node) => StringOf(node, "state") switch
+    private static PullRequestState PrStateOf(JsonElement node) => GitHubHttp.StringOf(node, "state") switch
     {
         "MERGED" => PullRequestState.Merged,
         "CLOSED" => PullRequestState.Closed,
@@ -397,7 +388,7 @@ public sealed class GitHubReviewClient : IGitHubReview
     // standing.
     private static ReviewDecision AggregateDecision(JsonElement node)
     {
-        string headOid = StringOf(node, "headRefOid");
+        string headOid = GitHubHttp.StringOf(node, "headRefOid");
         if (!TryProperty(node, "latestOpinionatedReviews", out JsonElement latestReviews)
             || !TryProperty(latestReviews, "nodes", out JsonElement reviews)
             || reviews.ValueKind != JsonValueKind.Array)
@@ -409,7 +400,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         bool approved = false;
         foreach (JsonElement review in reviews.EnumerateArray())
         {
-            switch (StringOf(review, "state"))
+            switch (GitHubHttp.StringOf(review, "state"))
             {
                 case "CHANGES_REQUESTED":
                     changesRequested = true;
@@ -417,7 +408,7 @@ public sealed class GitHubReviewClient : IGitHubReview
                 case "APPROVED"
                     when headOid.Length > 0
                         && TryProperty(review, "commit", out JsonElement commit)
-                        && StringOf(commit, "oid") == headOid:
+                        && GitHubHttp.StringOf(commit, "oid") == headOid:
                     approved = true;
                     break;
             }
@@ -447,9 +438,7 @@ public sealed class GitHubReviewClient : IGitHubReview
     private async Task<JsonDocument> PostGraphQlAsync(
         string accessToken, object body, string what, CancellationToken cancellationToken)
     {
-        using CancellationTokenSource timeout =
-            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 
         using HttpRequestMessage request = NewRequest(HttpMethod.Post, GraphQlEndpoint, accessToken);
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
@@ -477,7 +466,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         HttpRequestMessage request = new(method, endpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Headers.UserAgent.Add(UserAgent);
+        request.Headers.UserAgent.Add(GitHubHttp.UserAgent);
         request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
         return request;
     }
@@ -511,19 +500,4 @@ public sealed class GitHubReviewClient : IGitHubReview
 
         return (users, teams);
     }
-
-    private static int NumberOf(JsonElement root, string name) =>
-        root.ValueKind == JsonValueKind.Object
-        && root.TryGetProperty(name, out JsonElement element)
-        && element.ValueKind == JsonValueKind.Number
-        && element.TryGetInt32(out int value)
-            ? value
-            : 0;
-
-    private static string StringOf(JsonElement root, string name) =>
-        root.ValueKind == JsonValueKind.Object
-        && root.TryGetProperty(name, out JsonElement element)
-        && element.ValueKind == JsonValueKind.String
-            ? element.GetString() ?? string.Empty
-            : string.Empty;
 }

@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_repoGate`, where `_sync` must not be taken), preserving the exact autosave/discard/send race guards
   from earlier fixes. No IPC contract, event ordering, or observable "draft changed under an operation"
   behavior changes.
+- `SpecDesk.GitHub`'s two hand-rolled `HttpClient` transports (`DeviceFlowApi.cs`, `GitHubReview.cs`) no
+  longer each define their own copy of the 30-second per-request timeout, the `SpecDesk/1.0` User-Agent,
+  the linked-`CancellationTokenSource` pattern, and the safe `StringOf`/`NumberOf` JSON-field readers.
+  Both now share the new internal `GitHubHttp` helper for all four; the "hand-rolled BCL only, no HTTP
+  client package" discipline and every observable request/response behavior are unchanged.
 
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
