@@ -583,6 +583,14 @@ export class FormattedEditor {
     return serializeWithSplice(this.original, this.view.state.doc);
   }
 
+  /** Whether an edit has been typed here that hasn't been reported via `onChange` yet (still waiting
+   *  out the debounce). The cross-pane mirror in index.ts checks this on the DESTINATION pane before a
+   *  silent `setText`, so a same-instant edit there isn't clobbered by a stale mirror from the sibling
+   *  pane's own (earlier-started, now-firing) debounce. */
+  hasPendingChange(): boolean {
+    return this.scheduleChange.pending;
+  }
+
   /**
    * Allow or block document edits. Read by the filterTransaction gate; the view stays contentEditable
    * either way (so the caret works and a read-only typing attempt can offer a draft).

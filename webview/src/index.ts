@@ -37,6 +37,25 @@ import { SegmentedControl, type SegmentedOption } from "./segmented-control.js";
 import { SignInController } from "./signin.js";
 import { isSplit, paneVisibility, type ViewMode } from "./view-mode.js";
 
+/** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
+interface MirrorTarget {
+  getText(): string;
+  hasPendingChange(): boolean;
+}
+
+/**
+ * Whether an edit's text should be mirrored into `destination`: false when it already matches (nothing
+ * to do) or `destination` itself has a not-yet-reported edit pending. Each pane's onChange only fires
+ * once ITS OWN 120ms debounce settles, so the two panes' change notifications are not ordered: if the
+ * author edits pane A, then (within that same 120ms window) edits pane B, A's debounce — started first —
+ * can fire first and reach here BEFORE B's does. Mirroring A's (now-stale) text into B at that point
+ * would silently clobber B's still-unsent keystrokes with an older snapshot. Skipping the mirror here
+ * loses nothing: B's own debounce fires shortly after and mirrors ITS (newer) text back.
+ */
+export function shouldMirrorInto(text: string, destination: MirrorTarget): boolean {
+  return destination.getText() !== text && !destination.hasPendingChange();
+}
+
 function wire(): void {
   const editorEl = document.querySelector<HTMLElement>("#editor");
   const previewEl = document.querySelector<HTMLElement>("#preview");
@@ -248,15 +267,16 @@ function wire(): void {
   });
 
   // Live content sync. An edit in one editor goes to the native pipeline (sendDoc) AND is mirrored
-  // into the other — guarded by content equality so the mirror never echoes back, with a silent
-  // setText so the mirror can't re-fire as an edit. After mirroring, the other pane's scroll is
+  // into the other — guarded by shouldMirrorInto (content equality, plus the pending-edit check below)
+  // so the mirror never echoes back and never clobbers an unsent edit — with a silent setText so a
+  // mirror that DOES apply can't re-fire as an edit. After mirroring, the other pane's scroll is
   // re-aligned so it doesn't jump.
   const onEditorChange = (text: string): void => {
     // A genuine edit invalidates the compare snapshot — drop the overlay (the mirror below is silent
     // and re-applies nothing once cleared).
     review.clear();
     sendDoc(text);
-    if (formatted.getText() !== text) {
+    if (shouldMirrorInto(text, formatted)) {
       formatted.setText(text);
       if (isSplit(mode)) {
         scrollSync.suppress();
@@ -268,7 +288,7 @@ function wire(): void {
   const onFormattedChange = (text: string): void => {
     review.clear();
     sendDoc(text);
-    if (editor.getText() !== text) {
+    if (shouldMirrorInto(text, editor)) {
       editor.setText(text, true);
       if (isSplit(mode)) {
         scrollSync.suppress();
@@ -483,9 +503,13 @@ function wire(): void {
   // here (ipc/decoder knowledge belongs to the integrator); the controller version-gates a stale one
   // (the author edited past the snapshot the request was taken at — same gate as the preview) and
   // otherwise washes the changes in BOTH editors (pane visibility is CSS, so Split shows both at once).
+  // A malformed payload (decodes to null) is dropped, same as every other handler here — NOT treated as
+  // an empty entries list, which would otherwise wash nothing and surface a false "no changes" notice.
   ipc.on(Kinds.diffResult, (message) => {
     const payload = parseDiffResult(message.payload);
-    review.applyResult(message.version ?? 0, payload?.entries ?? []);
+    if (payload) {
+      review.applyResult(message.version ?? 0, payload.entries);
+    }
   });
 
   ipc.on(Kinds.docLoaded, (message) => {

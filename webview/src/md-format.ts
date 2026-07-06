@@ -160,12 +160,18 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
         })
         .join("\n");
     }
-    case "bullet":
+    case "bullet": {
+      const allBulleted = has(BULLET_RE);
       return lines
-        .map((line) =>
-          line.trim() === "" ? line : has(BULLET_RE) ? line.replace(BULLET_RE, "") : `- ${line}`,
-        )
+        .map((line) => {
+          if (line.trim() === "") {
+            return line;
+          }
+          const bare = line.replace(BULLET_RE, "");
+          return allBulleted ? bare : `- ${bare}`;
+        })
         .join("\n");
+    }
     case "ordered": {
       const numbered = has(ORDERED_RE);
       let n = 0;
@@ -175,16 +181,24 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
             return line;
           }
           n += 1;
-          return numbered ? line.replace(ORDERED_RE, "") : `${n}. ${line}`;
+          const bare = line.replace(ORDERED_RE, "");
+          return numbered ? bare : `${n}. ${bare}`;
         })
         .join("\n");
     }
-    default: // quote
+    default: {
+      // quote
+      const allQuoted = has(QUOTE_RE);
       return lines
-        .map((line) =>
-          line.trim() === "" ? line : has(QUOTE_RE) ? line.replace(QUOTE_RE, "") : `> ${line}`,
-        )
+        .map((line) => {
+          if (line.trim() === "") {
+            return line;
+          }
+          const bare = line.replace(QUOTE_RE, "");
+          return allQuoted ? bare : `> ${bare}`;
+        })
         .join("\n");
+    }
   }
 }
 

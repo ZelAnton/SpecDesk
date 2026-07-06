@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FormattedEditor } from "../src/formatted.js";
 
 // Runtime check of the ProseMirror integration (which can't be verified headlessly in the app):
@@ -503,5 +503,35 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setEditable(true);
     view.dispatch(view.state.tr.insertText("X", 1));
     expect(ed.getText()).not.toBe("# H\n\npara\n");
+  });
+});
+
+describe("FormattedEditor.hasPendingChange (jsdom, T-042)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is true only while an edit's debounced onChange hasn't fired yet", () => {
+    const ed = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    expect(ed.hasPendingChange()).toBe(false);
+
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.insertText("X", 1));
+    expect(ed.hasPendingChange()).toBe(true);
+    vi.advanceTimersByTime(119);
+    expect(ed.hasPendingChange()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(ed.hasPendingChange()).toBe(false);
+  });
+
+  it("stays false across a setText rebuild (setText uses updateState, not a dispatched transaction)", () => {
+    const ed = mount();
+    ed.setText("mirrored\n");
+    expect(ed.hasPendingChange()).toBe(false);
   });
 });

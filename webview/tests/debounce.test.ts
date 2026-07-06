@@ -52,4 +52,17 @@ describe("debounce", () => {
     vi.advanceTimersByTime(100);
     expect(fn).toHaveBeenCalledTimes(2);
   });
+
+  it("pending reflects whether a deferred call is still outstanding", () => {
+    const fn = vi.fn();
+    const run = debounce(fn, 100);
+    expect(run.pending).toBe(false);
+    run();
+    expect(run.pending).toBe(true);
+    vi.advanceTimersByTime(99);
+    expect(run.pending).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(run.pending).toBe(false);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
