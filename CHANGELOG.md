@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from earlier fixes. No IPC contract, event ordering, or observable "draft changed under an operation"
   behavior changes.
 
+### Removed
+- Dead release scaffolding: `.gitignore`'s `release-notes.md` entry and `cliff.toml`'s header comment
+  referenced a `.github/workflows/release.yml` that never existed in this repo; `Directory.Build.props`
+  carried a template comment block (and its now-unreachable conditional `CA1707` `NoWarn`) for a
+  `__ProjectName__`/`scripts/init.ps1` project-stamping script that was never added. `release.cmd` and
+  the build are unaffected — neither reads `cliff.toml`/`release-notes.md` nor relies on the removed
+  `NoWarn`.
+
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
   since the last saved version" when the host's `diff.result` reply is malformed (decodes to `null`,

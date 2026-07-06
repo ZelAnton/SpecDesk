@@ -19,9 +19,6 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
-# Release pipeline scratch file — written by .github/workflows/release.yml
-release-notes.md
-
 # Build results
 [Dd]ebug/
 [Rr]elease/

@@ -26,17 +26,5 @@
 		<NuGetAudit>true</NuGetAudit>
 		<NuGetAuditMode>all</NuGetAuditMode>
 		<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
-
-		<!-- The un-stamped template's project/assembly/namespace name __ProjectName__
-		     contains underscores, which trips CA1707 ("identifiers should not contain
-		     underscores") and — with TreatWarningsAsErrors — breaks the build before
-		     the template has been initialized. Suppress CA1707 only while a project
-		     name still contains an underscore, so it is silenced exactly for the
-		     placeholder and disappears on its own once scripts/init.ps1 renames the
-		     projects to your chosen (normally underscore-free) name, restoring the
-		     full latest-recommended analysis. If you deliberately pick a name with
-		     underscores, the suppression simply stays — a sensible default for that
-		     choice. -->
-		<NoWarn Condition="$(MSBuildProjectName.Contains('_'))">$(NoWarn);CA1707</NoWarn>
 	</PropertyGroup>
 </Project>
