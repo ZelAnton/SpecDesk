@@ -79,8 +79,8 @@ src/
   SpecDesk.Markdown/          F#  — Markdig wrapper, AST DU, lineMap, HTML renderer
   SpecDesk.Diff/              F#  — semantic (AST) diff              → depends on Markdown
   SpecDesk.Git/               C#  — LibGit2Sharp wrapper (local-only ops; GitHub-agnostic) (leaf)
-  SpecDesk.GitHub/            C#  — OAuth device-flow auth + hand-rolled HttpClient GitHub API → Contracts
-  SpecDesk.Ai/                C#  — STUB (see §5) → Contracts, Core (unused so far)
+  SpecDesk.GitHub/            C#  — OAuth device-flow auth + hand-rolled HttpClient GitHub API (leaf)
+  SpecDesk.Ai/                C#  — STUB (see §5), no ProjectReferences yet (leaf)
   SpecDesk.Host/               C# — Exe: Photino bootstrap, IPC router, orchestration → all of the above
 tests/                        # one test project per src/ project, NUnit, mirrors names + ".Tests"
 webview/
@@ -104,8 +104,8 @@ CHANGELOG.md                  # Keep-a-Changelog; detailed per-PoC entries, good
 | `SpecDesk.Markdown` | F# | Shared Markdig pipeline, `Ast` DU, `Projection`, `lineMap`-carrying `Renderer` | — | 6 files, 432 LOC |
 | `SpecDesk.Diff` | F# | `AstDiff` (Unchanged/Added/Removed/Changed/Moved) + `DiffWire` C#-friendly shape | `SpecDesk.Markdown` | 2 files, 421 LOC |
 | `SpecDesk.Git` | C# | `IDocumentVersioning` (local-only: branch/save-version/discard) + `IGitPublishing`, via LibGit2Sharp | — | 3 files, 435 LOC |
-| `SpecDesk.GitHub` | C# | OAuth device-flow (`GitHubDeviceFlowAuth`), `DpapiTokenProtector`, remote-URL parsing, PR/review status — hand-rolled `HttpClient`, **no Octokit package** | `SpecDesk.Contracts` | 8 files, 1449 LOC |
-| `SpecDesk.Ai` | C# | **Stub** — see §5 | `SpecDesk.Contracts`, `SpecDesk.Core` (unused) | 1 file (`Placeholder.cs`) |
+| `SpecDesk.GitHub` | C# | OAuth device-flow (`GitHubDeviceFlowAuth`), `DpapiTokenProtector`, remote-URL parsing, PR/review status — hand-rolled `HttpClient`, **no Octokit package** | — | 8 files, 1449 LOC |
+| `SpecDesk.Ai` | C# | **Stub** — see §5 | — | 1 file (`Placeholder.cs`) |
 | `SpecDesk.Host` | C# (Exe) | Photino bootstrap, `HostController` (IPC dispatch), `AppAssetResolver` (`app://` scheme), `PreviewCoordinator`, `DiffProjection`, `ExternalLink` (URL-scheme gate), Serilog logging, `SampleRepo` seeding | all seven above | 11 files, 2814 LOC — largest project |
 
 Rules that shape this graph (see `AGENTS.md` for the full text — restated here because a naive review

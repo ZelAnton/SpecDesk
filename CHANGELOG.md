@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Removed two dead `ProjectReference` edges: `SpecDesk.GitHub` no longer references `SpecDesk.Contracts`
+  (nothing in `SpecDesk.GitHub` used its types), and `SpecDesk.Ai` no longer references
+  `SpecDesk.Contracts`/`SpecDesk.Core` (the stub project ahead of PoC-9 doesn't consume either yet).
+  `docs/CODE-REVIEW-GUIDE.md` §3.1's dependency-graph table and repository-map diagram are corrected to
+  match — both projects are now leaves in the graph.
 - The `BundleWebview` MSBuild target (`SpecDesk.Host.csproj`) is now incremental: it declares
   `Inputs`/`Outputs` covering the webview sources/config and the generated bundle, so a plain
   `dotnet build`/`dotnet test` no longer re-runs `npm run bundle` when nothing in `webview/` changed.

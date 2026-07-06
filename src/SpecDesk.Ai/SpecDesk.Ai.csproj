@@ -4,11 +4,6 @@
 		<TargetFramework>net10.0</TargetFramework>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<ProjectReference Include="..\SpecDesk.Contracts\SpecDesk.Contracts.csproj" />
-		<ProjectReference Include="..\SpecDesk.Core\SpecDesk.Core.fsproj" />
-	</ItemGroup>
-
 	<!-- TODO(PoC-8): add Microsoft Agent Framework package -->
 
 </Project>
