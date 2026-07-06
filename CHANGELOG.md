@@ -49,6 +49,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `_repoGate`, where `_sync` must not be taken), preserving the exact autosave/discard/send race guards
   from earlier fixes. No IPC contract, event ordering, or observable "draft changed under an operation"
   behavior changes.
+- The `webview/` TypeScript UI, previously a flat `src/` of ~33 files, is now organized into subfolders
+  by area boundary (per `docs/CODE-REVIEW-GUIDE.md` §3.2): `wire/` (protocol/decoders/ipc), `editors/`
+  (CodeMirror + ProseMirror engines and the Markdown round-trip), `review/` (preview, diff marks/
+  decoration, word-diff, review overlay + panel), `chrome/` (view-mode, toolbars, dialogs, sign-in),
+  `sync/` (scroll- and height-sync), and `util/` (debounce, raf, dom, links, log, image capture);
+  `index.ts` stays at the `src/` root as the entry point. `webview/tests/` mirrors the new layout 1:1
+  (the cross-language `tests/contract/` fixtures and `contract.test.ts`/`index.test.ts` stay at the test
+  root). This is a purely mechanical move — file contents are byte-identical apart from the updated
+  relative imports; no esbuild/tsconfig/vitest/Biome configuration changed (the bundle entry is still
+  `src/index.ts`, and `tsconfig`/Vitest resolve `src`/`tests` by directory), so `npm run typecheck`,
+  `npm run lint`, `npm test`, and `npm run bundle` behave identically.
+- `index.ts`'s `wire()` bootstrap is split into four nested helpers over a shared prologue —
+  `wireEditors` (the two editors, their live cross-mirror/highlight/scroll sync, height-sync, the review
+  overlay, the formatting toolbar, image paste, and the preview/diff/`doc.loaded` handlers),
+  `wireLifecycle` (the action buttons + status/error stream), `wireGitHub` (sign-in, the reviews panel,
+  and the review-status refresh triggers), and `wireViewMode` (the mode switch plus wrap/theme/export/
+  skip-link chrome). The shared state, forward-declared editor/controller handles, and the
+  `dialogs`/`requestSuggestion`/`syncReviewPolling` helpers stay in the prologue so all four groups close
+  over them; the helpers run in dependency order and every cross-group reference is a callback that fires
+  after wiring completes, so IPC registration, construction order, and observable behavior are unchanged.
 
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes

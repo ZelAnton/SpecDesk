@@ -9,9 +9,9 @@
 import type { Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FormattedEditor } from "../src/formatted.js";
-import type { IpcMessage } from "../src/ipc.js";
-import { Kinds } from "../src/protocol.js";
+import { FormattedEditor } from "../src/editors/formatted.js";
+import type { IpcMessage } from "../src/wire/ipc.js";
+import { Kinds } from "../src/wire/protocol.js";
 
 /** A fake `window.external` — the "mock IPC host" the design calls for (mirrors ipc.test.ts). */
 function mockBridge() {
@@ -121,7 +121,7 @@ describe("index.ts: Split cross-pane mirror debounce race (jsdom)", () => {
     // wire() doesn't expose its internal pane instances (an implementation detail) — what matters is
     // exercising the real decision, shouldMirrorInto, against real MarkdownEditor/FormattedEditor
     // instances, the exact way index.ts's onEditorChange/onFormattedChange do.
-    const { MarkdownEditor } = await import("../src/editor.js");
+    const { MarkdownEditor } = await import("../src/editors/editor.js");
     const { shouldMirrorInto } = await import("../src/index.js");
 
     const sourceHost = document.createElement("div");

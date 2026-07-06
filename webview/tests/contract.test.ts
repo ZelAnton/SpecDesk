@@ -21,8 +21,8 @@ import {
   parsePrSuggested,
   parseStatus,
   parseVersionNoteSuggested,
-} from "../src/decoders.js";
-import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/protocol.js";
+} from "../src/wire/decoders.js";
+import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/wire/protocol.js";
 import diffKinds from "./contract/diff-kinds.json" with { type: "json" };
 import lifecycleStates from "./contract/lifecycle-states.json" with { type: "json" };
 import fixture from "./contract/native-payloads.json" with { type: "json" };
