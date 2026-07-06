@@ -103,12 +103,14 @@ export class IpcClient {
       return;
     }
     if (message.id !== undefined) {
-      // id-bearing frames are correlated replies; resolve the waiter, or drop if unawaited.
-      const resolve = this.pending.get(message.id);
-      if (resolve) {
-        this.pending.delete(message.id);
-        resolve(message);
-      }
+      // id-bearing frames are correlated replies, routed to whoever is waiting on that id (or
+      // dropped if unawaited). `pending` entries are NOT removed here: request() below is a
+      // one-shot correlation and deletes its own entry once resolved, while subscribe() is a
+      // multi-frame correlation (PoC-9's chat.delta/chat.done streaming) whose entry stays
+      // registered across frames until the subscriber itself calls the returned unsubscribe —
+      // typically on a terminal frame kind such as chat.done. This lets both usages share one
+      // `pending` map/dispatch path without dispatch needing to know which frame is "the last".
+      this.pending.get(message.id)?.(message);
       return;
     }
     this.handlers.get(message.kind)?.(message);
@@ -152,6 +154,9 @@ export class IpcClient {
             }, timeoutMs)
           : undefined;
       this.pending.set(id, (reply) => {
+        // One-shot: drop the entry before resolving, since dispatch() no longer does so itself
+        // (see the comment there on why request() and subscribe() share `pending` differently).
+        this.pending.delete(id);
         if (timer !== undefined) {
           clearTimeout(timer);
         }
@@ -159,6 +164,21 @@ export class IpcClient {
       });
       send(JSON.stringify(message));
     });
+  }
+
+  /**
+   * Correlate every frame carrying `id` to `handler`, for streaming replies (PoC-9's
+   * chat.delta/chat.done) where a single request produces more than one reply. Unlike
+   * {@link IpcClient.request}, the entry is not removed automatically — call the returned
+   * `unsubscribe()` once the stream is done (e.g. when `handler` sees a terminal kind such as
+   * `chat.done`) to stop receiving frames for that id and free the entry.
+   */
+  subscribe(id: string, handler: (message: IpcMessage) => void): () => void {
+    this.start();
+    this.pending.set(id, handler);
+    return () => {
+      this.pending.delete(id);
+    };
   }
 
   /**
