@@ -22,7 +22,7 @@ public sealed partial class HostController
 		SendForReviewPayload? prText = SafeGetPayload<SendForReviewPayload>(message);
 
 		// Gate the lifecycle transition AND claim the single-flight slot atomically under _sync, so a
-		// stale state read or a double-click can't slip a second round-trip through. fromState/_branch are
+		// stale state read or a double-click can't slip a second round-trip through. fromState/branch are
 		// re-checked before the transition is committed (the document may have moved on); seq records how
 		// many saved versions this push carries, so a later Update review knows what is already shared.
 		// generation additionally guards against a SAME-named branch being discarded and re-created while
@@ -39,10 +39,11 @@ public sealed partial class HostController
 		long generation;
 		lock (_sync)
 		{
-			next = Lifecycle.tryStep(_state, "sendForReview");
+			DraftSession session = _session;
+			next = Lifecycle.tryStep(session.State, "sendForReview");
 			if (next.Length == 0)
 			{
-				_logger.LogDebug("Send for review ignored from state {State}", _state);
+				_logger.LogDebug("Send for review ignored from state {State}", session.State);
 				return;
 			}
 
@@ -52,12 +53,15 @@ public sealed partial class HostController
 				return;
 			}
 
-			fromState = _state;
+			fromState = session.State;
 			repoRoot = _repoRoot;
-			branch = _branch;
-			baseBranch = _baseBranch;
+			branch = session.Branch;
+			baseBranch = session.BaseBranch;
 			path = _currentPath;
-			seq = _versionsSaved;
+			seq = session.VersionsSaved;
+			// The LIVE _draftGeneration (not the session's own Generation token): this snapshots "which
+			// checkout am I sending", which TryAdvanceReview later re-compares against the live counter to
+			// reject a same-named draft recreated mid-push (M-13).
 			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
 		}
@@ -163,10 +167,11 @@ public sealed partial class HostController
 		long generation;
 		lock (_sync)
 		{
-			next = Lifecycle.tryStep(_state, "updateReview");
+			DraftSession session = _session;
+			next = Lifecycle.tryStep(session.State, "updateReview");
 			if (next.Length == 0)
 			{
-				_logger.LogDebug("Update review ignored from state {State}", _state);
+				_logger.LogDebug("Update review ignored from state {State}", session.State);
 				return;
 			}
 
@@ -176,13 +181,14 @@ public sealed partial class HostController
 				return;
 			}
 
-			fromState = _state;
+			fromState = session.State;
 			repoRoot = _repoRoot;
-			branch = _branch;
-			seq = _versionsSaved;
-			shared = _versionsShared;
-			// See OnSendForReview / the _draftGeneration field comment: guards TryAdvanceReview against a
-			// same-named branch being discarded and re-created while this push is in flight (M-13).
+			branch = session.Branch;
+			seq = session.VersionsSaved;
+			shared = session.VersionsShared;
+			// The LIVE _draftGeneration (not the session's own Generation token): see OnSendForReview /
+			// the _draftGeneration field comment. Guards TryAdvanceReview against a same-named branch being
+			// discarded and re-created while this push is in flight (M-13).
 			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
 		}
@@ -261,9 +267,10 @@ public sealed partial class HostController
 		string fromState;
 		lock (_sync)
 		{
-			fromState = _state;
+			DraftSession session = _session;
+			fromState = session.State;
 			repoRoot = _repoRoot;
-			branch = _branch;
+			branch = session.Branch;
 			// Nothing to refresh unless under review with the feature wired (there's an open PR to check), or
 			// while a send/update is publishing — that flow authoritatively sets the state, so a concurrent
 			// read could clobber it (just after a push its GraphQL can lag; the poll / next focus pick it up).
@@ -335,9 +342,10 @@ public sealed partial class HostController
 				{
 					// Apply the decision only if the document is still the same review draft that we queried
 					// for, no publish started meanwhile (its committed state wins), and the decision moved.
-					if (_branch == branchName && !_publishInFlight && IsReviewState(_state) && _state != mapped)
+					DraftSession session = _session;
+					if (session.Branch == branchName && !_publishInFlight && IsReviewState(session.State) && session.State != mapped)
 					{
-						_state = mapped;
+						_session = session with { State = mapped };
 						changed = true;
 					}
 				}
@@ -523,7 +531,7 @@ public sealed partial class HostController
 	// it. Exactly tracking "what HEAD held at push time" would need the counter under _repoGate (the push's
 	// lock), which the _sync/_repoGate ordering rule forbids reading here — not worth it for a no-op re-push.
 	//
-	// M-13: (_state, _branch) alone can't tell "the same draft, untouched" from "a same-named draft that was
+	// M-13: (session State, Branch) alone can't tell "the same draft, untouched" from "a same-named draft that was
 	// recreated while this push was in flight" (e.g. via a reload — LoadFile resets the draft fields
 	// without checking _publishInFlight, unlike Discard — followed by a fresh BeginEdit) — branch names
 	// are date-deterministic, so a same-day recreation reproduces the exact same (state, branch) pair the
@@ -537,13 +545,13 @@ public sealed partial class HostController
 	{
 		lock (_sync)
 		{
-			if (_state != fromState || _branch != branchName || Interlocked.Read(ref _draftGeneration) != generation)
+			DraftSession session = _session;
+			if (session.State != fromState || session.Branch != branchName || Interlocked.Read(ref _draftGeneration) != generation)
 			{
 				return false;
 			}
 
-			_state = next;
-			_versionsShared = seq;
+			_session = session with { State = next, VersionsShared = seq };
 			return true;
 		}
 	}
@@ -689,11 +697,12 @@ public sealed partial class HostController
 		bool publishInFlight;
 		lock (_sync)
 		{
+			DraftSession session = _session;
 			repoRoot = _repoRoot;
-			branch = _branch;
-			baseBranch = _baseBranch;
+			branch = session.Branch;
+			baseBranch = session.BaseBranch;
 			path = _currentPath;
-			sendLegal = Lifecycle.tryStep(_state, "sendForReview").Length > 0;
+			sendLegal = Lifecycle.tryStep(session.State, "sendForReview").Length > 0;
 			publishInFlight = _publishInFlight;
 		}
 

@@ -47,13 +47,14 @@ public sealed partial class HostController
 		string text = payload.Text;
 		// Publish _text under _sync so the autosave timer's _sync snapshot sees it consistently with
 		// _currentPath (the two must stay a matched pair, or autosave could write across documents).
-		// _textGeneration tags this text with the checkout it was written against — see its field
-		// comment — so a later disk-autosave snapshot of this text carries a generation that a stale
-		// re-check can actually compare against.
+		// The session's Generation tags this text with the checkout it was written against — see
+		// DraftSession.Generation — so a later disk-autosave snapshot of this text carries a generation
+		// that a stale re-check can actually compare against. Only Generation moves here (a plain edit
+		// never changes the lifecycle state), so `with` preserves the rest of the session verbatim.
 		lock (_sync)
 		{
 			_text = text;
-			_textGeneration = Interlocked.Read(ref _draftGeneration);
+			_session = _session with { Generation = Interlocked.Read(ref _draftGeneration) };
 		}
 
 		string docDir = DocRelativeDir();
@@ -178,10 +179,10 @@ public sealed partial class HostController
 			return;
 		}
 
-		string next = Lifecycle.tryStep(_state, "edit");
+		string next = Lifecycle.tryStep(_session.State, "edit");
 		if (next.Length == 0)
 		{
-			_logger.LogDebug("Edit ignored from state {State}", _state);
+			_logger.LogDebug("Edit ignored from state {State}", _session.State);
 			return;
 		}
 
@@ -218,13 +219,19 @@ public sealed partial class HostController
 
 			lock (_sync)
 			{
-				_state = next;
-				_branch = session.Branch;
-				_baseBranch = session.BaseBranch;
-				_dirty = false;
-				// A fresh draft has saved nothing and shared nothing yet.
-				_versionsSaved = 0;
-				_versionsShared = 0;
+				// A fresh draft has saved nothing and shared nothing yet. Generation is deliberately NOT
+				// touched here: BeginEdit bumped _draftGeneration (above, under _repoGate) but did not rewrite
+				// _text, so the session's Generation stays behind until the first edit updates _text (see
+				// DraftSession.Generation) — the editor still shows the just-published content to edit from.
+				_session = _session with
+				{
+					State = next,
+					Branch = session.Branch,
+					BaseBranch = session.BaseBranch,
+					Dirty = false,
+					VersionsSaved = 0,
+					VersionsShared = 0,
+				};
 			}
 
 			_logger.LogInformation(
@@ -251,9 +258,9 @@ public sealed partial class HostController
 	private void OnDiscard()
 	{
 		// Gate the lifecycle transition AND the publish-in-flight check atomically under _sync, matching
-		// OnSendForReview/OnUpdateReview's discipline. Computing tryStep from an unlocked read of _state,
-		// then separately re-entering _sync only to check _publishInFlight (as this used to do), leaves a
-		// window: a review publish's background task settles _state (TryAdvanceReview) and clears
+		// OnSendForReview/OnUpdateReview's discipline. Computing tryStep from an unlocked read of the session
+		// state, then separately re-entering _sync only to check _publishInFlight (as this used to do), leaves
+		// a window: a review publish's background task settles the state (TryAdvanceReview) and clears
 		// _publishInFlight (ClearPublishInFlight) in two separate, later lock(_sync) acquisitions of its
 		// own — if this method's unlocked tryStep read the PRE-push state (still permitting "discard")
 		// before that background task started, but this method's lock acquisition happens only after the
@@ -269,7 +276,8 @@ public sealed partial class HostController
 		string? baseBranch;
 		lock (_sync)
 		{
-			string next = Lifecycle.tryStep(_state, "discard");
+			DraftSession session = _session;
+			string next = Lifecycle.tryStep(session.State, "discard");
 			if (next.Length == 0)
 			{
 				return;
@@ -286,8 +294,8 @@ public sealed partial class HostController
 
 			repoRoot = _repoRoot;
 			path = _currentPath;
-			branch = _branch;
-			baseBranch = _baseBranch;
+			branch = session.Branch;
+			baseBranch = session.BaseBranch;
 		}
 
 		if (repoRoot is null || path is null || branch is null || baseBranch is null)
@@ -299,7 +307,7 @@ public sealed partial class HostController
 		{
 			CancelAutosave();
 
-			// Deliberately NOT calling LoadFile here: it re-reads the file and resets _text/_state in a
+			// Deliberately NOT calling LoadFile here: it re-reads the file and resets _text/_session in a
 			// LATER, separate lock(_sync) block, after ResolveRepoRoot. Reading the reverted content
 			// while still holding _repoGate (right here) means the read that _text below is set from is
 			// never racing a second, independent disk read.
@@ -315,19 +323,22 @@ public sealed partial class HostController
 
 			lock (_sync)
 			{
-				_state = Lifecycle.stateName(Lifecycle.State.Published);
-				_branch = null;
-				_baseBranch = null;
-				// A discarded draft leaves nothing saved or shared.
-				_versionsSaved = 0;
-				_versionsShared = 0;
 				_text = revertedText;
 				// Re-detected from the reverted file's raw content, same as LoadFile.
 				_lineEnding = DetectLineEnding(revertedText);
-				// Tag with the (already bumped, above) checkout _text is now current for — see the
-				// _textGeneration field comment for why RunDiskAutosave's snapshot must capture this
-				// companion rather than _draftGeneration directly.
-				_textGeneration = Interlocked.Read(ref _draftGeneration);
+				// A discarded draft is a fresh Published session that has saved and shared nothing. Dirty is
+				// false here (CancelAutosave, above, already cleared it); the fresh record makes that explicit.
+				// Generation is tagged with the (already bumped, above) checkout _text is now current for —
+				// see DraftSession.Generation for why RunDiskAutosave's snapshot must capture this companion
+				// rather than _draftGeneration directly.
+				_session = new DraftSession(
+					Lifecycle.stateName(Lifecycle.State.Published),
+					Branch: null,
+					BaseBranch: null,
+					Dirty: false,
+					VersionsSaved: 0,
+					VersionsShared: 0,
+					Generation: Interlocked.Read(ref _draftGeneration));
 			}
 
 			_logger.LogInformation("Discarded draft on {Branch}", branch);
@@ -350,9 +361,10 @@ public sealed partial class HostController
 		}
 	}
 
-	// Whether the current lifecycle state is one in which the document is being edited on a working
-	// branch (so disk autosave should run and "Save a version" is allowed).
-	private bool IsEditingState() => Lifecycle.tryStep(_state, "saveVersion").Length > 0;
+	// Whether the given lifecycle state is one in which the document is being edited on a working
+	// branch (so disk autosave should run and "Save a version" is allowed). Takes the state explicitly so
+	// callers pass the value from a session snapshot they already read, rather than re-reading _session.
+	private static bool IsEditingState(string state) => Lifecycle.tryStep(state, "saveVersion").Length > 0;
 
 	// Whether the repo is set up for versioning — a libgit2 read, so it is serialized under _repoGate like
 	// every other repository access (a background push / image insert may be driving libgit2 concurrently).
@@ -372,14 +384,15 @@ public sealed partial class HostController
 		bool announce = false;
 		lock (_sync)
 		{
-			if (_repoRoot is null || _currentPath is null || !IsEditingState())
+			DraftSession session = _session;
+			if (_repoRoot is null || _currentPath is null || !IsEditingState(session.State))
 			{
 				return;
 			}
 
-			if (!_dirty)
+			if (!session.Dirty)
 			{
-				_dirty = true;
+				_session = session with { Dirty = true };
 				announce = true;
 			}
 
@@ -406,7 +419,8 @@ public sealed partial class HostController
 		long generation;
 		lock (_sync)
 		{
-			if (_repoRoot is null || _currentPath is null || !IsEditingState())
+			DraftSession session = _session;
+			if (_repoRoot is null || _currentPath is null || !IsEditingState(session.State))
 			{
 				return;
 			}
@@ -416,10 +430,10 @@ public sealed partial class HostController
 			text = _text;
 			path = _currentPath;
 			lineEnding = _lineEnding;
-			// Capture _textGeneration (the checkout this text was written against), NOT a live read of
-			// _draftGeneration here — see the _textGeneration field comment for why the two can briefly
-			// disagree, and why only the former is safe to compare against later.
-			generation = _textGeneration;
+			// Capture the session's Generation (the checkout this text was written against), NOT a live read
+			// of _draftGeneration here — see DraftSession.Generation for why the two can briefly disagree,
+			// and why only the former is safe to compare against later.
+			generation = session.Generation;
 		}
 
 		// Outer net: this runs on the Timer thread, which has no last-resort catch of its own (unlike the
@@ -438,10 +452,10 @@ public sealed partial class HostController
 					// first, in which case the snapshot above is for a draft that no longer exists — write
 					// it now and it resurrects discarded content on the (now different) checked-out
 					// branch. Lock-free by design: _repoGate must never be held while also taking _sync.
-					// Comparing against the LIVE _draftGeneration (not _textGeneration, which is what the
-					// snapshot captured) is deliberate: it is the authoritative value a checkout's own
-					// _repoGate section bumps, so it is guaranteed current here regardless of whether that
-					// checkout's later _sync-guarded _text update has happened yet.
+					// Comparing against the LIVE _draftGeneration (not the session's captured Generation,
+					// which is what the snapshot above holds) is deliberate: it is the authoritative value a
+					// checkout's own _repoGate section bumps, so it is guaranteed current here regardless of
+					// whether that checkout's later _sync-guarded _text update has happened yet.
 					if (Interlocked.Read(ref _draftGeneration) != generation)
 					{
 						_logger.LogDebug(
@@ -473,10 +487,10 @@ public sealed partial class HostController
 	{
 		SaveVersionPayload? payload = SafeGetPayload<SaveVersionPayload>(message);
 
-		string next = Lifecycle.tryStep(_state, "saveVersion");
+		string next = Lifecycle.tryStep(_session.State, "saveVersion");
 		if (next.Length == 0)
 		{
-			_logger.LogDebug("Save a version ignored from state {State}", _state);
+			_logger.LogDebug("Save a version ignored from state {State}", _session.State);
 			return;
 		}
 
@@ -519,21 +533,21 @@ public sealed partial class HostController
 				result = _versioning.SaveVersion(repoRoot, note);
 			}
 
-			// Either way the working copy now matches the last saved version (a no-op commit means it
-			// already did), so clear the dirty flag.
 			lock (_sync)
 			{
-				_dirty = false;
-				if (result.Committed)
+				DraftSession session = _session;
+				// Save a version is a self-transition in every editing state (Draft→Draft, InReview→
+				// InReview, …) — it never changes the lifecycle state, so we deliberately do NOT write State
+				// here. `next` was computed from a possibly-stale read (this commit ran under _repoGate, not
+				// _sync); a Send / Update review completing meanwhile may have advanced State (e.g.
+				// Draft→InReview), and writing the stale `next` would clobber that. Either way the working
+				// copy now matches the last saved version (a no-op commit means it already did), so clear
+				// Dirty; a committed version is one more a later Send / Update review can share.
+				_session = session with
 				{
-					// Save a version is a self-transition in every editing state (Draft→Draft, InReview→
-					// InReview, …) — it never changes the lifecycle state, so we deliberately do NOT write
-					// _state here. `next` was computed from a possibly-stale read (this commit ran under
-					// _repoGate, not _sync); a Send / Update review completing meanwhile may have advanced
-					// _state (e.g. Draft→InReview), and writing the stale `next` would clobber that.
-					// One more version now exists that a later Send / Update review can share.
-					_versionsSaved++;
-				}
+					Dirty = false,
+					VersionsSaved = result.Committed ? session.VersionsSaved + 1 : session.VersionsSaved,
+				};
 			}
 
 			if (result.Committed)
@@ -590,7 +604,7 @@ public sealed partial class HostController
 		{
 			_autosaveTimer?.Dispose();
 			_autosaveTimer = null;
-			_dirty = false;
+			_session = _session with { Dirty = false };
 			// Deliberately does NOT bump _draftGeneration: this runs before the repoGate-guarded repo
 			// mutation (Discard) or before BeginEdit's checkout, well before _text is reset to match.
 			// Bumping here would let a snapshot taken in the resulting gap capture the ALREADY-bumped
@@ -621,7 +635,7 @@ public sealed partial class HostController
 		CancelAutosave();
 		string repoRoot = ResolveRepoRoot(path);
 		// M-16: the FIRST document loaded in this process cannot trust its own (virgin) in-memory
-		// _state — a previous session may have been force-quit / crashed / restarted mid-draft, leaving
+		// _session — a previous session may have been force-quit / crashed / restarted mid-draft, leaving
 		// a working (draft) branch checked out on disk with no in-memory record of it. Always stamping
 		// Published here would lie to the author ("Published" while HEAD sits on a draft branch) and, if
 		// they then clicked "Edit", would drive BeginEdit's forced checkout against a state it thinks is
@@ -634,14 +648,6 @@ public sealed partial class HostController
 		_lifecycleResolvedOnce = true;
 		lock (_sync)
 		{
-			_state = state;
-			_branch = branch;
-			_baseBranch = baseBranch;
-			// A newly loaded document carries no LOCAL record of saved / shared versions from a prior
-			// session (even when we just resumed a draft) — the counters only drive "Update review"'s
-			// no-op guard and a fresh session has nothing of its own to compare against yet.
-			_versionsSaved = 0;
-			_versionsShared = 0;
 			// Publish the document fields as one matched set under the lock, so a still-running autosave
 			// timer can never snapshot a torn (new path, old text) pair and write across documents.
 			_text = text;
@@ -650,9 +656,20 @@ public sealed partial class HostController
 			// Detected from the RAW content just read, before anything normalizes it — see the
 			// _lineEnding field comment.
 			_lineEnding = DetectLineEnding(text);
-			// See the _textGeneration field comment: kept consistent with every other _text assignment
-			// site, even though a plain document load never bumps _draftGeneration itself.
-			_textGeneration = Interlocked.Read(ref _draftGeneration);
+			// A newly loaded document is a fresh session: no LOCAL record of saved / shared versions from a
+			// prior session (even when we just resumed a draft) — the counters only drive "Update review"'s
+			// no-op guard and a fresh session has nothing of its own to compare against yet — and Dirty
+			// false (CancelAutosave, above, already cleared it). See DraftSession.Generation: kept consistent
+			// with every other _text assignment site, even though a plain document load never bumps
+			// _draftGeneration itself.
+			_session = new DraftSession(
+				state,
+				Branch: branch,
+				BaseBranch: baseBranch,
+				Dirty: false,
+				VersionsSaved: 0,
+				VersionsShared: 0,
+				Generation: Interlocked.Read(ref _draftGeneration));
 		}
 
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);
@@ -717,7 +734,7 @@ public sealed partial class HostController
 		// CurrentBranch), but also reject libgit2's own "(no branch)" placeholder explicitly in case some
 		// future IDocumentVersioning implementation forwards it verbatim instead of translating it to
 		// null — either way there is no real branch name here to resume a draft onto or later store as
-		// _branch (which OnSaveVersion/OnDiscard would otherwise act on as if it were a real ref).
+		// the session's Branch (which OnSaveVersion/OnDiscard would otherwise act on as if it were a real ref).
 		if (currentBranch is null or "(no branch)" || string.Equals(currentBranch, baseBranch, StringComparison.Ordinal))
 		{
 			// Detached HEAD (no friendly branch to resume onto), or HEAD is already on the published
@@ -744,9 +761,10 @@ public sealed partial class HostController
 		// The editor is navigable (caret/selection) while read-only, so a paste can fire before the
 		// author has started a draft. Ignore it: with no working branch the image has nowhere to live,
 		// and inserting would mutate a read-only/published document and write a stray file into the repo.
-		if (!IsEditingState())
+		DraftSession session = _session;
+		if (!IsEditingState(session.State))
 		{
-			_logger.LogDebug("Image paste ignored: not editing (state {State})", _state);
+			_logger.LogDebug("Image paste ignored: not editing (state {State})", session.State);
 			ReplyInserted(id, string.Empty);
 			return;
 		}

@@ -599,15 +599,18 @@ public sealed class HostControllerReviewTests
         object sync = typeof(HostController)
             .GetField("_sync", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(controller)!;
-        FieldInfo stateField = typeof(HostController).GetField("_state", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        // The six lifecycle fields (state / branch / … ) are consolidated into the immutable _session
+        // snapshot; poke its State the same way this used to poke the standalone _state field.
+        FieldInfo sessionField = typeof(HostController).GetField("_session", BindingFlags.NonPublic | BindingFlags.Instance)!;
         FieldInfo publishInFlightField =
             typeof(HostController).GetField("_publishInFlight", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        string State() => ((HostController.DraftSession)sessionField.GetValue(controller)!).State;
 
         Task discard;
         Monitor.Enter(sync);
         try
         {
-            Assert.That(stateField.GetValue(controller), Is.EqualTo("draft"), "the draft should still be Draft here");
+            Assert.That(State(), Is.EqualTo("draft"), "the draft should still be Draft here");
 
             discard = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard)));
             Assert.That(
@@ -617,8 +620,11 @@ public sealed class HostControllerReviewTests
 
             // Stand in for a send that has JUST fully settled: state advanced to In review (where
             // "discard" is not a legal transition), flag cleared — while OnDiscard's whole check is still
-            // blocked waiting for _sync.
-            stateField.SetValue(controller, "inReview");
+            // blocked waiting for _sync. Swap in a session snapshot with State advanced, exactly as
+            // TryAdvanceReview does under _sync.
+            sessionField.SetValue(
+                controller,
+                ((HostController.DraftSession)sessionField.GetValue(controller)!) with { State = "inReview" });
             publishInFlightField.SetValue(controller, false);
         }
         finally
@@ -630,7 +636,7 @@ public sealed class HostControllerReviewTests
         Assert.Multiple(() =>
         {
             Assert.That(versioning.DiscardCalled, Is.False, "discard is not a legal transition from In review");
-            Assert.That(stateField.GetValue(controller), Is.EqualTo("inReview"));
+            Assert.That(State(), Is.EqualTo("inReview"));
         });
     }
 

@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disk autosave, saving versions, image paste, and compare). `HostController.cs` retains the shared
   fields, locks, constructor, and the IPC message router. This is a purely mechanical move of members
   between files of the same class — no signatures, lock ordering, logic, or observable behavior change.
+- `HostController`'s draft editing session (`SpecDesk.Host`) is now held as one immutable `DraftSession`
+  snapshot — lifecycle state, working/base branch, dirty flag, saved/shared version counts, and the
+  `_sync`-guarded generation token — swapped atomically under `_sync`, replacing six separate mutable
+  fields plus the loose `_textGeneration` companion. Handlers snapshot the whole session in a single
+  read and compare generations ("is this still the same draft?") instead of racing individual fields.
+  The live `_draftGeneration` checkout counter stays a separate `Interlocked` value (it is mutated under
+  `_repoGate`, where `_sync` must not be taken), preserving the exact autosave/discard/send race guards
+  from earlier fixes. No IPC contract, event ordering, or observable "draft changed under an operation"
+  behavior changes.
 
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes

@@ -80,9 +80,9 @@ public sealed partial class HostController : IDisposable
 	// M-16: guards the git-based lifecycle recovery in LoadFile (see ResolveInitialLifecycle) to only the
 	// FIRST document this process loads — whichever LoadFile call that turns out to be (the auto-loaded
 	// _initialDocPath on OnReady, or the author's first explicit "Open" if the app started with nothing to
-	// auto-load). Only THEN can the in-memory _state/_branch be stale relative to reality (a previous
-	// session's crash/restart left them unset while the repo's checkout moved on). Every later "Open"
-	// during the same running session already has an authoritative in-memory _state — this object tracked
+	// auto-load). Only THEN can the in-memory _session (state / branch) be stale relative to reality (a
+	// previous session's crash/restart left them unset while the repo's checkout moved on). Every later
+	// "Open" during the same running session already has an authoritative in-memory _session — this object tracked
 	// every Edit/Discard/Send for review itself — so consulting git again there would be wrong: the repo's
 	// single current checkout is a repo-wide, not a per-document, fact, and reusing it for a document
 	// opened mid-session (while a draft on a DIFFERENT document is in progress, or its publish is still
@@ -105,19 +105,39 @@ public sealed partial class HostController : IDisposable
 	// blocks until the push returns — a bounded responsiveness cost on a slow/stalled network, not a
 	// deadlock. The push itself runs off the message thread; only a concurrent repo-gated action contends.
 	private readonly object _repoGate = new();
-	private string _state = Lifecycle.stateName(Lifecycle.State.Published);
-	private string? _branch;
-	private string? _baseBranch;
+
+	// The whole draft editing session as one immutable snapshot (see the DraftSession record below),
+	// swapped atomically as a single reference under _sync. Consolidates what were six separate fields
+	// (_state / _branch / _baseBranch / _dirty / _versionsSaved / _versionsShared) plus the _sync-guarded
+	// generation companion, so every handler reads one self-consistent snapshot and asks "is this still
+	// the same draft?" against DraftSession.Generation / _draftGeneration rather than racing six loose
+	// fields. Assigned only under _sync (via `_session = _session with { … }` or a fresh record), except
+	// the few best-effort unlocked reads of _session.State that gate an action before it re-checks under
+	// _sync (OnEdit / OnSaveVersion's initial tryStep, OnImagePaste) — the same lock-free read _state
+	// carried before, now reading one atomic reference instead of a bare string.
+	private DraftSession _session = new(
+		Lifecycle.stateName(Lifecycle.State.Published),
+		Branch: null,
+		BaseBranch: null,
+		Dirty: false,
+		VersionsSaved: 0,
+		VersionsShared: 0,
+		Generation: 0);
+
 	private Timer? _autosaveTimer;
-	private bool _dirty;
 
 	// Monotonic "which repo checkout is this" token. Bumped only under _repoGate, immediately after a
 	// repo mutation that changes what is checked out (BeginEdit in OnEdit; Discard in OnDiscard) —
 	// never under _sync alone, and never in CancelAutosave (called by both, but before either's
-	// checkout — bumping there would be observable together with _text/_state that haven't caught up).
+	// checkout — bumping there would be observable together with _text/_session that haven't caught up).
+	// It stays a bare Interlocked counter, NOT a field of the _sync-guarded _session record, precisely
+	// because it is mutated under _repoGate: folding it into the record would require writing _session
+	// under both _repoGate and _sync (two locks that must never nest), and the resulting lost update is
+	// exactly the race this token exists to close.
+	//
 	// Read with Interlocked from RunDiskAutosave's re-check, which runs while holding _repoGate itself:
 	// _repoGate must never be held while also taking _sync (see the _repoGate comment below), so that
-	// re-check cannot take _sync to read _text/_state freshly — it can only compare against this counter.
+	// re-check cannot take _sync to read _text/_session freshly — it can only compare against this counter.
 	//
 	// That comparison is only meaningful if the snapshot's captured "generation" reflects the checkout
 	// _text was actually written against — NOT whatever this live counter happens to read at snapshot
@@ -125,38 +145,9 @@ public sealed partial class HostController : IDisposable
 	// separate _sync block (e.g. OnDiscard re-reading the reverted file — I/O — before resetting _text),
 	// this counter has already moved even though _text has not. A snapshot landing in that window would,
 	// if it captured this field directly, carry the NEW generation paired with the OLD text — a torn
-	// pair whose later re-check trivially matches. See _textGeneration below for the companion field
-	// that closes this, and RunDiskAutosave for how the two are used together.
+	// pair whose later re-check trivially matches. See DraftSession.Generation for the _sync-guarded
+	// companion that closes this, and RunDiskAutosave for how the two are used together.
 	private long _draftGeneration;
-
-	// _sync-guarded companion to _draftGeneration: set to whatever _draftGeneration currently reads,
-	// in the SAME _sync critical section as every assignment to _text (OnEditorChanged, LoadFile,
-	// OnDiscard's post-revert reset). RunDiskAutosave's snapshot captures THIS field (under _sync,
-	// alongside text/path) as its "generation" — not _draftGeneration directly — so the captured value
-	// always reflects the checkout _text was current for, never a checkout whose bump has landed but
-	// whose _text update has not. Any checkout that happens after _text was last written (i.e. any
-	// _repoGate-scoped bump to _draftGeneration since) leaves _textGeneration strictly behind — so
-	// RunDiskAutosave's later re-check (comparing the captured value against the LIVE _draftGeneration
-	// inside _repoGate) reports a mismatch regardless of exactly when, during the checkout's repoGate
-	// section, the snapshot was taken. This is what actually closes the window a snapshot that read
-	// _draftGeneration directly could not: the two fields change together under _sync, so a snapshot can
-	// never observe "new checkout, old text" — only "old checkout, old text" (correctly stale) or "new
-	// checkout, new text" (also filtered by IsEditingState(), since a fresh checkout via BeginEdit
-	// changes _state, and OnDiscard's reset sets it to Published).
-	//
-	// A plain "open a different document" (LoadFile without a Discard or BeginEdit) does not bump
-	// _draftGeneration at all: it never touches the checked-out branch, so a late write for the document
-	// it replaces still lands, correctly, on that document's own unchanged branch; LoadFile still updates
-	// _textGeneration alongside _text there, consistent with every other assignment site.
-	private long _textGeneration;
-
-	// Monotonic count of versions committed on the current draft ("Save a version"), and how many of
-	// those have been pushed to an open review. Guarded by _sync; both reset when the draft changes (begin
-	// edit / open a document / discard). "Has versions not yet shared" ⟺ _versionsSaved > _versionsShared —
-	// this is what makes Update review meaningful: it guards against a no-op push (and the pointless
-	// status refresh that would follow) when nothing new was saved since the review was last updated.
-	private long _versionsSaved;
-	private long _versionsShared;
 
 	// True while a review-publishing round-trip — "Send for review" (push + open PR) or "Update review"
 	// (push to the open PR) — is in flight (guarded by _sync). It single-flights both, and across both:
@@ -188,7 +179,7 @@ public sealed partial class HostController : IDisposable
 	// its input already is LF-only. Re-applied at every disk-write site (OnSave, RunDiskAutosave,
 	// OnSaveVersion) so a CRLF-authored file round-trips without every line in the diff being rewritten by
 	// a single keystroke. Published as one matched set with `_text`/`_currentPath` under `_sync` (LoadFile,
-	// OnDiscard), same discipline as `_textGeneration`. Defaults to "\n" for a brand-new/no-newline document.
+	// OnDiscard), same discipline as `DraftSession.Generation`. Defaults to "\n" for a brand-new/no-newline document.
 	private string _lineEnding = "\n";
 
 	public HostController(
@@ -360,30 +351,26 @@ public sealed partial class HostController : IDisposable
 
 	private void SendLifecycleStatus()
 	{
-		string state;
-		string? branch;
+		DraftSession session;
 		lock (_sync)
 		{
-			state = _state;
-			branch = _branch;
+			session = _session;
 		}
 
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.Status,
-			new StatusPayload(state, Lifecycle.labelOf(state), branch)));
+			new StatusPayload(session.State, Lifecycle.labelOf(session.State), session.Branch)));
 	}
 
 	private void SendTransientStatus(string label)
 	{
-		string state;
-		string? branch;
+		DraftSession session;
 		lock (_sync)
 		{
-			state = _state;
-			branch = _branch;
+			session = _session;
 		}
 
-		Emit(IpcSerializer.SerializeEvent(MessageKinds.Status, new StatusPayload(state, label, branch)));
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.Status, new StatusPayload(session.State, label, session.Branch)));
 	}
 
 	private void SendError(string message) =>
@@ -491,4 +478,62 @@ public sealed partial class HostController : IDisposable
 			return default;
 		}
 	}
+
+	/// <summary>
+	/// An immutable snapshot of the draft editing session — the lifecycle <see cref="State"/>, its
+	/// working (<see cref="Branch"/>) and base (<see cref="BaseBranch"/>) branch, whether the working copy
+	/// is <see cref="Dirty"/>, and how many versions have been <see cref="VersionsSaved"/> vs.
+	/// <see cref="VersionsShared"/> — plus the <see cref="Generation"/> token tying it to the checkout its
+	/// accompanying text was written against. Held in <see cref="_session"/> and swapped atomically as one
+	/// reference under <see cref="_sync"/>, so a handler snapshots the whole session in a single read and
+	/// compares generations ("is this still the same draft?") instead of racing six separate fields.
+	/// A reference type on purpose: a single reference read/write is atomic, so the few best-effort
+	/// unlocked reads of <see cref="_session"/> observe a self-consistent record, never a torn one, and
+	/// the swap under <see cref="_sync"/> publishes all fields together.
+	/// </summary>
+	/// <param name="State">The wire lifecycle state name (see <c>Lifecycle.stateName</c>).</param>
+	/// <param name="Branch">The working (draft) branch, or <c>null</c> when not editing.</param>
+	/// <param name="BaseBranch">The base branch the draft forked from, or <c>null</c> when not editing.</param>
+	/// <param name="Dirty">
+	/// Whether the working copy differs from the last saved version. Set on the first edit, held across disk
+	/// autosaves (a write, not a commit), cleared only by "Save a version" (or when the draft changes).
+	/// </param>
+	/// <param name="VersionsSaved">
+	/// Monotonic count of versions committed on the current draft ("Save a version"); reset whenever the
+	/// draft changes (begin edit / open a document / discard).
+	/// </param>
+	/// <param name="VersionsShared">
+	/// How many of the saved versions have been pushed to an open review. "Has versions not yet shared" ⟺
+	/// <see cref="VersionsSaved"/> &gt; <see cref="VersionsShared"/> — this is what makes Update review
+	/// meaningful: it guards against a no-op push (and the pointless status refresh that would follow) when
+	/// nothing new was saved since the review was last updated.
+	/// </param>
+	/// <param name="Generation">
+	/// The _sync-guarded companion to <see cref="_draftGeneration"/>: set to whatever
+	/// <see cref="_draftGeneration"/> currently reads, in the SAME _sync critical section as every
+	/// assignment to <c>_text</c> (OnEditorChanged, LoadFile, OnDiscard's post-revert reset), and left
+	/// untouched by session mutations that don't rewrite <c>_text</c> (they use <c>with</c>, preserving it).
+	/// RunDiskAutosave's snapshot captures THIS value (under _sync, alongside text/path) as its
+	/// "generation" — not <see cref="_draftGeneration"/> directly — so the captured value always reflects
+	/// the checkout <c>_text</c> was current for, never a checkout whose bump has landed but whose
+	/// <c>_text</c> update has not. Any checkout after <c>_text</c> was last written (any _repoGate-scoped
+	/// bump to <see cref="_draftGeneration"/> since) leaves this strictly behind, so RunDiskAutosave's
+	/// later re-check (comparing this captured value against the LIVE <see cref="_draftGeneration"/> inside
+	/// _repoGate) reports a mismatch regardless of exactly when, during the checkout's repoGate section, the
+	/// snapshot was taken. That is what closes the window a snapshot reading <see cref="_draftGeneration"/>
+	/// directly could not: this and <c>_text</c> change together under _sync, so a snapshot can never
+	/// observe "new checkout, old text" — only "old checkout, old text" (correctly stale) or "new checkout,
+	/// new text" (also filtered by IsEditingState, since a fresh BeginEdit changes <see cref="State"/> and
+	/// OnDiscard's reset sets it to Published). A plain "open a different document" (LoadFile without a
+	/// Discard or BeginEdit) never bumps <see cref="_draftGeneration"/> — it doesn't touch the checked-out
+	/// branch — yet LoadFile still refreshes this alongside <c>_text</c>, consistent with every other site.
+	/// </param>
+	internal sealed record DraftSession(
+		string State,
+		string? Branch,
+		string? BaseBranch,
+		bool Dirty,
+		long VersionsSaved,
+		long VersionsShared,
+		long Generation);
 }
