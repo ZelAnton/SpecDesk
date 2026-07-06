@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- `log.ts` (webview) no longer throws when logged `data` contains a circular reference or a `BigInt`
+  — the JSON serializer now renders `BigInt` values as strings and falls back to a placeholder for
+  anything it still can't stringify, instead of letting `JSON.stringify` throw into the caller.
 - Escape now closes/cancels an open inline prompt bar (draft name, version note, send-for-review)
   regardless of which of its own elements holds focus. Previously the Escape handling lived only on
   the text input/textarea, so a keyboard user focused on the Confirm/Cancel button got no reaction.
