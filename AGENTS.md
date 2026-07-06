@@ -88,7 +88,8 @@ file, so any drift breaks CI in the language that didn't follow.
 | `diff-kinds.json` | F# `DiffWire.DiffKind` → `DiffKindContractTests` (Diff.Tests) | `contract.test.ts` vs `DIFF_KINDS` |
 
 - After an intentional contract change, regenerate over the **whole solution** (the generators live in
-  three test projects behind one opt-in), then update the TS mirror to match:
+  three test projects behind one opt-in) using `scripts/update-contract-fixtures.cmd`, then update the
+  TS mirror to match. The script runs:
   ```sh
   UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx
   ```
