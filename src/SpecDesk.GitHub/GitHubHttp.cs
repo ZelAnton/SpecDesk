@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using SpecDesk.AppInfo;
 
 namespace SpecDesk.GitHub;
 
@@ -18,8 +19,11 @@ internal static class GitHubHttp
     // own loop where one exists.
     public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
-    // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is fine).
-    public static readonly ProductInfoHeaderValue UserAgent = new("SpecDesk", "1.0");
+    // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is
+    // fine). Both the name and the version come from ProductInfo — no second hard-coded "1.0" out of
+    // step with the actual product version.
+    public static readonly ProductInfoHeaderValue UserAgent =
+        new(ProductInfo.Name, ProductInfo.Version);
 
     /// <summary>A <see cref="CancellationTokenSource"/> linked to <paramref name="ct"/> with
     /// <see cref="RequestTimeout"/> already armed — the shared per-request-timeout pattern used by every

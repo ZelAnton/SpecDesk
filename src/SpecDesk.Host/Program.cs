@@ -2,6 +2,7 @@ using System.Net.Http;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using Photino.NET;
+using SpecDesk.AppInfo;
 using SpecDesk.Core;
 using SpecDesk.Git;
 using SpecDesk.GitHub;
@@ -39,20 +40,17 @@ internal static class Program
 		// box without ever touching SpecDesk's own working tree. The concrete type also implements
 		// IGitPublishing (push / remote / last-note) for the PoC-5 "Send for review" round-trip.
 		LibGit2DocumentVersioning versioning = new();
-		string sampleRepo = Path.Combine(
-			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-			"SpecDesk",
-			"sample-repo");
 		string welcomeDoc = SampleRepo.EnsureSeeded(
-			sampleRepo, BundledSamples, versioning, loggerFactory.CreateLogger("SpecDesk.Host.SampleRepo"));
+			AppPaths.SampleRepo, BundledSamples, versioning, loggerFactory.CreateLogger("SpecDesk.Host.SampleRepo"));
 
 		// GitHub sign-in (PoC-5): resolve the OAuth App client id (env → compiled default). An empty id
 		// means sign-in is unconfigured, so the auth library — and the webview's account affordance — stay
 		// off. The HttpClient is shared for the app's lifetime and disposed after the controller (so an
 		// in-flight sign-in is signalled to cancel first; at process teardown any residual fault is benign).
-		string gitHubClientId = Environment.GetEnvironmentVariable("SPECDESK_GITHUB_CLIENT_ID") is { Length: > 0 } id
-			? id
-			: GitHubAuthOptions.DefaultClientId;
+		string gitHubClientId =
+			Environment.GetEnvironmentVariable(GitHubAuthOptions.ClientIdEnvironmentVariable) is { Length: > 0 } id
+				? id
+				: GitHubAuthOptions.DefaultClientId;
 		using HttpClient gitHubHttp = new();
 
 		// Cancelled (with the grace period above) once the window starts closing; see
@@ -60,13 +58,7 @@ internal static class Program
 		using CancellationTokenSource dialogClosingCts = new();
 
 		IGitHubAuth? gitHubAuth = gitHubClientId.Length > 0
-			? new GitHubDeviceFlowAuth(
-				GitHubAuthOptions.ForClient(gitHubClientId),
-				gitHubHttp,
-				Path.Combine(
-					Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-					"SpecDesk",
-					"auth"))
+			? new GitHubDeviceFlowAuth(GitHubAuthOptions.ForClient(gitHubClientId), gitHubHttp, AppPaths.Auth)
 			: null;
 
 		using HostController controller = new(
@@ -90,7 +82,7 @@ internal static class Program
 			review: new GitHubReviewClient(gitHubHttp));
 
 		window = new PhotinoWindow()
-			.SetTitle("SpecDesk")
+			.SetTitle(ProductInfo.Name)
 			.SetUseOsDefaultSize(false)
 			.SetSize(1280, 800)
 			.Center()

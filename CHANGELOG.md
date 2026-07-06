@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The product's name and version, and the `%LOCALAPPDATA%\SpecDesk` data root, are now defined once in a
+  new `SpecDesk.AppInfo` project (`ProductInfo`, `AppPaths`) instead of being hand-duplicated across the
+  tree: the AppData root (previously assembled independently for the sample repo, the GitHub auth/token
+  directory, and the log directory), the window title, the rolling log file name prefix, and the local
+  git fallback commit identity all read from it now, and `GitHubHttp.UserAgent`'s version is derived from
+  `ProductInfo.Version` (the assembly's own build-time `<Version>`) instead of a second hard-coded "1.0"
+  that had drifted out of step with the shipped 0.1.0. `AppPaths.Auth`/`SampleRepo`/`Logs` are pinned
+  byte-identical to the paths they replace (see `SpecDesk.AppInfo.Tests`), so no existing installation's
+  DPAPI-encrypted token directory is orphaned by this change.
 - Removed two dead `ProjectReference` edges: `SpecDesk.GitHub` no longer references `SpecDesk.Contracts`
   (nothing in `SpecDesk.GitHub` used its types), and `SpecDesk.Ai` no longer references
   `SpecDesk.Contracts`/`SpecDesk.Core` (the stub project ahead of PoC-9 doesn't consume either yet).

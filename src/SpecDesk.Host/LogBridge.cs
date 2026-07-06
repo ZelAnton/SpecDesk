@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpecDesk.AppInfo;
 using SpecDesk.Contracts;
 
 namespace SpecDesk.Host;
@@ -66,7 +67,8 @@ public sealed class LogBridge
 	/// dialog layer logs.</summary>
 	public void Export()
 	{
-		string? destination = _dialogs.PickSaveFile(Path.Combine(_logDirectory, "specdesk-export.log"));
+		string? destination =
+			_dialogs.PickSaveFile(Path.Combine(_logDirectory, AppPaths.LogFilePrefix + "export.log"));
 		if (destination is null)
 		{
 			_notify($"Logs are at {_logDirectory}");
@@ -95,7 +97,7 @@ public sealed class LogBridge
 			return "(no log directory yet)";
 		}
 
-		string[] files = Directory.GetFiles(_logDirectory, "specdesk-*.log");
+		string[] files = Directory.GetFiles(_logDirectory, AppPaths.LogFilePrefix + "*.log");
 		if (files.Length == 0)
 		{
 			return "(no log file yet)";

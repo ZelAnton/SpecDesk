@@ -5,6 +5,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\SpecDesk.AppInfo\SpecDesk.AppInfo.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<!-- DPAPI for the token at rest (Windows); see Directory.Packages.props. -->
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" />
 	</ItemGroup>
