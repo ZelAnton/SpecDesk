@@ -9,7 +9,7 @@
  */
 
 import { type DiffMark, expandDiffMarks } from "./diff-marks.js";
-import type { DiffEntryPayload } from "./protocol.js";
+import type { DiffBaseKind, DiffEntryPayload } from "./protocol.js";
 
 /** The slice of an editor the overlay paints — both MarkdownEditor and FormattedEditor satisfy it. */
 export interface DiffSurface {
@@ -25,9 +25,11 @@ export interface ReviewDeps {
   surfaces: readonly [DiffSurface, ...DiffSurface[]];
   /** Reflect the toggle's pressed state on the "Show changes" button. */
   setPressed: (on: boolean) => void;
-  /** Ask the host to diff the working copy against the last saved version. The integrator stamps the
-   *  current docVersion on the request so a stale reply is dropped by {@link ReviewController.applyResult}. */
-  requestCompare: () => void;
+  /** Ask the host to diff the working copy against the given base. The overlay owns which base to ask
+   *  for (today always `"lastVersion"`; PoC-7 wires other affordances that pass `"published"`/`"pr"`).
+   *  The integrator stamps the current docVersion on the request so a stale reply is dropped by
+   *  {@link ReviewController.applyResult}. */
+  requestCompare: (base: DiffBaseKind) => void;
   /** The live monotonic document version, for the result's version-gate. */
   docVersion: () => number;
   /** Toggle the "no changes to show" notice: fired with true when a compare returns an empty diff
@@ -42,7 +44,9 @@ export class ReviewController {
   constructor(private readonly deps: ReviewDeps) {}
 
   /** Toggle the overlay: clear a showing one, or start a fresh compare (press the button and ask the
-   *  host to diff — the marks arrive later via {@link applyResult}). */
+   *  host to diff — the marks arrive later via {@link applyResult}). The local "Show changes" affordance
+   *  always compares against the last saved version; PoC-7's PR/published affordances will call a
+   *  variant that passes a different base. */
   toggle(): void {
     if (this.reviewing) {
       this.clear();
@@ -50,7 +54,7 @@ export class ReviewController {
     }
     this.reviewing = true;
     this.deps.setPressed(true);
-    this.deps.requestCompare();
+    this.deps.requestCompare("lastVersion");
   }
 
   /** Drop the overlay: un-press the button and clear the marks in every surface. A genuine edit, a

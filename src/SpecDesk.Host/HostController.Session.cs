@@ -826,12 +826,24 @@ public sealed partial class HostController
 		});
 	}
 
-	// Compare the working copy (head) against the file's last committed version (base) and send the
-	// structural diff for the editors to overlay (PoC-6). Local only — no GitHub. An empty diff (no
+	// Compare the working copy (head) against the requested base and send the structural diff for the
+	// editors to overlay (PoC-6). The webview overlay owns which base to ask for (DiffRequestPayload.Base);
+	// only "lastVersion" (the file's last committed version, local only — no GitHub) is wired so far.
+	// "published"/"pr" are PoC-7's vs-main / vs-PR-head compares, not implemented yet. An empty diff (no
 	// committed version, or nothing changed) clears any existing overlay. The editor-content version is
 	// echoed back so the webview can drop a result it has already edited past.
 	private void OnCompare(IpcMessage message)
 	{
+		// A missing/malformed payload defaults to the pre-existing local compare rather than erroring, so
+		// an older webview build (no payload at all) keeps working unchanged.
+		DiffRequestPayload? requested = SafeGetPayload<DiffRequestPayload>(message);
+		string requestedBase = requested?.Base ?? DiffBaseKinds.LastVersion;
+		if (requestedBase != DiffBaseKinds.LastVersion)
+		{
+			SendError("Comparing against that base isn't supported yet.");
+			return;
+		}
+
 		string text;
 		string? path;
 		string? repoRoot;

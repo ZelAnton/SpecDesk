@@ -352,7 +352,7 @@ function wire(): void {
   review = new ReviewController({
     surfaces: [editor, formatted],
     setPressed: (on) => compareBtn?.setAttribute("aria-pressed", String(on)),
-    requestCompare: () => ipc.send(Kinds.diffRequest, undefined, { version: docVersion }),
+    requestCompare: (base) => ipc.send(Kinds.diffRequest, { base }, { version: docVersion }),
     docVersion: () => docVersion,
     onEmptyState: (showing) => {
       if (reviewEmptyEl) {

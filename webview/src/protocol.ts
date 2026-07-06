@@ -51,6 +51,14 @@ export const DIFF_KINDS = ["added", "changed", "moved", "removed"] as const;
 /** How one changed block (or row/item) relates base→head (mirror of F# DiffWire.DiffKind). */
 export type DiffKind = (typeof DIFF_KINDS)[number];
 
+/** The `diff.request` `base` names — mirror of C# `DiffBaseKinds`. `"lastVersion"` is the only one wired
+ *  today (the local "Show changes": working copy vs the last saved version); `"published"` (vs the
+ *  published/main version) and `"pr"` (vs an open pull request's head, with the PR number in {@link
+ *  DiffRequestPayload.pr}) are reserved for PoC-7's in-flight-review compares. Kept as a plain union
+ *  (not a validated runtime set, unlike {@link DIFF_KINDS}) because the webview only ever *produces*
+ *  these values, never decodes them from the wire. */
+export type DiffBaseKind = "lastVersion" | "published" | "pr";
+
 /** A changed child (table row / list item) of a changed container (native→webview, inside a
  *  {@link DiffEntryPayload}'s `children`). Ordinals match the container's rendered children. */
 export interface ChildDiffPayload {
@@ -89,6 +97,14 @@ export interface DiffEntryPayload {
  *  committed version, in document order. The version rides on the envelope (drop a stale result). */
 export interface DiffResultPayload {
   entries: DiffEntryPayload[];
+}
+
+/** Payload of `diff.request` (webview→native): which base to diff the working copy against. The
+ *  overlay (ReviewController) owns this choice — see {@link DiffBaseKind}. `pr` is the pull request
+ *  number, present only when `base` is `"pr"`. */
+export interface DiffRequestPayload {
+  base: DiffBaseKind;
+  pr?: number;
 }
 
 /** The document lifecycle state names — the single runtime source on the webview side; the

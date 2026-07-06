@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `diff.request` (webview→native) now carries a `{ base }` payload — `"lastVersion"` (the working copy vs
+  the last saved version), with `"published"` and `"pr"` reserved for the upcoming vs-main / vs-PR-head
+  compares — instead of implicitly diffing against the local HEAD. The webview's review overlay
+  (`ReviewController`) owns the choice of base; the "Show changes" affordance keeps its existing local
+  behavior unchanged by always requesting `"lastVersion"`. `HostController.OnCompare` reads the base from
+  the payload (falling back to `"lastVersion"` for a missing/malformed payload) and reports "not supported
+  yet" for the reserved bases, which aren't implemented.
 - The `BundleWebview` MSBuild target (`SpecDesk.Host.csproj`) is now incremental: it declares
   `Inputs`/`Outputs` covering the webview sources/config and the generated bundle, so a plain
   `dotnet build`/`dotnet test` no longer re-runs `npm run bundle` when nothing in `webview/` changed.

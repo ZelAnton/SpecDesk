@@ -182,6 +182,25 @@ public sealed record DiffEntryPayload(
 /// webview can drop a result the document has already been edited past.</summary>
 public sealed record DiffResultPayload(IReadOnlyList<DiffEntryPayload> Entries);
 
+/// <summary>
+/// Wire values for <c>diff.request</c>'s <see cref="DiffRequestPayload.Base"/> (mirror of the webview's
+/// <c>DiffBaseKind</c> in protocol.ts). Only <see cref="LastVersion"/> is wired today — the local "Show
+/// changes" compare (working copy vs the last saved version, PoC-6); <see cref="Published"/> (vs the
+/// published/main version) and <see cref="Pr"/> (vs an open pull request's head) are reserved for PoC-7's
+/// in-flight-review compares and are not yet implemented by <c>HostController.OnCompare</c>.
+/// </summary>
+public static class DiffBaseKinds
+{
+	public const string LastVersion = "lastVersion";
+	public const string Published = "published";
+	public const string Pr = "pr";
+}
+
+/// <summary>Payload of <c>diff.request</c> (webview→native): which base to diff the working copy against
+/// (the webview overlay owns this choice — see <see cref="DiffBaseKinds"/>). <paramref name="Pr"/> is the
+/// pull request number, present only when <paramref name="Base"/> is <see cref="DiffBaseKinds.Pr"/>.</summary>
+public sealed record DiffRequestPayload(string Base, int? Pr = null);
+
 /// <summary>Payload of <c>github.code</c> (native→webview): the one-time code the author types at
 /// <paramref name="VerificationUri"/> to connect their GitHub account. Shown verbatim; never a secret
 /// token (the access token stays inside SpecDesk.GitHub).</summary>
