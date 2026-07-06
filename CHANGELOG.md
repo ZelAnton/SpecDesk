@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- `docs/CODE-REVIEW-PLAN.md`'s T-09 finding claimed `AGENTS.md`/`CLAUDE.md` were gitignored, making every
+  tracked doc's `../AGENTS.md` link 404 on GitHub. Verified false: both files have been git-tracked since
+  the repository's initial commit and are on the remote (`origin/main`); the finding is now marked
+  resolved so it isn't re-chased.
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
   since the last saved version" when the host's `diff.result` reply is malformed (decodes to `null`,
   e.g. a transport/contract glitch). It is now dropped, the same as every other `ipc.on` handler,
