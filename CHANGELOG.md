@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which never needed the bundle. A trailing `Touch` normalizes the copied `index.html`/`styles.css`
   timestamps after each real run, since Windows' file-copy preserves the *source* file's timestamp and
   would otherwise make the up-to-date check see a stale output on every invocation.
+- `HostController` (`SpecDesk.Host`) is now organized into partial-class files by area of
+  responsibility: `HostController.Review.cs` (GitHub review orchestration — send/update/refresh/list
+  and the PR-text suggestion), `HostController.SignIn.cs` (device-flow sign-in and the account
+  affordance), and `HostController.Session.cs` (the document/editing session — open/save, drafts,
+  disk autosave, saving versions, image paste, and compare). `HostController.cs` retains the shared
+  fields, locks, constructor, and the IPC message router. This is a purely mechanical move of members
+  between files of the same class — no signatures, lock ordering, logic, or observable behavior change.
 
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
