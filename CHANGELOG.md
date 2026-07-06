@@ -285,6 +285,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last line, while the Formatted pane (`formatted.ts` `blockIndexForLine`) already cleared it; the source
   editor now also clears it, so both panes agree.
 
+### Changed
+- `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked
+  `as` cast to reach a typed DOM element/stub — they now follow the instanceof-narrowing helper pattern
+  already used in `dialogs.test.ts` (throws locally if the test's own markup/stub ever drifts from what
+  it's asserting against, instead of trusting an assertion that could silently paper over that drift).
+
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain
   `CurrentUser` scoping — raising the bar against another process running as the same Windows user that

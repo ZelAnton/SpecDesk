@@ -29,6 +29,15 @@ function el(id: string): HTMLElement {
   return node;
 }
 
+// instanceof narrowing (no `as`) — mirrors the pattern in dialogs.test.ts.
+function input(id: string): HTMLInputElement {
+  const node = document.querySelector(`#${id}`);
+  if (!(node instanceof HTMLInputElement)) {
+    throw new Error(`#${id} not an input`);
+  }
+  return node;
+}
+
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -132,7 +141,7 @@ describe("ReviewsPanel", () => {
     const openUrl = vi.fn();
     // Constructed for its side effect: it wires the url-open button's click listener.
     new ReviewsPanel({ requestReviews: () => Promise.resolve({ items: [] }), openUrl });
-    const urlInput = el("reviews-url-input") as HTMLInputElement;
+    const urlInput = input("reviews-url-input");
 
     urlInput.value = "https://example.com/not-a-pr";
     el("reviews-url-open").click();
