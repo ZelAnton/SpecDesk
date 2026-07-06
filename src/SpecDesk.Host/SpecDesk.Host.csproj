@@ -42,19 +42,59 @@
 	</ItemGroup>
 
 	<!--
+		Webview inputs tracked as an item (rather than inlined directly in the target's Inputs
+		attribute below): MSBuild only expands "**" wildcards for a target's incremental
+		up-to-date check when they come from an @(Item) reference — an inline wildcard string in
+		Inputs is compared as a literal, non-existent path and forces a full rebuild every time.
+	-->
+	<ItemGroup>
+		<WebviewSource Include="$(RepoRoot)webview\src\**\*.*;$(RepoRoot)webview\index.html;$(RepoRoot)webview\styles.css;$(RepoRoot)webview\package.json;$(RepoRoot)webview\package-lock.json;$(RepoRoot)webview\tsconfig.json" />
+	</ItemGroup>
+
+	<!--
+		Whatever wwwroot/ already holds from an earlier successful bundle (this build or a previous
+		one) is staged unconditionally: this ItemGroup is evaluated up front, before any target runs,
+		so it also covers the case where BundleWebview below is skipped as up to date (e.g. after
+		`dotnet clean`/a bin wipe with wwwroot left untouched) — without it, a skipped target would
+		leave the output directory without the bundle. When BundleWebview does regenerate the files in
+		this same build, its own Content Include re-adds the (now fresh) paths; the resulting duplicate
+		item entries are harmless (MSBuild copies the same source/destination pair twice, not an error).
+	-->
+	<ItemGroup>
+		<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+	</ItemGroup>
+
+	<!--
 		Build the webview bundle (esbuild) before the .NET output is laid down, then stage the
 		generated wwwroot/ files. The Content items are added INSIDE the target, after the bundle
-		is written, so the fresh files are copied in the same build. Pass -p:SkipWebview=true to
-		skip this (the node-less CI .NET jobs do); `npm ci` runs only when node_modules is absent.
+		is written, so the fresh files are copied in the same build even though the static ItemGroup
+		above evaluated before they existed. Pass -p:SkipWebview=true to skip this (the node-less CI
+		.NET jobs do); `npm ci` runs only when node_modules is absent.
+
+		Inputs/Outputs make the target incremental: MSBuild skips it when every output is newer than
+		every input, so a plain `dotnet build`/`dotnet test` with no webview changes no longer pays
+		the ~second-plus cost of spawning npm/esbuild. The Condition also excludes design-time builds
+		(IDE IntelliSense passes/-p:DesignTimeBuild=true), which don't need the bundle at all.
+
+		The trailing Touch is required for correctness, not cosmetic: `npm run bundle` copies
+		index.html/styles.css via Node's fs.copyFileSync, which on Windows preserves the *source*
+		file's timestamp (CopyFileW semantics) instead of stamping "now". Left alone, those two
+		outputs would forever carry webview/index.html's and webview/styles.css's original
+		timestamps, which can be older than sibling *.ts sources checked out at the same time —
+		making the Inputs/Outputs comparison see a "newer input" and rebuild on every single
+		invocation, defeating the whole point of this section.
 	-->
 	<Target Name="BundleWebview" BeforeTargets="AssignTargetPaths"
-	        Condition="'$(SkipWebview)' != 'true' And Exists('$(RepoRoot)webview\package.json')">
+	        Condition="'$(SkipWebview)' != 'true' And '$(DesignTimeBuild)' != 'true' And Exists('$(RepoRoot)webview\package.json')"
+	        Inputs="@(WebviewSource)"
+	        Outputs="wwwroot\webview.js;wwwroot\index.html;wwwroot\styles.css">
 		<!-- Reinstall when node_modules is absent (first dev build) OR on any publish/release build, so
 		     the shipped bundle is always built against the committed lockfile rather than a stale
 		     node_modules left over after a dependency bump. Dev incremental builds stay fast. -->
 		<Exec Command="npm ci" WorkingDirectory="$(RepoRoot)webview"
 		      Condition="!Exists('$(RepoRoot)webview\node_modules') Or '$(PublishProfile)' != ''" />
 		<Exec Command="npm run bundle" WorkingDirectory="$(RepoRoot)webview" />
+		<Touch Files="wwwroot\webview.js;wwwroot\index.html;wwwroot\styles.css" AlwaysCreate="true" />
 		<ItemGroup>
 			<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
 		</ItemGroup>

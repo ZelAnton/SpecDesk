@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The `BundleWebview` MSBuild target (`SpecDesk.Host.csproj`) is now incremental: it declares
+  `Inputs`/`Outputs` covering the webview sources/config and the generated bundle, so a plain
+  `dotnet build`/`dotnet test` no longer re-runs `npm run bundle` when nothing in `webview/` changed.
+  It also skips entirely during design-time builds (`$(DesignTimeBuild)` — IDE IntelliSense passes),
+  which never needed the bundle. A trailing `Touch` normalizes the copied `index.html`/`styles.css`
+  timestamps after each real run, since Windows' file-copy preserves the *source* file's timestamp and
+  would otherwise make the up-to-date check see a stale output on every invocation.
+
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
   since the last saved version" when the host's `diff.result` reply is malformed (decodes to `null`,
