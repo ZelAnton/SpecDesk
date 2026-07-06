@@ -1,5 +1,8 @@
 <Solution>
 	<Folder Name="/Tests/">
+		<Project Path="tests/SpecDesk.AppInfo.Tests/SpecDesk.AppInfo.Tests.csproj">
+			<BuildDependency Project="src/SpecDesk.AppInfo/SpecDesk.AppInfo.csproj" />
+		</Project>
 		<Project Path="tests/SpecDesk.Contracts.Tests/SpecDesk.Contracts.Tests.csproj">
 			<BuildDependency Project="src/SpecDesk.Contracts/SpecDesk.Contracts.csproj" />
 		</Project>
@@ -22,6 +25,7 @@
 			<BuildDependency Project="src/SpecDesk.Diff/SpecDesk.Diff.fsproj" />
 		</Project>
 	</Folder>
+	<Project Path="src/SpecDesk.AppInfo/SpecDesk.AppInfo.csproj" />
 	<Project Path="src/SpecDesk.Contracts/SpecDesk.Contracts.csproj" />
 	<Project Path="src/SpecDesk.Core/SpecDesk.Core.fsproj" />
 	<Project Path="src/SpecDesk.Markdown/SpecDesk.Markdown.fsproj" />

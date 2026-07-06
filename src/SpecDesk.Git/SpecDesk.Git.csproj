@@ -5,6 +5,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<ProjectReference Include="..\SpecDesk.AppInfo\SpecDesk.AppInfo.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="LibGit2Sharp" />
 	</ItemGroup>
 

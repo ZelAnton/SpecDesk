@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Serilog;
 using Serilog.Events;
+using SpecDesk.AppInfo;
 
 namespace SpecDesk.Host;
 
@@ -14,11 +15,7 @@ namespace SpecDesk.Host;
 public static class Logging
 {
 	/// <summary>Directory holding the rolling log files.</summary>
-	public static string LogDirectory { get; } =
-		Path.Combine(
-			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-			"SpecDesk",
-			"logs");
+	public static string LogDirectory { get; } = AppPaths.Logs;
 
 	private const string OutputTemplate =
 		"{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}";
@@ -34,7 +31,7 @@ public static class Logging
 			.MinimumLevel.Debug()
 			.Enrich.FromLogContext()
 			.WriteTo.File(
-				Path.Combine(LogDirectory, "specdesk-.log"),
+				Path.Combine(LogDirectory, AppPaths.LogFilePrefix + ".log"),
 				rollingInterval: RollingInterval.Day,
 				retainedFileCountLimit: 7,
 				outputTemplate: OutputTemplate,

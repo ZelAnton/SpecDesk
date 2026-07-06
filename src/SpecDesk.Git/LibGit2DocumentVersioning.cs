@@ -1,4 +1,5 @@
 using LibGit2Sharp;
+using SpecDesk.AppInfo;
 
 namespace SpecDesk.Git;
 
@@ -11,7 +12,8 @@ namespace SpecDesk.Git;
 public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublishing
 {
     // Used when the repository has no committer identity configured (a freshly seeded demo repo).
-    private static readonly Identity FallbackIdentity = new("SpecDesk", "specdesk@localhost");
+    private static readonly Identity FallbackIdentity =
+        new(ProductInfo.Name, ProductInfo.Name.ToLowerInvariant() + "@localhost");
 
     public bool IsVersioned(string repoRoot)
     {
