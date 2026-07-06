@@ -1,8 +1,16 @@
 import { setHidden, setText } from "../util/dom.js";
 import type { PrListItemPayload, PrListPayload } from "../wire/protocol.js";
 
-/** The host actions the reviews panel triggers. */
+/** The host actions the reviews panel triggers, plus the panel's own DOM elements (each may be absent
+ *  from the markup). */
 export interface ReviewsPanelDeps {
+  /** The panel's own elements. */
+  panel: HTMLElement | null;
+  list: HTMLElement | null;
+  status: HTMLElement | null;
+  closeBtn: HTMLButtonElement | null;
+  urlInput: HTMLInputElement | null;
+  urlOpenBtn: HTMLButtonElement | null;
   /** Fetch the user's open reviews from the host (a correlated request). */
   requestReviews: () => Promise<PrListPayload>;
   /** Open a review's page in the OS browser (the host re-validates the scheme). */
@@ -19,18 +27,25 @@ const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+(?:[/?#].*)?$
  * never sees git/PR vocabulary (a "pull request" is a "review").
  */
 export class ReviewsPanel {
-  private readonly panel = document.querySelector<HTMLElement>("#reviews-panel");
-  private readonly list = document.querySelector<HTMLElement>("#reviews-list");
-  private readonly status = document.querySelector<HTMLElement>("#reviews-status");
-  private readonly closeBtn = document.querySelector<HTMLButtonElement>("#reviews-close");
-  private readonly urlInput = document.querySelector<HTMLInputElement>("#reviews-url-input");
-  private readonly urlOpenBtn = document.querySelector<HTMLButtonElement>("#reviews-url-open");
+  private readonly panel: HTMLElement | null;
+  private readonly list: HTMLElement | null;
+  private readonly status: HTMLElement | null;
+  private readonly closeBtn: HTMLButtonElement | null;
+  private readonly urlInput: HTMLInputElement | null;
+  private readonly urlOpenBtn: HTMLButtonElement | null;
   // True while a fetch is in flight. It serialises loads: repeat "My reviews" clicks (or a close+reopen
   // mid-flight) never fan out a second concurrent host query — the one in flight renders into the panel if
   // it's still open when it resolves.
   private loading = false;
 
   constructor(private readonly deps: ReviewsPanelDeps) {
+    this.panel = deps.panel;
+    this.list = deps.list;
+    this.status = deps.status;
+    this.closeBtn = deps.closeBtn;
+    this.urlInput = deps.urlInput;
+    this.urlOpenBtn = deps.urlOpenBtn;
+
     this.closeBtn?.addEventListener("click", () => this.close());
     this.urlOpenBtn?.addEventListener("click", () => this.openByUrl());
     this.urlInput?.addEventListener("keydown", (event) => {

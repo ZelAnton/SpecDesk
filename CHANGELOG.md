@@ -398,6 +398,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `as` cast to reach a typed DOM element/stub — they now follow the instanceof-narrowing helper pattern
   already used in `dialogs.test.ts` (throws locally if the test's own markup/stub ever drifts from what
   it's asserting against, instead of trusting an assertion that could silently paper over that drift).
+- `Dialogs` (`webview/src/chrome/dialogs.ts`), `SignInController` (`webview/src/chrome/signin.ts`), and
+  `ReviewsPanel` (`webview/src/review/reviews-panel.ts`) no longer query `document` directly for their own
+  elements — they now receive them via constructor deps, the same injection pattern already used by
+  `lifecycle-chrome.ts`/`segmented-control.ts`/`format-toolbar.ts`. `index.ts` (the sole caller) queries
+  the elements once and passes them in; no observable behavior change. The three modules' tests now build
+  their fake elements from the test markup and pass them in, instead of the module reaching into `document`
+  itself.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

@@ -30,7 +30,19 @@ function mount() {
   const cancelSignIn = vi.fn();
   const signOut = vi.fn();
   const openUrl = vi.fn();
-  const controller = new SignInController({ signIn, cancelSignIn, signOut, openUrl });
+  const controller = new SignInController({
+    accountBtn: document.querySelector<HTMLButtonElement>("#github-btn"),
+    bar: document.querySelector<HTMLElement>("#github-signin-bar"),
+    text: document.querySelector<HTMLElement>("#github-signin-text"),
+    userCode: document.querySelector<HTMLElement>("#github-user-code"),
+    openBtn: document.querySelector<HTMLButtonElement>("#github-open-btn"),
+    status: document.querySelector<HTMLElement>("#github-signin-status"),
+    cancelBtn: document.querySelector<HTMLButtonElement>("#github-cancel-btn"),
+    signIn,
+    cancelSignIn,
+    signOut,
+    openUrl,
+  });
   return { controller, signIn, cancelSignIn, signOut, openUrl };
 }
 

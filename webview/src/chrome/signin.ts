@@ -1,8 +1,18 @@
 import { setHidden, setText } from "../util/dom.js";
 import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.js";
 
-/** The host actions the account affordance triggers (each maps to one IPC message). */
+/** The host actions the account affordance triggers (each maps to one IPC message), plus the
+ *  affordance's own DOM elements (each may be absent from the markup). */
 export interface SignInDeps {
+  /** The "Connect to GitHub" account button. */
+  accountBtn: HTMLButtonElement | null;
+  /** The sign-in code bar and its contents. */
+  bar: HTMLElement | null;
+  text: HTMLElement | null;
+  userCode: HTMLElement | null;
+  openBtn: HTMLButtonElement | null;
+  status: HTMLElement | null;
+  cancelBtn: HTMLButtonElement | null;
   /** Start connecting a GitHub account. */
   signIn: () => void;
   /** Cancel an in-flight sign-in. */
@@ -25,17 +35,25 @@ function atHandle(login: string): string {
  * OAuth/token/device-flow vocabulary.
  */
 export class SignInController {
-  private readonly accountBtn = document.querySelector<HTMLButtonElement>("#github-btn");
-  private readonly bar = document.querySelector<HTMLElement>("#github-signin-bar");
-  private readonly text = document.querySelector<HTMLElement>("#github-signin-text");
-  private readonly userCode = document.querySelector<HTMLElement>("#github-user-code");
-  private readonly openBtn = document.querySelector<HTMLButtonElement>("#github-open-btn");
-  private readonly status = document.querySelector<HTMLElement>("#github-signin-status");
-  private readonly cancelBtn = document.querySelector<HTMLButtonElement>("#github-cancel-btn");
+  private readonly accountBtn: HTMLButtonElement | null;
+  private readonly bar: HTMLElement | null;
+  private readonly text: HTMLElement | null;
+  private readonly userCode: HTMLElement | null;
+  private readonly openBtn: HTMLButtonElement | null;
+  private readonly status: HTMLElement | null;
+  private readonly cancelBtn: HTMLButtonElement | null;
   private signedIn = false;
   private verificationUri = "";
 
   constructor(private readonly deps: SignInDeps) {
+    this.accountBtn = deps.accountBtn;
+    this.bar = deps.bar;
+    this.text = deps.text;
+    this.userCode = deps.userCode;
+    this.openBtn = deps.openBtn;
+    this.status = deps.status;
+    this.cancelBtn = deps.cancelBtn;
+
     this.accountBtn?.addEventListener("click", () => {
       if (this.signedIn) {
         this.deps.signOut();

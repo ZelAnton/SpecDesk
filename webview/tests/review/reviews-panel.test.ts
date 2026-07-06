@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ReviewsPanel } from "../../src/review/reviews-panel.js";
+import { ReviewsPanel, type ReviewsPanelDeps } from "../../src/review/reviews-panel.js";
 import type { PrListPayload } from "../../src/wire/protocol.js";
 
 // Minimal markup mirroring the reviews panel's ids (all start hidden, as in index.html).
@@ -42,6 +42,22 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// The elements ReviewsPanel receives via its deps (queried from the test markup here, not by
+// ReviewsPanel itself — mirrors the injection pattern in lifecycle-chrome.test.ts).
+function elements(): Pick<
+  ReviewsPanelDeps,
+  "panel" | "list" | "status" | "closeBtn" | "urlInput" | "urlOpenBtn"
+> {
+  return {
+    panel: el("reviews-panel"),
+    list: el("reviews-list"),
+    status: el("reviews-status"),
+    closeBtn: document.querySelector<HTMLButtonElement>("#reviews-close"),
+    urlInput: input("reviews-url-input"),
+    urlOpenBtn: document.querySelector<HTMLButtonElement>("#reviews-url-open"),
+  };
+}
+
 describe("ReviewsPanel", () => {
   beforeEach(setupDom);
 
@@ -71,6 +87,7 @@ describe("ReviewsPanel", () => {
   it("toggles open, renders each review, and opens one on click", async () => {
     const openUrl = vi.fn();
     const panel = new ReviewsPanel({
+      ...elements(),
       requestReviews: () => Promise.resolve(twoReviews),
       openUrl,
     });
@@ -96,7 +113,7 @@ describe("ReviewsPanel", () => {
     const requestReviews = vi.fn(
       () => new Promise<PrListPayload>((resolve) => (resolveLoad = resolve)),
     );
-    const panel = new ReviewsPanel({ requestReviews, openUrl: vi.fn() });
+    const panel = new ReviewsPanel({ ...elements(), requestReviews, openUrl: vi.fn() });
 
     void panel.open();
     void panel.open();
@@ -115,6 +132,7 @@ describe("ReviewsPanel", () => {
 
   it("shows the host's error and no rows when the list fails to load", async () => {
     const panel = new ReviewsPanel({
+      ...elements(),
       requestReviews: () => Promise.resolve({ items: [], error: "Couldn't load your reviews." }),
       openUrl: vi.fn(),
     });
@@ -127,6 +145,7 @@ describe("ReviewsPanel", () => {
 
   it("falls back to an error state when requestReviews rejects", async () => {
     const panel = new ReviewsPanel({
+      ...elements(),
       requestReviews: () => Promise.reject(new Error("transport failure")),
       openUrl: vi.fn(),
     });
@@ -140,7 +159,11 @@ describe("ReviewsPanel", () => {
   it("opens a valid pull-request link by URL and rejects anything else", () => {
     const openUrl = vi.fn();
     // Constructed for its side effect: it wires the url-open button's click listener.
-    new ReviewsPanel({ requestReviews: () => Promise.resolve({ items: [] }), openUrl });
+    new ReviewsPanel({
+      ...elements(),
+      requestReviews: () => Promise.resolve({ items: [] }),
+      openUrl,
+    });
     const urlInput = input("reviews-url-input");
 
     urlInput.value = "https://example.com/not-a-pr";
@@ -157,6 +180,7 @@ describe("ReviewsPanel", () => {
   it("closes on the close button and invalidates an in-flight load", async () => {
     let resolveLoad: (payload: PrListPayload) => void = () => {};
     const panel = new ReviewsPanel({
+      ...elements(),
       requestReviews: () => new Promise<PrListPayload>((resolve) => (resolveLoad = resolve)),
       openUrl: vi.fn(),
     });

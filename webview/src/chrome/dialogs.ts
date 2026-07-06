@@ -29,7 +29,25 @@ export interface PrSuggestion extends PrText {
   blocked?: string;
 }
 
-export interface DialogsCallbacks {
+export interface DialogsDeps {
+  /** The draft-name (branch) prompt's own elements (each may be absent from the markup). */
+  branchNameBar: HTMLElement | null;
+  branchNameInput: HTMLInputElement | null;
+  branchNameConfirm: HTMLButtonElement | null;
+  branchNameCancel: HTMLButtonElement | null;
+  /** The version-note (commit message) prompt's own elements. */
+  versionNoteBar: HTMLElement | null;
+  versionNoteInput: HTMLInputElement | null;
+  versionNoteTextarea: HTMLTextAreaElement | null;
+  versionNoteExpand: HTMLButtonElement | null;
+  versionNoteConfirm: HTMLButtonElement | null;
+  versionNoteCancel: HTMLButtonElement | null;
+  /** The send-for-review (PR title/body) prompt's own elements. */
+  prTextBar: HTMLElement | null;
+  prTitleInput: HTMLInputElement | null;
+  prBodyTextarea: HTMLTextAreaElement | null;
+  prTextConfirm: HTMLButtonElement | null;
+  prTextCancel: HTMLButtonElement | null;
   /** Fetch the host's suggested draft (branch) name to prefill the prompt; resolves "" on failure. */
   suggestBranchName: () => Promise<string>;
   /** The author confirmed a draft name (already trimmed) — fork the working branch and begin editing. */
@@ -48,39 +66,53 @@ export interface DialogsCallbacks {
 }
 
 export class Dialogs {
-  private readonly branchNameBar = document.querySelector<HTMLElement>("#branch-name-bar");
-  private readonly branchNameInput = document.querySelector<HTMLInputElement>("#branch-name-input");
-  private readonly branchNameConfirm =
-    document.querySelector<HTMLButtonElement>("#branch-name-confirm");
-  private readonly branchNameCancel =
-    document.querySelector<HTMLButtonElement>("#branch-name-cancel");
+  private readonly branchNameBar: HTMLElement | null;
+  private readonly branchNameInput: HTMLInputElement | null;
+  private readonly branchNameConfirm: HTMLButtonElement | null;
+  private readonly branchNameCancel: HTMLButtonElement | null;
 
-  private readonly versionNoteBar = document.querySelector<HTMLElement>("#version-note-bar");
-  private readonly versionNoteInput =
-    document.querySelector<HTMLInputElement>("#version-note-input");
-  private readonly versionNoteTextarea =
-    document.querySelector<HTMLTextAreaElement>("#version-note-textarea");
-  private readonly versionNoteExpand =
-    document.querySelector<HTMLButtonElement>("#version-note-expand");
-  private readonly versionNoteConfirm =
-    document.querySelector<HTMLButtonElement>("#version-note-confirm");
-  private readonly versionNoteCancel =
-    document.querySelector<HTMLButtonElement>("#version-note-cancel");
+  private readonly versionNoteBar: HTMLElement | null;
+  private readonly versionNoteInput: HTMLInputElement | null;
+  private readonly versionNoteTextarea: HTMLTextAreaElement | null;
+  private readonly versionNoteExpand: HTMLButtonElement | null;
+  private readonly versionNoteConfirm: HTMLButtonElement | null;
+  private readonly versionNoteCancel: HTMLButtonElement | null;
 
-  private readonly prTextBar = document.querySelector<HTMLElement>("#pr-text-bar");
-  private readonly prTitleInput = document.querySelector<HTMLInputElement>("#pr-title-input");
-  private readonly prBodyTextarea =
-    document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
-  private readonly prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
-  private readonly prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+  private readonly prTextBar: HTMLElement | null;
+  private readonly prTitleInput: HTMLInputElement | null;
+  private readonly prBodyTextarea: HTMLTextAreaElement | null;
+  private readonly prTextConfirm: HTMLButtonElement | null;
+  private readonly prTextCancel: HTMLButtonElement | null;
 
   // The open/close state machine (re-entrancy latch + supersession token) for each bar lives in
   // PromptBar, so that subtle handling is written once and the bars cannot drift apart.
-  private readonly branchBar = new PromptBar(this.branchNameBar);
-  private readonly versionBar = new PromptBar(this.versionNoteBar);
-  private readonly prBar = new PromptBar(this.prTextBar);
+  private readonly branchBar: PromptBar;
+  private readonly versionBar: PromptBar;
+  private readonly prBar: PromptBar;
 
-  constructor(private readonly callbacks: DialogsCallbacks) {
+  constructor(private readonly deps: DialogsDeps) {
+    this.branchNameBar = deps.branchNameBar;
+    this.branchNameInput = deps.branchNameInput;
+    this.branchNameConfirm = deps.branchNameConfirm;
+    this.branchNameCancel = deps.branchNameCancel;
+
+    this.versionNoteBar = deps.versionNoteBar;
+    this.versionNoteInput = deps.versionNoteInput;
+    this.versionNoteTextarea = deps.versionNoteTextarea;
+    this.versionNoteExpand = deps.versionNoteExpand;
+    this.versionNoteConfirm = deps.versionNoteConfirm;
+    this.versionNoteCancel = deps.versionNoteCancel;
+
+    this.prTextBar = deps.prTextBar;
+    this.prTitleInput = deps.prTitleInput;
+    this.prBodyTextarea = deps.prBodyTextarea;
+    this.prTextConfirm = deps.prTextConfirm;
+    this.prTextCancel = deps.prTextCancel;
+
+    this.branchBar = new PromptBar(this.branchNameBar);
+    this.versionBar = new PromptBar(this.versionNoteBar);
+    this.prBar = new PromptBar(this.prTextBar);
+
     // Escape closes/cancels a bar no matter which of its own elements holds focus (button or text
     // field) — bound on the bar container itself so it fires regardless of the focused descendant,
     // not only from the text-input/textarea listeners below.
@@ -186,7 +218,7 @@ export class Dialogs {
    *  (e.g. repeated keystrokes in the read-only editor) so requests don't stack — see PromptBar. */
   async openBranchName(): Promise<void> {
     await this.branchBar.open(
-      () => this.callbacks.suggestBranchName(),
+      () => this.deps.suggestBranchName(),
       (suggested) => {
         if (this.branchNameInput) {
           this.branchNameInput.value = suggested;
@@ -203,7 +235,7 @@ export class Dialogs {
   private confirmBranchName(): void {
     const branchName = this.branchNameInput?.value.trim() ?? "";
     this.branchBar.close();
-    this.callbacks.onBranchName(branchName);
+    this.deps.onBranchName(branchName);
   }
 
   // —— Version-note (commit message) prompt ——————————————————————————————————————————————————————————
@@ -216,7 +248,7 @@ export class Dialogs {
     // Only one draft prompt at a time — close the send-for-review bar if it's open (both are draft-state).
     this.prBar.close();
     await this.versionBar.open(
-      () => this.callbacks.suggestVersionNote(),
+      () => this.deps.suggestVersionNote(),
       (suggested) => {
         // Always reopen in the compact single-line state.
         if (this.versionNoteTextarea) {
@@ -250,12 +282,12 @@ export class Dialogs {
     // Only one draft prompt at a time — close the version-note bar if it's open (both are draft-state).
     this.versionBar.close();
     await this.prBar.open(
-      () => this.callbacks.suggestPrText(),
+      () => this.deps.suggestPrText(),
       (suggested) => {
         if (suggested.blocked) {
           // The send can't proceed — show the reason and do NOT open the prompt, so the author never
           // composes text into a send that would be rejected.
-          this.callbacks.onPrBlocked(suggested.blocked);
+          this.deps.onPrBlocked(suggested.blocked);
           return;
         }
         if (this.prTitleInput) {
@@ -281,7 +313,7 @@ export class Dialogs {
     const title = this.prTitleInput?.value.trim() ?? "";
     const body = this.prBodyTextarea?.value.trim() ?? "";
     this.prBar.close();
-    this.callbacks.onPrText({ title, body });
+    this.deps.onPrText({ title, body });
   }
 
   /** Close every prompt bar (e.g. when a new document loads). */
@@ -316,6 +348,6 @@ export class Dialogs {
       ? (this.versionNoteTextarea?.value ?? "")
       : (this.versionNoteInput?.value ?? "");
     this.closeVersionNote();
-    this.callbacks.onVersionNote(raw.trim());
+    this.deps.onVersionNote(raw.trim());
   }
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Dialogs, sanitizeDraftName } from "../../src/chrome/dialogs.js";
+import { Dialogs, type DialogsDeps, sanitizeDraftName } from "../../src/chrome/dialogs.js";
 
 // Minimal markup mirroring the two inline bars' ids; both start hidden, as in index.html.
 function setupDom(): void {
@@ -56,6 +56,45 @@ function button(id: string): HTMLButtonElement {
   return el;
 }
 
+// The elements Dialogs receives via its deps (queried from the test markup here, not by Dialogs itself —
+// mirrors the injection pattern in lifecycle-chrome.test.ts).
+function elements(): Pick<
+  DialogsDeps,
+  | "branchNameBar"
+  | "branchNameInput"
+  | "branchNameConfirm"
+  | "branchNameCancel"
+  | "versionNoteBar"
+  | "versionNoteInput"
+  | "versionNoteTextarea"
+  | "versionNoteExpand"
+  | "versionNoteConfirm"
+  | "versionNoteCancel"
+  | "prTextBar"
+  | "prTitleInput"
+  | "prBodyTextarea"
+  | "prTextConfirm"
+  | "prTextCancel"
+> {
+  return {
+    branchNameBar: div("branch-name-bar"),
+    branchNameInput: input("branch-name-input"),
+    branchNameConfirm: button("branch-name-confirm"),
+    branchNameCancel: button("branch-name-cancel"),
+    versionNoteBar: div("version-note-bar"),
+    versionNoteInput: input("version-note-input"),
+    versionNoteTextarea: textarea("version-note-textarea"),
+    versionNoteExpand: button("version-note-expand"),
+    versionNoteConfirm: button("version-note-confirm"),
+    versionNoteCancel: button("version-note-cancel"),
+    prTextBar: div("pr-text-bar"),
+    prTitleInput: input("pr-title-input"),
+    prBodyTextarea: textarea("pr-body-textarea"),
+    prTextConfirm: button("pr-text-confirm"),
+    prTextCancel: button("pr-text-cancel"),
+  };
+}
+
 function mount(
   suggest: {
     branch?: string;
@@ -71,6 +110,7 @@ function mount(
   const suggestVersionNote = vi.fn(async () => suggest.version ?? "");
   const suggestPrText = vi.fn(async () => suggest.pr ?? { title: "", body: "" });
   const dialogs = new Dialogs({
+    ...elements(),
     suggestBranchName,
     onBranchName,
     suggestVersionNote,
@@ -195,6 +235,7 @@ describe("Dialogs — draft-name bar", () => {
         }),
     );
     const dialogs = new Dialogs({
+      ...elements(),
       suggestBranchName,
       onBranchName: vi.fn(),
       suggestVersionNote: vi.fn(async () => ""),
@@ -220,6 +261,7 @@ describe("Dialogs — draft-name bar", () => {
         }),
     );
     const dialogs = new Dialogs({
+      ...elements(),
       suggestBranchName,
       onBranchName: vi.fn(),
       suggestVersionNote: vi.fn(async () => ""),
@@ -347,6 +389,7 @@ describe("Dialogs — version-note bar", () => {
         }),
     );
     const dialogs = new Dialogs({
+      ...elements(),
       suggestBranchName: vi.fn(async () => ""),
       onBranchName: vi.fn(),
       suggestVersionNote,
@@ -377,6 +420,7 @@ describe("Dialogs — version-note bar", () => {
         }),
     );
     const dialogs = new Dialogs({
+      ...elements(),
       suggestBranchName: vi.fn(async () => ""),
       onBranchName: vi.fn(),
       suggestVersionNote,

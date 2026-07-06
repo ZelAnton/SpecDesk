@@ -83,6 +83,41 @@ function wire(): void {
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
   );
+
+  // The inline prompt bars' own elements (dialogs.ts).
+  const branchNameBar = document.querySelector<HTMLElement>("#branch-name-bar");
+  const branchNameInput = document.querySelector<HTMLInputElement>("#branch-name-input");
+  const branchNameConfirm = document.querySelector<HTMLButtonElement>("#branch-name-confirm");
+  const branchNameCancel = document.querySelector<HTMLButtonElement>("#branch-name-cancel");
+  const versionNoteBar = document.querySelector<HTMLElement>("#version-note-bar");
+  const versionNoteInput = document.querySelector<HTMLInputElement>("#version-note-input");
+  const versionNoteTextarea = document.querySelector<HTMLTextAreaElement>("#version-note-textarea");
+  const versionNoteExpand = document.querySelector<HTMLButtonElement>("#version-note-expand");
+  const versionNoteConfirm = document.querySelector<HTMLButtonElement>("#version-note-confirm");
+  const versionNoteCancel = document.querySelector<HTMLButtonElement>("#version-note-cancel");
+  const prTextBar = document.querySelector<HTMLElement>("#pr-text-bar");
+  const prTitleInput = document.querySelector<HTMLInputElement>("#pr-title-input");
+  const prBodyTextarea = document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
+  const prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
+  const prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+
+  // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
+  const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const githubSigninBar = document.querySelector<HTMLElement>("#github-signin-bar");
+  const githubSigninText = document.querySelector<HTMLElement>("#github-signin-text");
+  const githubUserCode = document.querySelector<HTMLElement>("#github-user-code");
+  const githubOpenBtn = document.querySelector<HTMLButtonElement>("#github-open-btn");
+  const githubSigninStatus = document.querySelector<HTMLElement>("#github-signin-status");
+  const githubCancelBtn = document.querySelector<HTMLButtonElement>("#github-cancel-btn");
+
+  // The "My reviews" panel's own elements (reviews-panel.ts).
+  const reviewsPanelEl = document.querySelector<HTMLElement>("#reviews-panel");
+  const reviewsList = document.querySelector<HTMLElement>("#reviews-list");
+  const reviewsStatus = document.querySelector<HTMLElement>("#reviews-status");
+  const reviewsCloseBtn = document.querySelector<HTMLButtonElement>("#reviews-close");
+  const reviewsUrlInput = document.querySelector<HTMLInputElement>("#reviews-url-input");
+  const reviewsUrlOpenBtn = document.querySelector<HTMLButtonElement>("#reviews-url-open");
+
   if (!editorEl || !previewEl || !formattedEl) {
     return;
   }
@@ -175,6 +210,21 @@ function wire(): void {
   // The inline prompt bars (draft name on Edit, version note on Save version, review text on Send). They
   // reach the host only through these callbacks — the integrator keeps the ipc/Kinds knowledge (dialogs.ts).
   const dialogs = new Dialogs({
+    branchNameBar,
+    branchNameInput,
+    branchNameConfirm,
+    branchNameCancel,
+    versionNoteBar,
+    versionNoteInput,
+    versionNoteTextarea,
+    versionNoteExpand,
+    versionNoteConfirm,
+    versionNoteCancel,
+    prTextBar,
+    prTitleInput,
+    prBodyTextarea,
+    prTextConfirm,
+    prTextCancel,
     suggestBranchName: () =>
       requestSuggestion(
         Kinds.branchNameRequest,
@@ -552,6 +602,13 @@ function wire(): void {
     // GitHub account affordance (PoC-5): the host drives the "Connect to GitHub" button + the sign-in code
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
+      accountBtn: githubBtn,
+      bar: githubSigninBar,
+      text: githubSigninText,
+      userCode: githubUserCode,
+      openBtn: githubOpenBtn,
+      status: githubSigninStatus,
+      cancelBtn: githubCancelBtn,
       signIn: () => ipc.send(Kinds.githubSignIn),
       cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
       signOut: () => ipc.send(Kinds.githubSignOut),
@@ -560,6 +617,12 @@ function wire(): void {
 
     // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
     const reviewsPanel = new ReviewsPanel({
+      panel: reviewsPanelEl,
+      list: reviewsList,
+      status: reviewsStatus,
+      closeBtn: reviewsCloseBtn,
+      urlInput: reviewsUrlInput,
+      urlOpenBtn: reviewsUrlOpenBtn,
       requestReviews: () =>
         requestSuggestion(Kinds.prListRequest, parsePrList, {
           items: [],
