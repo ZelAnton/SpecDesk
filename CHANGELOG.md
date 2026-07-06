@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `IpcClient` (`webview/src/ipc.ts`) now exposes `subscribe(id, handler)`, a multi-frame
+  correlation alongside the existing one-shot `request()`: the pending entry stays registered
+  across every frame carrying the id until the caller itself releases it via the returned
+  `unsubscribe()` (typically on a terminal frame kind). This is the correlation model the
+  planned `chat.delta`/`chat.done` streaming will build on; the existing single-reply
+  `request()`/`on()` behavior is unchanged.
 - The `BundleWebview` MSBuild target (`SpecDesk.Host.csproj`) is now incremental: it declares
   `Inputs`/`Outputs` covering the webview sources/config and the generated bundle, so a plain
   `dotnet build`/`dotnet test` no longer re-runs `npm run bundle` when nothing in `webview/` changed.
