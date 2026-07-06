@@ -43,6 +43,19 @@ describe("scrollTopForLine", () => {
     // line 11.5 → fraction = 1.5/3 = 0.5 → 100 + 25
     expect(scrollTopForLine(formatted, 11.5)).toBe(125);
   });
+
+  it("returns the block top when the span is zero (avoids a divide-by-zero → NaN)", () => {
+    // contentLineEnd === lineStart → span = 0; a zero-content-line block must not yield NaN.
+    const zeroSpan: BlockBox = {
+      lineStart: 10,
+      lineEnd: 14,
+      contentLineEnd: 10,
+      top: 100,
+      height: 50,
+    };
+    expect(scrollTopForLine(zeroSpan, 10)).toBe(100);
+    expect(scrollTopForLine(zeroSpan, 12)).toBe(100);
+  });
 });
 
 describe("lineAtScrollTop", () => {
