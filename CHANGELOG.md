@@ -249,6 +249,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and whitespace (e.g. "x x x x...") could turn a modest-length string into thousands of tokens, blowing
   past the char-length cap and allocating/filling a many-million-cell table. Also removed an unreachable
   second `flushDel()` call left over from an earlier refactor, which recomputed nothing but was dead code.
+- The change-annotation pill on the Formatted pane's first block (`top: -0.72rem`, above the block it
+  labels) no longer gets clipped off by the pane's own top edge when that first block is the changed
+  one — `#formatted` now reserves top padding for it. `.review-meta`/`.review-state` in the "My reviews"
+  panel now shrink with an ellipsis instead of overflowing the row on a long `owner/name`, and
+  `#reviews-panel-head` gains `flex-wrap` per the design concept's "reflow rather than overflow" rule.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

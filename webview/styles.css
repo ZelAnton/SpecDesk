@@ -408,8 +408,10 @@ button {
 
 #reviews-panel-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 0.5rem;
 }
 
 #reviews-panel-title {
@@ -478,25 +480,39 @@ button {
 
 .review-title {
   flex: 1;
-  min-width: 0;
+  min-width: 4rem;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* Capped (not just shrinkable) so a long `owner/name` can't claim so much of the row that the title
+   above loses its guaranteed minimum (`.review-title`'s `min-width`) — both truncate with an ellipsis
+   before either would overflow the row. */
 .review-meta {
+  min-width: 0;
+  max-width: 12rem;
+  overflow: hidden;
   color: var(--text-muted);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* The state pill mirrors the status dot's per-state colour family (design concept §8); the word always
-   carries the meaning, never colour alone (§11). */
+   carries the meaning, never colour alone (§11). Shrinks (with an ellipsis, never overflow) alongside
+   `.review-meta` if a long `owner/name` leaves the row short on space — it never wraps onto a second
+   line, matching the "control labels never wrap" rule (design concept §12). */
 .review-state {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 8rem;
+  overflow: hidden;
   padding: 0.05rem 0.4rem;
   color: var(--text-muted);
   border: 1px solid var(--border);
   border-radius: 999px;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .review-state[data-state="inReview"] {
@@ -688,6 +704,14 @@ button {
   padding: 0 1.5rem;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+/* The formatted pane's own top padding, wider than the shared rule above: a change-annotation pill
+   (§ "Change annotation" below, `top: -0.72rem` on the changed block itself) sits above the block it
+   labels, so without headroom here it would be clipped off by the scroll container's top edge whenever
+   the very first block in the document is the changed one. */
+#formatted {
+  padding-top: 1.25rem;
 }
 
 /* The read-only Markdig preview is no longer a visible pane — Split now pairs the source editor with
