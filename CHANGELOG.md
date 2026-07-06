@@ -293,6 +293,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The source editor (`editor.ts` `activeLineField`) previously pinned the highlight to the document's
   last line, while the Formatted pane (`formatted.ts` `blockIndexForLine`) already cleared it; the source
   editor now also clears it, so both panes agree.
+- `IpcClient.on` (webview `ipc.ts`) now throws instead of silently replacing an already-registered
+  handler for the same message kind. Previously a second `on()` call for a kind that already had a
+  handler quietly disconnected the first one — every current caller registers each kind exactly once,
+  so a re-registration is always a bug, and it now surfaces immediately instead of dropping a handler
+  with no signal.
+
+### Changed
+- `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked
+  `as` cast to reach a typed DOM element/stub — they now follow the instanceof-narrowing helper pattern
+  already used in `dialogs.test.ts` (throws locally if the test's own markup/stub ever drifts from what
+  it's asserting against, instead of trusting an assertion that could silently paper over that drift).
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

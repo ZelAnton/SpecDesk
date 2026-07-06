@@ -1,10 +1,20 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { blockForLine, isFresh, type PreviewBlock } from "../src/preview.js";
 
-/** Build a block list without a DOM — only the line ranges matter for these pure helpers. */
+// instanceof narrowing (no `as`) — mirrors the pattern in dialogs.test.ts.
+function stubElement(): HTMLElement {
+  const el = document.createElement("div");
+  if (!(el instanceof HTMLElement)) {
+    throw new Error("expected an HTMLElement");
+  }
+  return el;
+}
+
+/** Build a block list without meaningful DOM content — only the line ranges matter for these pure helpers. */
 function blocks(...ranges: Array<[number, number]>): PreviewBlock[] {
   return ranges.map(([lineStart, lineEnd]) => ({
-    el: {} as HTMLElement,
+    el: stubElement(),
     lineStart,
     lineEnd,
   }));
@@ -36,7 +46,11 @@ describe("blockForLine", () => {
   });
 
   it("falls back to the first block for a line before everything", () => {
-    expect(blockForLine(blocks([3, 5]), 0)).toEqual({ el: {}, lineStart: 3, lineEnd: 5 });
+    expect(blockForLine(blocks([3, 5]), 0)).toEqual({
+      el: expect.any(HTMLElement),
+      lineStart: 3,
+      lineEnd: 5,
+    });
   });
 
   it("returns undefined for an empty index", () => {
