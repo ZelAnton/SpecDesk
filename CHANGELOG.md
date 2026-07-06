@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The formatting toolbar's line-prefix toggle (`md-format.ts` — bullet list, ordered list, blockquote)
+  no longer doubles the prefix on a mixed selection (some lines already carry the prefix, some don't).
+  Toggling now always strips any existing prefix from each line first, then re-adds the target prefix
+  when the selection isn't already uniform — normalizing mixed selections instead of stacking a second
+  prefix onto the lines that already had one.
 - `log.ts` (webview) no longer throws when logged `data` contains a circular reference or a `BigInt`
   — the JSON serializer now renders `BigInt` values as strings and falls back to a placeholder for
   anything it still can't stringify, instead of letting `JSON.stringify` throw into the caller.

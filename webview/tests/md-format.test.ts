@@ -100,6 +100,24 @@ describe("formatMarkdown — block prefixes", () => {
     expect(apply("a\nb", "quote", 0, 3).text).toBe("> a\n> b");
   });
 
+  // M-33 regression guard: toggling a line prefix over a MIXED selection (some lines already carry
+  // the prefix, some don't) used to double the prefix on the already-prefixed lines instead of
+  // normalizing every line to the same prefix — the "all or nothing" `has()` check only decided
+  // whether to strip at all, so lines that already had a prefix got a second one prepended.
+  describe("mixed-prefix selections normalize instead of doubling (M-33)", () => {
+    it("ordered list: re-numbers instead of doubling an existing '1. ' prefix", () => {
+      expect(apply("1. a\nb", "ordered", 0, 6).text).toBe("1. a\n2. b");
+    });
+
+    it("bullet list: normalizes instead of doubling an existing '- ' prefix", () => {
+      expect(apply("- a\nb", "bullet", 0, 5).text).toBe("- a\n- b");
+    });
+
+    it("blockquote: normalizes instead of doubling an existing '> ' prefix", () => {
+      expect(apply("> a\nb", "quote", 0, 5).text).toBe("> a\n> b");
+    });
+  });
+
   it("wraps a selection in a fenced code block", () => {
     expect(apply("x = 1", "code", 0, 5).text).toBe("```\nx = 1\n```");
   });
