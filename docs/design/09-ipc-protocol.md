@@ -46,7 +46,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.list.request` | `{}` | request the user's open reviews (author / reviewer); host replies with `pr.list`, correlated by `id` |
 | `pr.forFile` | `{ path }` | request the open PRs touching a given file (comparison) |
 | `pr.open` | `{ refOrUrl }` | load a PR *into the editor* for review — *not yet built*; PoC-5's My reviews panel opens a review on GitHub (from the list or a pasted URL) via `link.open` instead |
-| `diff.request` | `{}` (editor `version` on the envelope) | diff the working copy against its last saved version — replies with structured blocks via `diff.result` (the live "show changes" overlay) |
+| `diff.request` | `{ base }` (`base` ∈ `"lastVersion"`, `"published"`, `"pr"`; editor `version` on the envelope) — the webview overlay picks `base`; only `"lastVersion"` (the working copy vs its last saved version, the live "show changes" overlay) is wired today, `"published"`/`"pr"` are reserved for PoC-7 | diff the working copy against the requested base — replies with structured blocks via `diff.result` |
 | `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
 | `chat.send` | `{ text }` | message to the agent |

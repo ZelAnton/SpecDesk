@@ -58,6 +58,8 @@ describe("ReviewController", () => {
     const h = harness();
     h.review.toggle();
     expect(h.setPressed).toHaveBeenCalledWith(true);
+    // The overlay owns the base choice — the local "Show changes" affordance always asks for "lastVersion".
+    expect(h.requestCompare).toHaveBeenCalledWith("lastVersion");
     expect(h.requestCompare).toHaveBeenCalledTimes(1);
     // The marks only arrive later via applyResult, so no surface is painted on the click itself.
     expect(h.editor.setDiff).not.toHaveBeenCalled();

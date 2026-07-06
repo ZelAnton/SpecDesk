@@ -104,6 +104,32 @@ describe("IpcClient", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it("subscribe routes every frame for an id to the handler until unsubscribed", () => {
+    const bridge = mockBridge();
+    const client = new IpcClient(bridge);
+    const received: IpcMessage[] = [];
+    const id = "stream-1";
+
+    const unsubscribe = client.subscribe(id, (message) => {
+      received.push(message);
+      if (message.kind === "chat.done") {
+        unsubscribe();
+      }
+    });
+
+    bridge.emit({ kind: "chat.delta", id, payload: { text: "Hel" } });
+    bridge.emit({ kind: "chat.delta", id, payload: { text: "lo" } });
+    bridge.emit({ kind: "chat.done", id, payload: null });
+    // A frame arriving after the terminal one is a no-op — the entry was released above.
+    bridge.emit({ kind: "chat.delta", id, payload: { text: "late" } });
+
+    expect(received.map((message) => message.kind)).toEqual([
+      "chat.delta",
+      "chat.delta",
+      "chat.done",
+    ]);
+  });
+
   it("request rejects and drops the pending entry after the timeout", async () => {
     vi.useFakeTimers();
     const bridge = mockBridge();

@@ -13,6 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SpecDesk.Contracts`/`SpecDesk.Core` (the stub project ahead of PoC-9 doesn't consume either yet).
   `docs/CODE-REVIEW-GUIDE.md` §3.1's dependency-graph table and repository-map diagram are corrected to
   match — both projects are now leaves in the graph.
+- `diff.request` (webview→native) now carries a `{ base }` payload — `"lastVersion"` (the working copy vs
+  the last saved version), with `"published"` and `"pr"` reserved for the upcoming vs-main / vs-PR-head
+  compares — instead of implicitly diffing against the local HEAD. The webview's review overlay
+  (`ReviewController`) owns the choice of base; the "Show changes" affordance keeps its existing local
+  behavior unchanged by always requesting `"lastVersion"`. `HostController.OnCompare` reads the base from
+  the payload (falling back to `"lastVersion"` for a missing/malformed payload) and reports "not supported
+  yet" for the reserved bases, which aren't implemented.
+- `IpcClient` (`webview/src/ipc.ts`) now exposes `subscribe(id, handler)`, a multi-frame
+  correlation alongside the existing one-shot `request()`: the pending entry stays registered
+  across every frame carrying the id until the caller itself releases it via the returned
+  `unsubscribe()` (typically on a terminal frame kind). This is the correlation model the
+  planned `chat.delta`/`chat.done` streaming will build on; the existing single-reply
+  `request()`/`on()` behavior is unchanged.
 - The `BundleWebview` MSBuild target (`SpecDesk.Host.csproj`) is now incremental: it declares
   `Inputs`/`Outputs` covering the webview sources/config and the generated bundle, so a plain
   `dotnet build`/`dotnet test` no longer re-runs `npm run bundle` when nothing in `webview/` changed.

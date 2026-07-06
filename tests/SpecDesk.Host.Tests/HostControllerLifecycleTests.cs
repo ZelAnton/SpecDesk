@@ -392,7 +392,8 @@ public sealed class HostControllerLifecycleTests
             new EditorChangedPayload("# Billing\n\nNew clause.\n"),
             version: 7));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 7));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DiffRequest, new DiffRequestPayload(DiffBaseKinds.LastVersion), version: 7));
 
         IpcMessage? reply = FindKind(MessageKinds.DiffResult);
         Assert.That(reply, Is.Not.Null);
@@ -490,6 +491,42 @@ public sealed class HostControllerLifecycleTests
             Assert.That(entry.Children, Is.Empty); // a plain block — no children
             Assert.That(entry.BaseText, Does.Contain("wording")); // base rendered text (Formatted word-diff)
             Assert.That(entry.BaseSource, Does.Contain("wording")); // base raw source (Code word-diff)
+        });
+    }
+
+    [Test]
+    public void Compare_WithNoPayload_DefaultsToLastVersion()
+    {
+        // Defensive backward-compat: a malformed/absent payload (the pre-payload wire shape) falls back
+        // to the local "last saved version" compare rather than erroring, same as the other Compare_* tests
+        // that omit the payload entirely.
+        FakeVersioning versioning = new() { HeadContent = "# Billing" };
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged, new EditorChangedPayload("# Billing\n\nNew clause.\n"), version: 8));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DiffRequest, version: 8));
+
+        DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.That(payload!.Entries, Is.Not.Empty);
+    }
+
+    [Test]
+    public void Compare_WithAnUnsupportedBase_ReportsAnErrorAndSendsNoResult()
+    {
+        // "published"/"pr" are reserved for PoC-7 (not implemented yet) — OnCompare must refuse rather
+        // than silently diffing against the wrong base.
+        FakeVersioning versioning = new() { HeadContent = "# Billing" };
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DiffRequest, new DiffRequestPayload(DiffBaseKinds.Published), version: 9));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+            Assert.That(FindKind(MessageKinds.DiffResult), Is.Null);
         });
     }
 
