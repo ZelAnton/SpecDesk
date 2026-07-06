@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `scripts/update-contract-fixtures.cmd` regenerates all four contract fixture files
+  (`webview/tests/contract/{wire-kinds,native-payloads,lifecycle-states,diff-kinds}.json`) in one
+  whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract
+  change can no longer be regenerated with a narrowed `--filter` that silently leaves some fixtures
+  stale.
+
 ### Changed
 - The formatted editor's two markdown-it tokenizers — the source-block split (`webview/src/editors/
   md-blocks.ts`) and the ProseMirror parser (`webview/src/editors/pm-markdown.ts`) — now derive from one

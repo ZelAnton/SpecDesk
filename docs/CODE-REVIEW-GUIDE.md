@@ -225,9 +225,10 @@ divergence here is a genuine finding, not a false positive.
 | `lifecycle-states.json` | F# `Lifecycle.State` DU → `LifecycleContractTests` (`SpecDesk.Core.Tests`) | `contract.test.ts` vs `STATUS_STATES` |
 | `diff-kinds.json` | F# `DiffWire.DiffKind` → `DiffKindContractTests` (`SpecDesk.Diff.Tests`) | `contract.test.ts` vs `DIFF_KINDS` |
 
-Regeneration is **whole-solution only**: `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` (a
-filtered `--filter` run regenerates only some fixtures and leaves the rest stale — a common way this
-goes wrong). A **missing** fixture file is meant to be a hard test failure, never something silently
+Regeneration is **whole-solution only**: run `scripts/update-contract-fixtures.cmd`, which invokes
+`UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` (a filtered `--filter` run regenerates only some
+fixtures and leaves the rest stale — a common way this goes wrong). A **missing** fixture file is
+meant to be a hard test failure, never something silently
 regenerated away. The webview→native direction is deliberately **not** fixtured — the host decodes
 those payloads defensively (unknown shape → treated as absent/null), and host + webview bundle ship as
 one artifact, so there's no independent version skew to guard against on that side.
