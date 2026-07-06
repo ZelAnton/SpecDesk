@@ -158,6 +158,21 @@ describe("FormattedEditor (jsdom)", () => {
     expect(host.querySelectorAll(".sd-active-block")[0]?.textContent).toContain("para");
   });
 
+  it("clears (rather than pins to the last block) the active highlight once a shorter setText leaves it out of range (M-34)", () => {
+    const { ed, host } = mountWithHost();
+    // Blocks: heading (line 0), paragraph (line 2), bullet list (line 4).
+    ed.setText("# H\n\npara\n\n- a\n- b\n");
+    ed.setActiveLine(4); // "- a" — inside the last block
+    expect(host.querySelectorAll(".sd-active-block")).toHaveLength(1);
+
+    // The document shrinks (e.g. the sibling editor pane mirrors in a shorter edit) so the previously
+    // synced active line no longer exists — matches the source editor's behavior (see editor.ts
+    // activeLineField), which also clears rather than pins to its last line for this case.
+    ed.setText("# H\n\npara\n");
+
+    expect(host.querySelectorAll(".sd-active-block")).toHaveLength(0);
+  });
+
   it("highlights the table row (not the whole table) for a row's source line", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

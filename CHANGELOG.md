@@ -262,6 +262,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one — `#formatted` now reserves top padding for it. `.review-meta`/`.review-state` in the "My reviews"
   panel now shrink with an ellipsis instead of overflowing the row on a long `owner/name`, and
   `#reviews-panel-head` gains `flex-wrap` per the design concept's "reflow rather than overflow" rule.
+- The Code and Formatted panes no longer disagree on how to bound the active-line highlight once the
+  document shrinks out from under a synced (but now stale) line index — e.g. a Split mirror re-applying
+  the last active line across a whole-document `setText` after the sibling pane deleted trailing content.
+  The source editor (`editor.ts` `activeLineField`) previously pinned the highlight to the document's
+  last line, while the Formatted pane (`formatted.ts` `blockIndexForLine`) already cleared it; the source
+  editor now also clears it, so both panes agree.
 
 ### Security
 - The stored GitHub token is now DPAPI-protected with app-specific additional entropy, not just plain

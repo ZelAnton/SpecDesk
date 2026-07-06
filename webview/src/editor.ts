@@ -108,10 +108,14 @@ const activeLineField = StateField.define<DecorationSet>({
   update(decorations, tr) {
     for (const effect of tr.effects) {
       if (effect.is(setActiveLineEffect)) {
-        if (effect.value === null) {
+        const lineNumber = effect.value === null ? null : effect.value + 1;
+        // A stale line index from a document that has since shrunk (e.g. the Split mirror re-applying
+        // the last synced line across a whole-document setText replace) clears the highlight rather
+        // than pinning it to the last line — matching the formatted pane (see formatted.ts
+        // blockIndexForLine), which resets instead of clamping to its last block.
+        if (lineNumber === null || lineNumber < 1 || lineNumber > tr.state.doc.lines) {
           return Decoration.none;
         }
-        const lineNumber = Math.min(Math.max(effect.value + 1, 1), tr.state.doc.lines);
         const line = tr.state.doc.line(lineNumber);
         return Decoration.set([Decoration.line({ class: "cm-active-line" }).range(line.from)]);
       }

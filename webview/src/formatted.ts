@@ -349,7 +349,8 @@ export class FormattedEditor {
       }
     }
     // A line past the last block (a stale synced line from a now-shorter doc) clears the highlight
-    // rather than pinning the final block.
+    // rather than pinning the final block — matching the source editor's activeLineField (see
+    // editor.ts), which resets rather than clamps to its last line for the same stale-index case.
     if (index !== null && line > (this.blocks[index]?.lineEnd ?? Number.POSITIVE_INFINITY)) {
       return null;
     }

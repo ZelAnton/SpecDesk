@@ -171,6 +171,20 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
 
     expect(ed.getText()).toBe("one\n[IMG]");
   });
+
+  it("clears (rather than pins to the last line) the active-line highlight once a shorter setText leaves it out of range (M-34)", () => {
+    const { ed, host } = mount();
+    ed.setText("one\ntwo\nthree\nfour\nfive\n");
+    ed.setActiveLine(4); // "five" — the last line
+    expect(host.querySelectorAll(".cm-active-line")).toHaveLength(1);
+
+    // The Split mirror re-applies the last synced active line across a whole-document setText; here the
+    // new document is shorter, so that line no longer exists. setText re-dispatches the remembered
+    // activeLineValue via the same effect, so this reproduces the mirror path without depending on it.
+    ed.setText("one\ntwo\n", true);
+
+    expect(host.querySelectorAll(".cm-active-line")).toHaveLength(0);
+  });
 });
 
 describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
