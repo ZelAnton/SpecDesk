@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownEditor } from "../src/editor.js";
 
 // Runtime check of the Code-pane diff overlay (CodeMirror): the inline source word-diff decorations.
@@ -82,6 +82,35 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     expect(host.querySelectorAll(".cm-diff-word-added").length).toBeGreaterThan(0);
     expect(host.querySelectorAll(".cm-diff-word-removed").length).toBeGreaterThan(0);
     expect(host.querySelector(".cm-diff-removed-marker")?.textContent).toContain("gone block");
+  });
+});
+
+describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is true only while an edit's debounced onChange hasn't fired yet", () => {
+    const { ed } = mount();
+    expect(ed.hasPendingChange()).toBe(false);
+
+    // A non-silent setText is a genuine document change at the update-listener level — the same path a
+    // real edit takes — and starts the 120ms debounce (see DEBOUNCE_MS in editor.ts).
+    ed.setText("edited\n");
+    expect(ed.hasPendingChange()).toBe(true);
+    vi.advanceTimersByTime(119);
+    expect(ed.hasPendingChange()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(ed.hasPendingChange()).toBe(false);
+  });
+
+  it("stays false across a silent mirror setText (no change notification is scheduled)", () => {
+    const { ed } = mount();
+    ed.setText("mirrored\n", true);
+    expect(ed.hasPendingChange()).toBe(false);
   });
 });
 

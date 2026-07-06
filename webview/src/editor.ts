@@ -602,6 +602,14 @@ export class MarkdownEditor {
     return this.view.state.doc.toString();
   }
 
+  /** Whether an edit has been typed here that hasn't been reported via `onChange` yet (still waiting
+   *  out the debounce). The cross-pane mirror in index.ts checks this on the DESTINATION pane before a
+   *  silent `setText`, so a same-instant edit there isn't clobbered by a stale mirror from the sibling
+   *  pane's own (earlier-started, now-firing) debounce. */
+  hasPendingChange(): boolean {
+    return this.scheduleChange.pending;
+  }
+
   /** The editor's editable DOM element — where image paste/drop is captured. */
   get contentDOM(): HTMLElement {
     return this.view.contentDOM;

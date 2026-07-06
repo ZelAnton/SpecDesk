@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes
+  since the last saved version" when the host's `diff.result` reply is malformed (decodes to `null`,
+  e.g. a transport/contract glitch). It is now dropped, the same as every other `ipc.on` handler,
+  instead of falling through to an empty entries list that washed nothing and reported it as a genuine
+  empty diff. Separately, the Split view's cross-pane mirror (an edit in one editor is silently
+  mirrored into the other once its own 120ms debounce settles) could lose keystrokes: because each
+  pane's debounce is timed independently, editing pane B while pane A's own debounce was still pending
+  let A's mirror silently overwrite B's not-yet-reported edit with a stale snapshot once A's debounce
+  fired first. `MarkdownEditor`/`FormattedEditor` now expose `hasPendingChange()`, and the mirror
+  (`shouldMirrorInto`) skips mirroring into a pane that itself has a pending, not-yet-reported edit —
+  its own debounce mirrors its newer text back shortly after, so nothing is lost either way.
 - `log.ts` (webview) no longer throws when logged `data` contains a circular reference or a `BigInt`
   — the JSON serializer now renders `BigInt` values as strings and falls back to a placeholder for
   anything it still can't stringify, instead of letting `JSON.stringify` throw into the caller.
