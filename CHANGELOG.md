@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `log.ts` (webview) no longer throws when logged `data` contains a circular reference or a `BigInt`
   — the JSON serializer now renders `BigInt` values as strings and falls back to a placeholder for
   anything it still can't stringify, instead of letting `JSON.stringify` throw into the caller.
+- `scrollTopForLine` (webview `scroll-geometry.ts`) no longer risks producing `NaN` for a block whose
+  content-line span is zero (a division by zero). It now guards `span == 0` the same way its inverse,
+  `lineAtScrollTop`, already guards `height === 0`. Markdown-it's own top-level block tokens always carry
+  a source map spanning at least one line, so this is defense-in-depth rather than a fix for an observed
+  live scenario — but the interpolation is no longer implicitly relying on that invariant.
 - Escape now closes/cancels an open inline prompt bar (draft name, version note, send-for-review)
   regardless of which of its own elements holds focus. Previously the Escape handling lived only on
   the text input/textarea, so a keyboard user focused on the Confirm/Cancel button got no reaction.

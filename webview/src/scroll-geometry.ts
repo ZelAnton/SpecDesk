@@ -31,7 +31,8 @@ function span(box: BlockBox): number {
  * snapping to its top.
  */
 export function scrollTopForLine(box: BlockBox, line: number): number {
-  const fraction = Math.min(Math.max((line - box.lineStart) / span(box), 0), 1);
+  const blockSpan = span(box);
+  const fraction = blockSpan > 0 ? Math.min(Math.max((line - box.lineStart) / blockSpan, 0), 1) : 0;
   return box.top + fraction * box.height;
 }
 
