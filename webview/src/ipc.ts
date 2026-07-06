@@ -161,8 +161,16 @@ export class IpcClient {
     });
   }
 
-  /** Register a handler for unsolicited host events of a given kind. */
+  /**
+   * Register a handler for unsolicited host events of a given kind. Throws if a handler is
+   * already registered for that kind — re-registering the same kind previously replaced the
+   * prior handler silently, which is never the intent of any current caller (each kind is
+   * registered exactly once, from a single init path).
+   */
   on(kind: string, handler: (message: IpcMessage) => void): void {
+    if (this.handlers.has(kind)) {
+      throw new Error(`IPC handler for kind "${kind}" is already registered`);
+    }
     this.handlers.set(kind, handler);
     this.start();
   }

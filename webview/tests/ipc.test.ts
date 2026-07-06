@@ -68,6 +68,21 @@ describe("IpcClient", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
+  it("on throws instead of silently replacing a handler already registered for the kind", () => {
+    const bridge = mockBridge();
+    const client = new IpcClient(bridge);
+    const first = vi.fn();
+    const second = vi.fn();
+    client.on("status", first);
+
+    expect(() => client.on("status", second)).toThrow(/already registered/);
+
+    // The original handler is still the one dispatched to — not silently replaced.
+    bridge.emit({ kind: "status", payload: { state: "Saved" } });
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).not.toHaveBeenCalled();
+  });
+
   it("send returns false and request rejects when no bridge is present", async () => {
     const client = new IpcClient(undefined);
     expect(client.send("ping", {})).toBe(false);
