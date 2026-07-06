@@ -69,6 +69,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dialogs`/`requestSuggestion`/`syncReviewPolling` helpers stay in the prologue so all four groups close
   over them; the helpers run in dependency order and every cross-group reference is a callback that fires
   after wiring completes, so IPC registration, construction order, and observable behavior are unchanged.
+- `SpecDesk.GitHub`'s two hand-rolled `HttpClient` transports (`DeviceFlowApi.cs`, `GitHubReview.cs`) no
+  longer each define their own copy of the 30-second per-request timeout, the `SpecDesk/1.0` User-Agent,
+  the linked-`CancellationTokenSource` pattern, and the safe `StringOf`/`NumberOf` JSON-field readers.
+  Both now share the new internal `GitHubHttp` helper for all four; the "hand-rolled BCL only, no HTTP
+  client package" discipline and every observable request/response behavior are unchanged.
+
+### Removed
+- Dead release scaffolding: `.gitignore`'s `release-notes.md` entry and `cliff.toml`'s header comment
+  referenced a `.github/workflows/release.yml` that never existed in this repo; `Directory.Build.props`
+  carried a template comment block (and its now-unreachable conditional `CA1707` `NoWarn`) for a
+  `__ProjectName__`/`scripts/init.ps1` project-stamping script that was never added. `release.cmd` and
+  the build are unaffected — neither reads `cliff.toml`/`release-notes.md` nor relies on the removed
+  `NoWarn`.
 
 ### Fixed
 - The Split view's "Show changes" overlay (webview `index.ts`) no longer renders a false "No changes

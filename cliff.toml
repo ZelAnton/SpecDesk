@@ -1,6 +1,6 @@
-# git-cliff configuration — used by the release workflow as a fallback when
-# CHANGELOG.md's [Unreleased] section has no manual entries. Manual entries
-# always take priority; this only fills in the blanks from git history.
+# git-cliff configuration — a fallback for CHANGELOG.md's [Unreleased] section
+# when it has no manual entries (see AGENTS.md's changelog conventions). Manual
+# entries always take priority; this only fills in the blanks from git history.
 #
 # Commits since the previous tag are categorised by the first word of the
 # message into Keep a Changelog buckets:

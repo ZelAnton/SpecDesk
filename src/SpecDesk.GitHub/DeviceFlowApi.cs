@@ -103,14 +103,6 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     private const string TokenEndpoint = "https://github.com/login/oauth/access_token";
     private const string UserEndpoint = "https://api.github.com/user";
 
-    // A single request's wall-clock budget — well under HttpClient's 100s default so a stalled exchange or
-    // login lookup is detected promptly. Applied via a linked CancellationTokenSource so a (possibly shared)
-    // injected HttpClient is never mutated. A stall maps to a retryable outcome, bounded by the loop.
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-
-    // GitHub's REST API rejects requests without a User-Agent; this identifies the app (any value is fine).
-    private static readonly ProductInfoHeaderValue UserAgent = new("SpecDesk", "1.0");
-
     private readonly HttpClient _http;
 
     public GitHubDeviceFlowApi(HttpClient http) => _http = http;
@@ -121,12 +113,11 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         // The up-front call: nothing is in flight, so unlike the poll it throws on any failure (transport,
         // a per-request-timeout stall, a GitHub error, or a malformed response) for the host to surface as
         // "couldn't start sign-in, retry" — the documented StartSignInAsync contract.
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(ct);
 
         using HttpRequestMessage request = new(HttpMethod.Post, DeviceCodeEndpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.UserAgent.Add(UserAgent);
+        request.Headers.UserAgent.Add(GitHubHttp.UserAgent);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = clientId,
@@ -141,7 +132,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 
         if (root.ValueKind == JsonValueKind.Object
             && root.TryGetProperty("error", out JsonElement error)
-            && StringValue(error) is { Length: > 0 } code)
+            && GitHubHttp.StringValue(error) is { Length: > 0 } code)
         {
             throw new InvalidOperationException($"GitHub rejected the device-code request: {code}");
         }
@@ -192,8 +183,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 
     public async Task<DevicePollOutcome> ExchangeAsync(string clientId, string deviceCode, CancellationToken ct)
     {
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(ct);
         try
         {
             return await ExchangeOnceAsync(clientId, deviceCode, timeout.Token);
@@ -225,7 +215,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
     {
         using HttpRequestMessage request = new(HttpMethod.Post, TokenEndpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.UserAgent.Add(UserAgent);
+        request.Headers.UserAgent.Add(GitHubHttp.UserAgent);
         request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["client_id"] = clientId,
@@ -260,12 +250,13 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         }
 
         JsonElement root = json.RootElement;
-        if (root.TryGetProperty("access_token", out JsonElement token) && StringValue(token) is { Length: > 0 } value)
+        if (root.TryGetProperty("access_token", out JsonElement token)
+            && GitHubHttp.StringValue(token) is { Length: > 0 } value)
         {
             return DevicePollOutcome.Authorized(value);
         }
 
-        string error = root.TryGetProperty("error", out JsonElement e) ? StringValue(e) ?? "" : "";
+        string error = root.TryGetProperty("error", out JsonElement e) ? GitHubHttp.StringValue(e) ?? "" : "";
         return error switch
         {
             "authorization_pending" => DevicePollOutcome.Pending(),
@@ -276,12 +267,6 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             _ => DevicePollOutcome.Failure(error),
         };
     }
-
-    /// <summary>The element's value when it is a JSON string, else <c>null</c> — so a malformed response
-    /// with a non-string <c>access_token</c>/<c>error</c> (a number, bool, object…) degrades to "no usable
-    /// value" instead of throwing from <see cref="JsonElement.GetString"/> (which requires String or Null).</summary>
-    private static string? StringValue(JsonElement element) =>
-        element.ValueKind == JsonValueKind.String ? element.GetString() : null;
 
     /// <summary>Parse the exchange response body, or <c>null</c> when it is not JSON.</summary>
     private static JsonDocument? TryParseJson(string body)
@@ -300,8 +285,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
 
     public async Task<LoginOutcome> GetLoginAsync(string accessToken, CancellationToken ct)
     {
-        using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(RequestTimeout);
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(ct);
         try
         {
             return await GetLoginOnceAsync(accessToken, timeout.Token);
@@ -332,7 +316,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
         using HttpRequestMessage request = new(HttpMethod.Get, UserEndpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        request.Headers.UserAgent.Add(UserAgent);
+        request.Headers.UserAgent.Add(GitHubHttp.UserAgent);
 
         using HttpResponseMessage response = await _http.SendAsync(request, ct);
 
@@ -357,7 +341,7 @@ internal sealed class GitHubDeviceFlowApi : IDeviceFlowApi
             return LoginOutcome.Transient();
         }
         if (json.RootElement.TryGetProperty("login", out JsonElement loginElement)
-            && StringValue(loginElement) is { Length: > 0 } login)
+            && GitHubHttp.StringValue(loginElement) is { Length: > 0 } login)
         {
             return LoginOutcome.Success(login);
         }
