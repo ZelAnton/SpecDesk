@@ -1,5 +1,6 @@
 import type { Node as PmNode } from "prosemirror-model";
 import { describe, expect, it } from "vitest";
+import { splitTopLevelBlocks } from "../../src/editors/md-blocks.js";
 import { serializeWithSplice } from "../../src/editors/md-splice.js";
 import { parser, schema } from "../../src/editors/pm-markdown.js";
 
@@ -298,5 +299,44 @@ describe("serializeWithSplice", () => {
     // untouched "## Section\r\n..." block) — a visible mix of LF (the new node) and "\r" (the untouched gap).
     const editedBlock = out.slice(out.indexOf("Edited intro."), out.indexOf("## Section"));
     expect(editedBlock).toBe("Edited intro.\n\r\n");
+  });
+});
+
+// T-059 regression guard: block-splice correlates the source-block split (md-blocks) with the
+// ProseMirror parse (pm-markdown) 1:1, so the two must agree on where the top-level block boundaries
+// fall. That agreement used to hold only by convention — md-blocks tokenized with the default preset
+// (block-nesting cap 100) and pm-markdown with commonmark + table + strikethrough (cap 20), which
+// tokenize identically only up to nesting depth 20. Past that, the two caps truncate a deeply nested
+// structure at different points, so they disagree on the top-level boundaries. Both now derive from one
+// shared config (md-config.ts), pinning the same cap for both, so the agreement is constructive.
+describe("tokenizer config agreement past nesting depth 20 (T-059)", () => {
+  // A bullet list nested 25 levels deep (past the shared cap), then a blank line and a paragraph. With
+  // the pre-fix cap mismatch, md-blocks (cap 100) parsed the list deeply and ended it before the
+  // paragraph → TWO top-level blocks (list, paragraph), while pm-markdown (cap 20) truncated the deep
+  // list and absorbed the trailing paragraph into it → ONE top-level node. That blocks.length(2) !=
+  // childCount(1) mismatch forced serializeWithSplice onto its whole-document fallback for the whole
+  // document, reflowing every hard-wrapped paragraph and list marker on any edit.
+  function deeplyNestedListThenParagraph(): string {
+    let md = "";
+    for (let level = 0; level < 25; level++) {
+      md += `${"  ".repeat(level)}- item${level}\n`;
+    }
+    return `${md}\nAfter the deeply nested list.\n`;
+  }
+
+  it("the source-block split and the ProseMirror parse agree on the top-level block count", () => {
+    const md = deeplyNestedListThenParagraph();
+    const doc = parser.parse(md);
+    expect(doc).not.toBeNull();
+    // The invariant serializeWithSplice's fidelity check depends on — equal, not merely close. Before the
+    // shared config this was 2 (split) vs 1 (parse); now both tokenizers truncate at the same depth.
+    expect(splitTopLevelBlocks(md).length).toBe((doc as PmNode).childCount);
+  });
+
+  it("no-op round-trips a document nested deeper than 20 byte-for-byte (no whole-document fallback)", () => {
+    // The observable payoff of the agreement: because the counts now line up, serializeWithSplice keeps
+    // every block verbatim instead of taking the reflowing whole-document fallback the mismatch forced.
+    const md = deeplyNestedListThenParagraph();
+    expect(serializeWithSplice(md, parse(md))).toBe(md);
   });
 });

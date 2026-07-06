@@ -10,6 +10,41 @@ import type { Node as PmNode } from "prosemirror-model";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import { parser, schema, serializer } from "./pm-markdown.js";
 
+/**
+ * The two derivations of an `original` document the splice needs: its ProseMirror doc (for the node↔block
+ * 1:1 fidelity check and the per-block equality test) AND its source-block split (for the verbatim
+ * slices, and for the fallback's non-node-content preservation). Both come from the SAME `original`
+ * string, so they are computed — and cached — together as one pair.
+ */
+interface ParsedOriginal {
+  doc: PmNode | null;
+  blocks: MdBlock[];
+}
+
+/**
+ * Most-recent `(original → {doc, blocks})` memo. `serializeWithSplice` runs on every getText(), which the
+ * Split cross-pane mirror calls on each debounce tick just to compare — yet `original` only changes on a
+ * setText (a load or a mirror), never between edits. Without this, each call re-derived the SAME source
+ * twice: a ProseMirror parse plus a markdown-it tokenize (splitTopLevelBlocks), the tokenize a third time
+ * inside the fallback's nonNodeLines. Keyed on the exact `original` string, so it is self-invalidating —
+ * a changed `original` misses and re-derives, so a stale doc/blocks pair can never be returned.
+ */
+let originalCache: { original: string; parsed: ParsedOriginal } | null = null;
+
+/** The `original` document's `{doc, blocks}`, from the memo when the string is unchanged, else freshly
+ *  derived (and memoized). The two derivations always correspond to the exact `original` passed in. */
+function parseOriginal(original: string): ParsedOriginal {
+  if (originalCache !== null && originalCache.original === original) {
+    return originalCache.parsed;
+  }
+  const parsed: ParsedOriginal = {
+    doc: parser.parse(original),
+    blocks: splitTopLevelBlocks(original),
+  };
+  originalCache = { original, parsed };
+  return parsed;
+}
+
 /** Serialize a single top-level block node to Markdown (no surrounding blank lines). */
 function serializeBlock(node: PmNode): string {
   return serializer.serialize(schema.node("doc", null, [node]));
@@ -57,12 +92,13 @@ function headLines(lines: string[], block: MdBlock): string[] {
  * but computed directly from each block's own node span rather than by walking blocks pairwise, so it
  * still finds that content even when the document has no real top-level token at all (a lone reference
  * definition and nothing else): in that case `contentLineStart`/`contentLineEnd` are both unset, so the
- * whole block's span counts as "covered by nothing" and every one of its lines is returned.
+ * whole block's span counts as "covered by nothing" and every one of its lines is returned. Takes the
+ * caller's already-computed block split (from {@link parseOriginal}) rather than re-splitting `original`.
  */
-function nonNodeLines(original: string): string[] {
+function nonNodeLines(original: string, blocks: MdBlock[]): string[] {
   const lines = original.split("\n");
   const covered = new Array<boolean>(lines.length).fill(false);
-  for (const block of splitTopLevelBlocks(original)) {
+  for (const block of blocks) {
     const start = block.contentLineStart ?? block.lineStart;
     const end = block.contentLineEnd ?? start;
     for (let line = start; line < end; line++) {
@@ -82,8 +118,12 @@ function nonNodeLines(original: string): string[] {
  * plain serialize — when there is nothing to preserve, which keeps every existing whole-document-fallback
  * fixture (none of which use reference definitions) unaffected.
  */
-function withPreservedNonNodeContent(original: string, serialized: string): string {
-  const preserved = nonNodeLines(original).filter((line) => line.trim().length > 0);
+function withPreservedNonNodeContent(
+  original: string,
+  serialized: string,
+  blocks: MdBlock[],
+): string {
+  const preserved = nonNodeLines(original, blocks).filter((line) => line.trim().length > 0);
   if (preserved.length === 0) {
     return serialized;
   }
@@ -103,13 +143,14 @@ function withPreservedNonNodeContent(original: string, serialized: string): stri
  * {@link withPreservedNonNodeContent}.
  */
 export function serializeWithSplice(original: string, edited: PmNode): string {
-  const originalDoc = parser.parse(original);
+  // One derivation of `original` (memoized): both the ProseMirror doc and the source-block split, so the
+  // per-getText() double-parse of the same source is gone (see parseOriginal).
+  const { doc: originalDoc, blocks } = parseOriginal(original);
   if (originalDoc === null) {
-    return withPreservedNonNodeContent(original, serializer.serialize(edited));
+    return withPreservedNonNodeContent(original, serializer.serialize(edited), blocks);
   }
-  const blocks = splitTopLevelBlocks(original);
   if (originalDoc.childCount !== blocks.length || edited.childCount !== originalDoc.childCount) {
-    return withPreservedNonNodeContent(original, serializer.serialize(edited));
+    return withPreservedNonNodeContent(original, serializer.serialize(edited), blocks);
   }
 
   const lines = original.split("\n");

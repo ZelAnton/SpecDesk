@@ -158,6 +158,15 @@ export class FormattedEditor {
   // after each in-pane edit), cached so the per-frame highlight/scroll line↔node mapping doesn't
   // re-parse on every caret/mouse move. Distinct from `original`, which stays the splice baseline.
   private blocks: MdBlock[] = [];
+  // The last getText() result, keyed by the (original, doc) pair it was serialized from. The Split
+  // cross-pane mirror (index.ts) calls getText() on every SOURCE-side debounce tick just to compare this
+  // pane's text against the incoming edit — but this pane's document is untouched between those ticks, so
+  // re-running the block-splice (a full re-parse of `original` + a ProseMirror serialize) each time is
+  // pure waste. ProseMirror gives every edit a fresh immutable doc (and reuses the doc reference across a
+  // selection-only change), so an identity check on both keys is an O(1), staleness-free guard: a real
+  // edit (new doc) or a setText (new original) misses and recomputes; anything else hits. Sits above
+  // md-splice's own original-parse memo, which the recompute path still benefits from.
+  private cachedText: { original: string; doc: PmNode; text: string } | null = null;
   private editable = false;
   // Edit-change notification, debounced: a burst of in-pane edits coalesces into one onChange once
   // typing goes quiet (see debounce.ts). A field, so it exists before the update listener can call
@@ -329,7 +338,20 @@ export class FormattedEditor {
   setText(md: string): void {
     this.original = md;
     this.blocks = splitTopLevelBlocks(md);
-    this.view.updateState(this.freshState(parser.parse(md) ?? emptyDoc()));
+    const parsed = parser.parse(md);
+    const doc = parsed ?? emptyDoc();
+    this.view.updateState(this.freshState(doc));
+    // Prime the getText() cache for the common no-op round-trip: when the parse's top-level nodes line up
+    // 1:1 with the source-block split, serializeWithSplice returns `md` verbatim (md-splice), so the Split
+    // mirror's per-tick equality check hits this instead of re-serializing the just-set document — the
+    // hot path this whole change targets (each source-side edit mirrors in via setText, so without the
+    // prime the cache would miss every tick). A fallback (null parse, or counts that differ) leaves it
+    // empty so getText() computes the real result on demand. `doc` is exactly the new state's doc, so the
+    // identity key matches until the next edit/setText.
+    this.cachedText =
+      parsed !== null && parsed.childCount === this.blocks.length
+        ? { original: md, doc, text: md }
+        : null;
     // freshState reset the highlight + diff plugin state; re-apply the synced active/hover blocks and,
     // if a review overlay is showing, its diff marks (so a Split text-mirror doesn't drop them).
     this.pushHighlights();
@@ -578,9 +600,21 @@ export class FormattedEditor {
     this.pushDiff();
   }
 
-  /** The current document serialized back to Markdown, minimal-diff against the last {@link setText}. */
+  /** The current document serialized back to Markdown, minimal-diff against the last {@link setText}.
+   *  Memoized on the (original, doc) pair — see {@link cachedText} — so the cross-pane mirror's per-tick
+   *  equality check doesn't re-parse/serialize an unchanged document. */
   getText(): string {
-    return serializeWithSplice(this.original, this.view.state.doc);
+    const doc = this.view.state.doc;
+    if (
+      this.cachedText !== null &&
+      this.cachedText.original === this.original &&
+      this.cachedText.doc === doc
+    ) {
+      return this.cachedText.text;
+    }
+    const text = serializeWithSplice(this.original, doc);
+    this.cachedText = { original: this.original, doc, text };
+    return text;
   }
 
   /** Whether an edit has been typed here that hasn't been reported via `onChange` yet (still waiting

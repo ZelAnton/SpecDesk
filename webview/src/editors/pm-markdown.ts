@@ -10,7 +10,6 @@
  * serializer below only runs when a table is actually edited.
  */
 
-import MarkdownIt from "markdown-it";
 import {
   schema as baseSchema,
   defaultMarkdownParser,
@@ -20,6 +19,7 @@ import {
   type MarkdownSerializerState,
 } from "prosemirror-markdown";
 import { type Node as PmNode, Schema } from "prosemirror-model";
+import { createTokenizer } from "./md-config.js";
 
 /** CommonMark schema + minimal table nodes (header cells → <th>, body cells → <td>). */
 export const schema = new Schema({
@@ -70,9 +70,10 @@ export const schema = new Schema({
 
 // CommonMark + the GFM table and strikethrough rules. Used only to find structure (the serializer
 // round-trips); inline rules match the CommonMark serializer so non-table content stays diff-stable.
-const tokenizer = new MarkdownIt("commonmark", { html: false })
-  .enable("table")
-  .enable("strikethrough");
+// Built from the one shared config (md-config.ts) so its top-level block boundaries agree, by
+// construction, with the source-block split (md-blocks.ts) the block-splice correlates each node
+// against — see md-config.ts for why that agreement can no longer drift apart past nesting depth 20.
+const tokenizer = createTokenizer();
 
 /** Extract "left"/"right"/"center" from a `style="text-align:…"` value, else `null`. markdown-it's
  *  table plugin stamps this style onto a `th`/`td` token only for an explicitly aligned column

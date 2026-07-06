@@ -9,7 +9,7 @@
  * docs/ROADMAP.md "Decisions to lock").
  */
 
-import MarkdownIt from "markdown-it";
+import { createTokenizer } from "./md-config.js";
 
 /** A top-level Markdown block: its verbatim source slice and 0-based inclusive source-line range. */
 export interface MdBlock {
@@ -45,9 +45,13 @@ export interface MdBlock {
 }
 
 // Used ONLY to find top-level block boundaries — never to render — so its inline rules don't matter
-// here; what matters is that each top-level block token carries a source-line `map`. The default
-// preset recognises GFM tables, so a table stays one block instead of splitting into paragraphs.
-const tokenizer = new MarkdownIt();
+// here; what matters is that each top-level block token carries a source-line `map`, AND that these
+// boundaries agree with the ProseMirror parse (pm-markdown.ts) the block-splice correlates them 1:1
+// against. Both come from the one shared config (md-config.ts) — same block rules, same block-nesting
+// cap — so the agreement holds constructively at any nesting depth rather than by convention (the two
+// previously diverged past depth 20, where their caps differed). The config recognises GFM tables, so a
+// table stays one block instead of splitting into paragraphs.
+const tokenizer = createTokenizer();
 
 /**
  * Split Markdown into ordered top-level blocks. The slices form a contiguous line partition, so

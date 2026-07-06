@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The formatted editor's two markdown-it tokenizers — the source-block split (`webview/src/editors/
+  md-blocks.ts`) and the ProseMirror parser (`webview/src/editors/pm-markdown.ts`) — now derive from one
+  shared config (`webview/src/editors/md-config.ts`) instead of each configuring its own instance
+  (previously the default preset with a block-nesting cap of 100 vs commonmark + table + strikethrough
+  with a cap of 20). The block-splice round-trip correlates the split's top-level blocks with the parser's
+  top-level nodes 1:1, so the two must agree on the top-level boundaries; they used to agree only by
+  convention and diverged past nesting depth 20 (where the caps differed), silently forcing the whole-
+  document reflow fallback on such documents. Sharing one config makes the agreement constructive at any
+  depth. `serializeWithSplice` also no longer re-parses the baseline document twice per `getText()` call —
+  the `(original → {doc, blocks})` pair is memoized — and the formatted editor caches its own `getText()`
+  result on the (baseline, document) pair so the Split cross-pane mirror's per-tick equality check no
+  longer re-parses/serializes an unchanged document. No observable editor behavior changes.
 - Removed two dead `ProjectReference` edges: `SpecDesk.GitHub` no longer references `SpecDesk.Contracts`
   (nothing in `SpecDesk.GitHub` used its types), and `SpecDesk.Ai` no longer references
   `SpecDesk.Contracts`/`SpecDesk.Core` (the stub project ahead of PoC-9 doesn't consume either yet).
