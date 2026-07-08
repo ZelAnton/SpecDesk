@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- The webview's starting view mode (Code/Split/Formatted) is now declared exactly once, in `#panes`'s
+  `data-mode` attribute in `webview/index.html`; `webview/src/index.ts` reads it back at startup instead
+  of repeating a `"split"` literal of its own, and reflects it into the mode radiogroup through the same
+  `SegmentedControl.setSelected` path a user click/arrow-key uses (the buttons' `aria-checked`/`tabindex`
+  in the markup are now inert placeholders). Previously the starting mode was declared three times by
+  hand (the TS literal, `data-mode`, and the radiogroup's `aria-checked`/`tabindex`) and had to be kept in
+  sync manually; a drift between them ran the Split-only logic (spacer/scroll/height-sync) against panes
+  that were not actually both visible. No observable behavior changes when the three literals agreed, as
+  they always had.
 - The formatted editor's two markdown-it tokenizers — the source-block split (`webview/src/editors/
   md-blocks.ts`) and the ProseMirror parser (`webview/src/editors/pm-markdown.ts`) — now derive from one
   shared config (`webview/src/editors/md-config.ts`) instead of each configuring its own instance

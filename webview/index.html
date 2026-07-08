@@ -22,12 +22,17 @@
       <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
       <!-- A button-based radiogroup (segmented control): the WAI-ARIA radio keyboard pattern (roving
            tabindex + arrow keys) is implemented in segmented-control.ts. Native <input type="radio">
-           does not fit the segmented-control visual, so useSemanticElements is suppressed per button. -->
+           does not fit the segmented-control visual, so useSemanticElements is suppressed per button.
+           aria-checked/tabindex below are inert placeholders (all unchecked, no tab stop) — index.ts
+           derives the real selection from #panes[data-mode] (the single declared source of truth for
+           the starting mode, right below) and reflects it here via SegmentedControl.setSelected on
+           startup, the same path a user click/arrow-key uses, so this markup never has to be kept in
+           sync with the starting mode by hand. -->
       <span id="view-modes" role="radiogroup" aria-label="View mode">
         <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
         <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
         <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
-        <button id="mode-split" type="button" role="radio" aria-checked="true" tabindex="0">Split</button>
+        <button id="mode-split" type="button" role="radio" aria-checked="false" tabindex="-1">Split</button>
         <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
         <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
       </span>
@@ -113,6 +118,9 @@
     <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
          the author isn't left wondering why nothing is highlighted. -->
     <div id="review-empty-bar" role="status" hidden>No changes since the last saved version.</div>
+    <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads it
+         back into its `mode` variable at startup (see the comment there) instead of repeating the
+         literal, and the CSS below keys pane visibility off this same attribute. -->
     <div id="panes" data-mode="split">
       <div id="editor"></div>
       <div id="preview" class="sd-doc"></div>
