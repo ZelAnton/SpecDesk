@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
+import type { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownEditor } from "../../src/editors/editor.js";
+
+/** The editor's CodeMirror view, for test setup (dispatching a selection). Test-only internal access —
+ *  the one unavoidable cast is isolated here rather than repeated at each call site. */
+function viewOf(ed: MarkdownEditor): EditorView {
+  return (ed as unknown as { view: EditorView }).view;
+}
 
 // Runtime check of the Code-pane diff overlay (CodeMirror): the inline source word-diff decorations.
 
@@ -368,6 +375,88 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
     ed.setText("one\ntwo\n", true);
 
     expect(host.querySelectorAll(".cm-active-line")).toHaveLength(0);
+  });
+});
+
+describe("MarkdownEditor.mirror — the Split cross-pane sync (jsdom, T-097)", () => {
+  it("applies a distant sibling edit without collapsing the passive editor's selection", () => {
+    const { ed } = mount();
+    ed.setText("alpha\nbravo\ncharlie\n");
+    const view = viewOf(ed);
+    // Select "bravo" (positions 6..11) — a middle line the mirror below never touches.
+    view.dispatch({ selection: { anchor: 6, head: 11 } });
+
+    ed.mirror("alpha\nbravo\nCHARLIE\n"); // only the last line changes, well after the selection
+
+    expect(ed.getText()).toBe("alpha\nbravo\nCHARLIE\n");
+    // The selection is intact — the old whole-document replace collapsed it to the change boundary on
+    // every keystroke in the other pane; a minimal change maps it through untouched.
+    expect(view.state.selection.main.anchor).toBe(6);
+    expect(view.state.selection.main.head).toBe(11);
+  });
+
+  it("maps a tracked image marker through the mirror's minimal change (no restore workaround)", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    const id = ed.trackPosition(3); // captured right after "one"
+
+    // The sibling pane prepended text; the mirror inserts it at the front of the document.
+    ed.mirror("XXX one two three\n");
+    ed.insertAtMarker(id, "[IMG]");
+
+    // The marker followed the actual edit (offset 3 → 7, still right after "one") via the ordinary
+    // ChangeSet.mapPos mapping — unlike the whole-document replace, which restored it to the stale
+    // offset 3 and landed the insert inside the prepended "XXX ".
+    expect(ed.getText()).toBe("XXX one[IMG] two three\n");
+  });
+
+  it("is a no-op when the incoming text already matches (nothing to mirror)", () => {
+    const { ed } = mount();
+    ed.setText("unchanged\n");
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 2 } });
+
+    ed.mirror("unchanged\n");
+
+    expect(ed.getText()).toBe("unchanged\n");
+    expect(view.state.selection.main.head).toBe(2); // the caret is untouched
+  });
+
+  describe("silence (jsdom)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("never schedules a change notification for a mirror (it originated in the other pane)", () => {
+      let reported = "";
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const ed = new MarkdownEditor(host, {
+        onChange: (text) => {
+          reported = text;
+        },
+        onScroll: () => {},
+        onScrollSettle: () => {},
+        onCursor: () => {},
+        onHover: () => {},
+        onGeometryChange: () => {},
+        onEditAttempt: () => {},
+        onFocus: () => {},
+        onOpenLink: () => {},
+      });
+      ed.setText("one two three\n", true); // silent baseline (a prior mirror / load)
+
+      ed.mirror("one two THREE\n");
+
+      expect(ed.getText()).toBe("one two THREE\n");
+      // A mirror must not round-trip back out as an edit — no debounced onChange ever fires.
+      vi.advanceTimersByTime(500);
+      expect(reported).toBe("");
+      expect(ed.hasPendingChange()).toBe(false);
+    });
   });
 });
 

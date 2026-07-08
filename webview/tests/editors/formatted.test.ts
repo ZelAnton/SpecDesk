@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { undo, undoDepth } from "prosemirror-history";
 import { TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -520,5 +521,120 @@ describe("FormattedEditor.hasPendingChange (jsdom, T-042)", () => {
     const ed = mount();
     ed.setText("mirrored\n");
     expect(ed.hasPendingChange()).toBe(false);
+  });
+});
+
+describe("FormattedEditor.mirror — the Split cross-pane sync (jsdom, T-097)", () => {
+  it("keeps the caret/selection when a mirror edits a later block", () => {
+    const { ed } = mountWithHost();
+    ed.setEditable(true);
+    // Blocks: heading (line 0), paragraph "para one" (line 2), paragraph "para two" (line 4).
+    ed.setText("# H\n\npara one\n\npara two\n");
+    const view = viewOf(ed);
+    // Select "para one" (positions 4..12) — the FIRST paragraph, before the block the mirror changes.
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 4, 12)));
+    expect(view.state.selection.from).toBe(4);
+    expect(view.state.selection.to).toBe(12);
+
+    ed.mirror("# H\n\npara one\n\npara TWO\n"); // only the SECOND paragraph changes
+
+    expect(ed.getText()).toBe("# H\n\npara one\n\npara TWO\n");
+    // The selection is untouched — the change lands entirely after it. A freshState rebuild (the old
+    // setText mirror) would have reset the caret to the document start on every tick.
+    expect(view.state.selection.from).toBe(4);
+    expect(view.state.selection.to).toBe(12);
+  });
+
+  it("re-parses only the changed block, not the whole document, per mirror tick", async () => {
+    const { parser } = await import("../../src/editors/pm-markdown.js");
+    const { ed } = mountWithHost();
+    ed.setText("# H\n\npara one\n\npara two\n\npara three\n");
+
+    const spy = vi.spyOn(parser, "parse");
+    ed.mirror("# H\n\npara one\n\npara CHANGED\n\npara three\n"); // only the middle paragraph differs
+
+    // Exactly one parse, and it saw ONLY the changed block's source — never the (longer) whole document.
+    // This is the per-tick whole-document re-parse the task set out to eliminate.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const parsedArg = spy.mock.calls[0]?.[0] ?? "";
+    expect(parsedArg).toContain("CHANGED");
+    expect(parsedArg).not.toContain("para one");
+    expect(parsedArg).not.toContain("para three");
+    spy.mockRestore();
+  });
+
+  it("mirrors a document with a link reference definition correctly (full-rebuild fallback)", () => {
+    const { ed } = mountWithHost();
+    ed.setText("[a]: http://example.com\n\nSee [a] here.\n");
+    // Sanity: the reference-style link round-trips byte-identically before the mirror.
+    expect(ed.getText()).toBe("[a]: http://example.com\n\nSee [a] here.\n");
+
+    ed.mirror("[a]: http://example.com\n\nSee [a] there.\n");
+
+    // The cross-block reference forces the full-rebuild fallback (an isolated slice parse could not
+    // resolve the definition kept in another block); the content is still mirrored correctly.
+    expect(ed.getText()).toBe("[a]: http://example.com\n\nSee [a] there.\n");
+  });
+
+  describe("history + silence (fake timers)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("keeps the undo history of an earlier in-pane edit across a source-pane mirror", () => {
+      const { ed } = mountWithHost();
+      ed.setEditable(true);
+      ed.setText("# H\n\npara one\n");
+      const view = viewOf(ed);
+      const dispatch = view.dispatch.bind(view);
+
+      // A real edit the author made IN the formatted pane — a genuine ProseMirror history entry.
+      view.dispatch(view.state.tr.insertText("X", 1)); // heading "H" → "XH"
+      // Flush the debounce so the block map refreshes, exactly as the pending-change guard in index.ts
+      // guarantees before any real mirror is allowed through.
+      vi.advanceTimersByTime(120);
+      expect(ed.getText()).toBe("# XH\n\npara one\n");
+
+      // A source-pane edit to a DIFFERENT block mirrors in (its text carries the in-pane "X" already).
+      ed.mirror("# XH\n\npara two\n");
+      expect(ed.getText()).toBe("# XH\n\npara two\n");
+
+      // The history survived the mirror: a freshState rebuild would have reset undoDepth to 0 and made
+      // undo a no-op. It is still non-empty, and undo still reverts a change.
+      expect(undoDepth(view.state)).toBeGreaterThan(0);
+      const beforeUndo = ed.getText();
+      expect(undo(view.state, dispatch)).toBe(true);
+      expect(ed.getText()).not.toBe(beforeUndo);
+    });
+
+    it("mirrors the content in and stays silent (no change notification round-trips out)", () => {
+      let reported = "";
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const ed = new FormattedEditor(host, {
+        onChange: (text) => {
+          reported = text;
+        },
+        onEditAttempt: () => {},
+        onScroll: () => {},
+        onCursor: () => {},
+        onHover: () => {},
+        onContentResize: () => {},
+        onFocus: () => {},
+        onActiveChange: () => {},
+        onOpenLink: () => {},
+      });
+      ed.setText("# H\n\nfirst\n\nsecond\n");
+
+      ed.mirror("# H\n\nfirst EDITED\n\nsecond\n");
+
+      expect(ed.getText()).toBe("# H\n\nfirst EDITED\n\nsecond\n");
+      // A mirror must not re-fire as this pane's own edit — no debounced onChange ever runs.
+      vi.advanceTimersByTime(500);
+      expect(reported).toBe("");
+    });
   });
 });

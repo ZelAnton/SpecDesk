@@ -30,6 +30,7 @@ import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
 import { isRecord } from "../wire/decoders.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
+import { computeTextPatch } from "./mirror-patch.js";
 
 const DEBOUNCE_MS = 120;
 /** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
@@ -284,11 +285,12 @@ const diffField = StateField.define<DecorationSet>({
 // inserted), so ChangeSet.mapPos through it is meaningless for a marker — every position ends up mapped
 // to one edge of the change. setText therefore never lets a marker go through the ordinary docChanged
 // mapping above: a genuinely different document (loading another file) drops pending markers outright
-// via clearMarkersEffect (there is nothing left in the new document for them to mean); mirroring the
-// SAME logical content (the Split mirror, a mode-switch hydration) instead restores the pre-transaction
-// positions verbatim via restoreMarkersEffect (clamped to the new length) — content is unchanged or only
-// locally edited by the sibling pane, so the captured position is still the closest available estimate,
-// unlike the blunt mapPos result.
+// via clearMarkersEffect (there is nothing left in the new document for them to mean); a mode-switch
+// hydration re-applying the SAME logical content instead restores the pre-transaction positions verbatim
+// via restoreMarkersEffect (clamped to the new length) — content is unchanged, so the captured position
+// is still the closest available estimate, unlike the blunt mapPos result. The Split cross-pane mirror
+// (T-097) is NOT one of these: it goes through {@link MarkdownEditor.mirror}, a minimal changed-span
+// transaction, so its markers ride the ordinary `mapPos` mapping above and need no restore at all.
 const setMarkerEffect = StateEffect.define<{ id: number; pos: number | null }>();
 const clearMarkersEffect = StateEffect.define<null>();
 const restoreMarkersEffect = StateEffect.define<Map<number, number>>();
@@ -615,18 +617,18 @@ export class MarkdownEditor {
    * already no-op gracefully once a marker is gone, so an in-flight round-trip simply drops its insert.
    *
    * Pass `silent` to suppress the resulting change notification — for any replace whose text the host
-   * already knows about (a mirror from the sibling surface, a mode-switch hydration, or the initial
-   * `doc.loaded` hydration), so CodeMirror's own onChange doesn't echo it straight back out as a new
-   * edit (which would otherwise round-trip through the host as a no-op re-render).
+   * already knows about (a mode-switch hydration, or the initial `doc.loaded` hydration), so
+   * CodeMirror's own onChange doesn't echo it straight back out as a new edit (which would otherwise
+   * round-trip through the host as a no-op re-render). The live Split cross-pane sync no longer comes
+   * through here at all — it uses {@link mirror}, a minimal changed-span transaction.
    *
    * `sameDocument` is a SEPARATE axis controlling the marker behavior, defaulting to `silent` (the two
-   * usually coincide): pass/leave it true for mirroring the SAME logical content in from the sibling
-   * surface (the Split mirror, or hydrating a pane on a mode switch) — not a document change, so pending
-   * markers are kept, restored to their pre-transaction positions (clamped to the new length) rather
-   * than dropped or blindly mapped through the blunt whole-document change. `doc.loaded` is silent (the
-   * host already has this text) but NOT the same document — pass `sameDocument: false` there so any
-   * marker left over from the previous document is dropped rather than restored at a now-meaningless
-   * clamped position.
+   * usually coincide): pass/leave it true for re-hydrating a pane with the SAME logical content on a
+   * mode switch — not a document change, so pending markers are kept, restored to their pre-transaction
+   * positions (clamped to the new length) rather than dropped or blindly mapped through the blunt
+   * whole-document change. `doc.loaded` is silent (the host already has this text) but NOT the same
+   * document — pass `sameDocument: false` there so any marker left over from the previous document is
+   * dropped rather than restored at a now-meaningless clamped position.
    */
   setText(text: string, silent = false, sameDocument = silent): void {
     this.suppressChange = silent;
@@ -649,6 +651,37 @@ export class MarkdownEditor {
       ],
     });
     // Clear in case the text was identical and no docChanged fired to consume the flag.
+    this.suppressChange = false;
+  }
+
+  /**
+   * Mirror the sibling (formatted) pane's edit in with the SMALLEST change that reconciles the two —
+   * the Split cross-pane sync (index.ts onFormattedChange). Unlike {@link setText}'s whole-document
+   * replace, this dispatches a single changed-span transaction (common-prefix/suffix diff), so the
+   * passive source editor's caret, selection, scroll anchor and tracked image-insert markers all remap
+   * naturally through it: the caret no longer collapses to the replace boundary on every keystroke in
+   * the other pane, and the marker mapping is ordinary `ChangeSet.mapPos` (the whole-document
+   * restore-markers workaround is only for setText's mode-switch hydration now, never this hot path).
+   *
+   * Silent like the mirror always was — the change is not re-notified out as an edit (it originated in
+   * the other pane) — and the synced active/hover/diff overlays are re-asserted, exactly as setText
+   * does, since a docChange otherwise drops the hover highlight and the synced line must stay pinned.
+   */
+  mirror(text: string): void {
+    const patch = computeTextPatch(this.getText(), text);
+    if (patch === null) {
+      return; // already identical — nothing to mirror
+    }
+    this.suppressChange = true;
+    this.view.dispatch({
+      changes: { from: patch.from, to: patch.to, insert: patch.insert },
+      effects: [
+        setActiveLineEffect.of(this.activeLineValue),
+        setHoverLineEffect.of(this.hoverLineValue),
+        setDiffEffect.of(this.diffValue),
+      ],
+    });
+    // Clear defensively in case an identical-after-clamp change produced no docChanged to consume it.
     this.suppressChange = false;
   }
 

@@ -28,11 +28,22 @@ import { rafThrottle } from "../util/raf.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
+import { commonEnds } from "./mirror-patch.js";
 import { commandFor, activeFormats as computeActiveFormats } from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
+
+// A link reference definition (`[id]: url`) is the one CommonMark construct whose meaning crosses
+// top-level block boundaries: a `[text][id]` link in one block resolves against a definition that may
+// live in another. {@link FormattedEditor.mirror} re-parses ONLY the changed blocks in isolation, which
+// can't see a definition kept verbatim in an unchanged block, so any document that has one falls back to
+// a full {@link FormattedEditor.setText} rebuild (in-context parse). Deliberately loose (a `[x]:`-shaped
+// line at up to three-space indent) — over-matching only costs an occasional full rebuild, never
+// correctness. Such definitions are rare in these specs, so the minimal-patch fast path still covers the
+// overwhelming majority of edits.
+const REFERENCE_DEFINITION_RE = /^ {0,3}\[[^\]]+\]:/m;
 
 // Highlight the node holding the caret (active) and the one under the mouse (hover) — the formatted
 // equivalent of the source editor's active-/hover-line highlights. Both are driven externally
@@ -169,6 +180,10 @@ export class FormattedEditor {
   // md-splice's own original-parse memo, which the recompute path still benefits from.
   private cachedText: { original: string; doc: PmNode; text: string } | null = null;
   private editable = false;
+  // Set for the duration of a {@link mirror} dispatch: the Split cross-pane sync applies a minimal
+  // transaction that must NOT re-notify out as an edit (it originated in the source pane) and must
+  // bypass the read-only edit gate (a programmatic sync, like the source editor's silent setText).
+  private mirroring = false;
   // Edit-change notification, debounced: a burst of in-pane edits coalesces into one onChange once
   // typing goes quiet (see debounce.ts). A field, so it exists before the update listener can call
   // it; the body reads blocks/getText/onChange/reportCaret at fire time, all set by then.
@@ -240,6 +255,12 @@ export class FormattedEditor {
         const changed = !next.doc.eq(this.view.state.doc);
         const selectionMoved = tr.selectionSet || changed;
         this.view.updateState(next);
+        // A cross-pane mirror is a programmatic sync of an edit made in the OTHER pane: apply it (the
+        // history, caret and selection all mapped through the minimal change), but do not re-notify it
+        // out as this pane's own edit or re-report its caret — mirror() drives the highlights itself.
+        if (this.mirroring) {
+          return;
+        }
         if (changed) {
           this.scheduleChange();
         }
@@ -318,7 +339,9 @@ export class FormattedEditor {
         // Selection-only transactions pass through, so the caret still works.
         new Plugin({
           filterTransaction: (tr) => {
-            if (tr.docChanged && !this.editable) {
+            // A cross-pane mirror is a programmatic sync, not the author typing — it applies regardless
+            // of the read-only gate (mirroring the source editor's setText, which bypasses this too).
+            if (tr.docChanged && !this.editable && !this.mirroring) {
               this.onEditAttempt();
               return false;
             }
@@ -354,9 +377,90 @@ export class FormattedEditor {
         ? { original: md, doc, text: md }
         : null;
     // freshState reset the highlight + diff plugin state; re-apply the synced active/hover blocks and,
-    // if a review overlay is showing, its diff marks (so a Split text-mirror doesn't drop them).
+    // if a review overlay is showing, its diff marks (so a mode-switch re-hydration doesn't drop them).
     this.pushHighlights();
     this.pushDiff();
+  }
+
+  /**
+   * Reflect a source-pane edit into this view with the SMALLEST possible transaction — the Split
+   * cross-pane sync (index.ts onEditorChange). Where {@link setText} rebuilds the whole document from a
+   * fresh parse (resetting the undo history, caret and selection, and re-parsing every block on every
+   * mirror tick), this keeps every unchanged leading/trailing top-level block's existing node and
+   * re-parses ONLY the changed middle span, splicing it in as one ProseMirror transaction. So the
+   * passive pane's history, caret and selection all survive (mapped through the small change), and the
+   * per-tick whole-document re-parse is gone.
+   *
+   * Falls back to a full {@link setText} rebuild when a block-level splice can't safely be trusted: the
+   * live doc isn't 1:1 with the cached block split (a parser divergence), the changed slice doesn't
+   * re-parse back into the blocks the splitter found for it, or the document uses a link reference
+   * definition (whose cross-block resolution an isolated slice parse can't reproduce — see
+   * {@link REFERENCE_DEFINITION_RE}). Each fallback is correct, just not minimal.
+   */
+  mirror(text: string): void {
+    const oldBlocks = this.blocks;
+    const doc = this.view.state.doc;
+    // A block-level splice needs the live doc's top-level nodes to line up 1:1 with the cached source
+    // blocks (the same invariant serializeWithSplice guards). A reference definition anywhere means an
+    // isolated slice parse could misresolve a link — rebuild in context instead.
+    if (doc.childCount !== oldBlocks.length || REFERENCE_DEFINITION_RE.test(text)) {
+      this.setText(text);
+      return;
+    }
+    const newBlocks = splitTopLevelBlocks(text);
+    const oldTexts = oldBlocks.map((block) => block.text);
+    const newTexts = newBlocks.map((block) => block.text);
+    const { prefix, suffix } = commonEnds(oldTexts, newTexts);
+    const oldEnd = oldBlocks.length - suffix; // exclusive index of the changed old span
+    const newEnd = newBlocks.length - suffix; // exclusive index of the changed new span
+    const middleCount = newEnd - prefix;
+    const middleNodes: PmNode[] = [];
+    if (middleCount > 0) {
+      // Re-parse just the changed blocks' source (the per-tick whole-document parse this replaces).
+      const changedSource = newBlocks
+        .slice(prefix, newEnd)
+        .map((block) => block.text)
+        .join("\n");
+      const parsedMiddle = changedSource === "" ? null : parser.parse(changedSource);
+      // The changed slice must parse back into exactly the blocks the splitter found for it, or the
+      // node↔block 1:1 invariant would break — rebuild wholesale instead. (Also catches an empty-source
+      // middle, which a top-level parse can't turn into the paragraph the splitter still counts.)
+      if (parsedMiddle === null || parsedMiddle.childCount !== middleCount) {
+        this.setText(text);
+        return;
+      }
+      for (let i = 0; i < parsedMiddle.childCount; i++) {
+        middleNodes.push(parsedMiddle.child(i));
+      }
+    }
+    const from = startOfChild(doc, prefix);
+    const to = startOfChild(doc, oldEnd);
+    if (from === to && middleNodes.length === 0) {
+      // No structural change reached the document (the diff was inside a block already kept verbatim,
+      // or nothing changed at all) — still re-base below so the splice baseline tracks `text`.
+      this.rebaseTo(text, newBlocks);
+      return;
+    }
+    const tr = this.view.state.tr;
+    tr.replaceWith(from, to, middleNodes);
+    this.mirroring = true;
+    this.view.dispatch(tr);
+    this.mirroring = false;
+    this.rebaseTo(text, newBlocks);
+    // The active/hover/diff decorations already mapped through the change, but the synced active/hover
+    // line may now resolve to a different node against the refreshed block map — re-assert them.
+    this.pushHighlights();
+    this.pushDiff();
+  }
+
+  /** Re-base the block-splice baseline + cached block map onto the just-mirrored source, and prime the
+   *  getText() cache so the Split mirror's per-tick equality check stays O(1) (parity with setText's own
+   *  prime). `text` is exactly what this pane now shows, so it is the correct cached serialization
+   *  whether or not every block round-trips byte-identically. */
+  private rebaseTo(text: string, blocks: MdBlock[]): void {
+    this.original = text;
+    this.blocks = blocks;
+    this.cachedText = { original: text, doc: this.view.state.doc, text };
   }
 
   /** Map a 0-based source line to the index of the top-level block that contains it. */

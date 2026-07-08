@@ -565,6 +565,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spacer on the wrong line if a stale anchor slipped past the gate) — an out-of-range line/spacer is now
   refused outright, with a diagnostic through the editor's own `onDebug` callback (mirroring
   `HeightSync`'s existing one).
+- Split view's live cross-pane mirror no longer disrupts the passive pane while the author types in the
+  other one: a source-pane edit kept resetting the WYSIWYG pane's undo history, caret and selection (its
+  `FormattedEditor.setText` rebuilt the whole ProseMirror document from a fresh parse every tick), and a
+  formatted-pane edit collapsed the source editor's caret/selection to the change boundary (its
+  `MarkdownEditor.setText` replaced the entire document in one change, which also made image-marker
+  position mapping degenerate — the reason for the whole-document restore-markers workaround). Both
+  directions now mirror through the smallest change that reconciles the two panes (a new
+  `mirror-patch.ts` computes a common-prefix/suffix character diff for CodeMirror and a common-leading/
+  trailing block count for ProseMirror): CodeMirror applies a single changed-span transaction (caret,
+  selection, scroll anchor and image markers all remap naturally, no restore workaround), and the
+  formatted editor keeps every unchanged top-level block's existing node and re-parses only the changed
+  middle span as one transaction (its undo history, caret and selection survive, and the per-tick
+  whole-document re-parse is gone). A document using a link reference definition — the one CommonMark
+  construct whose meaning crosses block boundaries — falls back to a full in-context rebuild so its
+  links can't misresolve.
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked

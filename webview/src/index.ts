@@ -323,16 +323,18 @@ function wire(): void {
 
     // Live content sync. An edit in one editor goes to the native pipeline (sendDoc) AND is mirrored
     // into the other — guarded by shouldMirrorInto (content equality, plus the pending-edit check below)
-    // so the mirror never echoes back and never clobbers an unsent edit — with a silent setText so a
-    // mirror that DOES apply can't re-fire as an edit. After mirroring, the other pane's scroll is
-    // re-aligned so it doesn't jump.
+    // so the mirror never echoes back and never clobbers an unsent edit. The mirror applies the SMALLEST
+    // change that reconciles the two panes (editor.mirror / formatted.mirror), so the passive pane's
+    // caret, selection and undo history survive the sync (a whole-document replace would collapse them);
+    // it is silent so a mirror that DOES apply can't re-fire as an edit. After mirroring, the other
+    // pane's scroll is re-aligned so it doesn't jump.
     const onEditorChange = (text: string): void => {
       // A genuine edit invalidates the compare snapshot — drop the overlay (the mirror below is silent
       // and re-applies nothing once cleared).
       review.clear();
       sendDoc(text);
       if (shouldMirrorInto(text, formatted)) {
-        formatted.setText(text);
+        formatted.mirror(text);
         if (isSplit(mode)) {
           scrollSync.suppress();
           formatted.scrollToSourceLine(editor.topVisibleLineExact());
@@ -344,7 +346,7 @@ function wire(): void {
       review.clear();
       sendDoc(text);
       if (shouldMirrorInto(text, editor)) {
-        editor.setText(text, true);
+        editor.mirror(text);
         if (isSplit(mode)) {
           scrollSync.suppress();
           editor.scrollToSourceLine(formatted.topVisibleSourceLine());
