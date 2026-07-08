@@ -1,13 +1,14 @@
 /**
  * The native Markdig render sink. Since PoC-12 made Split's right pane the editable WYSIWYG, this
- * pane is **no longer shown** (hidden via CSS); it is kept as the canonical Markdig render — `apply`
- * injects the HTML and indexes the `data-line-*` line map — to back the upcoming diff (PoC-6) and
- * comments (PoC-8). The geometry / scroll / highlight methods below are retained scaffolding for
- * those overlays and are not currently wired (the live editors handle scroll-sync and highlights).
- * (docs/design/05-live-preview.md.)
+ * pane is **no longer shown** (hidden via CSS) and the host no longer renders/sends `preview.html` on
+ * every edit either (see HostController.Session.cs' `OnEditorChanged`) — there is currently no
+ * consumer, visible or otherwise. `apply` (inject the HTML, index the `data-line-*` line map) and the
+ * constructor's link handling are kept as the ready sink for the day a real consumer — diff (PoC-6) or
+ * comments (PoC-8) — needs it; a prior scroll/highlight/geometry scaffold that duplicated what the live
+ * editors (MarkdownEditor/FormattedEditor) already do for the visible panes was removed as dead code
+ * rather than kept unwired — see T-089. (docs/design/05-live-preview.md.)
  */
 
-import { lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
 import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
 
@@ -101,11 +102,6 @@ export class Preview {
     this.onOpenLink = callback;
   }
 
-  /** Inner width of the preview (its wrapping width) — for diagnostics. */
-  contentWidth(): number {
-    return this.el.clientWidth;
-  }
-
   /** Inject a rendered result, dropping it if a newer one was already applied. Returns whether applied. */
   apply(html: string, version: number): boolean {
     if (!isFresh(this.lastVersion, version)) {
@@ -119,105 +115,6 @@ export class Preview {
       img.addEventListener("load", () => this.onContentResize?.(), { once: true });
     }
     return true;
-  }
-
-  /** Per-block source-line range plus measured pixel geometry, in document order (for height-sync). */
-  blockGeometry(): BlockGeometry[] {
-    return this.blocks.map((block) => ({
-      lineStart: block.lineStart,
-      lineEnd: block.lineEnd,
-      top: this.blockTop(block.el),
-      height: block.el.getBoundingClientRect().height,
-    }));
-  }
-
-  /**
-   * Distance from the top of the scrolled content to an element's top, in a single coordinate
-   * system. `offsetTop` is relative to the offset parent (which differs for table rows vs. block
-   * elements), so we use bounding rects relative to the container instead.
-   */
-  private blockTop(el: HTMLElement): number {
-    return el.getBoundingClientRect().top - this.el.getBoundingClientRect().top + this.el.scrollTop;
-  }
-
-  /** Highlight the rendered block matching the editor's cursor line (and clear the others). */
-  highlightSourceLine(line: number): void {
-    const target = blockForLine(this.blocks, line);
-    for (const block of this.blocks) {
-      block.el.classList.toggle("sd-active-block", block === target);
-    }
-  }
-
-  /** Faintly highlight the rendered block under the mouse (null clears it). */
-  highlightHoverLine(line: number | null): void {
-    const target = line === null ? undefined : blockForLine(this.blocks, line);
-    for (const block of this.blocks) {
-      block.el.classList.toggle("sd-hover-block", target !== undefined && block === target);
-    }
-  }
-
-  /**
-   * Scroll the preview so the rendered block for the given source line aligns at the top. `line`
-   * may be fractional (see {@link MarkdownEditor.topVisibleLineExact}); the fractional part is
-   * interpolated across the block's height so a partly-scrolled source line maps to the matching
-   * point inside its rendered block rather than snapping to the block's top.
-   */
-  scrollToSourceLine(line: number): void {
-    const block = blockForLine(this.blocks, line);
-    if (block === undefined) {
-      return;
-    }
-    this.el.scrollTop = scrollTopForLine(
-      {
-        lineStart: block.lineStart,
-        lineEnd: block.lineEnd,
-        contentLineEnd: undefined,
-        top: this.blockTop(block.el),
-        height: block.el.getBoundingClientRect().height,
-      },
-      line,
-    );
-  }
-
-  /** Current vertical scroll offset (pixels from content top) — the scroll-map's preview coordinate. */
-  scrollTopValue(): number {
-    return this.el.scrollTop;
-  }
-
-  /**
-   * Set the vertical scroll offset directly (pixels). A fractional value is kept (not rounded): the
-   * scroll map is deterministic so there is no shimmer, and letting the browser snap to device
-   * pixels is smoother than quantizing to whole CSS pixels on HiDPI displays.
-   */
-  setScrollTop(px: number): void {
-    this.el.scrollTop = px;
-  }
-
-  /** The 0-based source line at the top of the preview viewport (the inverse of the above). */
-  topVisibleSourceLine(): number {
-    const scrollTop = this.el.scrollTop;
-    let current: PreviewBlock | undefined;
-    for (const block of this.blocks) {
-      if (this.blockTop(block.el) <= scrollTop) {
-        current = block;
-      } else {
-        break;
-      }
-    }
-    current ??= this.blocks[0];
-    if (current === undefined) {
-      return 0;
-    }
-    return lineAtScrollTop(
-      {
-        lineStart: current.lineStart,
-        lineEnd: current.lineEnd,
-        contentLineEnd: undefined,
-        top: this.blockTop(current.el),
-        height: current.el.getBoundingClientRect().height,
-      },
-      scrollTop,
-    );
   }
 
   private indexBlocks(): void {

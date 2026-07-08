@@ -266,7 +266,9 @@ function wire(): void {
   // and the native preview / diff / doc.loaded events that feed them.
   function wireEditors(): void {
     // The native Markdig render. No longer a visible pane (Split now pairs the source editor with the
-    // editable WYSIWYG); kept updated, hidden, as the canonical render for the future diff/comments.
+    // editable WYSIWYG), and — since T-089 — the host no longer renders/sends it on every edit either
+    // (there is no consumer, visible or otherwise, today). `preview` and its previewHtml handler below
+    // stay wired as the ready sink for the day a real consumer (diff/comments) needs it.
     const preview = new Preview(previewRoot);
     // A web link clicked in the preview opens in the OS browser (the host re-validates the scheme).
     preview.setOnOpenLink((url) => ipc.send(Kinds.linkOpen, { url }));
@@ -452,6 +454,8 @@ function wire(): void {
       })();
     });
 
+    // The host does not send this on every edit any more (see the `preview` comment above) — kept so a
+    // future on-demand render still has somewhere to land without any webview-side changes.
     ipc.on(Kinds.previewHtml, (message) => {
       const payload = parsePreview(message.payload);
       if (payload) {

@@ -182,6 +182,41 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void EditorChanged_NeverRendersOrEmitsPreviewHtmlOnTheHotPath()
+    {
+        // #preview (the native Markdig render sink) is permanently hidden and has no consumer today
+        // (see HostController.Session.cs' OnEditorChanged) — an edit must not trigger a full render or
+        // a preview.html emission, no matter how many edits arrive or how long we wait for a stray
+        // background task.
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged, new EditorChangedPayload("# Billing v2"), version: 1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged, new EditorChangedPayload("# Billing v3"), version: 2));
+
+        Thread.Sleep(80);
+        Assert.That(FindKind(MessageKinds.PreviewHtml), Is.Null);
+    }
+
+    [Test]
+    public void RenderAndSend_WhenCalledDirectly_StillRendersAndEmitsPreviewHtml()
+    {
+        // RenderAndSend is no longer wired into OnEditorChanged's hot path (see the test above), but it
+        // stays `internal` and fully functional — the ready entry point for a future on-demand consumer
+        // (diff/comments) to call directly, exercised here the same way RunDiskAutosave's tests call it
+        // directly instead of resurrecting the automatic trigger.
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        controller.RenderAndSend("# Billing v2", version: 1, docDir: string.Empty);
+
+        Assert.That(FindKind(MessageKinds.PreviewHtml), Is.Not.Null);
+    }
+
+    [Test]
     public void SaveVersion_CommitsWithTheGeneratedNoteWhenNoneGiven()
     {
         FakeVersioning versioning = new();

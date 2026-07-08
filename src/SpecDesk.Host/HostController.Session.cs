@@ -39,6 +39,11 @@ public sealed partial class HostController
 		}
 
 		long version = message.Version ?? 0;
+		// Still the ordering gate for _text itself, not only for a render: an out-of-order/duplicate
+		// frame must not overwrite _text with stale content (see HostControllerLineEndingTests'
+		// "Discard_ThenAFreshEdit..." for why a second edit in the same draft must strictly advance the
+		// version). This stays even though the render it also used to gate is no longer triggered here
+		// — see the comment below.
 		if (!_coordinator.ShouldRender(version))
 		{
 			return;
@@ -57,27 +62,28 @@ public sealed partial class HostController
 			_session = _session with { Generation = Interlocked.Read(ref _draftGeneration) };
 		}
 
-		string docDir = DocRelativeDir();
-		_ = Task.Run(() =>
-		{
-			try
-			{
-				RenderAndSend(text, version, docDir);
-			}
-			catch (Exception ex)
-			{
-				// RenderAndSend handles parse faults itself; this guards an unexpected fault on the
-				// background _send/transport path so it never becomes an unobserved task exception.
-				_logger.LogError(ex, "Background render task faulted (version {Version})", version);
-			}
-		});
+		// #preview (the native Markdig render sink RenderAndSend below feeds) is permanently hidden
+		// (styles.css: `#preview { display: none; }`) and has no consumer today — Split now pairs the
+		// source editor with the editable WYSIWYG, not this pane. Running a full Markdig render plus an
+		// HTML IPC round-trip on every debounced edit here was therefore pure overhead, paid on the hot
+		// typing path for a panel nobody ever sees. RenderAndSend is kept (internal) as the ready entry
+		// point for a future on-demand consumer — diff (PoC-6) or comments (PoC-8) — to call directly;
+		// it is simply no longer invoked automatically from here.
 
 		// In an editing state, each edit (re)arms the idle disk autosave (write only, never a commit)
 		// and flips the status to "Unsaved changes".
 		MarkDirtyAndScheduleDiskAutosave();
 	}
 
-	private void RenderAndSend(string text, long version, string docDir)
+	/// <summary>
+	/// Render <paramref name="text"/> to HTML and emit it as <see cref="MessageKinds.PreviewHtml"/>,
+	/// unless a newer edit has since superseded <paramref name="version"/>
+	/// (<see cref="PreviewCoordinator.ShouldEmit"/>). No longer called automatically from
+	/// <see cref="OnEditorChanged"/> (see its comment) — kept `internal`, like
+	/// <see cref="RunDiskAutosave"/>, so a future on-demand consumer can call it directly and a test can
+	/// exercise it deterministically without resurrecting the automatic hot-path call.
+	/// </summary>
+	internal void RenderAndSend(string text, long version, string docDir)
 	{
 		Renderer.RenderResult result;
 		try
@@ -86,9 +92,9 @@ public sealed partial class HostController
 		}
 		catch (Exception ex)
 		{
-			// A parser fault must never crash the background task / message pump; the author sees
-			// a plain-language notice instead of a stale or broken preview — but only if this
-			// render is still the newest, so a superseded failure stays silent.
+			// A parser fault must never crash whatever called this (a future on-demand caller, or a
+			// test); the author sees a plain-language notice instead of a stale or broken preview —
+			// but only if this render is still the newest, so a superseded failure stays silent.
 			_logger.LogError(ex, "Markdown render failed (version {Version}, {Length} chars)", version, text.Length);
 			if (_coordinator.ShouldEmit(version))
 			{

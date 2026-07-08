@@ -122,6 +122,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the linked-`CancellationTokenSource` pattern, and the safe `StringOf`/`NumberOf` JSON-field readers.
   Both now share the new internal `GitHubHttp` helper for all four; the "hand-rolled BCL only, no HTTP
   client package" discipline and every observable request/response behavior are unchanged.
+- An edit no longer triggers a full Markdig render plus a `preview.html` IPC round-trip on the hot
+  `OnEditorChanged` path (`HostController.Session.cs`): the `#preview` pane those messages fed has been
+  permanently hidden (`display: none`) with no consumer since PoC-12 made Split's right pane the editable
+  WYSIWYG, so the render was pure overhead paid on every debounced keystroke. `RenderAndSend` stays
+  (`internal`, matching `RunDiskAutosave`) as the ready entry point for a future on-demand consumer
+  (diff/comments); the version-ordering guard (`PreviewCoordinator.ShouldRender`) that also protects
+  `_text` itself against an out-of-order edit frame is unchanged. `webview/src/review/preview.ts`'s
+  `Preview.apply`/`indexBlocks` (and `index.ts`'s `previewHtml` handler) stay wired to receive it; the
+  unused scroll/highlight/geometry scaffold on `Preview` (`scrollToSourceLine`, `topVisibleSourceLine`,
+  `setScrollTop`, `scrollTopValue`, `highlightSourceLine`, `highlightHoverLine`, `blockGeometry`,
+  `contentWidth`) — which duplicated what the live editors already do for the visible panes — was removed.
 
 ### Removed
 - Dead release scaffolding: `.gitignore`'s `release-notes.md` entry and `cliff.toml`'s header comment
