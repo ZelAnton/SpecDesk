@@ -132,6 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Loading a document (`doc.loaded`) now resets both panes' scroll position to the start of the document.
+  Previously only the content was re-hydrated; each pane kept whatever `scrollTop` the PREVIOUS document
+  had left it at — an arbitrary depth for a shorter old document, the browser's own clamp for a longer
+  one, and the two panes generally disagreeing with each other. `MarkdownEditor`/`FormattedEditor` gained
+  a `scrollToTop()` used under `scrollSync.suppress()` so the reset doesn't itself drive a cross-pane sync.
 - The Split view's source editor no longer shows a large empty hatched band above its first line. Height-
   sync pads the source editor so each source block lines up with its rendered block, and the first block's
   lead reproduces the leading space above the first rendered block. That leading space included the first
@@ -496,6 +501,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/SpecDesk.Diff.Tests/ContainerOrdinalContractTests.fs`,
   `webview/tests/contract/container-ordinals.test.ts`) covering a nested list inside an item, loose/tight
   lists, a table with an empty header row, and a multi-paragraph list item.
+- Split view's height-synced scroll (`height-sync.ts`/`editor.ts`) no longer lets the visible text jump
+  while typing: whenever the editor spacers above the current viewport change weight (e.g. a below-
+  viewport block's estimated height gets corrected once CodeMirror finishes measuring it), `scrollTop`
+  is now nudged by that exact delta in the same dispatch, so the content already at the viewport top
+  stays put. The new `computeScrollCompensation` (pure, unit-tested) computes the delta from the
+  previous vs. next spacer set and the source line currently at the viewport top
+  (`MarkdownEditor.topVisibleLine()`).
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked

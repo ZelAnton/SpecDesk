@@ -495,6 +495,14 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(payload.text);
+        // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
+        // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
+        // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
+        // panes generally disagree. suppress() mutes the resulting onScroll callbacks so this programmatic
+        // reset doesn't itself drive a cross-pane sync.
+        scrollSync.suppress();
+        editor.scrollToTop();
+        formatted.scrollToTop();
         // Seed the synced highlight at the top of the document (both panes). No reveal: a freshly loaded
         // doc is scrolled to the top, so line 0 is already visible — and this is not a user navigation.
         setActive(0, null);
