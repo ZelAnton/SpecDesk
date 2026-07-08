@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- The webview's starting view mode (Code/Split/Formatted) is now declared exactly once, in `#panes`'s
+  `data-mode` attribute in `webview/index.html`; `webview/src/index.ts` reads it back at startup instead
+  of repeating a `"split"` literal of its own, and reflects it into the mode radiogroup through the same
+  `SegmentedControl.setSelected` path a user click/arrow-key uses (the buttons' `aria-checked`/`tabindex`
+  in the markup are now inert placeholders). Previously the starting mode was declared three times by
+  hand (the TS literal, `data-mode`, and the radiogroup's `aria-checked`/`tabindex`) and had to be kept in
+  sync manually; a drift between them ran the Split-only logic (spacer/scroll/height-sync) against panes
+  that were not actually both visible. No observable behavior changes when the three literals agreed, as
+  they always had.
 - The formatted editor's two markdown-it tokenizers — the source-block split (`webview/src/editors/
   md-blocks.ts`) and the ProseMirror parser (`webview/src/editors/pm-markdown.ts`) — now derive from one
   shared config (`webview/src/editors/md-config.ts`) instead of each configuring its own instance
@@ -119,6 +128,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `BaseText`/`BaseSource`/`RemovedText` on the wire never carry a "\r" that would otherwise mismatch
   every head-side line break as a fake whitespace add/del pair and inflate the change ratio on multi-line
   paragraphs.
+- The formatting toolbar's inline wrap (`md-format.ts` — bold, italic, strike) no longer emits Markdown
+  that fails to render. A selection with edge whitespace kept the spaces inside the markers (`**word **`),
+  which CommonMark's flanking rule leaves as literal asterisks — the markers are now pushed inside the
+  whitespace (`**word** `). A selection spanning a blank line produced a single emphasis run across the
+  paragraph break (invalid); each paragraph is now wrapped on its own. And a partial selection inside an
+  existing wrapper (e.g. `foo` inside `**foo bar**`) nested to `****foo** bar**` because "already
+  formatted" was tested only against markers touching the selection edges — the enclosing wrapper is now
+  detected on the parsed `@codemirror/lang-markdown` syntax tree, so the toggle unwraps it instead of
+  nesting.
 - `docs/CODE-REVIEW-PLAN.md`'s T-09 finding claimed `AGENTS.md`/`CLAUDE.md` were gitignored, making every
   tracked doc's `../AGENTS.md` link 404 on GitHub. The premise was real: a `.gitignore` rule excluded both
   files from early in the project's history (`8fa0b6c`) until commit `800ce26`, which removed that rule
