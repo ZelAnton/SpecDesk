@@ -4,7 +4,8 @@
  * wrap (or any editor-side change) never shifts the preview. Anchors come from the `lineMap`
  * (every leaf rendered element). See docs/ROADMAP.md ("Planned upgrade — height-synced scroll").
  *
- * The math (`computeGapAdjustments`) is pure and unit-tested; `HeightSync` is the DOM orchestration.
+ * The math (`computeGapAdjustments`, `computeScrollCompensation`) is pure and unit-tested; `HeightSync`
+ * is the DOM orchestration.
  */
 
 import type { MarkdownEditor } from "../editors/editor.js";
@@ -102,6 +103,44 @@ function spacersEqual(a: EditorSpacer[], b: EditorSpacer[]): boolean {
   return true;
 }
 
+/** One applied spacer set: the lead plus the per-block spacers, as tracked by {@link HeightSync}. */
+interface SpacerSet {
+  lead: number;
+  spacers: EditorSpacer[];
+}
+
+/** Total height of a spacer set's pieces that sit strictly above `viewportLine` (a 0-based source
+ *  line, matching {@link EditorSpacer.lineEnd}). A block spacer sits right after its `lineEnd`, so it
+ *  counts once the viewport has scrolled past that line (`lineEnd < viewportLine`); the lead sits
+ *  before line 0, so it counts for any viewport that has scrolled past the very top of the document
+ *  (`viewportLine > 0`) — mirroring the position-based convention in `MarkdownEditor.spacerHeightAbove`
+ *  (a leading spacer is never "above" the very first anchor). Pure. */
+function spacerHeightAboveLine(set: SpacerSet, viewportLine: number): number {
+  let total = viewportLine > 0 ? set.lead : 0;
+  for (const spacer of set.spacers) {
+    if (spacer.lineEnd < viewportLine) {
+      total += spacer.height;
+    }
+  }
+  return total;
+}
+
+/**
+ * The `scrollTop` delta (px) to apply so the content currently at the viewport top does not visibly
+ * shift when the spacer set changes from `previous` to `next` (T-066). Positive when the spacer weight
+ * above the viewport grew (scroll further down by that much to keep the same content at the top);
+ * negative when it shrank; zero — the common case once a Split layout has settled — when nothing above
+ * the viewport changed, so most reconciles apply no compensation at all. Pure — mirrors
+ * {@link computeGapAdjustments}; `viewportLine` comes from `MarkdownEditor.topVisibleLine()`.
+ */
+export function computeScrollCompensation(
+  viewportLine: number,
+  previous: SpacerSet,
+  next: SpacerSet,
+): number {
+  return spacerHeightAboveLine(next, viewportLine) - spacerHeightAboveLine(previous, viewportLine);
+}
+
 export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly source: GeometrySource;
@@ -137,10 +176,26 @@ export class HeightSync {
     ) {
       return false;
     }
+    // Compensate the viewport BEFORE swapping the applied set, so the delta reflects exactly what is
+    // about to change (T-066): the reference line and the "previous" weight above it must both be read
+    // against the still-old spacer set, otherwise the delta would compare against a set that no longer
+    // matches what's on screen. Without this, a spacer-weight change above the current viewport shifts
+    // the content under a fixed scrollTop — the visible jump while typing in Split that motivated this.
+    const viewportLine = this.editor.topVisibleLine();
+    const delta = computeScrollCompensation(
+      viewportLine,
+      { lead: this.appliedLead, spacers: this.appliedSpacers },
+      { lead, spacers },
+    );
     this.appliedLead = lead;
     this.appliedSpacers = spacers;
     this.hasApplied = true;
     this.editor.setSpacers(spacers, lead);
+    // Applied in the same synchronous pass as the spacer dispatch above — same frame, so the two land
+    // as one atomic visual update instead of a spacer-jump-then-scroll-catchup flicker.
+    if (delta !== 0) {
+      this.editor.adjustScrollTop(delta);
+    }
     return true;
   }
 

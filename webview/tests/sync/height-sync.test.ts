@@ -4,6 +4,7 @@ import type { BlockGeometry } from "../../src/review/preview.js";
 import {
   type AnchorMetrics,
   computeGapAdjustments,
+  computeScrollCompensation,
   type EditorSpacer,
   type GeometrySource,
   HeightSync,
@@ -99,20 +100,100 @@ describe("computeGapAdjustments", () => {
   });
 });
 
+describe("computeScrollCompensation (T-066)", () => {
+  const spacer = (lineEnd: number, height: number): EditorSpacer => ({ lineEnd, height });
+
+  it("is zero when nothing above the viewport changed (only spacers below it changed)", () => {
+    // Block spacer at line 5 (below the viewport top at line 2) grows from 100 to 160 — no compensation.
+    const delta = computeScrollCompensation(
+      2,
+      { lead: 0, spacers: [spacer(5, 100)] },
+      { lead: 0, spacers: [spacer(5, 160)] },
+    );
+    expect(delta).toBe(0);
+  });
+
+  it("is positive (scroll further down) when a spacer above the viewport grew", () => {
+    // Spacer at line 1 sits above the viewport top at line 3 in both sets; it grew by 60.
+    const delta = computeScrollCompensation(
+      3,
+      { lead: 0, spacers: [spacer(1, 100)] },
+      { lead: 0, spacers: [spacer(1, 160)] },
+    );
+    expect(delta).toBe(60);
+  });
+
+  it("is negative (scroll back up) when a spacer above the viewport shrank", () => {
+    const delta = computeScrollCompensation(
+      3,
+      { lead: 0, spacers: [spacer(1, 160)] },
+      { lead: 0, spacers: [spacer(1, 100)] },
+    );
+    expect(delta).toBe(-60);
+  });
+
+  it("counts the lead once the viewport has scrolled past the very top of the document", () => {
+    const delta = computeScrollCompensation(5, { lead: 0, spacers: [] }, { lead: 40, spacers: [] });
+    expect(delta).toBe(40);
+  });
+
+  it("does NOT count the lead while the viewport is still exactly at the document top (line 0)", () => {
+    // Matches the position-based convention `MarkdownEditor.spacerHeightAbove` already uses for anchor
+    // 0: the leading spacer is folded into line 0's own block, so it never counts as "above" line 0.
+    const delta = computeScrollCompensation(0, { lead: 0, spacers: [] }, { lead: 40, spacers: [] });
+    expect(delta).toBe(0);
+  });
+
+  it("nets several spacer changes above the viewport into one delta", () => {
+    const delta = computeScrollCompensation(
+      10,
+      { lead: 20, spacers: [spacer(1, 100), spacer(3, 50)] },
+      { lead: 20, spacers: [spacer(1, 150), spacer(3, 30)] },
+    );
+    // Lead unchanged (0); line 1 spacer +50; line 3 spacer −20 → net +30.
+    expect(delta).toBe(30);
+  });
+
+  it("ignores a spacer exactly at the viewport line — it sits below, not above, the viewport top", () => {
+    const delta = computeScrollCompensation(
+      3,
+      { lead: 0, spacers: [spacer(3, 100)] },
+      { lead: 0, spacers: [spacer(3, 160)] },
+    );
+    expect(delta).toBe(0);
+  });
+});
+
 // A scriptable stand-in for the two collaborators HeightSync drives, so reconcile()'s dispatch
 // behaviour can be tested without a live CodeMirror / DOM. `naturalLineTops` is keyed by the source
 // line so a test can flip a block's editor top from an estimate to its measured value between
 // reconciles (what CodeMirror does when it finishes measuring a below-viewport block).
 class FakeEditor {
   readonly calls: { spacers: EditorSpacer[]; lead: number }[] = [];
+  readonly scrollAdjustments: number[] = [];
   private tops = new Map<number, number>();
+  // Defaults to line 0 — with no viewport scroll below the document top, computeScrollCompensation
+  // never counts the lead and the existing (pre-T-066) tests below never trigger a compensation call.
+  private viewportLine = 0;
 
   setTops(pairs: Array<[line: number, top: number]>): void {
     this.tops = new Map(pairs);
   }
 
+  setViewportLine(line: number): void {
+    this.viewportLine = line;
+  }
+
   naturalLineTops(lines: number[]): number[] {
     return lines.map((lineStart) => this.tops.get(lineStart) ?? 0);
+  }
+
+  topVisibleLine(): number {
+    return this.viewportLine;
+  }
+
+  adjustScrollTop(delta: number): void {
+    this.scrollAdjustments.push(delta);
   }
 
   setSpacers(spacers: EditorSpacer[], leadingHeight = 0): void {
@@ -225,5 +306,87 @@ describe("HeightSync.reconcile (T-062: self-heal after re-measure, no flicker lo
     sync.reconcile();
     expect(editor.calls).toHaveLength(3);
     expect(editor.calls[2]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
+  });
+});
+
+describe("HeightSync viewport scroll compensation (T-066)", () => {
+  // Block 0 spans lines 0-5 (above the viewport); block 1 spans line 7 (below it). The viewport is
+  // parked at line 6, i.e. between the two blocks, so only block 0's spacer sits "above" it.
+  const geometry: BlockGeometry[] = [
+    { lineStart: 0, lineEnd: 5, top: 0, height: 200 },
+    { lineStart: 7, lineEnd: 7, top: 200, height: 40 },
+  ];
+
+  function make(): { editor: FakeEditor; sync: HeightSync } {
+    const editor = new FakeEditor();
+    const source: GeometrySource = { blockGeometry: () => geometry, contentWidth: () => 800 };
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
+    return { editor, sync };
+  }
+
+  it("compensates scrollTop for the initial spacer weight above the viewport, then again as it settles", () => {
+    const { editor, sync } = make();
+    editor.setViewportLine(6);
+
+    // First reconcile (an underestimated below-viewport top, as in the T-062 suite above): a 160px
+    // spacer appears above the (parked) viewport where none existed before — compensate the full 160px
+    // immediately so the content already visible at the top does not jump down.
+    editor.setTops([
+      [0, 0],
+      [7, 40],
+    ]);
+    sync.reconcile();
+    expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 160 }]);
+    expect(editor.scrollAdjustments).toEqual([160]);
+
+    // CodeMirror finishes measuring: the spacer above the (still parked) viewport shrinks 160 → 110, a
+    // visible upward jump unless scrollTop is pulled back by the same 50px in the same pass.
+    editor.setTops([
+      [0, 0],
+      [7, 90],
+    ]);
+    sync.reconcile();
+    expect(editor.calls[1]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
+    expect(editor.scrollAdjustments).toEqual([160, -50]);
+  });
+
+  it("does not compensate when the spacer that changed sits below the viewport", () => {
+    const { editor, sync } = make();
+    editor.setViewportLine(0); // parked at the very top, above both blocks
+
+    editor.setTops([
+      [0, 0],
+      [7, 40],
+    ]);
+    sync.reconcile();
+    editor.setTops([
+      [0, 0],
+      [7, 90],
+    ]);
+    sync.reconcile();
+
+    // The only spacer (below line 5, i.e. below the line-0 viewport) changed, but line 0 never counts
+    // anything as "above" it — so no compensation, even though a dispatch happened both times.
+    expect(editor.calls).toHaveLength(2);
+    expect(editor.scrollAdjustments).toEqual([]);
+  });
+
+  it("adjusts scrollTop exactly once, alongside the one settling dispatch (no repeat on later reconciles)", () => {
+    const { editor, sync } = make();
+    editor.setViewportLine(6);
+    editor.setTops([
+      [0, 0],
+      [7, 90],
+    ]);
+
+    sync.reconcile();
+    sync.reconcile();
+    sync.reconcile();
+
+    // Only the first reconcile dispatches (see the T-062 suite) — for the 110px spacer that appears
+    // above the parked viewport. The settled repeats skip apply() entirely, so no further adjustment
+    // is ever computed for them, let alone applied.
+    expect(editor.calls).toHaveLength(1);
+    expect(editor.scrollAdjustments).toEqual([110]);
   });
 });

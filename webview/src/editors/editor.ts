@@ -735,10 +735,43 @@ export class MarkdownEditor {
     return lineNumber - 1 + Math.min(Math.max(fraction, 0), 1);
   }
 
+  /**
+   * The 0-based source line whose block currently sits at the top of the editor viewport, resolved
+   * through CodeMirror's height map (`lineBlockAtHeight`) rather than `posAtCoords`/
+   * `getBoundingClientRect` — so, unlike {@link topVisibleLineExact}, this stays accurate even where
+   * real layout/painting isn't available (e.g. under jsdom in tests). Used by {@link HeightSync} (T-066)
+   * as the fixed reference point for compensating `scrollTop` when the spacer set changes: whichever
+   * spacers sit above this line are the ones whose height change must be added to `scrollTop` so the
+   * content already at the viewport top does not visibly jump.
+   */
+  topVisibleLine(): number {
+    const block = this.view.lineBlockAtHeight(this.view.scrollDOM.scrollTop);
+    return this.view.state.doc.lineAt(block.from).number - 1;
+  }
+
+  /**
+   * Nudge `scrollTop` by `delta` pixels, synchronously — used right after {@link setSpacers} dispatches
+   * a spacer set whose weight above the viewport changed, so the compensation lands in the very same
+   * frame as the spacer change and the two are visually indistinguishable from one atomic update.
+   */
+  adjustScrollTop(delta: number): void {
+    this.view.scrollDOM.scrollTop += delta;
+  }
+
   /** Scroll so the given 0-based source line is at the top of the viewport. */
   scrollToSourceLine(line: number): void {
     const target = this.view.state.doc.line(this.clampLine(line)).from;
     this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "start" }) });
+  }
+
+  /**
+   * Hard-reset the viewport to the very start of the document. Unlike {@link scrollToSourceLine}
+   * this sets scrollTop directly rather than going through CodeMirror's measured scrollIntoView —
+   * used when hydrating a freshly loaded document, whose scrollTop otherwise still reflects wherever
+   * the PREVIOUS document happened to leave it.
+   */
+  scrollToTop(): void {
+    this.view.scrollDOM.scrollTop = 0;
   }
 
   /**

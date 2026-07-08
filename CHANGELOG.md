@@ -140,6 +140,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Markdig's `entry.lineStart`, the real content line — the mismatched keys made the lookup miss and
   fall back to whole-container highlighting. The keying now uses the block's real content-token start
   (`contentLineStart`) so the keys agree and per-row/per-item highlighting is preserved.
+- Loading a document (`doc.loaded`) now resets both panes' scroll position to the start of the document.
+  Previously only the content was re-hydrated; each pane kept whatever `scrollTop` the PREVIOUS document
+  had left it at — an arbitrary depth for a shorter old document, the browser's own clamp for a longer
+  one, and the two panes generally disagreeing with each other. `MarkdownEditor`/`FormattedEditor` gained
+  a `scrollToTop()` used under `scrollSync.suppress()` so the reset doesn't itself drive a cross-pane sync.
 - The Split view's source editor no longer shows a large empty hatched band above its first line. Height-
   sync pads the source editor so each source block lines up with its rendered block, and the first block's
   lead reproduces the leading space above the first rendered block. That leading space included the first
@@ -493,6 +498,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler quietly disconnected the first one — every current caller registers each kind exactly once,
   so a re-registration is always a bug, and it now surfaces immediately instead of dropping a handler
   with no signal.
+- The Formatted pane's row/item highlight (`formatted.ts` `nodeRangeForLine`) no longer clamps a child
+  ordinal into a container node whose child count disagrees with md-blocks' `childLineStarts`. It used
+  to `Math.min` the computed index into range, which for a mismatched count could point at the wrong
+  row/item instead of the one the source line actually falls in; on a count mismatch it now washes the
+  whole container, matching how a per-child diff already falls back to a whole-block wash natively
+  (`DiffWire.fs`). md-blocks and the ProseMirror schema share one tokenizer config and agree on child
+  counts for any real document today, so this is a defense-in-depth guard, pinned by a new
+  cross-language ordinal fixture (`webview/tests/contract/container-ordinals.json`,
+  `tests/SpecDesk.Diff.Tests/ContainerOrdinalContractTests.fs`,
+  `webview/tests/contract/container-ordinals.test.ts`) covering a nested list inside an item, loose/tight
+  lists, a table with an empty header row, and a multi-paragraph list item.
+- Split view's height-synced scroll (`height-sync.ts`/`editor.ts`) no longer lets the visible text jump
+  while typing: whenever the editor spacers above the current viewport change weight (e.g. a below-
+  viewport block's estimated height gets corrected once CodeMirror finishes measuring it), `scrollTop`
+  is now nudged by that exact delta in the same dispatch, so the content already at the viewport top
+  stays put. The new `computeScrollCompensation` (pure, unit-tested) computes the delta from the
+  previous vs. next spacer set and the source line currently at the viewport top
+  (`MarkdownEditor.topVisibleLine()`).
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked
