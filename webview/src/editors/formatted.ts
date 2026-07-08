@@ -686,6 +686,16 @@ export class FormattedEditor {
   }
 
   /**
+   * Hard-reset the viewport to the very start of the document. Unlike {@link scrollToSourceLine}
+   * this does no block-geometry math (which needs a laid-out DOM the caller may not have yet) — used
+   * when hydrating a freshly loaded document, whose scrollTop otherwise still reflects wherever the
+   * PREVIOUS document happened to leave it.
+   */
+  scrollToTop(): void {
+    this.scrollEl.scrollTop = 0;
+  }
+
+  /**
    * Per-top-level-block source-line range plus measured pixel geometry, in document order. This is
    * the reference height-sync (height-sync.ts) pads the source editor against, so each source block's
    * top lines up with its rendered block. Granularity is top-level blocks (md-blocks); rows of a

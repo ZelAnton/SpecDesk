@@ -132,6 +132,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Loading a document (`doc.loaded`) now resets both panes' scroll position to the start of the document.
+  Previously only the content was re-hydrated; each pane kept whatever `scrollTop` the PREVIOUS document
+  had left it at — an arbitrary depth for a shorter old document, the browser's own clamp for a longer
+  one, and the two panes generally disagreeing with each other. `MarkdownEditor`/`FormattedEditor` gained
+  a `scrollToTop()` used under `scrollSync.suppress()` so the reset doesn't itself drive a cross-pane sync.
 - The Split view's source editor no longer shows a large empty hatched band above its first line. Height-
   sync pads the source editor so each source block lines up with its rendered block, and the first block's
   lead reproduces the leading space above the first rendered block. That leading space included the first
