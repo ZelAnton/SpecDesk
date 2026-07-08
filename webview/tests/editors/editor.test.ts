@@ -85,6 +85,26 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
   });
 });
 
+describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => {
+  // The height-sync lead is a stable fixed point only because `naturalLineTops` is invariant to the
+  // leading spacer we apply: CodeMirror folds a leading block widget (side −1 at pos 0) into line 0's
+  // block as `spaceAbove`, so `lineBlockAt(0).top` reports the region top (unchanged), and
+  // spacerHeightAbove correctly does NOT subtract the lead at pos 0. If a CodeMirror upgrade ever
+  // changed that, the lead would oscillate (grow without bound) between reconciles — this locks it in.
+  it("keeps the first line's natural top unchanged when a leading spacer is applied", () => {
+    const { ed } = mount();
+    ed.setText("# Welcome to SpecDesk\n\nHello world.\n\n## Section\n\nMore.\n");
+
+    const before = ed.naturalLineTops([0, 2, 4]);
+    ed.setSpacers([], 60); // apply a 60px lead, no block spacers
+    const after = ed.naturalLineTops([0, 2, 4]);
+
+    // Every anchor's natural (spacer-free) top is identical before and after — the whole point of the
+    // fixed point. In particular the FIRST anchor does not swing by the lead height.
+    expect(after).toEqual(before);
+  });
+});
+
 describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -110,6 +130,15 @@ describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
   it("stays false across a silent mirror setText (no change notification is scheduled)", () => {
     const { ed } = mount();
     ed.setText("mirrored\n", true);
+    expect(ed.hasPendingChange()).toBe(false);
+  });
+
+  // T-069: doc.loaded hydration is silent (sameDocument: false, see the marker-tracking suite below) —
+  // suppressChange is driven only by `silent`, independently of `sameDocument`, so this must stay false
+  // exactly like the same-document silent mirror above.
+  it("stays false across a silent-but-different-document setText (doc.loaded)", () => {
+    const { ed } = mount();
+    ed.setText("a freshly loaded document\n", true, false);
     expect(ed.hasPendingChange()).toBe(false);
   });
 });
@@ -188,6 +217,21 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
     ed.insertAtMarker(id, "[IMG]");
 
     expect(ed.getText()).toBe("one[IMG] two three\n");
+  });
+
+  // T-069: doc.loaded hydrates the source editor SILENTLY (the host already has this text — no change
+  // notification should round-trip back out as editor.changed), but it IS a genuinely different document
+  // (a file was just opened/loaded), unlike the Split-mirror/mode-switch silent calls above — so a
+  // pending marker from the PREVIOUS document must still be dropped, not restored at a now-meaningless
+  // clamped position. `sameDocument` (defaulting to `silent`) is the explicit override for this case.
+  it("drops a pending marker across a silent-but-different-document setText (doc.loaded), unlike a same-document silent mirror", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    const id = ed.trackPosition(3);
+    ed.setText("a whole new document just loaded\n", true, false);
+    ed.insertAtMarker(id, "[stale]");
+
+    expect(ed.getText()).toBe("a whole new document just loaded\n");
   });
 
   it("clamps a restored marker to the new (shorter) document length after a silent setText", () => {

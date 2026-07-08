@@ -604,18 +604,27 @@ export class MarkdownEditor {
    * arbitrary position in a document it was never captured against. insertAtMarker/discardMarker
    * already no-op gracefully once a marker is gone, so an in-flight round-trip simply drops its insert.
    *
-   * Pass `silent` for the OTHER use of a whole-document replace: mirroring the SAME logical content in
-   * from the sibling surface (the Split mirror, or hydrating a pane on a mode switch) — not a document
-   * change, so pending markers are kept, restored to their pre-transaction positions (clamped to the
-   * new length) rather than dropped or blindly mapped through the blunt whole-document change. This
-   * also suppresses the change notification so the mirror doesn't echo back out as a new edit.
+   * Pass `silent` to suppress the resulting change notification — for any replace whose text the host
+   * already knows about (a mirror from the sibling surface, a mode-switch hydration, or the initial
+   * `doc.loaded` hydration), so CodeMirror's own onChange doesn't echo it straight back out as a new
+   * edit (which would otherwise round-trip through the host as a no-op re-render).
+   *
+   * `sameDocument` is a SEPARATE axis controlling the marker behavior, defaulting to `silent` (the two
+   * usually coincide): pass/leave it true for mirroring the SAME logical content in from the sibling
+   * surface (the Split mirror, or hydrating a pane on a mode switch) — not a document change, so pending
+   * markers are kept, restored to their pre-transaction positions (clamped to the new length) rather
+   * than dropped or blindly mapped through the blunt whole-document change. `doc.loaded` is silent (the
+   * host already has this text) but NOT the same document — pass `sameDocument: false` there so any
+   * marker left over from the previous document is dropped rather than restored at a now-meaningless
+   * clamped position.
    */
-  setText(text: string, silent = false): void {
+  setText(text: string, silent = false, sameDocument = silent): void {
     this.suppressChange = silent;
-    // Silent = mirroring the same logical content (Split mirror / mode-switch hydration): keep pending
-    // image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than dropped.
-    // Non-silent = a genuinely different document (a file was opened) — drop any pending markers.
-    const markerEffect = silent
+    // sameDocument = mirroring the same logical content (Split mirror / mode-switch hydration): keep
+    // pending image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than
+    // dropped. Not sameDocument = a genuinely different document (a file was opened/loaded) — drop any
+    // pending markers, independently of whether the change notification itself is suppressed.
+    const markerEffect = sameDocument
       ? restoreMarkersEffect.of(this.view.state.field(markerField))
       : clearMarkersEffect.of(null);
     // Re-apply the synced highlights in the same transaction: a whole-document replace would otherwise
@@ -749,6 +758,10 @@ export class MarkdownEditor {
    * the decoration set). This makes "natural" independent of whether spacers are applied — a true
    * fixed point — so reconciling does not oscillate. (A prefix sum of line heights had counted the
    * block widgets, creating a measure→apply→measure feedback loop.)
+   *
+   * This fixed-point property holds for the FIRST anchor too, which is what keeps the height-sync
+   * lead stable (T-061): see {@link spacerHeightAbove} for why the leading spacer is (correctly) not
+   * subtracted at pos 0.
    */
   naturalLineTops(lines: number[]): number[] {
     return lines.map((line) => {
@@ -759,9 +772,16 @@ export class MarkdownEditor {
 
   /**
    * Total height of spacer widgets above a document position. A spacer at <c>from</c> counts when
-   * <c>from &lt; pos</c>. Crucially the leading spacer (at position 0) is therefore NOT counted for
-   * the first anchor (pos 0) — CodeMirror's `lineBlockAt(0).top` does not include it, so counting it
-   * there would over-subtract and make the computed lead grow on every edit.
+   * <c>from &lt; pos</c>. Crucially the leading spacer (a block widget at position 0, side −1) is
+   * therefore NOT counted for the first anchor (pos 0), and that is correct: CodeMirror folds a
+   * leading block widget into the first line's own block as its `spaceAbove`, and `lineBlockAt(0).top`
+   * reports the TOP of that combined region (the widget's top, i.e. the document origin) — NOT the
+   * text top below the widget. So `lineBlockAt(0).top` is invariant to the lead height (confirmed by
+   * instrumenting `@codemirror/view`: `HeightMapText.spaceAbove` + `BlockInfo.join`, which keeps the
+   * joined block's `top` at the space block's top). Counting the lead here would subtract a height the
+   * measurement never included, driving `naturalLineTops[0]` negative and the computed lead to grow
+   * without bound between reconciles. Every OTHER anchor sits strictly below the lead, so `from < pos`
+   * correctly subtracts it for them.
    */
   private spacerHeightAbove(pos: number): number {
     let total = 0;

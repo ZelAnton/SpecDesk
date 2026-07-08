@@ -10,8 +10,12 @@
  * paragraph (emphasis cannot span a paragraph break), and an existing wrapper the selection sits
  * inside is detected by RE-PARSING the document text with the lang-markdown parser
  * (`markdownLanguage.parser.parse`) — so a partial selection inside `**foo bar**` toggles the bold
- * off instead of nesting to the non-rendering `****foo** bar**`. That parse is the only added
- * machinery; the module stays a pure function of (doc, from, to) with no live EditorView / editor.ts.
+ * off instead of nesting to the non-rendering `****foo** bar**`. Fenced code toggling reuses the same
+ * re-parse to find the enclosing FencedCode node (``` or ~~~, with or without an info string) rather
+ * than text-matching the selection's own first/last lines, and a NEW fence's marker is always longer
+ * than any backtick run already in the content, so wrapping can never nest into (and prematurely
+ * close on) a fence the selection happens to contain. That parse is the only added machinery; the
+ * module stays a pure function of (doc, from, to) with no live EditorView / editor.ts.
  */
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
@@ -204,6 +208,16 @@ function wrapChunk(chunk: string, marker: string): string {
 
 /** Toggle a line-level construct (heading / list / quote / fenced code) over the selected lines. */
 function toggleBlock(doc: string, from: number, to: number, command: FormatCommand): FormatEdit {
+  // Fenced code toggles OFF by unwrapping the enclosing FencedCode syntax node (see toggleFence's
+  // doc comment) rather than by re-deriving a line range from the raw selection — a selection that
+  // sits anywhere inside an existing fence (not just spanning its outer ``` lines) must unwrap.
+  if (command === "code") {
+    const unwrapped = unwrapFence(doc, from, to);
+    if (unwrapped !== null) {
+      return unwrapped;
+    }
+  }
+
   // `doc.lastIndexOf("\n", from - 1)` is the standard "find the start of the current line" idiom, but
   // at `from === 0` the search position `-1` is clamped by the platform to `0` instead of "before the
   // string" — so if `doc[0]` is itself a newline (a leading blank line), it wrongly matches THAT
@@ -217,7 +231,7 @@ function toggleBlock(doc: string, from: number, to: number, command: FormatComma
   const blockEnd = newlineAfter === -1 ? doc.length : newlineAfter;
   const lines = doc.slice(blockStart, blockEnd).split("\n");
 
-  const insert = command === "code" ? toggleFence(lines) : toggleLinePrefix(lines, command);
+  const insert = command === "code" ? wrapFence(lines) : toggleLinePrefix(lines, command);
   return {
     from: blockStart,
     to: blockEnd,
@@ -295,12 +309,72 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
   }
 }
 
-/** Wrap the lines in a ``` fence, or unwrap if the selection already is a fenced block. */
-function toggleFence(lines: string[]): string {
-  const first = lines[0] ?? "";
-  const last = lines[lines.length - 1] ?? "";
-  if (lines.length >= 2 && first.startsWith("```") && last.startsWith("```")) {
-    return lines.slice(1, -1).join("\n");
+/**
+ * The innermost FencedCode syntax node (``` or ~~~, with or without an info string) that fully
+ * covers the selection [from, to), or null. Re-parses `doc`, mirroring {@link enclosingWrap} — so a
+ * selection anywhere INSIDE an existing fence (a middle line, a partial line, or the fence exactly)
+ * is recognized by the real grammar, not by checking whether the selection's own first/last lines
+ * happen to start with ``` (the old heuristic: a selection of interior lines only, which never
+ * touches the fence's own delimiter lines, was invisible to it and got wrapped into a nested fence
+ * whose inner ``` prematurely closed the outer one, corrupting everything after).
+ */
+function enclosingFence(doc: string, from: number, to: number): MdNode | null {
+  const tree = markdownLanguage.parser.parse(doc);
+  for (let node: MdNode | null = tree.resolveInner(from, 1); node !== null; node = node.parent) {
+    if (node.name === "FencedCode" && node.from <= from && node.to >= to) {
+      return node;
+    }
   }
-  return ["```", ...lines, "```"].join("\n");
+  return null;
+}
+
+/**
+ * Unwrap the FencedCode node enclosing [from, to) (if any): drop its opening line (mark + optional
+ * info string) and closing mark, keep the inner text, and map the selection onto that text — same
+ * shape as {@link unwrapNode} for inline marks. Returns null when the selection isn't inside a fence
+ * at all, so the caller falls through to wrapping a NEW fence around it.
+ */
+function unwrapFence(doc: string, from: number, to: number): FormatEdit | null {
+  const node = enclosingFence(doc, from, to);
+  if (node === null) {
+    return null;
+  }
+  const openEnd = doc.indexOf("\n", node.from);
+  const closeStart = openEnd === -1 ? node.from : doc.lastIndexOf("\n", node.to - 1);
+  // A one-line fence (`` ``` `` immediately followed by `` ``` `` with nothing between, or a single
+  // stray opening line) has no interior newline pair to split on — its content is empty.
+  const inner = openEnd === -1 || closeStart <= openEnd ? "" : doc.slice(openEnd + 1, closeStart);
+  const prefixLen = (openEnd === -1 ? node.to : openEnd + 1) - node.from;
+  const clamp = (p: number): number =>
+    Math.min(Math.max(p - prefixLen, node.from), node.from + inner.length);
+  return {
+    from: node.from,
+    to: node.to,
+    insert: inner,
+    selectionStart: clamp(from),
+    selectionEnd: clamp(to),
+  };
+}
+
+/** The longest run of consecutive `char` characters anywhere in `text`. */
+function longestRun(text: string, char: string): number {
+  let max = 0;
+  let current = 0;
+  for (const c of text) {
+    current = c === char ? current + 1 : 0;
+    max = Math.max(max, current);
+  }
+  return max;
+}
+
+/**
+ * Wrap the given lines in a ``` fence. The fence marker is at least one backtick LONGER than the
+ * longest run of backticks anywhere in the content, so a selection that already contains a fenced
+ * block (or any other run of backticks) can never be prematurely closed by content the outer fence is
+ * meant to just pass through verbatim — CommonMark only treats a line of `n` fence characters as a
+ * delimiter for a fence opened with `n` or fewer, so a strictly longer outer marker is safe.
+ */
+function wrapFence(lines: string[]): string {
+  const marker = "`".repeat(Math.max(3, longestRun(lines.join("\n"), "`") + 1));
+  return [marker, ...lines, marker].join("\n");
 }

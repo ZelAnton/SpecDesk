@@ -57,6 +57,46 @@ describe("computeGapAdjustments", () => {
     expect(result.editorLead).toBe(0);
     expect(result.editorSpacers).toEqual([{ lineEnd: 1, height: 50 }]);
   });
+
+  // T-061 first-block lead edge cases. The lead reproduces the small structural offset from the
+  // rendered pane's scroll origin to its first block (its `padding-top`), NOT the first block's own
+  // typographic top margin — that margin is reset to 0 in the shared rendered stylesheet, so the first
+  // rendered block hugs its pane's content top and the lead stays a small structural inset.
+  describe("first-block lead (T-061)", () => {
+    it("reproduces only the pane's structural top inset, not a first-block margin", () => {
+      // First rendered block sits at the pane's padding-top (20); the source's first line is at 0.
+      const result = computeGapAdjustments([anchor(0, 0, 20), anchor(3, 40, 60)]);
+      expect(result.editorLead).toBe(20);
+    });
+
+    it("is 0 when the first source line and first rendered block already coincide", () => {
+      const result = computeGapAdjustments([anchor(0, 0, 0), anchor(3, 40, 40)]);
+      expect(result.editorLead).toBe(0);
+    });
+
+    it("never emits a negative lead when the first source line starts below the rendered block", () => {
+      const result = computeGapAdjustments([anchor(0, 30, 5), anchor(3, 50, 25)]);
+      expect(result.editorLead).toBe(0);
+    });
+
+    it("leaves inter-block gaps unchanged when the whole rendered document shifts up uniformly", () => {
+      // Resetting the first block's top margin lifts every rendered top by the same amount (here 44):
+      // only the lead changes; the per-gap spacers, being differences, are identical.
+      const withMargin = computeGapAdjustments([
+        anchor(0, 0, 64),
+        anchor(2, 20, 120),
+        anchor(5, 40, 150),
+      ]);
+      const flush = computeGapAdjustments([
+        anchor(0, 0, 20),
+        anchor(2, 20, 76),
+        anchor(5, 40, 106),
+      ]);
+      expect(withMargin.editorLead).toBe(64);
+      expect(flush.editorLead).toBe(20);
+      expect(flush.editorSpacers).toEqual(withMargin.editorSpacers);
+    });
+  });
 });
 
 // A scriptable stand-in for the two collaborators HeightSync drives, so reconcile()'s dispatch
@@ -139,6 +179,33 @@ describe("HeightSync.reconcile (T-062: self-heal after re-measure, no flicker lo
     // and skip the dispatch, so CodeMirror is never nudged into the loop the old blanket guard prevented.
     expect(editor.calls).toHaveLength(1);
     expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
+  });
+
+  // T-061: a lead (first rendered block below the first source line) must settle to a fixed point and
+  // NOT oscillate. `naturalLineTops` is invariant to the lead we apply (CodeMirror folds the leading
+  // block widget into line 0's block, so `lineBlockAt(0).top` doesn't move — see editor.ts
+  // spacerHeightAbove), which the FakeEditor models by returning line-keyed tops that don't change when
+  // a lead is applied. So repeated reconciles recompute the identical lead and stop re-dispatching.
+  it("applies a lead once and settles — no lead flicker between reconciles", () => {
+    const leadGeometry: BlockGeometry[] = [
+      { lineStart: 0, lineEnd: 0, top: 20, height: 40 }, // first rendered block 20px down (pane inset)
+      { lineStart: 2, lineEnd: 2, top: 60, height: 40 },
+    ];
+    const editor = new FakeEditor();
+    const source: GeometrySource = { blockGeometry: () => leadGeometry, contentWidth: () => 800 };
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
+    editor.setTops([
+      [0, 0],
+      [2, 40],
+    ]);
+
+    sync.reconcile();
+    sync.reconcile();
+    sync.reconcile();
+
+    // The lead is dispatched exactly once; the settled reconciles recompute the same lead and skip it.
+    expect(editor.calls).toHaveLength(1);
+    expect(editor.calls[0]?.lead).toBe(20);
   });
 
   it("clear() drops the spacers and a later reconcile re-applies them (leaving/returning to Split)", () => {

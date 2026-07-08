@@ -46,6 +46,23 @@ export interface GapAdjustments {
  * is intrinsically taller than the render we add nothing (no negative spacer), so a little vertical
  * drift can accumulate over long distances — acceptable, and the active-line highlight covers it.
  * Pure.
+ *
+ * Coordinate systems (T-061). Both `previewTop` and `editorTop` are measured from their own pane's
+ * scroll origin (the reference via `blockGeometry`, the editor via `naturalLineTops`); the two panes
+ * are side-by-side, so those origins coincide on screen. Inter-block spacers are differences
+ * (`previewGap − editorGap`), so any constant origin offset cancels — only the LEAD crosses panes as
+ * an absolute subtraction, so it is the one place a coordinate mismatch would leak in. The lead is the
+ * distance from the source's first line to the first rendered block, i.e. it reproduces whatever
+ * leading space sits above the first rendered block: the reference pane's structural `padding-top`
+ * (its scroll origin to its content box) — a small, genuine offset needed so the first source line
+ * sits level with the first rendered block. It does NOT reproduce the first block's own typographic
+ * top margin (a heading's `1.6em`): that is reset to 0 in the shared rendered stylesheet
+ * (styles.css §5, `.sd-doc > :first-child`), so the first rendered block hugs its pane's content top
+ * just as the first source line hugs the editor's — bringing both panes to one leading frame and
+ * shrinking the lead from the old ~65px hatched band to the pane's structural inset. The lead stays a
+ * stable fixed point because `naturalLineTops[0]` is invariant to the lead we apply (see
+ * `MarkdownEditor.spacerHeightAbove`), so a settled geometry recomputes the identical lead and
+ * {@link HeightSync.apply} stops re-dispatching — no oscillation.
  */
 export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments {
   const editorSpacers: EditorSpacer[] = [];
