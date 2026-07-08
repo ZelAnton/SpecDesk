@@ -112,6 +112,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The "Show changes" overlay's inline word diff no longer shows phantom strikethrough/insertion marks at
+  every line break of a CRLF-committed document. `ReadHeadContent`'s git blob still carries "\r" for a
+  CRLF document, while the webview's head text is always LF-only; `DiffProjection.Build`
+  (`src/SpecDesk.Host/DiffProjection.cs`) now normalizes the base to "\n" before the structural diff runs,
+  so `BaseText`/`BaseSource`/`RemovedText` on the wire never carry a "\r" that would otherwise mismatch
+  every head-side line break as a fake whitespace add/del pair and inflate the change ratio on multi-line
+  paragraphs.
 - `docs/CODE-REVIEW-PLAN.md`'s T-09 finding claimed `AGENTS.md`/`CLAUDE.md` were gitignored, making every
   tracked doc's `../AGENTS.md` link 404 on GitHub. The premise was real: a `.gitignore` rule excluded both
   files from early in the project's history (`8fa0b6c`) until commit `800ce26`, which removed that rule
