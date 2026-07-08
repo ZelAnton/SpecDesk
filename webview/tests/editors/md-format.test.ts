@@ -75,6 +75,95 @@ describe("formatMarkdown — inline marks", () => {
   });
 });
 
+// T-091 regression guards: `toggleInline` used to wrap the raw selection as-is, which produced
+// Markdown that does not render — a trailing/leading space defeats CommonMark's flanking rule
+// (`**word **` stays literal), emphasis was allowed to straddle a paragraph break, and a partial
+// selection inside an existing wrapper nested to `****foo** bar**`. The fix expels edge whitespace,
+// wraps per paragraph across a blank line, and detects the enclosing wrapper on the parsed syntax tree.
+describe("formatMarkdown — inline edge cases (T-091)", () => {
+  describe("edge whitespace is expelled so the markers hug the text", () => {
+    it("pulls a trailing space out of a bold wrap", () => {
+      expect(apply("word ", "bold", 0, 5)).toEqual({ text: "**word** ", sel: [2, 6] });
+    });
+
+    it("pulls a leading space out of a bold wrap", () => {
+      expect(apply(" word", "bold", 0, 5)).toEqual({ text: " **word**", sel: [3, 7] });
+    });
+
+    it("pulls spaces off both ends", () => {
+      expect(apply(" word ", "bold", 0, 6)).toEqual({ text: " **word** ", sel: [3, 7] });
+    });
+
+    it("expels a space for italic too", () => {
+      expect(apply("x ", "italic", 0, 2)).toEqual({ text: "*x* ", sel: [1, 2] });
+    });
+
+    it("expels a space for strike too", () => {
+      expect(apply("x ", "strike", 0, 2)).toEqual({ text: "~~x~~ ", sel: [2, 3] });
+    });
+
+    it("expels a trailing newline (block boundary) from the wrap", () => {
+      expect(apply("word\n", "bold", 0, 5)).toEqual({ text: "**word**\n", sel: [2, 6] });
+    });
+
+    it("keeps the markers inside the spaces mid-document", () => {
+      expect(apply("a word b", "bold", 2, 7)).toEqual({ text: "a **word** b", sel: [4, 8] });
+    });
+
+    it("leaves an all-whitespace selection unchanged (no invalid `** **`)", () => {
+      expect(apply("   ", "bold", 0, 3)).toEqual({ text: "   ", sel: [0, 3] });
+    });
+  });
+
+  describe("a selection crossing a blank line wraps each paragraph on its own", () => {
+    it("bolds both paragraphs without spanning the blank line", () => {
+      expect(apply("para one\n\npara two", "bold", 0, 18).text).toBe(
+        "**para one**\n\n**para two**",
+      );
+    });
+
+    it("keeps the blank-line separator verbatim between the wraps", () => {
+      // Selecting from mid-first-paragraph to mid-second must not emit a marker across the break.
+      expect(apply("para one\n\npara two", "bold", 5, 18).text).toBe(
+        "para **one**\n\n**para two**",
+      );
+    });
+
+    it("does NOT split a soft line break (single newline stays one paragraph)", () => {
+      expect(apply("a\nb", "bold", 0, 3)).toEqual({ text: "**a\nb**", sel: [2, 5] });
+    });
+  });
+
+  describe("a partial selection inside an existing wrapper toggles it off, never nests", () => {
+    it("unwraps the whole bold when only part of it is selected (no `****foo** bar**`)", () => {
+      expect(apply("**foo bar**", "bold", 2, 5)).toEqual({ text: "foo bar", sel: [0, 3] });
+    });
+
+    it("unwraps regardless of which word inside the wrapper is selected", () => {
+      expect(apply("**foo bar**", "bold", 6, 9)).toEqual({ text: "foo bar", sel: [4, 7] });
+    });
+
+    it("detection is by tree, not by markers touching the selection edges", () => {
+      // The selection edges are nowhere near the `**`, yet the enclosing bold is still found.
+      const { text } = apply("lead **foo bar baz** tail", "bold", 10, 13);
+      expect(text).toBe("lead foo bar baz tail");
+    });
+
+    it("removes the inner bold of ***hello*** when bold is toggled on the inner text", () => {
+      expect(apply("***hello***", "bold", 3, 8)).toEqual({ text: "*hello*", sel: [1, 6] });
+    });
+
+    it("removes the outer italic of ***hello*** when italic is toggled on the inner text", () => {
+      expect(apply("***hello***", "italic", 3, 8)).toEqual({ text: "**hello**", sel: [2, 7] });
+    });
+
+    it("still nests italic inside an unrelated bold wrapper (different mark type)", () => {
+      // Italic toggled inside a bold span has no enclosing *italic* node → it wraps, nesting cleanly.
+      expect(apply("**foo bar**", "italic", 2, 5).text).toBe("***foo* bar**");
+    });
+  });
+});
+
 describe("formatMarkdown — block prefixes", () => {
   it("adds an H1 prefix", () => {
     expect(apply("Title", "h1", 0, 5).text).toBe("# Title");

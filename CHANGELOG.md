@@ -112,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The formatting toolbar's inline wrap (`md-format.ts` — bold, italic, strike) no longer emits Markdown
+  that fails to render. A selection with edge whitespace kept the spaces inside the markers (`**word **`),
+  which CommonMark's flanking rule leaves as literal asterisks — the markers are now pushed inside the
+  whitespace (`**word** `). A selection spanning a blank line produced a single emphasis run across the
+  paragraph break (invalid); each paragraph is now wrapped on its own. And a partial selection inside an
+  existing wrapper (e.g. `foo` inside `**foo bar**`) nested to `****foo** bar**` because "already
+  formatted" was tested only against markers touching the selection edges — the enclosing wrapper is now
+  detected on the parsed `@codemirror/lang-markdown` syntax tree, so the toggle unwraps it instead of
+  nesting.
 - `docs/CODE-REVIEW-PLAN.md`'s T-09 finding claimed `AGENTS.md`/`CLAUDE.md` were gitignored, making every
   tracked doc's `../AGENTS.md` link 404 on GitHub. The premise was real: a `.gitignore` rule excluded both
   files from early in the project's history (`8fa0b6c`) until commit `800ce26`, which removed that rule
