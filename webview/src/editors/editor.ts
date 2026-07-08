@@ -742,6 +742,16 @@ export class MarkdownEditor {
   }
 
   /**
+   * Hard-reset the viewport to the very start of the document. Unlike {@link scrollToSourceLine}
+   * this sets scrollTop directly rather than going through CodeMirror's measured scrollIntoView —
+   * used when hydrating a freshly loaded document, whose scrollTop otherwise still reflects wherever
+   * the PREVIOUS document happened to leave it.
+   */
+  scrollToTop(): void {
+    this.view.scrollDOM.scrollTop = 0;
+  }
+
+  /**
    * Scroll the editor the minimum amount so the given 0-based source line is visible (no-op if it
    * already is). Used in Split to reveal the synced active-line highlight when accumulated block-height
    * drift pushed it outside this pane's viewport while the user works in the other pane. Unlike

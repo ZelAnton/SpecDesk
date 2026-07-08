@@ -358,3 +358,40 @@ describe("index.ts: doc.loaded drops a stale image-insert marker (R-01, jsdom)",
     expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Other doc");
   });
 });
+
+describe("index.ts: doc.loaded resets both panes' scroll (T-087, jsdom)", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  // Before the fix, setText hydrated the panes' CONTENT on doc.loaded but never touched scrollTop, so a
+  // pane kept whichever position the PREVIOUS document had left it at — an arbitrary depth for a shorter
+  // old doc, the browser's clamp for a longer one, and the two panes generally disagreeing with each
+  // other. Both must land back at the very top on every load, not just the first.
+  it("resets a scrolled-down editor and formatted pane back to the top on a second load", async () => {
+    const bridge = await mountApp();
+
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: { path: "docs/first.md", text: "# First\n", docDir: "docs" },
+    });
+
+    const scroller = document.querySelector<HTMLElement>("#editor .cm-scroller");
+    const formattedEl = document.querySelector<HTMLElement>("#formatted");
+    expect(scroller).not.toBeNull();
+    expect(formattedEl).not.toBeNull();
+
+    // Simulate the author having scrolled down into the first document before switching away.
+    (scroller as HTMLElement).scrollTop = 500;
+    (formattedEl as HTMLElement).scrollTop = 300;
+
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: { path: "docs/second.md", text: "# Second\n\nBody text.\n", docDir: "docs" },
+    });
+
+    expect((scroller as HTMLElement).scrollTop).toBe(0);
+    expect((formattedEl as HTMLElement).scrollTop).toBe(0);
+  });
+});
