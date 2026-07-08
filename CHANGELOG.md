@@ -121,6 +121,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The Split view's source editor no longer shows a large empty hatched band above its first line. Height-
+  sync pads the source editor so each source block lines up with its rendered block, and the first block's
+  lead reproduces the leading space above the first rendered block. That leading space included the first
+  block's own typographic top margin (a heading's `1.6em`, ~45px), which — with nothing above the first
+  block to separate from — was pushed into the source pane as a tall hatched service band while the first
+  source line failed to sit level with the rendered heading. The first rendered block now hugs the top of
+  its pane's content area (`.sd-doc > :first-child { margin-top: 0 }` in the shared rendered stylesheet),
+  which lifts the rendered document uniformly and leaves the inter-block gaps unchanged, so the lead
+  shrinks to just the pane's structural inset and the first source line lines up with the rendered heading.
+  (The lead is a stable fixed point — CodeMirror folds the leading spacer into the first line's block, so
+  the source's natural first-line top is invariant to the lead and it never oscillates.)
 - The Split view's source editor no longer keeps an inflated spacer before a block that sat below the
   viewport (e.g. a `### A code block` after a table). Height-sync reads each source block's top from
   CodeMirror, but a not-yet-measured region below the viewport — especially a wrapped line, estimated as

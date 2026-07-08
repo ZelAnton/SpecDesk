@@ -85,6 +85,26 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
   });
 });
 
+describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => {
+  // The height-sync lead is a stable fixed point only because `naturalLineTops` is invariant to the
+  // leading spacer we apply: CodeMirror folds a leading block widget (side −1 at pos 0) into line 0's
+  // block as `spaceAbove`, so `lineBlockAt(0).top` reports the region top (unchanged), and
+  // spacerHeightAbove correctly does NOT subtract the lead at pos 0. If a CodeMirror upgrade ever
+  // changed that, the lead would oscillate (grow without bound) between reconciles — this locks it in.
+  it("keeps the first line's natural top unchanged when a leading spacer is applied", () => {
+    const { ed } = mount();
+    ed.setText("# Welcome to SpecDesk\n\nHello world.\n\n## Section\n\nMore.\n");
+
+    const before = ed.naturalLineTops([0, 2, 4]);
+    ed.setSpacers([], 60); // apply a 60px lead, no block spacers
+    const after = ed.naturalLineTops([0, 2, 4]);
+
+    // Every anchor's natural (spacer-free) top is identical before and after — the whole point of the
+    // fixed point. In particular the FIRST anchor does not swing by the lead height.
+    expect(after).toEqual(before);
+  });
+});
+
 describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
