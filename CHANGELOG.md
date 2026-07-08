@@ -131,6 +131,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — previously the same flag drove both — so `doc.loaded` can hydrate silently while still dropping any
   image-insert marker left over from the previous document, instead of restoring it at a now-meaningless
   clamped position.
+- The formatting toolbar's fence toggle (`md-format.ts` — the code-block button) no longer corrupts the
+  document when the selection sits inside an existing fenced code block. It used to recognize "already a
+  fence" only by checking whether the SELECTION's own first/last lines started with ` ``` `, so selecting
+  interior lines (never touching the fence's own delimiter lines) was invisible to that check and got
+  wrapped in a nested fence — the inner ` ``` ` prematurely closed the outer one and broke everything
+  below. Detection is now the enclosing `FencedCode` syntax node (parsed the same way the inline-marker
+  toggle already detects its enclosing wrapper), so a selection anywhere inside a fence — including a
+  ` ~~~ ` fence or one with an info string (` ```js `) — unwraps it. When the selection is not fully inside
+  a single fence (e.g. it spans a whole fence plus a following paragraph) it still wraps, but the new
+  fence's marker is always at least one backtick longer than any backtick run already in the content, so
+  it can never be prematurely closed by an embedded fence either.
 - The Split view's source editor no longer keeps an inflated spacer before a block that sat below the
   viewport (e.g. a `### A code block` after a table). Height-sync reads each source block's top from
   CodeMirror, but a not-yet-measured region below the viewport — especially a wrapped line, estimated as
