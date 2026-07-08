@@ -8,6 +8,16 @@
 
 export type ViewMode = "code" | "split" | "formatted";
 
+const VIEW_MODES: readonly ViewMode[] = ["code", "split", "formatted"];
+
+/**
+ * Type guard for a `ViewMode` literal, e.g. a `data-mode` DOM attribute read back at startup. Lets the
+ * DOM stay the single declared source of truth for the initial mode instead of a matching TS literal.
+ */
+export function isViewMode(value: string | null | undefined): value is ViewMode {
+  return value !== null && value !== undefined && (VIEW_MODES as readonly string[]).includes(value);
+}
+
 /**
  * Which panes are visible in a mode. The CSS (`#panes[data-mode=…]`) hides the rest; the panes are
  * never destroyed. This is the authoritative policy the two helpers below build on.

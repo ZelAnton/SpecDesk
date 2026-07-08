@@ -51,21 +51,25 @@ function installMatchMediaStub(): void {
 // index.ts queries is used behind an optional-chain/null-check, so the rest of the chrome (toolbar
 // buttons, dialogs, sign-in, reviews panel) is safely absent — mirroring how signin.test.ts/
 // reviews-panel.test.ts mount only the markup each test actually needs, not the whole index.html shell.
-function setupDom(): void {
+// `panesMarkup` optionally adds #panes (with its `data-mode`, the single declared source of truth for
+// the starting mode) and the mode radiogroup buttons, for the startup-mode test below; every other test
+// omits it, exactly mirroring index.html's real fallback when the radiogroup chrome is absent.
+function setupDom(panesMarkup = ""): void {
   document.body.innerHTML = `
     <div id="editor"></div>
     <div id="preview"></div>
     <div id="formatted"></div>
     <button id="compare-btn" type="button" aria-pressed="false"></button>
     <div id="review-empty-bar" hidden></div>
+    ${panesMarkup}
   `;
 }
 
 /** Boot the real index.ts wiring against a mocked host bridge. The ipc.ts singleton reads
  *  `window.external` at module-eval time, so the bridge must be installed and the module graph reset
  *  before each fresh import. */
-async function mountApp(): Promise<ReturnType<typeof mockBridge>> {
-  setupDom();
+async function mountApp(panesMarkup = ""): Promise<ReturnType<typeof mockBridge>> {
+  setupDom(panesMarkup);
   installMatchMediaStub();
   const bridge = mockBridge();
   Object.defineProperty(globalThis, "external", { value: bridge, configurable: true });
@@ -187,5 +191,51 @@ describe("index.ts: Split cross-pane mirror debounce race (jsdom)", () => {
     vi.advanceTimersByTime(50);
     expect(destReported).toBe("Xshared\n");
     expect(shouldMirrorInto(destReported, source)).toBe(true);
+  });
+});
+
+describe("index.ts: startup view mode has a single source of truth (jsdom)", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  // #panes' `data-mode` (T-070): index.ts must read the STARTING mode from it — not repeat a "split"
+  // literal of its own — and reflect that same value into the radiogroup through applyMode's own
+  // setSelected path, so the TS `mode` variable, `#panes[data-mode]` (what the Split-only logic —
+  // spacer/scroll/height-sync — actually gates on via isSplit(mode)) and the buttons' aria-checked/
+  // tabindex can never disagree at boot, whichever mode the markup declares.
+  it("derives the TS mode and the radiogroup selection from #panes[data-mode], not a hardcoded split", async () => {
+    await mountApp(`
+      <div id="panes" data-mode="code"></div>
+      <span id="view-modes" role="radiogroup">
+        <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
+        <button id="mode-split" type="button" role="radio" aria-checked="false" tabindex="-1">Split</button>
+        <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
+      </span>
+    `);
+
+    const panesEl = document.querySelector<HTMLElement>("#panes");
+    const codeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
+    const splitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
+    const formattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
+
+    // The DOM-declared mode is untouched (index.ts never overwrites it with a "split" default).
+    expect(panesEl?.dataset.mode).toBe("code");
+    // The radiogroup was reflected from that same DOM-declared mode via setSelected, exactly the path
+    // a user click/arrow-key uses on a later switch — not left at its inert "all unchecked" markup.
+    expect(codeBtn?.getAttribute("aria-checked")).toBe("true");
+    expect(codeBtn?.tabIndex).toBe(0);
+    expect(splitBtn?.getAttribute("aria-checked")).toBe("false");
+    expect(splitBtn?.tabIndex).toBe(-1);
+    expect(formattedBtn?.getAttribute("aria-checked")).toBe("false");
+    expect(formattedBtn?.tabIndex).toBe(-1);
+
+    // Switching to Split afterwards still works (existing Code/Split/Formatted toggling behaviour is
+    // unaffected by reading the starting mode from the DOM).
+    splitBtn?.click();
+    expect(panesEl?.dataset.mode).toBe("split");
+    expect(splitBtn?.getAttribute("aria-checked")).toBe("true");
+    expect(codeBtn?.getAttribute("aria-checked")).toBe("false");
   });
 });

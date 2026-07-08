@@ -9,7 +9,7 @@ import { FormatToolbar } from "./chrome/format-toolbar.js";
 import { LifecycleChrome } from "./chrome/lifecycle-chrome.js";
 import { SegmentedControl, type SegmentedOption } from "./chrome/segmented-control.js";
 import { SignInController } from "./chrome/signin.js";
-import { isSplit, paneVisibility, type ViewMode } from "./chrome/view-mode.js";
+import { isSplit, isViewMode, paneVisibility, type ViewMode } from "./chrome/view-mode.js";
 import { MarkdownEditor } from "./editors/editor.js";
 import { FormattedEditor } from "./editors/formatted.js";
 import { Preview } from "./review/preview.js";
@@ -135,8 +135,12 @@ function wire(): void {
   let underReview = false;
   // The active view mode. Code = source only; Split = source editor + formatted (WYSIWYG) editor,
   // both editable and synced live; Formatted = WYSIWYG only. Declared before the editor callbacks
-  // below so their closures read the live value.
-  let mode: ViewMode = "split";
+  // below so their closures read the live value. The single declared source of truth for the STARTING
+  // mode is the `data-mode` attribute #panes carries in index.html (the same attribute the CSS keys
+  // pane visibility off) — read it back here rather than repeating the literal, so the DOM and this
+  // variable cannot drift apart; "split" is only a defensive fallback if the markup is ever missing it.
+  const initialModeAttr = panesEl?.dataset.mode;
+  let mode: ViewMode = isViewMode(initialModeAttr) ? initialModeAttr : "split";
   // One monotonic version across BOTH editors: the native side drops stale preview results by
   // version, so the two surfaces must share a single counter.
   let docVersion = 0;
@@ -767,6 +771,10 @@ function wire(): void {
       modeOptions.push({ el: modeFormattedBtn, value: "formatted" });
     }
     viewModeControl = new SegmentedControl(modeOptions, applyMode);
+    // Reflect the DOM-derived starting `mode` into the radiogroup through the exact same path a
+    // user-driven switch uses (setSelected) — the aria-checked/tabindex the buttons carry in the
+    // markup are inert placeholders, not a second source of truth to keep in sync by hand.
+    viewModeControl.setSelected(mode);
 
     // Skip link (a11y): jump keyboard focus past the toolbar into the editing surface visible in the
     // current mode — the source editor in Code/Split, the formatted editor in Formatted.
