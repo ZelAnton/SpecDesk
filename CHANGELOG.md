@@ -132,6 +132,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The review overlay now highlights only the changed row/item of a table or list, instead of washing
+  the whole container, when that table/list is the document's very first block and is preceded by
+  leading blank lines or link-reference-definitions. `expandDiffMarks` (`webview/src/review/
+  diff-marks.ts`) keyed `childLineStarts` by md-blocks' `block.lineStart`, which for the first block
+  is pulled back to `0` when the block has such leading "head" content, while the lookup used
+  Markdig's `entry.lineStart`, the real content line — the mismatched keys made the lookup miss and
+  fall back to whole-container highlighting. The keying now uses the block's real content-token start
+  (`contentLineStart`) so the keys agree and per-row/per-item highlighting is preserved.
 - The Split view's source editor no longer shows a large empty hatched band above its first line. Height-
   sync pads the source editor so each source block lines up with its rendered block, and the first block's
   lead reproduces the leading space above the first rendered block. That leading space included the first
