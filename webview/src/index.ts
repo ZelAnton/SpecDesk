@@ -79,6 +79,7 @@ function wire(): void {
   const modeFormattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
   const compareBtn = document.querySelector<HTMLButtonElement>("#compare-btn");
   const reviewEmptyEl = document.querySelector<HTMLElement>("#review-empty-bar");
+  const reviewOverflowEl = document.querySelector<HTMLElement>("#review-overflow-bar");
   const formatBar = document.querySelector<HTMLElement>("#format-bar");
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
@@ -413,6 +414,13 @@ function wire(): void {
           reviewEmptyEl.hidden = !showing;
         }
       },
+      // A compare that overflowed the native node-pair guard: nothing is washed (see review.ts), so
+      // surface a distinct notice from the "no changes" one — there ARE changes, just too many to diff.
+      onOverflow: (showing) => {
+        if (reviewOverflowEl) {
+          reviewOverflowEl.hidden = !showing;
+        }
+      },
     });
 
     // The formatting toolbar, now that both editors exist. It routes a command to the source editor
@@ -472,7 +480,7 @@ function wire(): void {
     ipc.on(Kinds.diffResult, (message) => {
       const payload = parseDiffResult(message.payload);
       if (payload) {
-        review.applyResult(message.version ?? 0, payload.entries);
+        review.applyResult(message.version ?? 0, payload.entries, payload.overflow);
       }
     });
 

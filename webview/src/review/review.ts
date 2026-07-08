@@ -8,7 +8,7 @@
  * inline prompt bars reach the host only through callbacks (dialogs.ts).
  */
 
-import type { DiffBaseKind, DiffEntryPayload } from "../wire/protocol.js";
+import type { DiffBaseKind, DiffEntryPayload, DiffOverflowPayload } from "../wire/protocol.js";
 import { type DiffMark, expandDiffMarks } from "./diff-marks.js";
 
 /** The slice of an editor the overlay paints — both MarkdownEditor and FormattedEditor satisfy it. */
@@ -51,6 +51,12 @@ export interface ReviewDeps {
    *  while the overlay is on (so the author isn't left wondering why nothing is highlighted), and with
    *  false when there are changes to show or the overlay is cleared. */
   onEmptyState: (showing: boolean) => void;
+  /** Toggle the "too many changes to show" notice: fired with true when a compare overflows the native
+   *  node-pair guard (see {@link DiffOverflowPayload}) while the overlay is on — a distinct notice from
+   *  {@link onEmptyState}'s, since nothing is washed for a reason opposite to "no changes" (there ARE
+   *  changes, just too many to diff in detail). Fired with false when a later result doesn't overflow, or
+   *  the overlay is cleared. */
+  onOverflow: (showing: boolean) => void;
 }
 
 export class ReviewController {
@@ -111,6 +117,7 @@ export class ReviewController {
       surface.clearDiff();
     }
     this.deps.onEmptyState(false);
+    this.deps.onOverflow(false);
   }
 
   /** Apply a `diff.result`. Dropped unless the overlay is still showing and the result matches the live
@@ -121,11 +128,27 @@ export class ReviewController {
    *  would pass the gate (the version hasn't moved yet) while `getText()` already reflects that edit. What
    *  closes the gap is {@link toggle} deferring the request itself until every surface is settled (see
    *  {@link requestCompareOnceSettled}), so by the time a request is ever sent, the head it's taken
-   *  against is the one this expansion later reads. */
-  applyResult(version: number, entries: DiffEntryPayload[]): void {
+   *  against is the one this expansion later reads.
+   *
+   *  `overflow`, when present, means the native side's node-pair guard fired and swapped a compact
+   *  count-only signal in for `entries` (empty in that case) — expanding it would otherwise mean nothing
+   *  to expand anyway, but the point is `entries` was NEVER the full flat Removed+Added listing on the
+   *  wire in the first place. Painting that listing's thousands of marks would freeze the editors, which
+   *  is exactly the pathological case the guard exists for, so this washes nothing and raises a distinct
+   *  notice instead of the ordinary "no changes" one. */
+  applyResult(version: number, entries: DiffEntryPayload[], overflow?: DiffOverflowPayload): void {
     if (!this.reviewing || version !== this.deps.docVersion()) {
       return;
     }
+    if (overflow) {
+      for (const surface of this.deps.surfaces) {
+        surface.clearDiff();
+      }
+      this.deps.onEmptyState(false);
+      this.deps.onOverflow(true);
+      return;
+    }
+    this.deps.onOverflow(false);
     const [head] = this.deps.surfaces;
     const marks = expandDiffMarks(entries, head.getText());
     for (const surface of this.deps.surfaces) {

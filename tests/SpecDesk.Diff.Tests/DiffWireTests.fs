@@ -173,3 +173,38 @@ let ``a non-changed child carries an empty BaseSource`` () =
     let w = toWire "- one\n- two\n- three\n" "- one\n- three\n"
     Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "removed")
     Assert.That(w.[0].Children.[0].BaseSource, Is.Empty)
+
+// T-081: above AstDiff.maxNodePairs base×head node pairs, AstDiff falls back to a flat Removed+Added
+// listing — toWireDetailed must NOT build/ship that listing's entries (every removed block's full base
+// text) over the wire; a compact count-only OverflowSignal replaces them.
+
+let private paragraphDocText (count: int) (label: string) : string =
+    [ for i in 0 .. count - 1 -> sprintf "%s paragraph %d" label i ] |> String.concat "\n\n"
+
+[<Test>]
+let ``an overflowing pair yields no entries and a count-only overflow signal`` () =
+    // Comfortably over the limit (size² > maxNodePairs with margin), mirroring AstDiffTests' guard tests.
+    let size = int (sqrt (float SpecDesk.Diff.AstDiff.maxNodePairs)) + 50
+    let baseText = paragraphDocText size "base"
+    let headText = paragraphDocText size "head"
+
+    let entries, overflow = toWireDetailed baseText headText
+
+    Assert.That(entries, Is.Empty)
+    Assert.That(overflow.Overflowed, Is.True)
+    Assert.That(overflow.RemovedCount, Is.EqualTo size)
+    Assert.That(overflow.AddedCount, Is.EqualTo size)
+
+[<Test>]
+let ``a non-overflowing pair carries a not-overflowed signal alongside toWire's normal entries`` () =
+    let baseText = "# H\n"
+    let headText = "# H\n\nNew paragraph.\n"
+    let entries: DiffWireEntry[] = toWireDetailed baseText headText |> fst
+    let overflow = toWireDetailed baseText headText |> snd
+    Assert.That(overflow.Overflowed, Is.False)
+    Assert.That(overflow.RemovedCount, Is.EqualTo 0)
+    Assert.That(overflow.AddedCount, Is.EqualTo 0)
+    // toWireDetailed's entries, for a non-overflowing pair, are exactly what toWire itself returns.
+    let expected: DiffWireEntry[] = toWire baseText headText
+    Assert.That(kinds entries, Is.EqualTo(kinds expected))
+    Assert.That(entries.Length, Is.EqualTo expected.Length)

@@ -150,6 +150,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- "Show changes" no longer floods the review overlay with thousands of removed-block decorations (and
+  ships every removed block's full text over IPC) for a pathologically large document, once `AstDiff.diff`
+  (`src/SpecDesk.Diff/AstDiff.fs`) has fallen back to its flat, coarse Removed+Added listing above
+  `maxNodePairs` base×head node pairs. `DiffWire.toWireDetailed` (used by `DiffProjection.Build` instead of
+  `toWire`) now detects the fallback alongside the diff it already computes and, when it fired, sends a
+  compact `{ removedCount, addedCount }` `DiffOverflowPayload` on `diff.result` INSTEAD of building/shipping
+  the flat entries — `entries` is empty in that case. `ReviewController.applyResult` (`webview/src/review/
+  review.ts`) washes nothing and raises a new, distinct "too many changes to show" notice (`#review-
+  overflow-bar`) instead of expanding the (empty) entries or the ordinary "no changes" notice. The
+  non-overflowing path (`toWire`, `AstDiff.diff`/`diffText`, `expandDiffMarks`) is unchanged.
 - Split view no longer occasionally yanks the passive pane's scroll to the very start of the document
   while the active pane is being scrolled. `MarkdownEditor.topVisibleLineExact()` probed
   `posAtCoords` at a point inside the line-number gutter (`scrollDOM`'s rect) rather than the content

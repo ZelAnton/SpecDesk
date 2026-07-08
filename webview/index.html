@@ -118,6 +118,12 @@
     <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
          the author isn't left wondering why nothing is highlighted. -->
     <div id="review-empty-bar" role="status" hidden>No changes since the last saved version.</div>
+    <!-- Shown only while "Show changes" is on and the compare overflowed the native size guard (a
+         pathologically large document) — nothing is highlighted, so the author isn't left wondering why,
+         and isn't shown the "no changes" notice either (there ARE changes, just too many to diff). -->
+    <div id="review-overflow-bar" role="status" hidden>
+      Too many changes to show in detail — the document is too large to compare closely.
+    </div>
     <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads it
          back into its `mode` variable at startup (see the comment there) instead of repeating the
          literal, and the CSS below keys pane visibility off this same attribute. -->
