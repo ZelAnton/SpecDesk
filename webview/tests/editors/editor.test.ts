@@ -132,6 +132,15 @@ describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
     ed.setText("mirrored\n", true);
     expect(ed.hasPendingChange()).toBe(false);
   });
+
+  // T-069: doc.loaded hydration is silent (sameDocument: false, see the marker-tracking suite below) —
+  // suppressChange is driven only by `silent`, independently of `sameDocument`, so this must stay false
+  // exactly like the same-document silent mirror above.
+  it("stays false across a silent-but-different-document setText (doc.loaded)", () => {
+    const { ed } = mount();
+    ed.setText("a freshly loaded document\n", true, false);
+    expect(ed.hasPendingChange()).toBe(false);
+  });
 });
 
 describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () => {
@@ -208,6 +217,21 @@ describe("MarkdownEditor image-insert marker tracking (jsdom, T-034/M-21)", () =
     ed.insertAtMarker(id, "[IMG]");
 
     expect(ed.getText()).toBe("one[IMG] two three\n");
+  });
+
+  // T-069: doc.loaded hydrates the source editor SILENTLY (the host already has this text — no change
+  // notification should round-trip back out as editor.changed), but it IS a genuinely different document
+  // (a file was just opened/loaded), unlike the Split-mirror/mode-switch silent calls above — so a
+  // pending marker from the PREVIOUS document must still be dropped, not restored at a now-meaningless
+  // clamped position. `sameDocument` (defaulting to `silent`) is the explicit override for this case.
+  it("drops a pending marker across a silent-but-different-document setText (doc.loaded), unlike a same-document silent mirror", () => {
+    const { ed } = mount();
+    ed.setText("one two three\n");
+    const id = ed.trackPosition(3);
+    ed.setText("a whole new document just loaded\n", true, false);
+    ed.insertAtMarker(id, "[stale]");
+
+    expect(ed.getText()).toBe("a whole new document just loaded\n");
   });
 
   it("clamps a restored marker to the new (shorter) document length after a silent setText", () => {

@@ -580,18 +580,27 @@ export class MarkdownEditor {
    * arbitrary position in a document it was never captured against. insertAtMarker/discardMarker
    * already no-op gracefully once a marker is gone, so an in-flight round-trip simply drops its insert.
    *
-   * Pass `silent` for the OTHER use of a whole-document replace: mirroring the SAME logical content in
-   * from the sibling surface (the Split mirror, or hydrating a pane on a mode switch) — not a document
-   * change, so pending markers are kept, restored to their pre-transaction positions (clamped to the
-   * new length) rather than dropped or blindly mapped through the blunt whole-document change. This
-   * also suppresses the change notification so the mirror doesn't echo back out as a new edit.
+   * Pass `silent` to suppress the resulting change notification — for any replace whose text the host
+   * already knows about (a mirror from the sibling surface, a mode-switch hydration, or the initial
+   * `doc.loaded` hydration), so CodeMirror's own onChange doesn't echo it straight back out as a new
+   * edit (which would otherwise round-trip through the host as a no-op re-render).
+   *
+   * `sameDocument` is a SEPARATE axis controlling the marker behavior, defaulting to `silent` (the two
+   * usually coincide): pass/leave it true for mirroring the SAME logical content in from the sibling
+   * surface (the Split mirror, or hydrating a pane on a mode switch) — not a document change, so pending
+   * markers are kept, restored to their pre-transaction positions (clamped to the new length) rather
+   * than dropped or blindly mapped through the blunt whole-document change. `doc.loaded` is silent (the
+   * host already has this text) but NOT the same document — pass `sameDocument: false` there so any
+   * marker left over from the previous document is dropped rather than restored at a now-meaningless
+   * clamped position.
    */
-  setText(text: string, silent = false): void {
+  setText(text: string, silent = false, sameDocument = silent): void {
     this.suppressChange = silent;
-    // Silent = mirroring the same logical content (Split mirror / mode-switch hydration): keep pending
-    // image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than dropped.
-    // Non-silent = a genuinely different document (a file was opened) — drop any pending markers.
-    const markerEffect = silent
+    // sameDocument = mirroring the same logical content (Split mirror / mode-switch hydration): keep
+    // pending image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than
+    // dropped. Not sameDocument = a genuinely different document (a file was opened/loaded) — drop any
+    // pending markers, independently of whether the change notification itself is suppressed.
+    const markerEffect = sameDocument
       ? restoreMarkersEffect.of(this.view.state.field(markerField))
       : clearMarkersEffect.of(null);
     // Re-apply the synced highlights in the same transaction: a whole-document replace would otherwise

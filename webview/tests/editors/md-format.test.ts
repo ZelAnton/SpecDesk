@@ -219,6 +219,67 @@ describe("formatMarkdown — block prefixes", () => {
     expect(apply("```\nx = 1\n```", "code", 0, 13).text).toBe("x = 1");
   });
 
+  // T-093 regression guards: toggleFence used to recognize "already a fence" only by checking
+  // whether the SELECTION's own first/last lines started with ``` — so a selection of lines INSIDE
+  // an existing fence (never touching its own delimiter lines) was invisible to that heuristic and
+  // got wrapped in a nested fence, whose inner ``` prematurely closed the outer one and corrupted
+  // everything after. The fix detects the enclosing FencedCode syntax node instead.
+  describe("fenced code — detects an existing fence by syntax tree, not by selection edges (T-093)", () => {
+    it("unwraps the whole fence when only an interior line is selected", () => {
+      const doc = "```\nline one\nline two\n```";
+      // Select just "line one" (an interior line, nowhere near the ``` delimiters).
+      const from = doc.indexOf("line one");
+      const to = from + "line one".length;
+      expect(apply(doc, "code", from, to).text).toBe("line one\nline two");
+    });
+
+    it("unwraps regardless of which interior line the selection sits in", () => {
+      const doc = "```\nline one\nline two\n```";
+      const from = doc.indexOf("line two");
+      const to = from + "line two".length;
+      expect(apply(doc, "code", from, to).text).toBe("line one\nline two");
+    });
+
+    it("unwraps a caret placed inside the fence with no selection", () => {
+      const doc = "```\nx = 1\n```";
+      const at = doc.indexOf("x = 1");
+      expect(apply(doc, "code", at, at).text).toBe("x = 1");
+    });
+
+    it("recognizes a ~~~ fence the same way", () => {
+      const doc = "~~~\nline one\nline two\n~~~";
+      const from = doc.indexOf("line one");
+      const to = from + "line one".length;
+      expect(apply(doc, "code", from, to).text).toBe("line one\nline two");
+    });
+
+    it("recognizes a fence with an info string", () => {
+      const doc = "```js\nconst x = 1;\n```";
+      const from = doc.indexOf("const x");
+      const to = from + "const x = 1;".length;
+      expect(apply(doc, "code", from, to).text).toBe("const x = 1;");
+    });
+
+    it("unwraps an empty fence", () => {
+      expect(apply("```\n```", "code", 4, 4).text).toBe("");
+    });
+
+    it("does not corrupt the document below the selection when the selection spans the whole fence plus a following paragraph", () => {
+      const doc = "```\nx = 1\n```\npara after";
+      const { text } = apply(doc, "code", 0, doc.length);
+      // Not contained by the FencedCode node → wraps instead of unwrapping. The wrap must use a
+      // marker LONGER than the embedded ``` so the inner fence can't prematurely close the outer one.
+      expect(text.startsWith("````\n")).toBe(true);
+      expect(text.endsWith("\n````")).toBe(true);
+      // The embedded fence and trailing paragraph must survive completely intact inside the wrap.
+      expect(text).toContain("```\nx = 1\n```\npara after");
+    });
+
+    it("still wraps plain (non-fenced) lines in a fresh ``` fence", () => {
+      expect(apply("a\nb", "code", 0, 3).text).toBe("```\na\nb\n```");
+    });
+  });
+
   it("operates on the whole line even when only part is selected", () => {
     // caret inside "Title", no selection → the whole line gets the heading prefix
     expect(apply("Title", "h1", 2, 2).text).toBe("# Title");
