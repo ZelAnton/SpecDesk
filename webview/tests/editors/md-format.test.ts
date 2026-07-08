@@ -304,4 +304,65 @@ describe("formatMarkdown — block prefixes", () => {
       });
     }
   });
+
+  // T-090 regression guards: the Code and Formatted (ProseMirror) tracts used to disagree on the
+  // Markdown a toolbar command produced because each was implemented independently — see
+  // format-parity.test.ts for the paired assertions against the PM tract; these pin the Code tract's
+  // own corrected behavior in isolation.
+  describe("bullet/ordered conversion is bidirectional, not additive (T-090)", () => {
+    it("bullet on an already-ordered line converts it instead of prefixing garbage", () => {
+      // Used to give "- 1. x" (BULLET_RE didn't recognize the ordered prefix at all).
+      expect(apply("1. x", "bullet", 0, 4).text).toBe("- x");
+    });
+
+    it("ordered on an already-bulleted line converts it instead of prefixing garbage", () => {
+      expect(apply("- x", "ordered", 0, 3).text).toBe("1. x");
+    });
+
+    it("numbers sequentially when converting a multi-line bulleted list to ordered", () => {
+      expect(apply("- a\n- b", "ordered", 0, 7).text).toBe("1. a\n2. b");
+    });
+  });
+
+  describe("heading nests inside an existing list/quote container instead of jumbling marker order (T-090)", () => {
+    it("h1 on a bullet list line lands after the bullet, not before it", () => {
+      // Used to give "# - item" (a heading whose literal text is "- item", losing the list).
+      expect(apply("- item", "h1", 0, 6).text).toBe("- # item");
+    });
+
+    it("h1 toggles back off a list item's heading, keeping the list", () => {
+      expect(apply("- # item", "h1", 0, 8).text).toBe("- item");
+    });
+
+    it("h1 on an ordered list line lands after the number marker", () => {
+      expect(apply("1. item", "h1", 0, 7).text).toBe("1. # item");
+    });
+
+    it("h1 on a quoted line lands after the quote marker", () => {
+      expect(apply("> Title", "h1", 0, 7).text).toBe("> # Title");
+    });
+
+    it("h1 on a quoted list item lands after both containers, quote outermost", () => {
+      expect(apply("> - hello", "h1", 0, 9).text).toBe("> - # hello");
+    });
+  });
+
+  describe("fenced code strips a heading marker instead of fencing raw ATX syntax (T-090)", () => {
+    it("code on a heading line fences just its text, not the '#'", () => {
+      // Used to give "```\n# Title\n```" (the literal '#' became part of the fenced content).
+      expect(apply("# Title", "code", 0, 7).text).toBe("```\nTitle\n```");
+    });
+  });
+
+  describe("a multi-line selection within ONE paragraph produces a single heading (T-090)", () => {
+    it("joins soft-wrapped lines into one heading instead of one per physical line", () => {
+      // Used to give "# line one\n# line two" (two headings from one logical paragraph).
+      expect(apply("line one\nline two", "h1", 0, 17).text).toBe("# line one line two");
+    });
+
+    it("does not join two separate ATX headings that merely sit on adjacent lines", () => {
+      // "# a\n# b" is two Heading blocks, not one Paragraph — toggling h1 off both must not join them.
+      expect(apply("# a\n# b", "h1", 0, 7).text).toBe("a\nb");
+    });
+  });
 });
