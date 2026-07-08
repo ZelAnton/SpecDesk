@@ -173,7 +173,7 @@ function flattenRowOrItem(node: PmNode, rowFrom: number): FlattenedText | null {
       pure = false;
       return;
     }
-    if (text.length > 0) {
+    if (segments.length > 0) {
       text += joiner;
     }
     const from = text.length;

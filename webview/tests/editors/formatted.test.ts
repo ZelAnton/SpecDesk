@@ -432,6 +432,38 @@ describe("FormattedEditor (jsdom)", () => {
     expect(added.some((w) => w.textContent?.includes("apples"))).toBe(false);
   });
 
+  // R-01 (T-076 review): flattenRowOrItem used to gate the joiner on accumulated text LENGTH
+  // (`text.length > 0`), so a leading empty cell — itself contributing zero characters — left the
+  // joiner out entirely, producing "changed" instead of the native side's " | changed". Fixed to gate
+  // on segment COUNT instead, so an empty leading cell still gets its joiner.
+  it("highlights a changed word in a table row with a leading empty cell", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("| Name | Notes |\n| - | - |\n|  | buy fresh apples today |\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 2,
+        lineEnd: 2,
+        // Native tableRowText joins ["", "buy fresh oranges today"] with " | ": " | buy fresh oranges today".
+        baseText: " | buy fresh oranges today",
+        baseSource: null,
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(true);
+    const removed = [...host.querySelectorAll(".sd-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("oranges"))).toBe(true);
+    // The missing joiner would inflate changeRatio (comparing "buy fresh apples today" against the
+    // joiner-prefixed base) and fall back to a whole-row wash instead of the inline highlight above.
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    // The dropped joiner (the actual R-01 bug) would also misalign the leading " | " itself, surfacing it
+    // as a spurious removed run — asserting its absence is what pins the regression down to the joiner,
+    // not just the ratio staying under threshold by coincidence.
+    expect(removed.some((w) => w.textContent?.includes("|"))).toBe(false);
+  });
+
   it("highlights changed words inline inside an edited paragraph (no whole-block wash)", () => {
     const { ed, host } = mountWithHost();
     ed.setText("The quick brown fox jumps over the lazy dog today.\n");
