@@ -30,7 +30,11 @@ import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
 import { commonEnds } from "./mirror-patch.js";
-import { commandFor, activeFormats as computeActiveFormats } from "./pm-commands.js";
+import {
+  commandFor,
+  activeFormats as computeActiveFormats,
+  disabledFormats as computeDisabledFormats,
+} from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 
 const DEBOUNCE_MS = 120;
@@ -808,6 +812,12 @@ export class FormattedEditor {
   /** The toolbar commands currently active at the selection (for the pressed-button state). */
   activeFormats(): Set<FormatCommand> {
     return computeActiveFormats(this.view.state);
+  }
+
+  /** The toolbar commands NOT applicable at the selection (for the disabled-button state) — see
+   *  pm-commands.ts's `disabledFormats`. */
+  disabledFormats(): Set<FormatCommand> {
+    return computeDisabledFormats(this.view.state);
   }
 
   /** Force a re-render after the pane returns from display:none to a new width. */

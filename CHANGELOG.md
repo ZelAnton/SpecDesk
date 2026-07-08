@@ -154,6 +154,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The formatting toolbar's buttons now honestly reflect what a click will do in both panels. Previously:
+  a command PM's schema can't apply in the current context (`setBlockType(heading/code_block)` inside a
+  table cell, `wrapIn(blockquote)` there too — a table cell's content is inline-only, no block children)
+  silently did nothing when clicked; a partially-marked selection's bold/italic/strikethrough button
+  looked pressed (`rangeHasMark` — the mark present SOMEWHERE in the selection) even though clicking it
+  would make the selection MORE marked, not less; and the Code/Split panel's buttons never reflected the
+  caret's context at all (`aria-pressed` stayed `false` unconditionally, on the stated grounds that "the
+  source editor has no inline-mark notion"). Now: the formatted pane's inapplicable commands disable
+  their buttons (a dry-run applicability query against ProseMirror's own commands, no dispatch); the
+  pressed state reflects the mark covering the WHOLE selection, matching `toggleMark`'s (now explicit)
+  `removeWhenPresent: false` add/widen semantics; and the Code/Split panel reads its own pressed state
+  from the caret's position in the lang-markdown (GFM) syntax tree (bold/italic/strikethrough/H1/H2/
+  bullet/ordered/quote/fenced-code), so both panels report the same honest state. The source editor's
+  `markdown()` extension is now configured with the GFM-extended base language (`markdownLanguage`) it
+  was missing, so `~~strikethrough~~` parses to a real syntax node there too (previously plain CommonMark
+  only, silently excluding GFM constructs from the live editor's own syntax tree).
 - The formatting toolbar now produces the same Markdown regardless of which panel (Code or Formatted)
   was focused when a button was pressed — the two editors implement toolbar commands independently
   (line-based text transforms in `webview/src/editors/md-format.ts` vs. structural ProseMirror commands

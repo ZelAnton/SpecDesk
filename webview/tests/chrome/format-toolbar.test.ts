@@ -12,21 +12,31 @@ function harness(mode: ViewMode = "split") {
   const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button[data-format]"));
   const applyInSource = vi.fn<(c: FormatCommand) => void>();
   const applyInFormatted = vi.fn<(c: FormatCommand) => void>();
-  let active = new Set<FormatCommand>();
+  let activeSource = new Set<FormatCommand>();
+  let activeFormatted = new Set<FormatCommand>();
+  let disabledFormatted = new Set<FormatCommand>();
   let m: ViewMode = mode;
   const deps: FormatToolbarDeps = {
     buttons,
     applyInSource,
     applyInFormatted,
-    activeFormats: () => active,
+    activeInSource: () => activeSource,
+    activeInFormatted: () => activeFormatted,
+    disabledInFormatted: () => disabledFormatted,
     mode: () => m,
   };
   return {
     toolbar: new FormatToolbar(deps),
     applyInSource,
     applyInFormatted,
-    setActive: (...cmds: FormatCommand[]) => {
-      active = new Set(cmds);
+    setActiveSource: (...cmds: FormatCommand[]) => {
+      activeSource = new Set(cmds);
+    },
+    setActiveFormatted: (...cmds: FormatCommand[]) => {
+      activeFormatted = new Set(cmds);
+    },
+    setDisabledFormatted: (...cmds: FormatCommand[]) => {
+      disabledFormatted = new Set(cmds);
     },
     setMode: (v: ViewMode) => {
       m = v;
@@ -48,6 +58,10 @@ function pressed(command: string): string | null {
       .querySelector<HTMLButtonElement>(`button[data-format="${command}"]`)
       ?.getAttribute("aria-pressed") ?? null
   );
+}
+
+function disabled(command: string): boolean | undefined {
+  return document.querySelector<HTMLButtonElement>(`button[data-format="${command}"]`)?.disabled;
 }
 
 describe("FormatToolbar", () => {
@@ -76,24 +90,49 @@ describe("FormatToolbar", () => {
 
   it("refresh marks the formatted pane's active formats pressed", () => {
     const h = harness("formatted");
-    h.setActive("bold");
+    h.setActiveFormatted("bold");
     h.toolbar.refresh();
     expect(pressed("bold")).toBe("true");
     expect(pressed("italic")).toBe("false");
   });
 
-  it("refresh shows nothing pressed when the target is the source editor", () => {
+  it("refresh reads the source pane's active formats when the target is the source editor", () => {
     const h = harness("code");
-    h.setActive("bold"); // active in the formatted pane, but the source is the target → not shown
+    h.setActiveFormatted("bold"); // active in the OTHER (formatted) pane — must not leak here
+    h.setActiveSource("italic");
     h.toolbar.refresh();
     expect(pressed("bold")).toBe("false");
+    expect(pressed("italic")).toBe("true");
   });
 
   it("running a command refreshes the pressed state", () => {
     const h = harness("formatted");
-    h.setActive("bold"); // a bold toggle would become active
+    h.setActiveFormatted("bold"); // a bold toggle would become active
     clickFormat("bold");
     expect(pressed("bold")).toBe("true");
+  });
+
+  it("refresh disables the formatted pane's inapplicable commands", () => {
+    const h = harness("formatted");
+    h.setDisabledFormatted("bold");
+    h.toolbar.refresh();
+    expect(disabled("bold")).toBe(true);
+    expect(disabled("italic")).toBe(false);
+  });
+
+  it("the source target is never disabled, even if the formatted pane reports it inapplicable", () => {
+    const h = harness("code");
+    h.setDisabledFormatted("bold");
+    h.toolbar.refresh();
+    expect(disabled("bold")).toBe(false);
+  });
+
+  it("a disabled command's click is a no-op (native disabled blocks the click event)", () => {
+    const h = harness("formatted");
+    h.setDisabledFormatted("bold");
+    h.toolbar.refresh();
+    clickFormat("bold");
+    expect(h.applyInFormatted).not.toHaveBeenCalled();
   });
 
   it("prevents mousedown so a click never steals editor focus", () => {

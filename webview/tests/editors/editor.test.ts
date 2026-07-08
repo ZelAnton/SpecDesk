@@ -563,3 +563,58 @@ describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
     });
   }
 });
+
+// T-100: the source pane's toolbar pressed state, read from the lang-markdown Lezer syntax tree at the
+// caret — lifts the historical "the source editor has no inline-mark notion" limitation (format-toolbar
+// used to always show the Code/Split target unpressed). Each case places the caret inside a construct and
+// checks exactly the matching registry command lights up (and its siblings don't).
+describe("MarkdownEditor.activeFormats (jsdom, T-100)", () => {
+  function activeAt(text: string, pos: number): Set<string> {
+    const { ed } = mount();
+    ed.setText(text);
+    viewOf(ed).dispatch({ selection: { anchor: pos } });
+    return ed.activeFormats();
+  }
+
+  it("reports bold at the caret inside a StrongEmphasis run", () => {
+    const active = activeAt("**bold** text\n", 4); // inside "bold"
+    expect(active.has("bold")).toBe(true);
+    expect(active.has("italic")).toBe(false);
+  });
+
+  it("reports italic at the caret inside an Emphasis run", () => {
+    expect(activeAt("*hi* there\n", 2).has("italic")).toBe(true); // inside "hi"
+  });
+
+  it("reports strike at the caret inside a Strikethrough run (GFM)", () => {
+    expect(activeAt("~~no~~ more\n", 3).has("strike")).toBe(true); // inside "no"
+  });
+
+  it("reports h1/h2 at the caret on the matching ATX heading line", () => {
+    expect(activeAt("# Title\n", 3).has("h1")).toBe(true);
+    expect(activeAt("## Title\n", 4).has("h2")).toBe(true);
+  });
+
+  it("reports bullet/ordered at the caret inside the matching list item", () => {
+    expect(activeAt("- item\n", 3).has("bullet")).toBe(true);
+    expect(activeAt("1. item\n", 4).has("ordered")).toBe(true);
+  });
+
+  it("reports quote at the caret inside a blockquote line", () => {
+    expect(activeAt("> item\n", 3).has("quote")).toBe(true);
+  });
+
+  it("reports code at the caret inside a fenced code block", () => {
+    expect(activeAt("```\ncode\n```\n", 6).has("code")).toBe(true);
+  });
+
+  it("reports nothing for a caret in plain paragraph text", () => {
+    expect(activeAt("just text\n", 3).size).toBe(0);
+  });
+
+  it("reports every ancestor construct — a bullet nested in a blockquote lights up both", () => {
+    const active = activeAt("> - item\n", 5);
+    expect(active.has("quote")).toBe(true);
+    expect(active.has("bullet")).toBe(true);
+  });
+});

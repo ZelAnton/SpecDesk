@@ -2,10 +2,13 @@
  * The formatting toolbar's routing (PoC-12). A format command applies to the pane the author last
  * worked in: Code → the source editor (Markdown text transforms), Formatted → the WYSIWYG editor
  * (ProseMirror commands), Split → whichever pane last had focus (default the source editor). The
- * formatted pane's currently-active formats are reflected on the buttons' aria-pressed. It owns the
- * button listeners and the last-focused state; the integrator feeds it the live mode and the two panes'
- * apply/active operations through callbacks, so it stays free of editor/ipc knowledge and is
- * unit-testable (mirrors the dialogs/review leaf modules).
+ * CURRENT target's active formats are reflected on the buttons' aria-pressed, and (formatted target
+ * only — see {@link FormatToolbarDeps.disabledInFormatted}) its inapplicable commands as `disabled`
+ * (T-100): one `refresh()` contract serves both targets, each supplying its own reading through the
+ * deps below, so the loop over buttons is written once. It owns the button listeners and the
+ * last-focused state; the integrator feeds it the live mode and the two panes' apply/active/disabled
+ * operations through callbacks, so it stays free of editor/ipc knowledge and is unit-testable (mirrors
+ * the dialogs/review leaf modules).
  */
 
 import { type FormatCommand, isFormatCommand } from "../editors/md-format.js";
@@ -18,8 +21,16 @@ export interface FormatToolbarDeps {
   applyInSource: (command: FormatCommand) => void;
   /** Apply a ProseMirror command in the formatted editor (the Formatted/Split target). */
   applyInFormatted: (command: FormatCommand) => void;
-  /** The formatted editor's currently-active formats, for the buttons' pressed state. */
-  activeFormats: () => Set<FormatCommand>;
+  /** The source editor's active formats at the caret (its lang-markdown syntax tree), for the buttons'
+   *  pressed state when the source pane is the target. */
+  activeInSource: () => Set<FormatCommand>;
+  /** The formatted editor's active formats at the selection, for the buttons' pressed state when the
+   *  formatted pane is the target. */
+  activeInFormatted: () => Set<FormatCommand>;
+  /** The formatted editor's commands NOT applicable at the current selection, for the buttons' disabled
+   *  state when the formatted pane is the target. The source tract has no such notion — a Markdown text
+   *  transform is always well-formed regardless of context — so only the formatted target disables. */
+  disabledInFormatted: () => Set<FormatCommand>;
   /** The live view mode (Code / Split / Formatted). */
   mode: () => ViewMode;
 }
@@ -47,15 +58,18 @@ export class FormatToolbar {
     this.refresh();
   }
 
-  /** Reflect the active formats of the current target on the buttons' aria-pressed state. Active state
-   *  is shown only for the formatted pane (the source editor has no inline-mark notion). */
+  /** Reflect the current target's active formats (aria-pressed) and inapplicable commands (disabled) on
+   *  the buttons — Code/Split reads the source pane's syntax-tree state, Formatted reads the WYSIWYG
+   *  pane's selection state (both active AND disabled; see {@link FormatToolbarDeps.disabledInFormatted}). */
   refresh(): void {
+    const disabled = this.currentDisabled();
     const active =
-      this.target() === "formatted" ? this.deps.activeFormats() : new Set<FormatCommand>();
+      this.target() === "formatted" ? this.deps.activeInFormatted() : this.deps.activeInSource();
     for (const button of this.deps.buttons) {
       const command = button.dataset.format;
       if (isFormatCommand(command)) {
         button.setAttribute("aria-pressed", String(active.has(command)));
+        button.disabled = disabled.has(command);
       }
     }
   }
@@ -66,7 +80,21 @@ export class FormatToolbar {
     return mode === "code" ? "editor" : mode === "formatted" ? "formatted" : this.lastFocused;
   }
 
+  /** The current target's inapplicable commands — empty for the source target (see
+   *  {@link FormatToolbarDeps.disabledInFormatted}). */
+  private currentDisabled(): Set<FormatCommand> {
+    return this.target() === "formatted"
+      ? this.deps.disabledInFormatted()
+      : new Set<FormatCommand>();
+  }
+
   private run(command: FormatCommand): void {
+    // Defense in depth against a click that bypasses the native `disabled` gate (e.g. a synthetic click
+    // dispatched in a test, or a future keyboard-shortcut path that doesn't go through the button at
+    // all) — never apply a command the current target reports as inapplicable.
+    if (this.currentDisabled().has(command)) {
+      return;
+    }
     if (this.target() === "formatted") {
       this.deps.applyInFormatted(command);
     } else {

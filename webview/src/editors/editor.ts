@@ -8,8 +8,8 @@
  * pad source regions so each rendered block lines up vertically with its source (see height-sync.ts).
  */
 
-import { markdown } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import {
   Compartment,
   EditorState,
@@ -30,6 +30,7 @@ import { debounce } from "../util/debounce.js";
 import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
 import { isRecord } from "../wire/decoders.js";
+import { FORMAT_REGISTRY, type FormatKind } from "./format-registry.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { computeTextPatch } from "./mirror-patch.js";
@@ -37,6 +38,35 @@ import { computeTextPatch } from "./mirror-patch.js";
 const DEBOUNCE_MS = 120;
 /** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
 const SCROLL_SETTLE_MS = 120;
+
+/** A lang-markdown syntax node, derived from `syntaxTree()` so this module needs no direct @lezer/common
+ *  dep (mirrors md-format.ts's own `MdNode` alias). */
+type SyntaxTreeNode = ReturnType<ReturnType<typeof syntaxTree>["resolveInner"]>;
+
+/**
+ * The lang-markdown Lezer syntax-node name a toolbar {@link FormatKind} maps to — the source pane's
+ * counterpart of pm-commands.ts's per-kind node check, read against the syntax tree instead of a
+ * ProseMirror selection: an inline mark's own `node` (StrongEmphasis/Emphasis/Strikethrough, from the
+ * registry — the same name CommonMark's grammar produces for the valid wrapped form), a heading's
+ * `ATXHeading<level>`, a list's `BulletList`/`OrderedList`, a quote's `Blockquote`, a fence's
+ * `FencedCode`. `default: assertNever(kind)` keeps this exhaustive against {@link FormatKind}.
+ */
+function syntaxNodeNameFor(kind: FormatKind): string {
+  switch (kind.type) {
+    case "inline":
+      return kind.node;
+    case "heading":
+      return `ATXHeading${kind.level}`;
+    case "list":
+      return kind.ordered ? "OrderedList" : "BulletList";
+    case "quote":
+      return "Blockquote";
+    case "fence":
+      return "FencedCode";
+    default:
+      return assertNever(kind);
+  }
+}
 
 /** A zero-content block of a fixed pixel height, inserted to match a taller rendered block. */
 class SpacerWidget extends WidgetType {
@@ -538,7 +568,15 @@ export class MarkdownEditor {
         doc: "",
         extensions: [
           basicSetup,
-          markdown(),
+          // `markdown()`'s OWN default base is plain CommonMark (`commonmarkLanguage`) — GFM (tables,
+          // strikethrough, autolink, task lists) is a SEPARATE exported language (`markdownLanguage`)
+          // that must be opted into explicitly. Every other Markdown-aware piece of this app already
+          // assumes GFM's grammar (pm-markdown.ts's schema has a strikethrough mark; md-format.ts
+          // re-parses with `markdownLanguage` directly to find an enclosing Strikethrough/FencedCode
+          // node) — the live editor's own tree must match, both so `~~struck~~` highights and so
+          // {@link activeFormats} (T-100, which reads THIS live tree via `syntaxTree()`) can recognize a
+          // Strikethrough node at all.
+          markdown({ base: markdownLanguage }),
           editorTheme,
           syntaxHighlighting(editorHighlight),
           this.wrap.of(EditorView.lineWrapping),
@@ -637,6 +675,36 @@ export class MarkdownEditor {
       selection: { anchor: edit.selectionStart, head: edit.selectionEnd },
     });
     this.view.focus();
+  }
+
+  /**
+   * The toolbar commands active at the caret in the lang-markdown syntax tree — the source pane's
+   * counterpart of pm-commands.ts's `activeFormats`, for the toolbar's pressed-button state in Code/
+   * Split (lifting the historical "the source editor has no inline-mark notion" limitation). Walks every
+   * ancestor of the caret's syntax node (Lezer's incremental reparse makes this cheap even on a large
+   * document) and lights up each registry command whose {@link syntaxNodeNameFor} names one of them —
+   * mirroring the PM tract's ancestor scan, so a bullet item nested in a blockquote lights up both.
+   * Reads the caret HEAD only (not a selection range): unlike the PM tract's mark-coverage question
+   * (T-100 Stage 1), the source tract's toolbar commands are per-line/per-node text transforms with no
+   * analogous "is the mark on the WHOLE selection" question to answer.
+   */
+  activeFormats(): Set<FormatCommand> {
+    const pos = this.view.state.selection.main.head;
+    const names = new Set<string>();
+    for (
+      let node: SyntaxTreeNode | null = syntaxTree(this.view.state).resolveInner(pos, -1);
+      node !== null;
+      node = node.parent
+    ) {
+      names.add(node.name);
+    }
+    const result = new Set<FormatCommand>();
+    for (const { id, kind } of FORMAT_REGISTRY) {
+      if (names.has(syntaxNodeNameFor(kind))) {
+        result.add(id);
+      }
+    }
+    return result;
   }
 
   /**

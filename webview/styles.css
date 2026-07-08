@@ -658,6 +658,17 @@ button {
   background: var(--accent-soft);
 }
 
+/* A command the schema can't apply at the current caret/selection (T-100), e.g. a heading toggle inside
+   a table cell — dimmed and inert rather than silently no-op'ing on click. */
+#format-bar button:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+#format-bar button:disabled:hover {
+  background: transparent;
+}
+
 /* Glyph buttons echo the mark they apply (the design mockup). */
 #format-bar #fmt-bold {
   font-weight: 700;

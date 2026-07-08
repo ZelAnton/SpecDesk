@@ -525,6 +525,35 @@ describe("FormattedEditor (jsdom)", () => {
     expect(ed.activeFormats().has("h1")).toBe(true);
   });
 
+  // T-100: a table cell's content model is inline*-only, so the block-structure toolbar commands can't
+  // apply there — disabledFormats() reports them so the toolbar can disable the buttons instead of the
+  // click silently no-op'ing.
+  it("disabledFormats() reports block-structure commands as inapplicable inside a table cell", () => {
+    const ed = mount();
+    ed.setText("| a | b |\n| --- | --- |\n| x | y |\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    // Caret inside the first header cell's text.
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+
+    const disabled = ed.disabledFormats();
+    expect(disabled.has("h1")).toBe(true);
+    expect(disabled.has("code")).toBe(true);
+    expect(disabled.has("quote")).toBe(true);
+    expect(disabled.has("bullet")).toBe(true);
+    expect(disabled.has("bold")).toBe(false);
+  });
+
+  it("disabledFormats() reports nothing inapplicable in an ordinary paragraph", () => {
+    const ed = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+
+    expect(ed.disabledFormats().size).toBe(0);
+  });
+
   it("round-trips strikethrough and applies it via format()", () => {
     const ed = mount();
     // parse path: ~~ becomes a strikethrough mark and round-trips byte-identical (verbatim).

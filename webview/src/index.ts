@@ -370,7 +370,12 @@ function wire(): void {
         }
       },
       onScrollSettle: () => {},
-      onCursor: (line, navigated) => setActive(line, navigated ? "editor" : null),
+      onCursor: (line, navigated) => {
+        setActive(line, navigated ? "editor" : null);
+        // The source pane's toolbar state depends on the caret's syntax-tree context (T-100) — refresh
+        // on every caret report, mirroring the formatted pane's onActiveChange below.
+        formatToolbar.refresh();
+      },
       onHover: (line) => setHover(line),
       onGeometryChange: () => reconcileHeights(),
       onEditAttempt: offerDraft,
@@ -432,7 +437,9 @@ function wire(): void {
       buttons: formatButtons,
       applyInSource: (command) => editor.applyFormat(command),
       applyInFormatted: (command) => formatted.format(command),
-      activeFormats: () => formatted.activeFormats(),
+      activeInSource: () => editor.activeFormats(),
+      activeInFormatted: () => formatted.activeFormats(),
+      disabledInFormatted: () => formatted.disabledFormats(),
       mode: () => mode,
     });
 

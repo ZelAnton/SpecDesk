@@ -120,7 +120,13 @@ export function commandFor(command: FormatCommand): Command {
   const { kind } = formatDef(command);
   switch (kind.type) {
     case "inline":
-      return toggleMark(markType(kind.mark));
+      // `removeWhenPresent: false` (prosemirror-commands' default is `true`, i.e. "any mark in the
+      // selection → strip it everywhere") makes a partial selection ADD the mark across the whole
+      // selection instead — matching the pressed-button contract below (`markActive` reports pressed only
+      // once the mark covers the WHOLE selection): a not-fully-marked selection reads as unpressed AND a
+      // click on it adds/widens, never the surprising "button looks pressed but the click makes the text
+      // MORE marked" combination a rangeHasMark-style reading would produce with this option.
+      return toggleMark(markType(kind.mark), null, { removeWhenPresent: false });
     case "heading":
       return toggleBlock(nodeType("heading"), { level: kind.level });
     case "fence":
@@ -134,13 +140,40 @@ export function commandFor(command: FormatCommand): Command {
   }
 }
 
-/** Whether `type` is active at the selection: the stored/cursor marks for an empty selection, else
- *  present across the whole selected range. */
+/**
+ * Whether `type` is active at the selection: the stored/cursor marks for an empty selection, else
+ * present across the WHOLE selected range — not merely somewhere in it — so the pressed state matches
+ * what a click actually does (see {@link commandFor}'s `removeWhenPresent: false`): a partially-marked
+ * selection reads as unpressed (a click would ADD/widen the mark), a fully-marked one as pressed (a
+ * click would remove it). Mirrors prosemirror-commands' own `toggleMark` "missing" scan (the
+ * `removeWhenPresent: false` branch): a node counts as missing the mark only if its parent actually
+ * allows the mark type there AND it isn't whitespace-only text — so a selection that merely brushes
+ * whitespace at its edges, or crosses a non-mark-bearing node the schema wouldn't mark anyway, still
+ * reads as fully covered.
+ */
 function markActive(state: EditorState, type: MarkType): boolean {
   const sel = state.selection;
-  return sel.empty
-    ? (state.storedMarks ?? sel.$head.marks()).some((m) => m.type === type)
-    : state.doc.rangeHasMark(sel.from, sel.to, type);
+  if (sel.empty) {
+    return (state.storedMarks ?? sel.$head.marks()).some((m) => m.type === type);
+  }
+  let missing = false;
+  state.doc.nodesBetween(sel.from, sel.to, (node, pos, parent) => {
+    if (missing) {
+      return false;
+    }
+    const coversWhitespaceOnly =
+      node.isText &&
+      /^\s*$/.test(
+        node.textBetween(Math.max(0, sel.from - pos), Math.min(node.nodeSize, sel.to - pos)),
+      );
+    missing =
+      !type.isInSet(node.marks) &&
+      parent !== null &&
+      parent.type.allowsMarkType(type) &&
+      !coversWhitespaceOnly;
+    return true;
+  });
+  return !missing;
 }
 
 /**
@@ -174,6 +207,25 @@ export function activeFormats(state: EditorState): Set<FormatCommand> {
   const result = new Set<FormatCommand>();
   for (const { id, kind } of FORMAT_REGISTRY) {
     if (isActive(state, kind)) {
+      result.add(id);
+    }
+  }
+  return result;
+}
+
+/**
+ * The toolbar commands NOT applicable at the given selection (for the disabled-button state) — every
+ * registry command whose {@link commandFor} would return `false` when queried WITHOUT a `dispatch`, the
+ * dry-run applicability check every one of these commands (setBlockType / wrapIn / toggleMark / the
+ * list/quote toggles, all built on top of them) already supports. E.g. `setBlockType(heading/code_block)`
+ * is inapplicable inside a `table_cell` (its content model is `inline*` — no block children at all, so
+ * neither a heading nor a code block can replace its text), and `wrapIn(blockquote)` is inapplicable
+ * there for the same reason; without this check the button would silently no-op on click.
+ */
+export function disabledFormats(state: EditorState): Set<FormatCommand> {
+  const result = new Set<FormatCommand>();
+  for (const { id } of FORMAT_REGISTRY) {
+    if (!commandFor(id)(state)) {
       result.add(id);
     }
   }
