@@ -19,35 +19,14 @@
  */
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
+import { assertNever } from "../util/assert.js";
+import { type FormatCommand, type FormatKind, formatDef } from "./format-registry.js";
 
-/** The formatting commands the toolbar issues (shared by both editor surfaces). */
-export type FormatCommand =
-  | "bold"
-  | "italic"
-  | "strike"
-  | "h1"
-  | "h2"
-  | "bullet"
-  | "ordered"
-  | "quote"
-  | "code";
-
-const FORMAT_COMMANDS: readonly FormatCommand[] = [
-  "bold",
-  "italic",
-  "strike",
-  "h1",
-  "h2",
-  "bullet",
-  "ordered",
-  "quote",
-  "code",
-];
-
-/** Validate a `data-format` attribute (DOM boundary) into a {@link FormatCommand}; false for anything else. */
-export function isFormatCommand(value: string | undefined): value is FormatCommand {
-  return value !== undefined && FORMAT_COMMANDS.some((command) => command === value);
-}
+export type { FormatCommand } from "./format-registry.js";
+// The FormatCommand union and the DOM-boundary guard both live in the single command registry
+// (format-registry.ts, the source of truth); re-exported here so the source editor's long-standing
+// public surface (editor.ts, format-toolbar.ts, the tests) keeps importing them from md-format unchanged.
+export { isFormatCommand } from "./format-registry.js";
 
 /** A single document edit plus the selection to set afterwards (offsets in the post-edit document). */
 export interface FormatEdit {
@@ -58,18 +37,9 @@ export interface FormatEdit {
   selectionEnd: number;
 }
 
-const INLINE_MARKERS: Partial<Record<FormatCommand, string>> = {
-  bold: "**",
-  italic: "*",
-  strike: "~~",
-};
-
-/** The lang-markdown syntax-tree node each inline marker forms when it is valid CommonMark. */
-const MARKER_NODE: Record<string, string> = {
-  "*": "Emphasis",
-  "**": "StrongEmphasis",
-  "~~": "Strikethrough",
-};
+/** The block kinds that toggle a per-line prefix (heading / list / quote), as opposed to the
+ *  fenced-code wrap — the subset {@link toggleLinePrefix} handles. */
+type LinePrefixKind = Extract<FormatKind, { type: "heading" | "list" | "quote" }>;
 
 /** A lang-markdown syntax node, derived from the parser so this module needs no direct @lezer/common dep. */
 type MdNode = ReturnType<ReturnType<typeof markdownLanguage.parser.parse>["resolveInner"]>;
@@ -78,17 +48,30 @@ type MdNode = ReturnType<ReturnType<typeof markdownLanguage.parser.parse>["resol
 const PARAGRAPH_BREAK = /\n[ \t]*\n/;
 const PARAGRAPH_BREAK_SPLIT = /(\n[ \t]*\n)/;
 
-/** Compute the toolbar edit for a command over the selection [from, to) in `doc`. */
+/**
+ * Compute the toolbar edit for a command over the selection [from, to) in `doc`, dispatching on the
+ * command's {@link FormatKind} from the registry. The `default: assertNever(kind)` makes this exhaustive:
+ * a new command whose `kind.type` this switch doesn't handle fails to compile.
+ */
 export function formatMarkdown(
   doc: string,
   from: number,
   to: number,
   command: FormatCommand,
 ): FormatEdit {
-  const marker = INLINE_MARKERS[command];
-  return marker !== undefined
-    ? toggleInline(doc, from, to, marker)
-    : toggleBlock(doc, from, to, command);
+  const { kind } = formatDef(command);
+  switch (kind.type) {
+    case "inline":
+      return toggleInline(doc, from, to, kind.marker, kind.node);
+    case "fence":
+      return toggleFence(doc, from, to);
+    case "heading":
+    case "list":
+    case "quote":
+      return toggleBlockPrefix(doc, from, to, kind);
+    default:
+      return assertNever(kind);
+  }
 }
 
 /**
@@ -101,9 +84,14 @@ export function formatMarkdown(
  *    or trailing space breaks CommonMark's flanking rule, so `**word **` would stay literal) and a
  *    selection crossing a blank line wrapped per paragraph (emphasis cannot span a paragraph break).
  */
-function toggleInline(doc: string, from: number, to: number, marker: string): FormatEdit {
-  const nodeName = MARKER_NODE[marker];
-  if (nodeName !== undefined && to > from) {
+function toggleInline(
+  doc: string,
+  from: number,
+  to: number,
+  marker: string,
+  nodeName: string,
+): FormatEdit {
+  if (to > from) {
     const node = enclosingWrap(doc, from, to, nodeName);
     const unwrapped = node !== null ? unwrapNode(doc, from, to, node) : null;
     if (unwrapped !== null) {
@@ -206,18 +194,12 @@ function wrapChunk(chunk: string, marker: string): string {
   return chunk.slice(0, lead) + marker + core + marker + chunk.slice(chunk.length - trail);
 }
 
-/** Toggle a line-level construct (heading / list / quote / fenced code) over the selected lines. */
-function toggleBlock(doc: string, from: number, to: number, command: FormatCommand): FormatEdit {
-  // Fenced code toggles OFF by unwrapping the enclosing FencedCode syntax node (see toggleFence's
-  // doc comment) rather than by re-deriving a line range from the raw selection — a selection that
-  // sits anywhere inside an existing fence (not just spanning its outer ``` lines) must unwrap.
-  if (command === "code") {
-    const unwrapped = unwrapFence(doc, from, to);
-    if (unwrapped !== null) {
-      return unwrapped;
-    }
-  }
-
+/**
+ * The [start, end) offsets of the whole lines the selection [from, to) touches — the line-level unit the
+ * block commands (heading / list / quote / fenced code) operate over, extending the selection out to the
+ * enclosing line boundaries on each side.
+ */
+function blockLineRange(doc: string, from: number, to: number): [number, number] {
   // `doc.lastIndexOf("\n", from - 1)` is the standard "find the start of the current line" idiom, but
   // at `from === 0` the search position `-1` is clamped by the platform to `0` instead of "before the
   // string" — so if `doc[0]` is itself a newline (a leading blank line), it wrongly matches THAT
@@ -229,9 +211,11 @@ function toggleBlock(doc: string, from: number, to: number, command: FormatComma
   const endRef = to > from && doc[to - 1] === "\n" ? to - 1 : to;
   const newlineAfter = doc.indexOf("\n", endRef);
   const blockEnd = newlineAfter === -1 ? doc.length : newlineAfter;
-  const lines = doc.slice(blockStart, blockEnd).split("\n");
+  return [blockStart, blockEnd];
+}
 
-  const insert = command === "code" ? wrapFence(lines) : toggleLinePrefix(lines, command);
+/** Build the edit that replaces the block-line range with `insert`, selecting the whole result. */
+function blockEdit(blockStart: number, blockEnd: number, insert: string): FormatEdit {
   return {
     from: blockStart,
     to: blockEnd,
@@ -241,21 +225,51 @@ function toggleBlock(doc: string, from: number, to: number, command: FormatComma
   };
 }
 
+/**
+ * Toggle a fenced code block. Toggles OFF by unwrapping the enclosing FencedCode syntax node (see
+ * {@link unwrapFence}) rather than by re-deriving a line range from the raw selection — a selection that
+ * sits anywhere inside an existing fence (not just spanning its outer ``` lines) must unwrap; otherwise
+ * wraps the selection's whole lines in a fresh fence.
+ */
+function toggleFence(doc: string, from: number, to: number): FormatEdit {
+  const unwrapped = unwrapFence(doc, from, to);
+  if (unwrapped !== null) {
+    return unwrapped;
+  }
+  const [blockStart, blockEnd] = blockLineRange(doc, from, to);
+  const lines = doc.slice(blockStart, blockEnd).split("\n");
+  return blockEdit(blockStart, blockEnd, wrapFence(lines));
+}
+
+/** Toggle a per-line prefix construct (heading / list / quote) over the selection's whole lines. */
+function toggleBlockPrefix(
+  doc: string,
+  from: number,
+  to: number,
+  kind: LinePrefixKind,
+): FormatEdit {
+  const [blockStart, blockEnd] = blockLineRange(doc, from, to);
+  const lines = doc.slice(blockStart, blockEnd).split("\n");
+  return blockEdit(blockStart, blockEnd, toggleLinePrefix(lines, kind));
+}
+
 const HEADING_RE = /^#{1,6} +/;
 const BULLET_RE = /^[-*+] +/;
 const ORDERED_RE = /^\d+\. +/;
 const QUOTE_RE = /^> ?/;
 
-/** Add the command's line prefix to every line, or strip it if every (non-blank) line already has it. */
-function toggleLinePrefix(lines: string[], command: FormatCommand): string {
+/**
+ * Add the kind's line prefix to every line, or strip it if every (non-blank) line already has it. The
+ * `default: assertNever(kind)` keeps the switch exhaustive against {@link LinePrefixKind}.
+ */
+function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
   const nonBlank = lines.filter((line) => line.trim() !== "");
   const has = (re: RegExp): boolean =>
     nonBlank.length > 0 && nonBlank.every((line) => re.test(line));
 
-  switch (command) {
-    case "h1":
-    case "h2": {
-      const prefix = command === "h1" ? "# " : "## ";
+  switch (kind.type) {
+    case "heading": {
+      const prefix = `${"#".repeat(kind.level)} `;
       const allAtLevel = has(HEADING_RE) && nonBlank.every((line) => line.startsWith(prefix));
       return lines
         .map((line) => {
@@ -267,7 +281,21 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
         })
         .join("\n");
     }
-    case "bullet": {
+    case "list": {
+      if (kind.ordered) {
+        const numbered = has(ORDERED_RE);
+        let n = 0;
+        return lines
+          .map((line) => {
+            if (line.trim() === "") {
+              return line;
+            }
+            n += 1;
+            const bare = line.replace(ORDERED_RE, "");
+            return numbered ? bare : `${n}. ${bare}`;
+          })
+          .join("\n");
+      }
       const allBulleted = has(BULLET_RE);
       return lines
         .map((line) => {
@@ -279,22 +307,7 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
         })
         .join("\n");
     }
-    case "ordered": {
-      const numbered = has(ORDERED_RE);
-      let n = 0;
-      return lines
-        .map((line) => {
-          if (line.trim() === "") {
-            return line;
-          }
-          n += 1;
-          const bare = line.replace(ORDERED_RE, "");
-          return numbered ? bare : `${n}. ${bare}`;
-        })
-        .join("\n");
-    }
-    default: {
-      // quote
+    case "quote": {
       const allQuoted = has(QUOTE_RE);
       return lines
         .map((line) => {
@@ -306,6 +319,8 @@ function toggleLinePrefix(lines: string[], command: FormatCommand): string {
         })
         .join("\n");
     }
+    default:
+      return assertNever(kind);
   }
 }
 

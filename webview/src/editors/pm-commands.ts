@@ -10,7 +10,13 @@ import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
 import type { MarkType, NodeType, ResolvedPos } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import type { Command, EditorState } from "prosemirror-state";
-import type { FormatCommand } from "./md-format.js";
+import { assertNever } from "../util/assert.js";
+import {
+  FORMAT_REGISTRY,
+  type FormatCommand,
+  type FormatKind,
+  formatDef,
+} from "./format-registry.js";
 import { schema } from "./pm-markdown.js";
 
 /** Resolve a required node type from the shared schema (these are always present — strict indexing
@@ -91,61 +97,64 @@ function toggleQuote(): Command {
  * so any other consumer — e.g. a future keymap binding — must apply its own gate before dispatching.
  */
 export function commandFor(command: FormatCommand): Command {
-  switch (command) {
-    case "bold":
-      return toggleMark(markType("strong"));
-    case "italic":
-      return toggleMark(markType("em"));
-    case "strike":
-      return toggleMark(markType("strikethrough"));
-    case "h1":
-      return toggleBlock(nodeType("heading"), { level: 1 });
-    case "h2":
-      return toggleBlock(nodeType("heading"), { level: 2 });
-    case "code":
+  const { kind } = formatDef(command);
+  switch (kind.type) {
+    case "inline":
+      return toggleMark(markType(kind.mark));
+    case "heading":
+      return toggleBlock(nodeType("heading"), { level: kind.level });
+    case "fence":
       return toggleBlock(nodeType("code_block"), {});
-    case "bullet":
-      return toggleList(nodeType("bullet_list"));
-    case "ordered":
-      return toggleList(nodeType("ordered_list"));
-    default:
+    case "list":
+      return toggleList(nodeType(kind.ordered ? "ordered_list" : "bullet_list"));
+    case "quote":
       return toggleQuote();
+    default:
+      return assertNever(kind);
   }
 }
 
-/** The toolbar commands currently active at the given selection (for the pressed-button state). */
-export function activeFormats(state: EditorState): Set<FormatCommand> {
+/** Whether `type` is active at the selection: the stored/cursor marks for an empty selection, else
+ *  present across the whole selected range. */
+function markActive(state: EditorState, type: MarkType): boolean {
   const sel = state.selection;
-  const $head = sel.$head;
-  const result = new Set<FormatCommand>();
+  return sel.empty
+    ? (state.storedMarks ?? sel.$head.marks()).some((m) => m.type === type)
+    : state.doc.rangeHasMark(sel.from, sel.to, type);
+}
 
-  const markActive = (type: MarkType): boolean =>
-    sel.empty
-      ? (state.storedMarks ?? $head.marks()).some((m) => m.type === type)
-      : state.doc.rangeHasMark(sel.from, sel.to, type);
-  if (markActive(markType("strong"))) result.add("bold");
-  if (markActive(markType("em"))) result.add("italic");
-  if (markActive(markType("strikethrough"))) result.add("strike");
-
-  const parent = $head.parent;
-  if (parent.type === schema.nodes.heading) {
-    // Only the toolbar's own levels light up; H3–H6 leave both heading buttons unpressed.
-    if (parent.attrs.level === 1) {
-      result.add("h1");
-    } else if (parent.attrs.level === 2) {
-      result.add("h2");
-    }
-  } else if (parent.type === schema.nodes.code_block) {
-    result.add("code");
+/**
+ * Whether the given format {@link FormatKind} is active at the selection — the per-kind reader
+ * {@link activeFormats} maps over the registry. Inline marks read the selection's marks; a heading/fence
+ * is the immediate textblock parent (only the registry's own heading levels light up — H3–H6 match no
+ * entry); a list/quote is any enclosing ancestor, so a bullet nested in a blockquote lights up both.
+ * `default: assertNever(kind)` keeps it exhaustive against FormatKind.
+ */
+function isActive(state: EditorState, kind: FormatKind): boolean {
+  const { $head } = state.selection;
+  switch (kind.type) {
+    case "inline":
+      return markActive(state, markType(kind.mark));
+    case "heading":
+      return $head.parent.type === nodeType("heading") && $head.parent.attrs.level === kind.level;
+    case "fence":
+      return $head.parent.type === nodeType("code_block");
+    case "list":
+      return inNodeType($head, nodeType(kind.ordered ? "ordered_list" : "bullet_list"));
+    case "quote":
+      return inNodeType($head, nodeType("blockquote"));
+    default:
+      return assertNever(kind);
   }
-  for (let depth = $head.depth; depth > 0; depth--) {
-    const type = $head.node(depth).type;
-    if (type === schema.nodes.bullet_list) {
-      result.add("bullet");
-    } else if (type === schema.nodes.ordered_list) {
-      result.add("ordered");
-    } else if (type === schema.nodes.blockquote) {
-      result.add("quote");
+}
+
+/** The toolbar commands currently active at the given selection (for the pressed-button state),
+ *  derived by reading each registry command's kind against the selection. */
+export function activeFormats(state: EditorState): Set<FormatCommand> {
+  const result = new Set<FormatCommand>();
+  for (const { id, kind } of FORMAT_REGISTRY) {
+    if (isActive(state, kind)) {
+      result.add(id);
     }
   }
   return result;
