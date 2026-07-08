@@ -69,10 +69,31 @@ export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments 
   return { editorLead, editorSpacers };
 }
 
+/** Value-equality of two spacer lists (order-sensitive: {@link computeGapAdjustments} emits them
+ *  top-to-bottom, so a stable geometry yields an identically ordered list). */
+function spacersEqual(a: EditorSpacer[], b: EditorSpacer[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (!x || !y || x.lineEnd !== y.lineEnd || x.height !== y.height) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly source: GeometrySource;
   private readonly onDebug: ((summary: string) => void) | undefined;
+  // The last spacer set actually pushed to the editor. reconcile() skips re-dispatching an identical
+  // set — that is what makes repeated reconciles converge instead of flickering (see apply()).
+  private appliedLead = 0;
+  private appliedSpacers: EditorSpacer[] = [];
+  private hasApplied = false;
 
   constructor(editor: MarkdownEditor, source: GeometrySource, onDebug?: (summary: string) => void) {
     this.editor = editor;
@@ -81,14 +102,42 @@ export class HeightSync {
   }
 
   /**
+   * Push a spacer set to the editor, but ONLY when it differs from the last one applied — returns
+   * whether it actually dispatched. This is the loop breaker for the "re-reconcile after CodeMirror
+   * re-measures" path (T-062): applying spacers makes CodeMirror re-measure and fire another
+   * (transaction-less) `geometryChanged`, which re-enters reconcile. Because `naturalLineTops` is
+   * spacer-invariant, a *settled* geometry recomputes the identical set here, so we skip the dispatch
+   * and the cascade stops at a fixed point; a geometry that genuinely changed (an estimated height
+   * became a measured one) yields a different set, so it dispatches and re-measures until it settles.
+   * Without this guard the old code re-dispatched unconditionally and looped apply→measure→apply
+   * forever, which is why the update-listener used to swallow every transaction-less geometryChanged.
+   */
+  private apply(lead: number, spacers: EditorSpacer[]): boolean {
+    if (
+      this.hasApplied &&
+      lead === this.appliedLead &&
+      spacersEqual(spacers, this.appliedSpacers)
+    ) {
+      return false;
+    }
+    this.appliedLead = lead;
+    this.appliedSpacers = spacers;
+    this.hasApplied = true;
+    this.editor.setSpacers(spacers, lead);
+    return true;
+  }
+
+  /**
    * Measure both panes' natural geometry and apply editor spacers to match the reference (formatted)
    * pane. The reference is measured as-is (we never pad it); editor tops come from a spacer-free
-   * prefix sum, so this is a stable fixed point with no tracked state.
+   * prefix sum, so this is a stable fixed point with no tracked state. Idempotent by design: calling
+   * it again on an unchanged geometry recomputes the same spacers and skips re-dispatching them (see
+   * {@link apply}), so it can be driven every time CodeMirror re-measures without flickering.
    */
   reconcile(): void {
     const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {
-      this.editor.setSpacers([], 0);
+      this.apply(0, []);
       this.onDebug?.("height-sync: 0 blocks");
       return;
     }
@@ -101,14 +150,14 @@ export class HeightSync {
     }));
 
     const { editorLead, editorSpacers } = computeGapAdjustments(anchors);
-    this.editor.setSpacers(editorSpacers, editorLead);
+    const dispatched = this.apply(editorLead, editorSpacers);
 
     const last = anchors[anchors.length - 1];
     const round = (value: number) => Math.round(value);
     this.onDebug?.(
       `hs: ${anchors.length} · eN=${round(last?.editorTop ?? 0)} pN=${round(last?.previewTop ?? 0)}` +
         ` · eW=${this.editor.contentWidth()} pW=${this.source.contentWidth()}` +
-        ` · lead ${editorLead} sp ${editorSpacers.length}`,
+        ` · lead ${editorLead} sp ${editorSpacers.length}${dispatched ? "" : " (settled)"}`,
     );
   }
 
@@ -118,6 +167,6 @@ export class HeightSync {
    * would just linger as meaningless gaps in the source. {@link reconcile} re-adds them on return.
    */
   clear(): void {
-    this.editor.setSpacers([], 0);
+    this.apply(0, []);
   }
 }

@@ -445,13 +445,20 @@ export class MarkdownEditor {
         cursorNavigated = !update.docChanged;
         reportCursor();
       }
-      // The editor relaid out because of a real transaction other than a content edit or our own
-      // spacer dispatch (i.e. a wrap toggle) → re-equalize. We require a transaction so we ignore
-      // CodeMirror's internal re-measure of our just-applied spacers (which fires geometryChanged
-      // with no transaction) — that would otherwise loop apply→measure→apply forever (flicker).
+      // The editor relaid out for a reason other than a content edit or our own spacer dispatch →
+      // re-equalize. Two cases matter: a real relayout transaction (a wrap toggle), AND — with no
+      // transaction — CodeMirror finishing an async re-measure that turned an *estimated* line height
+      // into a measured one (T-062: a block below the viewport, especially a wrapped one, whose top
+      // `naturalLineTops` first read as an underestimate, yielding an inflated spacer). We used to gate
+      // on `transactions.length > 0` to swallow that transaction-less re-measure, because re-reconciling
+      // on it looped apply→measure→apply forever. That loop is now broken at the source — HeightSync only
+      // re-dispatches spacers when the computed set actually changed (naturalLineTops is spacer-invariant,
+      // so a settled geometry reconciles to the identical set and stops) — so we can safely let the
+      // re-measure through and the stale spacer self-corrects. We still ignore the geometryChanged that
+      // OUR OWN setSpacers dispatch carries (its transaction holds a setSpacersEffect) and any docChanged
+      // (an edit already schedules its own reconcile via onChange).
       if (
         update.geometryChanged &&
-        update.transactions.length > 0 &&
         !update.docChanged &&
         !update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setSpacersEffect)))
       ) {

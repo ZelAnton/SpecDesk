@@ -112,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The Split view's source editor no longer keeps an inflated spacer before a block that sat below the
+  viewport (e.g. a `### A code block` after a table). Height-sync reads each source block's top from
+  CodeMirror, but a not-yet-measured region below the viewport — especially a wrapped line, estimated as
+  a single row — reports a top that is too small, so the computed gap looked short and the spacer grew
+  too tall. The stale spacer used to persist until the next edit or window resize, because the update
+  listener deliberately swallowed CodeMirror's transaction-less "I finished measuring" `geometryChanged`
+  to avoid an apply→measure→apply flicker loop. That loop is now broken at its source instead —
+  `HeightSync.reconcile` only re-dispatches spacers when the recomputed set actually differs from the one
+  already applied (natural tops are spacer-invariant, so a settled geometry recomputes the identical set
+  and stops) — so the re-measure is allowed through and the spacer self-corrects to the right height with
+  no user action and no flicker.
 - `docs/CODE-REVIEW-PLAN.md`'s T-09 finding claimed `AGENTS.md`/`CLAUDE.md` were gitignored, making every
   tracked doc's `../AGENTS.md` link 404 on GitHub. The premise was real: a `.gitignore` rule excluded both
   files from early in the project's history (`8fa0b6c`) until commit `800ce26`, which removed that rule
