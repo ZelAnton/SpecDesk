@@ -132,6 +132,50 @@ describe("MarkdownEditor.topVisibleLine / adjustScrollTop (jsdom, T-066)", () =>
   });
 });
 
+describe("MarkdownEditor.topVisibleLineExact (jsdom, T-064)", () => {
+  // jsdom has no real layout, so posAtCoords always misses (returns null) — that's exactly the
+  // "measure not settled" case this method must survive without collapsing to line 0. `posAtCoords`
+  // is stubbed to drive both branches deterministically.
+  it("falls back to the last resolved value instead of 0 when posAtCoords misses", () => {
+    const { ed } = mount();
+    ed.setText("one\ntwo\nthree\n");
+
+    // No successful resolution yet — the default fallback is 0 (unscrolled, never desynced).
+    expect(ed.topVisibleLineExact()).toBe(0);
+
+    // A successful probe lands mid document-line 2 (0-based line 1).
+    vi.spyOn(ed, "posAtCoords").mockReturnValue(ed.getText().indexOf("two"));
+    expect(ed.topVisibleLineExact()).toBe(1);
+
+    // The next probe misses (mid-measure) — the previously resolved value must be reused, not 0.
+    vi.spyOn(ed, "posAtCoords").mockReturnValue(null);
+    expect(ed.topVisibleLineExact()).toBe(1);
+  });
+
+  it("probes the content area's left edge (contentDOM), not the scrollDOM rect which includes the gutter", () => {
+    const { ed } = mount();
+    ed.setText("one\ntwo\nthree\n");
+
+    const contentRect = {
+      left: 42,
+      top: 7,
+      right: 0,
+      bottom: 0,
+      width: 0,
+      height: 0,
+      x: 42,
+      y: 7,
+      toJSON: () => ({}),
+    };
+    vi.spyOn(ed.contentDOM, "getBoundingClientRect").mockReturnValue(contentRect as DOMRect);
+    const posSpy = vi.spyOn(ed, "posAtCoords").mockReturnValue(0);
+
+    ed.topVisibleLineExact();
+
+    expect(posSpy).toHaveBeenCalledWith(43, 8);
+  });
+});
+
 describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();

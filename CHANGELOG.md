@@ -132,6 +132,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view no longer occasionally yanks the passive pane's scroll to the very start of the document
+  while the active pane is being scrolled. `MarkdownEditor.topVisibleLineExact()` probed
+  `posAtCoords` at a point inside the line-number gutter (`scrollDOM`'s rect) rather than the content
+  area, and, when `posAtCoords` missed (mid-measure, e.g. during a layout rebuild), returned `0`
+  instead of skipping the frame — both cases could report "top of document" mid-scroll and the
+  formatted pane would sync to it. The probe now uses `contentDOM`'s left edge, and a miss now
+  returns the last successfully resolved line instead of `0`.
 - The review overlay now highlights only the changed row/item of a table or list, instead of washing
   the whole container, when that table/list is the document's very first block and is preceded by
   leading blank lines or link-reference-definitions. `expandDiffMarks` (`webview/src/review/

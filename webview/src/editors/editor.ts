@@ -433,6 +433,10 @@ export class MarkdownEditor {
   private diffValue: DiffMark[] | null = null;
   // Monotonic id source for tracked image-insert markers (see markerField / trackPosition).
   private nextMarkerId = 0;
+  // The last value topVisibleLineExact() successfully resolved via posAtCoords. Reused when a probe
+  // lands mid-measure (posAtCoords returns null, e.g. during a layout rebuild) so a transient miss
+  // does not report line 0 and yank the passive Split pane back to the top of the document.
+  private lastTopVisibleLineExact = 0;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -721,18 +725,26 @@ export class MarkdownEditor {
    * part is the line, the fractional part is how far the viewport top has scrolled into that
    * line's block. Used for sub-line-precise scroll-sync so the preview's top edge lines up with
    * the editor's instead of snapping to the nearest whole line (the cause of the residual drift).
+   *
+   * The probe point is the left edge of the CONTENT area (`contentDOM`, not `scrollDOM`, whose
+   * rect includes the line-number gutter) — probing inside the gutter leaves `posAtCoords`'s
+   * result unspecified. When `posAtCoords` misses (e.g. mid-measure, during a layout rebuild) the
+   * last successfully resolved value is returned instead of 0, so a transient miss doesn't yank
+   * the passive Split pane back to the top of the document (T-064).
    */
   topVisibleLineExact(): number {
     const scrollTop = this.view.scrollDOM.scrollTop;
-    const rect = this.view.scrollDOM.getBoundingClientRect();
-    const pos = this.view.posAtCoords({ x: rect.left + 1, y: rect.top + 1 });
+    const rect = this.view.contentDOM.getBoundingClientRect();
+    const pos = this.posAtCoords(rect.left + 1, rect.top + 1);
     if (pos === null) {
-      return 0;
+      return this.lastTopVisibleLineExact;
     }
     const lineNumber = this.view.state.doc.lineAt(pos).number;
     const block = this.view.lineBlockAt(this.view.state.doc.line(lineNumber).from);
     const fraction = block.height > 0 ? (scrollTop - block.top) / block.height : 0;
-    return lineNumber - 1 + Math.min(Math.max(fraction, 0), 1);
+    const exact = lineNumber - 1 + Math.min(Math.max(fraction, 0), 1);
+    this.lastTopVisibleLineExact = exact;
+    return exact;
   }
 
   /**
