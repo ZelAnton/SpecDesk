@@ -28,7 +28,22 @@ internal static class DiffProjection
             ? null
             : baseText.Contains('\r') ? baseText.Replace("\r\n", "\n").Replace("\r", "\n") : baseText;
 
-        DiffWire.DiffWireEntry[] wire = normalizedBase is null ? [] : DiffWire.toWire(normalizedBase, headText);
+        if (normalizedBase is null)
+        {
+            return new DiffResultPayload([]);
+        }
+
+        // toWireDetailed (not toWire) so an overflowing pair (AstDiff's node-pair guard forced the flat
+        // Removed+Added fallback) never has its entries built at all here — no slicing of every removed
+        // block's full base text, no thousands-of-entries array — and the payload below carries a compact
+        // count-only signal instead.
+        (DiffWire.DiffWireEntry[] wire, DiffWire.OverflowSignal overflow) =
+            DiffWire.toWireDetailed(normalizedBase, headText);
+
+        if (overflow.Overflowed)
+        {
+            return new DiffResultPayload([], new DiffOverflowPayload(overflow.RemovedCount, overflow.AddedCount));
+        }
 
         // Discriminate the flat F# intermediate into the wire's per-kind payloads: each kind keeps only the
         // fields it uses (the sentinels the flat record carries for the others never reach the wire).

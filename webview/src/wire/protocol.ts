@@ -131,10 +131,23 @@ export type DiffEntryPayload =
       baseSource: string;
     };
 
+/** Compact overflow signal on {@link DiffResultPayload}: the (base, head) pair overflowed the native
+ *  AstDiff node-pair size guard and fell back to a flat, coarse Removed+Added listing — sent as this
+ *  count-only signal INSTEAD of enumerating every base/head block (which would ship every removed block's
+ *  full text over IPC and paint thousands of decorations). `entries` is empty whenever this is present.
+ *  Mirror of the C# `DiffOverflowPayload`. */
+export interface DiffOverflowPayload {
+  removedCount: number;
+  addedCount: number;
+}
+
 /** Payload of `diff.result` (native→webview): the changed blocks of the working copy vs the last
- *  committed version, in document order. The version rides on the envelope (drop a stale result). */
+ *  committed version, in document order. The version rides on the envelope (drop a stale result).
+ *  `overflow` is present only for a pair too large to diff in detail (see {@link DiffOverflowPayload}),
+ *  in which case `entries` is empty. */
 export interface DiffResultPayload {
   entries: DiffEntryPayload[];
+  overflow?: DiffOverflowPayload;
 }
 
 /** Payload of `diff.request` (webview→native): which base to diff the working copy against. The

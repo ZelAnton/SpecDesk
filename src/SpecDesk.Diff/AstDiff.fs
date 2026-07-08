@@ -39,6 +39,12 @@ let private changeSimilarityThreshold = 0.5
 /// document on each side still passes) while keeping the worst case a bounded, sub-second array/loop.
 let internal maxNodePairs = 4_000_000L
 
+/// Whether this many base × head node pairs exceeds {@link maxNodePairs} — the single predicate {@link
+/// diff} and {@link diffTextDetailed} both key their O(m·n) vs. flat-fallback choice on, factored out so
+/// the two call sites (and, transitively, DiffWire.toWireDetailed) can't drift out of sync on the threshold.
+let private overflows (baseCount: int) (headCount: int) : bool =
+    int64 baseCount * int64 headCount > maxNodePairs
+
 /// The unbounded-cost diff falls back to here for a document pair too large to LCS/score safely: no
 /// backbone matching at all — every base node is Removed, every head node is Added. Correct but
 /// coarse (a huge document that hasn't actually changed would, past this size, still read as "all
@@ -226,7 +232,7 @@ let diff (baseDoc: Ast.Document) (headDoc: Ast.Document) : DocumentDiff =
     let baseArr = List.toArray baseDoc
     let headArr = List.toArray headDoc
 
-    if int64 baseArr.Length * int64 headArr.Length > maxNodePairs then
+    if overflows baseArr.Length headArr.Length then
         flatDiff baseArr headArr
     else
         diffBounded baseArr headArr
@@ -238,6 +244,15 @@ let hasChanges (d: DocumentDiff) : bool =
         | Unchanged _ -> false
         | _ -> true)
 
+/// {@link diffText}, plus whether {@link maxNodePairs} was exceeded (the flat {@link flatDiff} fallback
+/// fired) for this pair — exposed so a wire-layer caller that needs to react differently to an overflowing
+/// pair (DiffWire.toWireDetailed, to swap in a compact count-only signal instead of enumerating every
+/// base/head node) gets the flag alongside the diff it already has to compute, rather than re-parsing or
+/// duplicating the threshold check.
+let diffTextDetailed (baseText: string) (headText: string) : DocumentDiff * bool =
+    let baseDoc = Projection.toAst baseText
+    let headDoc = Projection.toAst headText
+    diff baseDoc headDoc, overflows (List.length baseDoc) (List.length headDoc)
+
 /// Diff two Markdown source strings end to end (parse each to the shared AST, then diff).
-let diffText (baseText: string) (headText: string) : DocumentDiff =
-    diff (Projection.toAst baseText) (Projection.toAst headText)
+let diffText (baseText: string) (headText: string) : DocumentDiff = fst (diffTextDetailed baseText headText)

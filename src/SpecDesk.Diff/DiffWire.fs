@@ -228,9 +228,12 @@ let private childDiff
 
     entries.ToArray()
 
-/// Diff base→head into wire entries, in document order. The removed anchor is the previous head-present
-/// block's end line + 1 (0 when the deletion precedes all head content).
-let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
+/// Build the wire entries for an already-computed diff of base→head (base text needed for its line slices
+/// / container-child source ranges). Extracted from {@link toWire} so {@link toWireDetailed} can skip this
+/// entirely for an overflowing pair — whose diff is AstDiff's flat Removed+Added fallback — instead of
+/// slicing every removed block's full base text into a wire entry only to discard it for the compact
+/// overflow signal that replaces them.
+let private buildEntries (baseText: string) (diffResult: AstDiff.DocumentDiff) : DiffWireEntry[] =
     let baseLines = baseText.Split('\n')
     // The base's container-child source ranges, keyed by the base container's top-level start line, so a
     // changed child (below) can be sliced back to its base source. A second (cheap, O(n)) parse of the
@@ -245,7 +248,7 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
         entries.Add entry
         lastHeadLineEnd <- headEnd
 
-    for entry in AstDiff.diffText baseText headText do
+    for entry in diffResult do
         match entry with
         | AstDiff.Unchanged node -> lastHeadLineEnd <- node.LineEnd
         | AstDiff.Added node -> emit (Build.added node.LineStart node.LineEnd) node.LineEnd
@@ -297,3 +300,51 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
             entries.Add(Build.removed (lastHeadLineEnd + 1) (slice baseLines node.LineStart node.LineEnd))
 
     entries.ToArray()
+
+/// Diff base→head into wire entries, in document order. The removed anchor is the previous head-present
+/// block's end line + 1 (0 when the deletion precedes all head content). For an overflowing pair (see
+/// {@link toWireDetailed}) this still returns the flat Removed+Added fallback's full entries — kept
+/// unchanged for direct callers/tests of this function; DiffProjection.cs uses {@link toWireDetailed}
+/// instead so the host never builds (or ships) that flat listing for the `diff.result` payload.
+let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
+    buildEntries baseText (AstDiff.diffText baseText headText)
+
+/// Compact overflow signal from {@link toWireDetailed}: whether AstDiff's node-pair guard forced the flat
+/// Removed+Added fallback for this pair, and — only when it did — how many base blocks were flatly removed
+/// and head blocks flatly added. Deliberately NOT their text (`RemovedText`): the whole point of this type
+/// is to avoid building/slicing every removed block's base text only to discard it for a count-only signal.
+/// CLIMutable + a sentinel-when-unused shape, the same C#-friendly convention as the flat wire DTOs above
+/// (kept an explicit record rather than an F# option, which would leak FSharpOption plumbing into the host).
+[<CLIMutable>]
+type OverflowSignal =
+    { Overflowed: bool
+      RemovedCount: int // meaningful only when Overflowed; 0 otherwise
+      AddedCount: int } // meaningful only when Overflowed; 0 otherwise
+
+/// The not-overflowing sentinel {@link OverflowSignal} — {@link toWireDetailed} returns this alongside its
+/// normal, fully-enumerated entries.
+let private noOverflow: OverflowSignal =
+    { Overflowed = false
+      RemovedCount = 0
+      AddedCount = 0 }
+
+/// `toWire`, plus whether AstDiff's node-pair guard forced the flat fallback for this pair — and, when it
+/// did, a compact {@link OverflowSignal} INSTEAD of the flat entries (`DiffWireEntry[]` is empty in that
+/// case): skips building/slicing every removed block's base text, which the overflow signal replaces.
+/// DiffProjection.cs uses this (not `toWire`) for the `diff.result` payload, so an overflowing document
+/// never ships every removed block's full text over IPC or paints thousands of decorations in the webview;
+/// `toWire` itself keeps its existing, fully-enumerated behavior for a non-overflowing pair (and for its
+/// own direct callers/tests, which predate this guard).
+let toWireDetailed (baseText: string) (headText: string) : DiffWireEntry[] * OverflowSignal =
+    let diffResult, overflow = AstDiff.diffTextDetailed baseText headText
+
+    if overflow then
+        let removedCount = diffResult |> List.sumBy (function AstDiff.Removed _ -> 1 | _ -> 0)
+        let addedCount = diffResult |> List.sumBy (function AstDiff.Added _ -> 1 | _ -> 0)
+
+        [||],
+        { Overflowed = true
+          RemovedCount = removedCount
+          AddedCount = addedCount }
+    else
+        buildEntries baseText diffResult, noOverflow

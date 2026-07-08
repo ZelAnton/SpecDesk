@@ -89,6 +89,7 @@ function setupDom(panesMarkup = ""): void {
     <div id="formatted"></div>
     <button id="compare-btn" type="button" aria-pressed="false"></button>
     <div id="review-empty-bar" hidden></div>
+    <div id="review-overflow-bar" hidden></div>
     ${panesMarkup}
   `;
 }
@@ -135,6 +136,27 @@ describe("index.ts: diff.result malformed-payload guard (jsdom)", () => {
     // payload is dropped, not the handler's legitimate empty-diff notice.
     bridge.emit({ kind: Kinds.diffResult, version, payload: { entries: [] } });
     expect(reviewEmptyEl?.hidden).toBe(false);
+  });
+
+  // T-081: an overflowing diff.result carries an `overflow` count instead of a full `entries` array —
+  // the overflow notice must show (distinct from the "no changes" one) and nothing should be painted.
+  it("shows the overflow notice, not the empty-diff one, for an overflowing diff.result", async () => {
+    const bridge = await mountApp();
+    const compareBtn = document.querySelector<HTMLButtonElement>("#compare-btn");
+    const reviewEmptyEl = document.querySelector<HTMLElement>("#review-empty-bar");
+    const reviewOverflowEl = document.querySelector<HTMLElement>("#review-overflow-bar");
+
+    compareBtn?.click();
+    const request = bridge.sent.find((m) => m.kind === Kinds.diffRequest);
+    const version = request?.version ?? 0;
+
+    bridge.emit({
+      kind: Kinds.diffResult,
+      version,
+      payload: { entries: [], overflow: { removedCount: 5000, addedCount: 5000 } },
+    });
+    expect(reviewOverflowEl?.hidden).toBe(false);
+    expect(reviewEmptyEl?.hidden).toBe(true);
   });
 });
 

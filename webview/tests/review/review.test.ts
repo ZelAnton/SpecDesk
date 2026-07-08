@@ -42,6 +42,7 @@ function harness(version = 1) {
   const setPressed = vi.fn();
   const requestCompare = vi.fn();
   const onEmptyState = vi.fn<(showing: boolean) => void>();
+  const onOverflow = vi.fn<(showing: boolean) => void>();
   let current = version;
   const deps: ReviewDeps = {
     surfaces: [editor.view, formatted.view],
@@ -49,6 +50,7 @@ function harness(version = 1) {
     requestCompare,
     docVersion: () => current,
     onEmptyState,
+    onOverflow,
   };
   return {
     review: new ReviewController(deps),
@@ -57,6 +59,7 @@ function harness(version = 1) {
     setPressed,
     requestCompare,
     onEmptyState,
+    onOverflow,
     setVersion: (v: number) => {
       current = v;
     },
@@ -175,6 +178,56 @@ describe("ReviewController", () => {
     const h = harness(4);
     h.review.applyResult(4, []); // not reviewing → dropped
     expect(h.onEmptyState).not.toHaveBeenCalled();
+  });
+
+  // T-081: a result overflowing the native node-pair guard swaps `entries` for a compact count-only
+  // signal. Painting the fallback's flat Removed+Added listing (thousands of marks) would freeze the
+  // editors, so this must wash nothing and raise a distinct notice instead of expanding `entries`.
+  describe("overflow signal (T-081)", () => {
+    it("washes nothing and raises the overflow notice, not the empty-diff one", () => {
+      const h = harness(1);
+      h.review.toggle();
+      h.review.applyResult(1, [], { removedCount: 5000, addedCount: 5000 });
+      expect(h.editor.setDiff).not.toHaveBeenCalled();
+      expect(h.formatted.setDiff).not.toHaveBeenCalled();
+      expect(h.editor.clearDiff).toHaveBeenCalledTimes(1);
+      expect(h.formatted.clearDiff).toHaveBeenCalledTimes(1);
+      expect(h.onOverflow).toHaveBeenLastCalledWith(true);
+      expect(h.onEmptyState).not.toHaveBeenCalledWith(true);
+    });
+
+    it("even a non-empty entries array is ignored once overflow is present (defense in depth)", () => {
+      const h = harness(1);
+      h.review.toggle();
+      h.review.applyResult(1, [changedEntry()], { removedCount: 1, addedCount: 1 });
+      expect(h.editor.setDiff).not.toHaveBeenCalled();
+    });
+
+    it("a later non-overflowing result lowers the overflow notice", () => {
+      const h = harness(1);
+      h.review.toggle();
+      h.review.applyResult(1, [], { removedCount: 5000, addedCount: 5000 });
+      h.review.clear();
+      h.review.toggle();
+      h.review.applyResult(1, [changedEntry()]);
+      expect(h.onOverflow).toHaveBeenLastCalledWith(false);
+      expect(h.editor.setDiff).toHaveBeenCalledTimes(1);
+    });
+
+    it("clearing the overlay lowers the overflow notice", () => {
+      const h = harness(1);
+      h.review.toggle();
+      h.review.applyResult(1, [], { removedCount: 5000, addedCount: 5000 });
+      h.review.clear();
+      expect(h.onOverflow).toHaveBeenLastCalledWith(false);
+    });
+
+    it("an overflowing result dropped while not showing never touches either notice", () => {
+      const h = harness(4);
+      h.review.applyResult(4, [], { removedCount: 5000, addedCount: 5000 }); // not reviewing → dropped
+      expect(h.onOverflow).not.toHaveBeenCalled();
+      expect(h.onEmptyState).not.toHaveBeenCalled();
+    });
   });
 });
 

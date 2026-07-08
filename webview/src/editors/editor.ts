@@ -399,6 +399,10 @@ export interface EditorCallbacks {
   onFocus: () => void;
   /** Fired with an http/https URL the author Ctrl/Cmd-clicked in the source, to open in the OS browser. */
   onOpenLink: (url: string) => void;
+  /** Diagnostics for the height-sync reconcile path (T-084) — mirrors {@link HeightSync}'s own optional
+   *  `onDebug`. Fired when {@link naturalLineTops}/{@link setSpacers} refuse a stale anchor instead of
+   *  silently clamping it to the last line (see those methods). Optional: only wired where useful. */
+  onDebug?: (summary: string) => void;
 }
 
 export class MarkdownEditor {
@@ -412,6 +416,7 @@ export class MarkdownEditor {
   private readonly onEditAttempt: () => void;
   private readonly onFocus: () => void;
   private readonly onOpenLink: (url: string) => void;
+  private readonly onDebug: ((summary: string) => void) | undefined;
   private readonly wrap = new Compartment();
   private readonly editable = new Compartment();
   private version = 0;
@@ -448,6 +453,7 @@ export class MarkdownEditor {
     this.onEditAttempt = callbacks.onEditAttempt;
     this.onFocus = callbacks.onFocus;
     this.onOpenLink = callbacks.onOpenLink;
+    this.onDebug = callbacks.onDebug;
 
     // The caret line is reported rAF-deferred so the resulting setActiveLine dispatch (cross-pane
     // sync) runs after this update listener, not re-entrantly within it.
@@ -807,12 +813,34 @@ export class MarkdownEditor {
    * This fixed-point property holds for the FIRST anchor too, which is what keeps the height-sync
    * lead stable (T-061): see {@link spacerHeightAbove} for why the leading spacer is (correctly) not
    * subtracted at pos 0.
+   *
+   * A `line` outside the CURRENT document (T-084) yields `null` at that index rather than being
+   * silently clamped to the last line: on the height-sync reconcile path a line comes from the sibling
+   * (formatted) pane's `blockGeometry()`, so an out-of-range line means that anchor was minted against
+   * a document this editor no longer has — clamping it would measure the wrong line and produce a
+   * spacer on it instead of surfacing the mismatch. {@link HeightSync.reconcile} refuses to apply the
+   * whole anchor set when any come back `null` (see its pane-consistency gate) rather than build spacers
+   * off a partially-stale set.
    */
-  naturalLineTops(lines: number[]): number[] {
+  naturalLineTops(lines: number[]): (number | null)[] {
     return lines.map((line) => {
-      const pos = this.view.state.doc.line(this.clampLine(line)).from;
+      if (!this.isValidLine(line)) {
+        this.onDebug?.(
+          `height-sync: refused stale anchor line ${line} (doc has ${this.view.state.doc.lines} lines)`,
+        );
+        return null;
+      }
+      const pos = this.view.state.doc.line(line + 1).from;
       return this.view.lineBlockAt(pos).top - this.spacerHeightAbove(pos);
     });
+  }
+
+  /** Whether 0-based `line` resolves within the CURRENT document — the check {@link naturalLineTops}
+   *  and {@link setSpacers} use INSTEAD OF {@link clampLine}'s silent clamp on the reconcile path
+   *  (T-084): an anchor line minted against a sibling pane's now-diverged document is a symptom of
+   *  staleness, not a value worth relocating to the nearest valid line. */
+  private isValidLine(line: number): boolean {
+    return line >= 0 && line < this.view.state.doc.lines;
   }
 
   /**
@@ -847,15 +875,31 @@ export class MarkdownEditor {
   /**
    * Replace the spacer decorations (height-sync). Block spacers sit below each block's last source
    * line; the optional leading spacer sits above the first line so the first block aligns.
+   *
+   * A spacer whose `lineEnd` falls outside the CURRENT document (T-084) is dropped rather than
+   * silently clamped to the last line — clamping would plant it under whatever line happens to be
+   * last, producing a spacer on the wrong line instead of surfacing the staleness (a symptom of the
+   * caller applying anchors from a since-diverged sibling document). {@link HeightSync.reconcile}'s
+   * pane-consistency gate is expected to keep this from happening in practice; this is defense in depth
+   * for the direct caller of `setSpacers`.
    */
   setSpacers(spacers: EditorSpacer[], leadingHeight = 0): void {
-    const ranges = spacers.map((spacer) =>
-      Decoration.widget({
-        widget: new SpacerWidget(spacer.height),
-        block: true,
-        side: 1,
-      }).range(this.view.state.doc.line(this.clampLine(spacer.lineEnd)).to),
-    );
+    const ranges: Range<Decoration>[] = [];
+    for (const spacer of spacers) {
+      if (!this.isValidLine(spacer.lineEnd)) {
+        this.onDebug?.(
+          `height-sync: refused stale spacer at line ${spacer.lineEnd} (doc has ${this.view.state.doc.lines} lines)`,
+        );
+        continue;
+      }
+      ranges.push(
+        Decoration.widget({
+          widget: new SpacerWidget(spacer.height),
+          block: true,
+          side: 1,
+        }).range(this.view.state.doc.line(spacer.lineEnd + 1).to),
+      );
+    }
     if (leadingHeight > 0) {
       ranges.push(
         Decoration.widget({
@@ -931,6 +975,12 @@ export class MarkdownEditor {
     });
   }
 
+  /** Clamp a 0-based line to the nearest valid 1-based CM line — appropriate for a user/programmatic
+   *  scroll TARGET (`scrollToSourceLine`, `revealSourceLine`), where landing on the nearest line is the
+   *  right degraded behaviour for an out-of-range request. NOT used on the height-sync reconcile path
+   *  (`naturalLineTops`, `setSpacers`, T-084): there, an out-of-range line means the anchor was minted
+   *  against a since-diverged sibling document, and clamping would silently measure/pad the wrong line
+   *  instead of refusing it — see {@link isValidLine}. */
   private clampLine(line: number): number {
     return Math.min(Math.max(line + 1, 1), this.view.state.doc.lines);
   }

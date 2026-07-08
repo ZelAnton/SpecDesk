@@ -544,6 +544,16 @@ button {
   font-size: 0.85rem;
 }
 
+/* The "Show changes" overflow notice — same plain-bar shape as #review-empty-bar, but the warn tint (an
+   actionable "too large to compare" limitation, not a routine "nothing changed" state). */
+#review-overflow-bar {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  font-size: 0.85rem;
+}
+
 #branch-name-bar input,
 #version-note-bar input,
 #version-note-bar textarea,

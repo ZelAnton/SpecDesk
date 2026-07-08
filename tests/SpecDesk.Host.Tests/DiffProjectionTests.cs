@@ -122,4 +122,40 @@ public sealed class DiffProjectionTests
         ChangedChildDiff child = (ChangedChildDiff)container.Children[0];
         Assert.That(child.BaseText, Does.Not.Contain('\r'));
     }
+
+    // T-081: a pair large enough to trip AstDiff's node-pair guard (maxNodePairs = 4,000,000; 2100 * 2100 =
+    // 4,410,000 is comfortably over it) must NOT ship the flat Removed+Added fallback's full entries — every
+    // removed block's full base text — over IPC. DiffProjection swaps in a compact count-only signal instead.
+
+    private static string GenerateParagraphs(int count, string label) =>
+        string.Join("\n\n", Enumerable.Range(0, count).Select(i => $"{label} paragraph {i}"));
+
+    [Test]
+    public void Build_OverflowingPair_SendsACompactSignalInsteadOfTheFlatFallback()
+    {
+        const int size = 2100;
+        string baseText = GenerateParagraphs(size, "base");
+        string headText = GenerateParagraphs(size, "head");
+
+        DiffResultPayload payload = DiffProjection.Build(baseText, headText);
+
+        // No per-block entries at all — in particular, no RemovedDiffEntry carrying any removed block's
+        // full base text (RemovedText) for the webview to render or the IPC channel to carry.
+        Assert.That(payload.Entries, Is.Empty);
+        Assert.That(payload.Overflow, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload.Overflow!.RemovedCount, Is.EqualTo(size));
+            Assert.That(payload.Overflow.AddedCount, Is.EqualTo(size));
+        });
+    }
+
+    [Test]
+    public void Build_ANonOverflowingPair_CarriesNoOverflowSignal()
+    {
+        DiffResultPayload payload = DiffProjection.Build(
+            "The refund window is 14 days.\n", "The refund window is 30 days.\n");
+
+        Assert.That(payload.Overflow, Is.Null);
+    }
 }

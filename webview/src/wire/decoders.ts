@@ -10,6 +10,7 @@ import {
   type BranchNameSuggestedPayload,
   type ChildDiffPayload,
   type DiffEntryPayload,
+  type DiffOverflowPayload,
   type DiffResultPayload,
   type DocLoadedPayload,
   type ErrorPayload,
@@ -147,6 +148,15 @@ function parseDiffEntry(value: unknown): DiffEntryPayload | null {
   return null;
 }
 
+// The overflow signal replaces `entries` when the native side's node-pair guard fired; validated the
+// same way as every other wire shape here — a wrong-typed field falls through to null (a contract drift).
+function parseDiffOverflow(value: unknown): DiffOverflowPayload | null {
+  if (!isRecord(value) || !isNumber(value.removedCount) || !isNumber(value.addedCount)) {
+    return null;
+  }
+  return { removedCount: value.removedCount, addedCount: value.addedCount };
+}
+
 export function parseDiffResult(value: unknown): DiffResultPayload | null {
   if (!isRecord(value)) {
     return null;
@@ -155,7 +165,14 @@ export function parseDiffResult(value: unknown): DiffResultPayload | null {
   if (entries === null) {
     return null;
   }
-  return { entries };
+  if (value.overflow === undefined) {
+    return { entries };
+  }
+  const overflow = parseDiffOverflow(value.overflow);
+  if (overflow === null) {
+    return null;
+  }
+  return { entries, overflow };
 }
 
 function isStatusState(value: unknown): value is StatusState {

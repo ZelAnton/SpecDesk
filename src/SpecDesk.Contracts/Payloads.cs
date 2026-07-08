@@ -214,10 +214,21 @@ public sealed record ChangedDiffEntry(
 /// </summary>
 public sealed record RemovedDiffEntry(int AnchorLine, string RemovedText) : DiffEntryPayload;
 
+/// <summary>
+/// Diagnostic signal on <see cref="DiffResultPayload"/>: the (base, head) pair overflowed AstDiff's
+/// node-pair size guard (<c>maxNodePairs</c>) and fell back to a flat, coarse Removed+Added listing —
+/// sent as this compact count INSTEAD of enumerating every base/head block, which would ship every removed
+/// block's full text over IPC and paint thousands of decorations in the webview. <see
+/// cref="DiffResultPayload.Entries"/> is empty whenever this is present.
+/// </summary>
+public sealed record DiffOverflowPayload(int RemovedCount, int AddedCount);
+
 /// <summary>Payload of <c>diff.result</c> (native→webview): the changed blocks of the working copy vs the
 /// last committed version, in document order. The editor-content version rides on the envelope so the
-/// webview can drop a result the document has already been edited past.</summary>
-public sealed record DiffResultPayload(IReadOnlyList<DiffEntryPayload> Entries);
+/// webview can drop a result the document has already been edited past. <see cref="Overflow"/> is present
+/// only for a pair too large to diff in detail (see <see cref="DiffOverflowPayload"/>), in which case
+/// <paramref name="Entries"/> is empty.</summary>
+public sealed record DiffResultPayload(IReadOnlyList<DiffEntryPayload> Entries, DiffOverflowPayload? Overflow = null);
 
 /// <summary>
 /// Wire values for <c>diff.request</c>'s <see cref="DiffRequestPayload.Base"/> (mirror of the webview's
