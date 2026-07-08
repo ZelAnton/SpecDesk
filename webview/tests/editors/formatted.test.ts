@@ -228,9 +228,11 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setText("# H\n\nkeep\n\nmore\n");
 
     ed.setDiff([
-      { kind: "changed", lineStart: 0, lineEnd: 0, anchorLine: -1, removedText: "" },
-      { kind: "added", lineStart: 2, lineEnd: 2, anchorLine: -1, removedText: "" },
-      { kind: "moved", lineStart: 4, lineEnd: 4, anchorLine: -1, removedText: "" },
+      // A changed heading whose base equals its head text → nothing word-differs → a whole-block wash
+      // (the inline word-diff bows out), which is what this test asserts the pill on.
+      { kind: "changed", sub: false, lineStart: 0, lineEnd: 0, baseText: "H", baseSource: "H" },
+      { kind: "added", sub: false, lineStart: 2, lineEnd: 2 },
+      { kind: "moved", sub: false, lineStart: 4, lineEnd: 4 },
     ]);
     expect(host.querySelector(".sd-diff-changed")?.textContent).toContain("H");
     expect(host.querySelector(".sd-diff-added")?.textContent).toContain("keep");
@@ -257,9 +259,7 @@ describe("FormattedEditor (jsdom)", () => {
     // head: heading (line 0), paragraph "keep" (line 2). A block was removed in between, so the wire
     // anchor is line 1 (the blank inter-block line) — the case that naive block-containment got wrong.
     ed.setText("# H\n\nkeep\n");
-    ed.setDiff([
-      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 1, removedText: "gone block" },
-    ]);
+    ed.setDiff([{ kind: "removed", sub: false, anchorLine: 1, removedText: "gone block" }]);
 
     const marker = host.querySelector(".sd-diff-removed-marker");
     const heading = host.querySelector("h1");
@@ -277,17 +277,13 @@ describe("FormattedEditor (jsdom)", () => {
     const kept = () => [...host.querySelectorAll("p")].find((p) => p.textContent?.includes("keep"));
 
     // Deleted before all head content (anchor 0) → the marker precedes the heading.
-    ed.setDiff([
-      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 0, removedText: "was first" },
-    ]);
+    ed.setDiff([{ kind: "removed", sub: false, anchorLine: 0, removedText: "was first" }]);
     let marker = host.querySelector(".sd-diff-removed-marker");
     const h1 = heading();
     expect(marker && h1 && follows(marker, h1)).toBe(true);
 
     // Deleted after all head content (anchor past the last block) → the marker follows the last block.
-    ed.setDiff([
-      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 9, removedText: "was last" },
-    ]);
+    ed.setDiff([{ kind: "removed", sub: false, anchorLine: 9, removedText: "was last" }]);
     marker = host.querySelector(".sd-diff-removed-marker");
     const p = kept();
     expect(marker && p && follows(p, marker)).toBe(true);
@@ -297,9 +293,10 @@ describe("FormattedEditor (jsdom)", () => {
     const { ed, host } = mountWithHost();
     ed.setText("- one\n- two\n- three\n"); // items at lines 0, 1, 2
 
-    // A changed row/item mark (sub) on the second item's line.
+    // A changed row/item mark (sub) on the second item's line; its base equals the item text so nothing
+    // word-differs → a whole-item wash (no inline words), which is what this test asserts.
     ed.setDiff([
-      { kind: "changed", lineStart: 1, lineEnd: 1, anchorLine: -1, removedText: "", sub: true },
+      { kind: "changed", sub: true, lineStart: 1, lineEnd: 1, baseText: "two", baseSource: null },
     ]);
     const changed = host.querySelectorAll(".sd-diff-changed");
     expect(changed).toHaveLength(1);
@@ -314,16 +311,7 @@ describe("FormattedEditor (jsdom)", () => {
     const { ed, host } = mountWithHost();
     ed.setText("- one\n- two\n- three\n"); // items at lines 0, 1, 2
     // A removed item sat just before "two" (the following head item, line 1).
-    ed.setDiff([
-      {
-        kind: "removed",
-        lineStart: 0,
-        lineEnd: 0,
-        anchorLine: 1,
-        removedText: "gone item",
-        sub: true,
-      },
-    ]);
+    ed.setDiff([{ kind: "removed", sub: true, anchorLine: 1, removedText: "gone item" }]);
 
     const marker = host.querySelector(".sd-diff-removed-marker");
     const items = [...host.querySelectorAll("li")];
@@ -341,12 +329,11 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: true,
         lineStart: 1,
         lineEnd: 1,
-        anchorLine: -1,
-        removedText: "",
-        sub: true,
         baseText: "buy fresh oranges from the market today",
+        baseSource: null,
       },
     ]);
 
@@ -364,11 +351,11 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: false,
         lineStart: 0,
         lineEnd: 0,
-        anchorLine: -1,
-        removedText: "",
         baseText: "The quick brown fox leaps over the lazy dog today.",
+        baseSource: "The quick brown fox leaps over the lazy dog today.",
       },
     ]);
 
@@ -389,11 +376,11 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: false,
         lineStart: 0,
         lineEnd: 0,
-        anchorLine: -1,
-        removedText: "",
         baseText: "alpha beta gamma delta",
+        baseSource: "alpha beta gamma delta",
       },
     ]);
 

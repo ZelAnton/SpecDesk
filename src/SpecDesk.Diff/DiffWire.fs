@@ -33,6 +33,10 @@ module DiffKind =
 
 /// One changed child (list item / table row) of a changed container, in HEAD child-ordinal space — the
 /// same ordinals the webview's per-container `childLineStarts` uses, so the UI maps index → row/item.
+/// This is the flat intermediate the host reads by field (CLIMutable); the host then projects it to the
+/// wire's per-kind discriminated payload (SpecDesk.Contracts ChildDiffPayload subtypes). Built ONLY via
+/// the per-kind `Build` helpers below, so fields a kind has no use for hold a neutral sentinel and an
+/// illegal combination (a removed child with a head ordinal, a changed child with no base) is never formed.
 [<CLIMutable>]
 type ChildWireEntry =
     { Kind: string // DiffKind.* — "added" | "removed" | "changed" | "moved"
@@ -42,7 +46,11 @@ type ChildWireEntry =
       BaseText: string // for changed: the base child's flattened text (inline word-diff inside the item)
     }
 
-/// One changed top-level block, ready for the wire. CLIMutable so the C# host can read its fields.
+/// One changed top-level block — the flat intermediate the host reads by field (CLIMutable) and then
+/// projects to the wire's per-kind discriminated payload (SpecDesk.Host.DiffProjection →
+/// SpecDesk.Contracts DiffEntryPayload subtypes). Built ONLY through the per-kind `Build` helpers below,
+/// which keep each kind's fields consistent (added/changed/moved carry the head range; removed carries the
+/// anchor + base text) — so the flat shape can't encode "removed with a range" or "changed with no base".
 [<CLIMutable>]
 type DiffWireEntry =
     { Kind: string // DiffKind.* — "added" | "removed" | "changed" | "moved"
@@ -54,6 +62,87 @@ type DiffWireEntry =
       BaseText: string // for a CHANGED plain block: the base rendered text (Formatted-pane inline word-diff)
       BaseSource: string // for a CHANGED plain block: the base raw source (Code-pane inline word-diff)
     }
+
+/// Per-kind builders for the flat wire DTOs above — the single construction path in this module. Each sets
+/// ONLY the fields its kind uses and leaves the rest at their neutral sentinel, so a wire entry can't be
+/// built with a range a removed block has no use for, or without the base a changed block needs: the
+/// illegal kind/field combinations the flat shape could otherwise encode are unreachable at the call sites.
+/// (The host then discriminates these flat records into the wire's per-kind payloads — DiffProjection.)
+[<RequireQualifiedAccess>]
+module private Build =
+    let childAdded (childIndex: int) : ChildWireEntry =
+        { Kind = DiffKind.Added
+          ChildIndex = childIndex
+          AnchorIndex = -1
+          RemovedText = ""
+          BaseText = "" }
+
+    let childMoved (childIndex: int) : ChildWireEntry =
+        { Kind = DiffKind.Moved
+          ChildIndex = childIndex
+          AnchorIndex = -1
+          RemovedText = ""
+          BaseText = "" }
+
+    let childChanged (childIndex: int) (baseText: string) : ChildWireEntry =
+        { Kind = DiffKind.Changed
+          ChildIndex = childIndex
+          AnchorIndex = -1
+          RemovedText = ""
+          BaseText = baseText }
+
+    let childRemoved (anchorIndex: int) (removedText: string) : ChildWireEntry =
+        { Kind = DiffKind.Removed
+          ChildIndex = -1
+          AnchorIndex = anchorIndex
+          RemovedText = removedText
+          BaseText = "" }
+
+    let added (lineStart: int) (lineEnd: int) : DiffWireEntry =
+        { Kind = DiffKind.Added
+          LineStart = lineStart
+          LineEnd = lineEnd
+          AnchorLine = -1
+          RemovedText = ""
+          Children = [||]
+          BaseText = ""
+          BaseSource = "" }
+
+    let moved (lineStart: int) (lineEnd: int) : DiffWireEntry =
+        { Kind = DiffKind.Moved
+          LineStart = lineStart
+          LineEnd = lineEnd
+          AnchorLine = -1
+          RemovedText = ""
+          Children = [||]
+          BaseText = ""
+          BaseSource = "" }
+
+    let removed (anchorLine: int) (removedText: string) : DiffWireEntry =
+        { Kind = DiffKind.Removed
+          LineStart = 0
+          LineEnd = 0
+          AnchorLine = anchorLine
+          RemovedText = removedText
+          Children = [||]
+          BaseText = ""
+          BaseSource = "" }
+
+    let changed
+        (lineStart: int)
+        (lineEnd: int)
+        (children: ChildWireEntry[])
+        (baseText: string)
+        (baseSource: string)
+        : DiffWireEntry =
+        { Kind = DiffKind.Changed
+          LineStart = lineStart
+          LineEnd = lineEnd
+          AnchorLine = -1
+          RemovedText = ""
+          Children = children
+          BaseText = baseText
+          BaseSource = baseSource }
 
 /// The base source slice for an inclusive 0-based line range, clamped to the array.
 let private slice (lines: string[]) (lineStart: int) (lineEnd: int) : string =
@@ -95,30 +184,21 @@ let private childDiff (baseTexts: string list) (headTexts: string list) : ChildW
     let entries = ResizeArray<ChildWireEntry>()
     let mutable lastHeadChild = -1
 
-    let emit kind (after: Ast.Node) (baseText: string) =
-        entries.Add(
-            { Kind = kind
-              ChildIndex = after.LineStart
-              AnchorIndex = -1
-              RemovedText = ""
-              BaseText = baseText })
-
-        lastHeadChild <- after.LineEnd
+    // Record a head-present child and advance the anchor cursor past it (a later removed child anchors
+    // after the last head-present one).
+    let emit (child: ChildWireEntry) (headEnd: int) =
+        entries.Add child
+        lastHeadChild <- headEnd
 
     for entry in AstDiff.diff (synthDoc baseTexts) (synthDoc headTexts) do
         match entry with
         | AstDiff.Unchanged node -> lastHeadChild <- node.LineEnd
-        | AstDiff.Added node -> emit DiffKind.Added node ""
+        | AstDiff.Added node -> emit (Build.childAdded node.LineStart) node.LineEnd
         // A changed child carries its base text so the webview can word-diff the row/item inline.
-        | AstDiff.Changed(before, after) -> emit DiffKind.Changed after (AstDiff.blockText before.Content)
-        | AstDiff.Moved(_, after) -> emit DiffKind.Moved after ""
-        | AstDiff.Removed node ->
-            entries.Add(
-                { Kind = DiffKind.Removed
-                  ChildIndex = -1
-                  AnchorIndex = lastHeadChild + 1
-                  RemovedText = AstDiff.blockText node.Content
-                  BaseText = "" })
+        | AstDiff.Changed(before, after) ->
+            emit (Build.childChanged after.LineStart (AstDiff.blockText before.Content)) after.LineEnd
+        | AstDiff.Moved(_, after) -> emit (Build.childMoved after.LineStart) after.LineEnd
+        | AstDiff.Removed node -> entries.Add(Build.childRemoved (lastHeadChild + 1) (AstDiff.blockText node.Content))
 
     entries.ToArray()
 
@@ -129,24 +209,16 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
     let entries = ResizeArray<DiffWireEntry>()
     let mutable lastHeadLineEnd = -1
 
-    let emit kind (node: Ast.Node) (children: ChildWireEntry[]) (baseText: string) (baseSource: string) =
-        entries.Add(
-            { Kind = kind
-              LineStart = node.LineStart
-              LineEnd = node.LineEnd
-              AnchorLine = -1
-              RemovedText = ""
-              Children = children
-              BaseText = baseText
-              BaseSource = baseSource })
-
-        lastHeadLineEnd <- node.LineEnd
+    // Record a head-present block and advance the removed-anchor cursor past it.
+    let emit (entry: DiffWireEntry) (headEnd: int) =
+        entries.Add entry
+        lastHeadLineEnd <- headEnd
 
     for entry in AstDiff.diffText baseText headText do
         match entry with
         | AstDiff.Unchanged node -> lastHeadLineEnd <- node.LineEnd
-        | AstDiff.Added node -> emit DiffKind.Added node [||] "" ""
-        | AstDiff.Moved(_, after) -> emit DiffKind.Moved after [||] "" ""
+        | AstDiff.Added node -> emit (Build.added node.LineStart node.LineEnd) node.LineEnd
+        | AstDiff.Moved(_, after) -> emit (Build.moved after.LineStart after.LineEnd) after.LineEnd
         | AstDiff.Changed(before, after) ->
             // A changed list/table descends to per-child diffs (highlight the changed rows/items, not the
             // whole container); any other changed block carries its base rendered AND raw-source text so
@@ -166,29 +238,25 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
                     // container) — matching text on both sides here means nothing gets highlighted, which is
                     // the correct, minimal signal for a style-only edit.
                     emit
-                        DiffKind.Changed
-                        after
-                        [||]
-                        (AstDiff.blockText before.Content)
-                        (slice baseLines before.LineStart before.LineEnd)
+                        (Build.changed
+                            after.LineStart
+                            after.LineEnd
+                            [||]
+                            (AstDiff.blockText before.Content)
+                            (slice baseLines before.LineStart before.LineEnd))
+                        after.LineEnd
                 else
-                    emit DiffKind.Changed after children "" ""
+                    emit (Build.changed after.LineStart after.LineEnd children "" "") after.LineEnd
             | _ ->
                 emit
-                    DiffKind.Changed
-                    after
-                    [||]
-                    (AstDiff.blockText before.Content)
-                    (slice baseLines before.LineStart before.LineEnd)
+                    (Build.changed
+                        after.LineStart
+                        after.LineEnd
+                        [||]
+                        (AstDiff.blockText before.Content)
+                        (slice baseLines before.LineStart before.LineEnd))
+                    after.LineEnd
         | AstDiff.Removed node ->
-            entries.Add(
-                { Kind = DiffKind.Removed
-                  LineStart = 0
-                  LineEnd = 0
-                  AnchorLine = lastHeadLineEnd + 1
-                  RemovedText = slice baseLines node.LineStart node.LineEnd
-                  Children = [||]
-                  BaseText = ""
-                  BaseSource = "" })
+            entries.Add(Build.removed (lastHeadLineEnd + 1) (slice baseLines node.LineStart node.LineEnd))
 
     entries.ToArray()

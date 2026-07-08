@@ -403,7 +403,7 @@ public sealed class HostControllerLifecycleTests
             // The version rides the envelope so the webview can drop a result it has edited past.
             Assert.That(reply!.Version, Is.EqualTo(7));
             Assert.That(payload!.Entries, Is.Not.Empty);
-            Assert.That(payload!.Entries[0].Kind, Is.EqualTo("added"));
+            Assert.That(payload!.Entries[0], Is.InstanceOf<AddedDiffEntry>());
         });
     }
 
@@ -458,15 +458,16 @@ public sealed class HostControllerLifecycleTests
 
         DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
         Assert.That(payload, Is.Not.Null);
-        DiffEntryPayload entry = payload!.Entries.Single();
+        // The whole list is one changed entry, but it carries the per-child (item) diff.
+        Assert.That(payload!.Entries.Single(), Is.InstanceOf<ChangedDiffEntry>());
+        ChangedDiffEntry entry = (ChangedDiffEntry)payload.Entries.Single();
+        Assert.That(entry.Children, Has.Count.EqualTo(1));
+        Assert.That(entry.Children[0], Is.InstanceOf<ChangedChildDiff>());
+        ChangedChildDiff child = (ChangedChildDiff)entry.Children[0];
         Assert.Multiple(() =>
         {
-            // The whole list is one changed entry, but it carries the per-child (item) diff.
-            Assert.That(entry.Kind, Is.EqualTo("changed"));
-            Assert.That(entry.Children, Has.Count.EqualTo(1));
-            Assert.That(entry.Children[0].Kind, Is.EqualTo("changed"));
-            Assert.That(entry.Children[0].ChildIndex, Is.EqualTo(1)); // the second item
-            Assert.That(entry.Children[0].BaseText, Does.Contain("two")); // base item text, for inline word-diff
+            Assert.That(child.ChildIndex, Is.EqualTo(1)); // the second item
+            Assert.That(child.BaseText, Does.Contain("two")); // base item text, for inline word-diff
         });
     }
 
@@ -484,10 +485,10 @@ public sealed class HostControllerLifecycleTests
 
         DiffResultPayload? payload = FindKind(MessageKinds.DiffResult)?.GetPayload<DiffResultPayload>();
         Assert.That(payload, Is.Not.Null);
-        DiffEntryPayload entry = payload!.Entries.Single();
+        Assert.That(payload!.Entries.Single(), Is.InstanceOf<ChangedDiffEntry>());
+        ChangedDiffEntry entry = (ChangedDiffEntry)payload.Entries.Single();
         Assert.Multiple(() =>
         {
-            Assert.That(entry.Kind, Is.EqualTo("changed"));
             Assert.That(entry.Children, Is.Empty); // a plain block — no children
             Assert.That(entry.BaseText, Does.Contain("wording")); // base rendered text (Formatted word-diff)
             Assert.That(entry.BaseSource, Does.Contain("wording")); // base raw source (Code word-diff)

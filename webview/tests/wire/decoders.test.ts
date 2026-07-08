@@ -35,21 +35,26 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
   });
 
   it("parseDiffResult validates entries and their children deeply", () => {
+    // The wire is discriminated by kind — a changed entry carries only its own fields (no removed sentinels),
+    // and its children are per-kind too. The decoder narrows to exactly this shape.
     const entry = {
       kind: "changed",
       lineStart: 0,
       lineEnd: 0,
-      anchorLine: -1,
-      removedText: "",
       baseText: "",
       baseSource: "",
-      children: [
-        { kind: "changed", childIndex: 1, anchorIndex: -1, removedText: "", baseText: "two" },
-      ],
+      children: [{ kind: "changed", childIndex: 1, baseText: "two" }],
     };
     expect(parseDiffResult({ entries: [entry] })).toEqual({ entries: [entry] });
     expect(parseDiffResult({ entries: [{ ...entry, lineStart: "0" }] })).toBeNull(); // bad field
     expect(parseDiffResult({ entries: [{ ...entry, children: [{ kind: "x" }] }] })).toBeNull(); // bad child
+    // A removed entry with a head line range is not a valid removed shape (removed has no range) — but the
+    // decoder simply reads removed's own fields (anchorLine/removedText) and ignores the stray range.
+    expect(
+      parseDiffResult({ entries: [{ kind: "removed", anchorLine: 3, removedText: "gone" }] }),
+    ).toEqual({
+      entries: [{ kind: "removed", anchorLine: 3, removedText: "gone" }],
+    });
     expect(parseDiffResult({ entries: "nope" })).toBeNull();
     expect(parseDiffResult({})).toBeNull();
   });

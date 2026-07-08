@@ -30,8 +30,6 @@ function changedEntry(): DiffEntryPayload {
     kind: "changed",
     lineStart: 0,
     lineEnd: 0,
-    anchorLine: -1,
-    removedText: "",
     children: [],
     baseText: "old",
     baseSource: "old",

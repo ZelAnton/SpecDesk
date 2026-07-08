@@ -98,26 +98,36 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload).not.toBeNull();
     expect(payload?.entries).toHaveLength(3);
 
+    // The wire is discriminated by kind — narrow each entry before reading its case-specific fields (a
+    // removed entry has no baseText/children, a changed one no removedText: the compiler enforces it).
     const changedBlock = payload?.entries[0];
     expect(changedBlock?.kind).toBe("changed");
-    expect(changedBlock?.baseText).toBe("The refund window is 14 days.");
-    expect(changedBlock?.children).toHaveLength(0);
+    if (changedBlock?.kind === "changed") {
+      expect(changedBlock.baseText).toBe("The refund window is 14 days.");
+      expect(changedBlock.children).toHaveLength(0);
+    }
 
     const container = payload?.entries[1];
-    expect(container?.children).toHaveLength(2);
-    expect(container?.children[0]).toMatchObject({
-      kind: "changed",
-      childIndex: 1,
-      baseText: "Net 30",
-    });
-    expect(container?.children[1]).toMatchObject({
-      kind: "removed",
-      anchorIndex: 2,
-      removedText: "Legacy clause",
-    });
+    expect(container?.kind).toBe("changed");
+    if (container?.kind === "changed") {
+      expect(container.children).toHaveLength(2);
+      expect(container.children[0]).toMatchObject({
+        kind: "changed",
+        childIndex: 1,
+        baseText: "Net 30",
+      });
+      expect(container.children[1]).toMatchObject({
+        kind: "removed",
+        anchorIndex: 2,
+        removedText: "Legacy clause",
+      });
+    }
 
-    expect(payload?.entries[2]?.kind).toBe("removed");
-    expect(payload?.entries[2]?.removedText).toBe("Deprecated section");
+    const removed = payload?.entries[2];
+    expect(removed?.kind).toBe("removed");
+    if (removed?.kind === "removed") {
+      expect(removed.removedText).toBe("Deprecated section");
+    }
   });
 
   it("github.code", () => {

@@ -51,16 +51,15 @@ public sealed class ContractFixtureTests
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.
-			new DiffEntryPayload("changed", 2, 2, -1, "", [], "The refund window is 14 days.",
-				"The refund window is 14 days."),
+			new ChangedDiffEntry(2, 2, [], "The refund window is 14 days.", "The refund window is 14 days."),
 			// A changed container (list/table) carries per-child entries: a changed item and a removed item.
-			new DiffEntryPayload("changed", 4, 6, -1, "",
+			new ChangedDiffEntry(4, 6,
 			[
-				new ChildDiffPayload("changed", 1, -1, "", "Net 30"),
-				new ChildDiffPayload("removed", -1, 2, "Legacy clause", ""),
+				new ChangedChildDiff(1, "Net 30"),
+				new RemovedChildDiff(2, "Legacy clause"),
 			], "", ""),
 			// A removed top-level block: not in the head, so it anchors before a head line and carries its source.
-			new DiffEntryPayload("removed", 0, 0, 8, "Deprecated section", [], "", ""),
+			new RemovedDiffEntry(8, "Deprecated section"),
 		])),
 		(MessageKinds.GitHubCode,
 			new GitHubCodePayload("WXYZ-1234", "https://github.com/login/device")),

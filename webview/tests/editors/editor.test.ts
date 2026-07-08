@@ -28,10 +28,10 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: false,
         lineStart: 0,
         lineEnd: 0,
-        anchorLine: -1,
-        removedText: "",
+        baseText: "The quick brown fox leaps over the lazy dog today.",
         baseSource: "The quick brown fox leaps over the lazy dog today.",
       },
     ]);
@@ -50,10 +50,10 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: false,
         lineStart: 0,
         lineEnd: 0,
-        anchorLine: -1,
-        removedText: "",
+        baseText: "alpha beta gamma delta",
         baseSource: "alpha beta gamma delta",
       },
     ]);
@@ -70,13 +70,13 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     ed.setDiff([
       {
         kind: "changed",
+        sub: false,
         lineStart: 0,
         lineEnd: 0,
-        anchorLine: -1,
-        removedText: "",
+        baseText: "The quick brown fox leaps over the lazy dog today.",
         baseSource: "The quick brown fox leaps over the lazy dog today.",
       },
-      { kind: "removed", lineStart: 0, lineEnd: 0, anchorLine: 2, removedText: "gone block" },
+      { kind: "removed", sub: false, anchorLine: 2, removedText: "gone block" },
     ]);
 
     expect(host.querySelectorAll(".cm-diff-word-added").length).toBeGreaterThan(0);

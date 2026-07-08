@@ -30,18 +30,35 @@ internal static class DiffProjection
 
         DiffWire.DiffWireEntry[] wire = normalizedBase is null ? [] : DiffWire.toWire(normalizedBase, headText);
 
+        // Discriminate the flat F# intermediate into the wire's per-kind payloads: each kind keeps only the
+        // fields it uses (the sentinels the flat record carries for the others never reach the wire).
         List<DiffEntryPayload> entries = new(wire.Length);
         foreach (DiffWire.DiffWireEntry w in wire)
         {
-            ChildDiffPayload[] children = w.Children.Length == 0
-                ? []
-                : Array.ConvertAll(
-                    w.Children,
-                    c => new ChildDiffPayload(c.Kind, c.ChildIndex, c.AnchorIndex, c.RemovedText, c.BaseText));
-            entries.Add(new DiffEntryPayload(
-                w.Kind, w.LineStart, w.LineEnd, w.AnchorLine, w.RemovedText, children, w.BaseText, w.BaseSource));
+            entries.Add(w.Kind switch
+            {
+                DiffWire.DiffKind.Added => new AddedDiffEntry(w.LineStart, w.LineEnd),
+                DiffWire.DiffKind.Moved => new MovedDiffEntry(w.LineStart, w.LineEnd),
+                DiffWire.DiffKind.Removed => new RemovedDiffEntry(w.AnchorLine, w.RemovedText),
+                DiffWire.DiffKind.Changed => new ChangedDiffEntry(
+                    w.LineStart, w.LineEnd, MapChildren(w.Children), w.BaseText, w.BaseSource),
+                _ => throw new InvalidOperationException($"Unknown diff wire kind '{w.Kind}'."),
+            });
         }
 
         return new DiffResultPayload(entries);
     }
+
+    /// <summary>Discriminate a changed container's flat child entries into the wire's per-kind child payloads.</summary>
+    private static ChildDiffPayload[] MapChildren(DiffWire.ChildWireEntry[] children) =>
+        children.Length == 0
+            ? []
+            : Array.ConvertAll<DiffWire.ChildWireEntry, ChildDiffPayload>(children, c => c.Kind switch
+            {
+                DiffWire.DiffKind.Added => new AddedChildDiff(c.ChildIndex),
+                DiffWire.DiffKind.Moved => new MovedChildDiff(c.ChildIndex),
+                DiffWire.DiffKind.Changed => new ChangedChildDiff(c.ChildIndex, c.BaseText),
+                DiffWire.DiffKind.Removed => new RemovedChildDiff(c.AnchorIndex, c.RemovedText),
+                _ => throw new InvalidOperationException($"Unknown child diff wire kind '{c.Kind}'."),
+            });
 }

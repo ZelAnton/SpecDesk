@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SpecDesk.Contracts;
 
 /// <summary>
@@ -141,41 +143,74 @@ public sealed record OpenExternalPayload(string Url);
 
 /// <summary>
 /// One changed child (table row / list item) of a changed container (native→webview, inside a
-/// <see cref="DiffEntryPayload"/>'s <c>Children</c>). Ordinals match the container's rendered children.
-/// For added/changed/moved, <paramref name="ChildIndex"/> is the 0-based HEAD child ordinal; for removed,
-/// <paramref name="AnchorIndex"/> is the head child it sat before and <paramref name="RemovedText"/> is the
-/// base child's flattened text (ChildIndex is unused). <paramref name="BaseText"/> is the base child's
-/// flattened text for a changed child (inline word-diff inside the row/item); "" otherwise.
+/// <see cref="ChangedDiffEntry"/>'s <c>Children</c>). Ordinals match the container's rendered children.
+/// Discriminated by <c>kind</c> on the wire — each derived record serializes a <c>kind</c> property plus
+/// ONLY its own fields, so an illegal shape (a removed child with a head ordinal, a changed child with no
+/// base) can't be encoded with sentinels: it is simply not a valid record. The webview mirrors this as a
+/// discriminated union in protocol.ts.
 /// </summary>
-public sealed record ChildDiffPayload(
-    string Kind,
-    int ChildIndex,
-    int AnchorIndex,
-    string RemovedText,
-    string BaseText);
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(AddedChildDiff), "added")]
+[JsonDerivedType(typeof(MovedChildDiff), "moved")]
+[JsonDerivedType(typeof(ChangedChildDiff), "changed")]
+[JsonDerivedType(typeof(RemovedChildDiff), "removed")]
+public abstract record ChildDiffPayload;
+
+/// <summary>An added child: the 0-based HEAD child ordinal the new row/item occupies.</summary>
+public sealed record AddedChildDiff(int ChildIndex) : ChildDiffPayload;
+
+/// <summary>A moved child: the 0-based HEAD child ordinal the reordered row/item now occupies.</summary>
+public sealed record MovedChildDiff(int ChildIndex) : ChildDiffPayload;
+
+/// <summary>A changed child: its 0-based HEAD child ordinal and the base child's flattened text (the
+/// inline word-diff inside the row/item).</summary>
+public sealed record ChangedChildDiff(int ChildIndex, string BaseText) : ChildDiffPayload;
+
+/// <summary>A removed child: the head child it sat before (<paramref name="AnchorIndex"/>) and the deleted
+/// child's flattened text (<paramref name="RemovedText"/>, for the marker). It has no head ordinal.</summary>
+public sealed record RemovedChildDiff(int AnchorIndex, string RemovedText) : ChildDiffPayload;
 
 /// <summary>
 /// One changed top-level block in a rendered diff (native→webview, inside <see cref="DiffResultPayload"/>).
-/// Unchanged blocks are omitted. <paramref name="Kind"/> is added/removed/changed/moved.
-/// For added/changed/moved, <paramref name="LineStart"/>/<paramref name="LineEnd"/> are the 0-based,
-/// inclusive HEAD source-line range of the (after) block; the webview decorates those lines/blocks.
-/// For removed, the block is not in the head, so <paramref name="AnchorLine"/> is the head line it sat
-/// before and <paramref name="RemovedText"/> is its base source (for a marker); LineStart/LineEnd are unused.
-/// <paramref name="Children"/> is non-empty only for a changed list/table whose individual rows/items
-/// changed — then the UI highlights those children instead of washing the whole container.
-/// <paramref name="BaseText"/> / <paramref name="BaseSource"/> are the base rendered text and base raw
-/// source of a changed plain block (paragraph/heading), for the webview's inline word-diff in the
-/// Formatted and Code panes respectively; "" otherwise.
+/// Unchanged blocks are omitted. Discriminated by <c>kind</c> on the wire — each derived record serializes
+/// a <c>kind</c> property plus ONLY its own fields, so an illegal shape (a removed block with a head line
+/// range, a changed block with no base) is unrepresentable rather than sentinel-encoded. The webview keys
+/// styling / labels off <c>kind</c> and mirrors this as a discriminated union in protocol.ts.
 /// </summary>
-public sealed record DiffEntryPayload(
-    string Kind,
+[JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(AddedDiffEntry), "added")]
+[JsonDerivedType(typeof(MovedDiffEntry), "moved")]
+[JsonDerivedType(typeof(ChangedDiffEntry), "changed")]
+[JsonDerivedType(typeof(RemovedDiffEntry), "removed")]
+public abstract record DiffEntryPayload;
+
+/// <summary>An added block: its 0-based, inclusive HEAD source-line range (the webview decorates it).</summary>
+public sealed record AddedDiffEntry(int LineStart, int LineEnd) : DiffEntryPayload;
+
+/// <summary>A moved block: its 0-based, inclusive HEAD source-line range (the reordered head position).</summary>
+public sealed record MovedDiffEntry(int LineStart, int LineEnd) : DiffEntryPayload;
+
+/// <summary>
+/// A changed block: its 0-based, inclusive HEAD source-line range plus, for a changed list/table whose
+/// individual rows/items changed, the per-child <paramref name="Children"/> (the UI highlights those
+/// instead of washing the whole container). <paramref name="BaseText"/> / <paramref name="BaseSource"/>
+/// are the base rendered text and base raw source of a changed plain block (paragraph/heading), for the
+/// webview's inline word-diff in the Formatted and Code panes respectively; "" for a container that
+/// descended to children.
+/// </summary>
+public sealed record ChangedDiffEntry(
     int LineStart,
     int LineEnd,
-    int AnchorLine,
-    string RemovedText,
     IReadOnlyList<ChildDiffPayload> Children,
     string BaseText,
-    string BaseSource);
+    string BaseSource) : DiffEntryPayload;
+
+/// <summary>
+/// A removed block: not in the head, so it carries the head line it sat before
+/// (<paramref name="AnchorLine"/>) and its base source text (<paramref name="RemovedText"/>, for a marker).
+/// It has no head line range.
+/// </summary>
+public sealed record RemovedDiffEntry(int AnchorLine, string RemovedText) : DiffEntryPayload;
 
 /// <summary>Payload of <c>diff.result</c> (native→webview): the changed blocks of the working copy vs the
 /// last committed version, in document order. The editor-content version rides on the envelope so the

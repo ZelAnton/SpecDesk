@@ -20,6 +20,7 @@ import { applyWordDiff, diffLabel, removedMarkerLabel } from "../review/diff-dec
 import type { DiffMark } from "../review/diff-marks.js";
 import type { BlockGeometry } from "../review/preview.js";
 import { lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
+import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
@@ -467,65 +468,86 @@ export class FormattedEditor {
     // Distinct keys so adjacent deletions (which share an anchor position) stay separate widgets that
     // ProseMirror can tell apart across redraws rather than collapsing into one.
     let removedSeq = 0;
-    for (const mark of this.diffMarks) {
-      if (mark.kind === "removed") {
-        // A removed ROW/ITEM (mark.sub) anchors at the following row/item inside its container, so the
-        // marker sits between the surrounding rows/items rather than at the container's edge.
-        const childRange = mark.sub === true ? this.nodeRangeForLine(mark.anchorLine) : null;
-        let pos: number;
-        if (childRange !== null) {
-          pos = childRange[0];
-        } else {
-          // A removed top-level BLOCK: before the FIRST head block starting at/after the anchor line.
-          // Keying on block STARTS (lineStart) is robust to where trailing blank lines land (block ENDS
-          // can differ between the native AST that set the anchor and this pane's splitter). anchorLine 0
-          // targets the first block (top); nothing at/after the anchor (deleted at the end) → doc end.
-          let following = -1;
-          for (let i = 0; i < this.blocks.length; i++) {
-            const block = this.blocks[i];
-            if (block !== undefined && block.lineStart >= mark.anchorLine) {
-              following = i;
-              break;
-            }
-          }
-          pos =
-            following < 0 || following >= doc.childCount
-              ? doc.content.size
-              : blockRange(doc, following)[0];
-        }
-        decos.push(
-          Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
-            side: -1,
-            key: `sd-removed-${removedSeq++}`,
-          }),
-        );
-        continue;
-      }
-      // Resolve the node to wash: a whole top-level block, or — for a sub-block mark (a changed table
-      // row / list item) — the individual row/item that nodeRangeForLine narrows to inside a table/list.
-      const range = this.nodeRangeForLine(mark.lineStart);
-      if (range === null) {
-        continue;
-      }
-      // A changed block tries an inline word-diff first (highlight the changed words rather than wash
-      // the whole thing): a top-level paragraph/heading on its own node, or a row/item (sub) on its
-      // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub mark gets no
-      // annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
-      if (mark.kind === "changed" && mark.baseText !== undefined) {
-        const inlineFrom = mark.sub === true ? range[0] + 1 : range[0];
-        if (this.pushInlineWordDiff(decos, inlineFrom, mark.baseText, mark.sub !== true)) {
-          continue;
-        }
-      }
-      // Whole-block wash. `data-diff-label` drives the CSS ::before annotation pill — for whole-block
-      // changes only; a row/item (mark.sub) skips it (it would clutter, and a <tr> can't anchor a label).
-      const attrs: { class: string; "data-diff-label"?: string } = {
-        class: `sd-diff-${mark.kind}`,
-      };
-      if (mark.sub !== true) {
-        attrs["data-diff-label"] = diffLabel(mark.kind);
+
+    // Whole-block (or row/item) wash by kind. `data-diff-label` drives the CSS ::before annotation pill —
+    // for whole-block changes only; a row/item (mark.sub) skips it (it would clutter, and a <tr> can't
+    // anchor a label).
+    const washBlock = (
+      kind: "added" | "moved" | "changed",
+      sub: boolean,
+      range: [number, number],
+    ): void => {
+      const attrs: { class: string; "data-diff-label"?: string } = { class: `sd-diff-${kind}` };
+      if (!sub) {
+        attrs["data-diff-label"] = diffLabel(kind);
       }
       decos.push(Decoration.node(range[0], range[1], attrs));
+    };
+
+    for (const mark of this.diffMarks) {
+      switch (mark.kind) {
+        case "removed": {
+          // A removed ROW/ITEM (mark.sub) anchors at the following row/item inside its container, so the
+          // marker sits between the surrounding rows/items rather than at the container's edge.
+          const childRange = mark.sub ? this.nodeRangeForLine(mark.anchorLine) : null;
+          let pos: number;
+          if (childRange !== null) {
+            pos = childRange[0];
+          } else {
+            // A removed top-level BLOCK: before the FIRST head block starting at/after the anchor line.
+            // Keying on block STARTS (lineStart) is robust to where trailing blank lines land (block ENDS
+            // can differ between the native AST that set the anchor and this pane's splitter). anchorLine 0
+            // targets the first block (top); nothing at/after the anchor (deleted at the end) → doc end.
+            let following = -1;
+            for (let i = 0; i < this.blocks.length; i++) {
+              const block = this.blocks[i];
+              if (block !== undefined && block.lineStart >= mark.anchorLine) {
+                following = i;
+                break;
+              }
+            }
+            pos =
+              following < 0 || following >= doc.childCount
+                ? doc.content.size
+                : blockRange(doc, following)[0];
+          }
+          decos.push(
+            Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
+              side: -1,
+              key: `sd-removed-${removedSeq++}`,
+            }),
+          );
+          break;
+        }
+        case "added":
+        case "moved": {
+          // Resolve the node to wash: a whole top-level block, or — for a sub-block mark (a table row /
+          // list item) — the individual row/item that nodeRangeForLine narrows to inside a table/list.
+          const range = this.nodeRangeForLine(mark.lineStart);
+          if (range !== null) {
+            washBlock(mark.kind, mark.sub, range);
+          }
+          break;
+        }
+        case "changed": {
+          const range = this.nodeRangeForLine(mark.lineStart);
+          if (range === null) {
+            break;
+          }
+          // A changed block tries an inline word-diff first (highlight the changed words rather than wash
+          // the whole thing): a top-level paragraph/heading on its own node, or a row/item (sub) on its
+          // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub mark gets
+          // no annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
+          const inlineFrom = mark.sub ? range[0] + 1 : range[0];
+          if (this.pushInlineWordDiff(decos, inlineFrom, mark.baseText, !mark.sub)) {
+            break;
+          }
+          washBlock("changed", mark.sub, range);
+          break;
+        }
+        default:
+          assertNever(mark);
+      }
     }
     this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.create(doc, decos)));
   }

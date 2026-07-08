@@ -59,39 +59,77 @@ export type DiffKind = (typeof DIFF_KINDS)[number];
  *  these values, never decodes them from the wire. */
 export type DiffBaseKind = "lastVersion" | "published" | "pr";
 
-/** A changed child (table row / list item) of a changed container (native→webview, inside a
- *  {@link DiffEntryPayload}'s `children`). Ordinals match the container's rendered children. */
-export interface ChildDiffPayload {
-  kind: DiffKind;
-  /** 0-based HEAD child ordinal (added/changed/moved); -1 for "removed". */
-  childIndex: number;
-  /** For "removed": the head child it sat before (the marker anchors there); -1 otherwise. */
-  anchorIndex: number;
-  /** For "removed": the deleted child's flattened text; "" otherwise. */
-  removedText: string;
-  /** For "changed": the base child's flattened text (inline word-diff inside the row/item); "" otherwise. */
-  baseText: string;
-}
+/** A changed child (table row / list item) of a changed container (native→webview, inside a changed
+ *  {@link DiffEntryPayload}'s `children`). Discriminated by `kind` (mirror of the C# `ChildDiffPayload`
+ *  hierarchy): each case carries ONLY its own fields — a removed child anchors and carries its text, a
+ *  changed child carries a base, added/moved just a head ordinal — so "a removed child with a head
+ *  ordinal" or "a changed child with no base" is unrepresentable rather than sentinel-encoded. Ordinals
+ *  match the container's rendered children. */
+export type ChildDiffPayload =
+  | {
+      kind: "added";
+      /** 0-based HEAD child ordinal the new row/item occupies. */
+      childIndex: number;
+    }
+  | {
+      kind: "moved";
+      /** 0-based HEAD child ordinal the reordered row/item now occupies. */
+      childIndex: number;
+    }
+  | {
+      kind: "changed";
+      /** 0-based HEAD child ordinal of the changed row/item. */
+      childIndex: number;
+      /** The base child's flattened text (inline word-diff inside the row/item). */
+      baseText: string;
+    }
+  | {
+      kind: "removed";
+      /** The head child the deleted row/item sat before (the marker anchors there). */
+      anchorIndex: number;
+      /** The deleted child's flattened text (for the marker). */
+      removedText: string;
+    };
 
-/** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted. */
-export interface DiffEntryPayload {
-  kind: DiffKind;
-  /** 0-based inclusive HEAD source-line range of the (after) block; unused for "removed". */
-  lineStart: number;
-  lineEnd: number;
-  /** For "removed": the head line the block sat before (the overlay places a marker there); -1 otherwise. */
-  anchorLine: number;
-  /** For "removed": the deleted block's base source text (for the marker); "" otherwise. */
-  removedText: string;
-  /** Non-empty only for a changed list/table whose individual rows/items changed — then the UI
-   *  highlights those children rather than washing the whole container. */
-  children: ChildDiffPayload[];
-  /** The base rendered text of a changed plain block (paragraph/heading), for the Formatted pane's
-   *  inline word-diff; "" otherwise. */
-  baseText: string;
-  /** The base raw source of a changed plain block, for the Code pane's inline word-diff; "" otherwise. */
-  baseSource: string;
-}
+/** A changed top-level block in a rendered diff (native→webview). Unchanged blocks are omitted.
+ *  Discriminated by `kind` (mirror of the C# `DiffEntryPayload` hierarchy): each case carries ONLY its
+ *  own fields — added/changed/moved carry the HEAD line range, removed carries the anchor + base text,
+ *  changed additionally carries the per-child diff and inline-word-diff bases — so "a removed block with
+ *  a line range" or "a changed block with no base" is unrepresentable rather than sentinel-encoded. */
+export type DiffEntryPayload =
+  | {
+      kind: "added";
+      /** 0-based inclusive HEAD source-line range. */
+      lineStart: number;
+      lineEnd: number;
+    }
+  | {
+      kind: "moved";
+      /** 0-based inclusive HEAD source-line range (reordered head position). */
+      lineStart: number;
+      lineEnd: number;
+    }
+  | {
+      kind: "removed";
+      /** The head line the deleted block sat before (the overlay places a marker there). */
+      anchorLine: number;
+      /** The deleted block's base source text (for the marker). */
+      removedText: string;
+    }
+  | {
+      kind: "changed";
+      /** 0-based inclusive HEAD source-line range of the (after) block. */
+      lineStart: number;
+      lineEnd: number;
+      /** Non-empty only for a changed list/table whose individual rows/items changed — then the UI
+       *  highlights those children rather than washing the whole container. */
+      children: ChildDiffPayload[];
+      /** The base rendered text of a changed plain block (paragraph/heading), for the Formatted pane's
+       *  inline word-diff; "" for a container that descended to children. */
+      baseText: string;
+      /** The base raw source of a changed plain block, for the Code pane's inline word-diff; "" otherwise. */
+      baseSource: string;
+    };
 
 /** Payload of `diff.result` (native→webview): the changed blocks of the working copy vs the last
  *  committed version, in document order. The version rides on the envelope (drop a stale result). */

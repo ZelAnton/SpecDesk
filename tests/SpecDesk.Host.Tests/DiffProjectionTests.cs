@@ -18,7 +18,7 @@ public sealed class DiffProjectionTests
         DiffResultPayload payload = DiffProjection.Build(
             "The refund window is 14 days.\n", "The refund window is 30 days.\n");
 
-        DiffEntryPayload? changed = payload.Entries.FirstOrDefault(e => e.Kind == "changed");
+        ChangedDiffEntry? changed = payload.Entries.OfType<ChangedDiffEntry>().FirstOrDefault();
         Assert.That(changed, Is.Not.Null);
         Assert.Multiple(() =>
         {
@@ -34,12 +34,13 @@ public sealed class DiffProjectionTests
         DiffResultPayload payload = DiffProjection.Build(
             "- one\n- two\n- three\n", "- one\n- two changed\n- three\n");
 
-        DiffEntryPayload? container = payload.Entries.FirstOrDefault(e => e.Children.Count > 0);
+        ChangedDiffEntry? container = payload.Entries.OfType<ChangedDiffEntry>()
+            .FirstOrDefault(e => e.Children.Count > 0);
         Assert.That(container, Is.Not.Null);
-        ChildDiffPayload child = container!.Children[0];
+        Assert.That(container!.Children[0], Is.InstanceOf<ChangedChildDiff>());
+        ChangedChildDiff child = (ChangedChildDiff)container.Children[0];
         Assert.Multiple(() =>
         {
-            Assert.That(child.Kind, Is.EqualTo("changed"));
             Assert.That(child.ChildIndex, Is.EqualTo(1)); // the second item
             Assert.That(child.BaseText, Does.Contain("two"));
         });
@@ -59,7 +60,7 @@ public sealed class DiffProjectionTests
 
         DiffResultPayload payload = DiffProjection.Build(crlfBase, head);
 
-        DiffEntryPayload? changed = payload.Entries.FirstOrDefault(e => e.Kind == "changed");
+        ChangedDiffEntry? changed = payload.Entries.OfType<ChangedDiffEntry>().FirstOrDefault();
         Assert.That(changed, Is.Not.Null);
         Assert.Multiple(() =>
         {
@@ -77,7 +78,7 @@ public sealed class DiffProjectionTests
 
         DiffResultPayload payload = DiffProjection.Build(crlfBase, head);
 
-        DiffEntryPayload? removed = payload.Entries.FirstOrDefault(e => e.Kind == "removed");
+        RemovedDiffEntry? removed = payload.Entries.OfType<RemovedDiffEntry>().FirstOrDefault();
         Assert.That(removed, Is.Not.Null);
         Assert.Multiple(() =>
         {
@@ -96,7 +97,7 @@ public sealed class DiffProjectionTests
 
         DiffResultPayload payload = DiffProjection.Build(crlfBase, head);
 
-        DiffEntryPayload? changed = payload.Entries.FirstOrDefault(e => e.Kind == "changed");
+        ChangedDiffEntry? changed = payload.Entries.OfType<ChangedDiffEntry>().FirstOrDefault();
         Assert.That(changed, Is.Not.Null);
         Assert.Multiple(() =>
         {
@@ -114,9 +115,11 @@ public sealed class DiffProjectionTests
 
         DiffResultPayload payload = DiffProjection.Build(crlfBase, head);
 
-        DiffEntryPayload? container = payload.Entries.FirstOrDefault(e => e.Children.Count > 0);
+        ChangedDiffEntry? container = payload.Entries.OfType<ChangedDiffEntry>()
+            .FirstOrDefault(e => e.Children.Count > 0);
         Assert.That(container, Is.Not.Null);
-        ChildDiffPayload child = container!.Children[0];
+        Assert.That(container!.Children[0], Is.InstanceOf<ChangedChildDiff>());
+        ChangedChildDiff child = (ChangedChildDiff)container.Children[0];
         Assert.That(child.BaseText, Does.Not.Contain('\r'));
     }
 }

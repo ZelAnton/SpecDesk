@@ -24,6 +24,7 @@ import { basicSetup } from "codemirror";
 import { applyWordDiff, removedMarkerLabel } from "../review/diff-decoration.js";
 import type { DiffMark } from "../review/diff-marks.js";
 import type { EditorSpacer } from "../sync/height-sync.js";
+import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
@@ -201,32 +202,55 @@ function pushInlineSourceWords(
 function buildDiffDecorations(state: EditorState, marks: DiffMark[]): DecorationSet {
   const lineCount = state.doc.lines;
   const ranges: Range<Decoration>[] = [];
-  for (const mark of marks) {
-    if (mark.kind === "removed") {
-      const widget = new RemovedWidget(mark.removedText);
-      if (mark.anchorLine >= lineCount) {
-        // Deleted past the last head line — a marker below the last line.
-        ranges.push(
-          Decoration.widget({ widget, block: true, side: 1 }).range(state.doc.line(lineCount).to),
-        );
-      } else {
-        // A marker above the line the deleted block sat before.
-        const line = state.doc.line(Math.max(mark.anchorLine + 1, 1));
-        ranges.push(Decoration.widget({ widget, block: true, side: -1 }).range(line.from));
-      }
-      continue;
-    }
-    const cls = `cm-diff-${mark.kind}`;
-    const start = Math.min(Math.max(mark.lineStart + 1, 1), lineCount);
-    const end = Math.min(Math.max(mark.lineEnd + 1, 1), lineCount);
+
+  // Wash a whole-block range (added/moved/changed) by kind; returns the clamped 1-based CM line span so a
+  // changed block can refine it with inline word highlights.
+  const washLines = (
+    kind: "added" | "moved" | "changed",
+    lineStart: number,
+    lineEnd: number,
+  ): [number, number] => {
+    const cls = `cm-diff-${kind}`;
+    const start = Math.min(Math.max(lineStart + 1, 1), lineCount);
+    const end = Math.min(Math.max(lineEnd + 1, 1), lineCount);
     for (let n = start; n <= end; n++) {
       ranges.push(Decoration.line({ class: cls }).range(state.doc.line(n).from));
     }
-    // On a granular changed paragraph/heading, refine the line wash with inline word highlights. The
-    // wash stays as the block-level signal (the Code pane has no annotation pill); too-significant or
-    // sub-block (row/item) marks keep just the wash.
-    if (mark.kind === "changed" && mark.sub !== true && mark.baseSource !== undefined) {
-      pushInlineSourceWords(ranges, state, mark.baseSource, start, end);
+    return [start, end];
+  };
+
+  for (const mark of marks) {
+    switch (mark.kind) {
+      case "removed": {
+        const widget = new RemovedWidget(mark.removedText);
+        if (mark.anchorLine >= lineCount) {
+          // Deleted past the last head line — a marker below the last line.
+          ranges.push(
+            Decoration.widget({ widget, block: true, side: 1 }).range(state.doc.line(lineCount).to),
+          );
+        } else {
+          // A marker above the line the deleted block sat before.
+          const line = state.doc.line(Math.max(mark.anchorLine + 1, 1));
+          ranges.push(Decoration.widget({ widget, block: true, side: -1 }).range(line.from));
+        }
+        break;
+      }
+      case "added":
+      case "moved":
+        washLines(mark.kind, mark.lineStart, mark.lineEnd);
+        break;
+      case "changed": {
+        const [start, end] = washLines("changed", mark.lineStart, mark.lineEnd);
+        // On a whole-block changed paragraph/heading, refine the line wash with inline word highlights (the
+        // wash stays as the block-level signal — the Code pane has no annotation pill). A row/item (sub)
+        // changed mark has no own code-pane source (baseSource is null) and keeps just the wash.
+        if (mark.baseSource !== null) {
+          pushInlineSourceWords(ranges, state, mark.baseSource, start, end);
+        }
+        break;
+      }
+      default:
+        assertNever(mark);
     }
   }
 

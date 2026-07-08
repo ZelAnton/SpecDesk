@@ -9,9 +9,7 @@
 import {
   type BranchNameSuggestedPayload,
   type ChildDiffPayload,
-  DIFF_KINDS,
   type DiffEntryPayload,
-  type DiffKind,
   type DiffResultPayload,
   type DocLoadedPayload,
   type ErrorPayload,
@@ -93,57 +91,60 @@ export function parsePreview(value: unknown): PreviewPayload | null {
   return { html: value.html, lineMap };
 }
 
-function isDiffKind(value: unknown): value is DiffKind {
-  return isString(value) && DIFF_KINDS.some((kind) => kind === value);
-}
-
+// The wire is discriminated by `kind` (the C# host serializes only each case's own fields, no sentinels),
+// so each parser reads ONLY the fields its kind carries and narrows straight to the union case. An
+// unknown/absent kind, or a field of the wrong type, falls through to null (a contract drift).
 function parseChildDiff(value: unknown): ChildDiffPayload | null {
-  if (
-    !isRecord(value) ||
-    !isDiffKind(value.kind) ||
-    !isNumber(value.childIndex) ||
-    !isNumber(value.anchorIndex) ||
-    !isString(value.removedText) ||
-    !isString(value.baseText)
-  ) {
+  if (!isRecord(value)) {
     return null;
   }
-  return {
-    kind: value.kind,
-    childIndex: value.childIndex,
-    anchorIndex: value.anchorIndex,
-    removedText: value.removedText,
-    baseText: value.baseText,
-  };
+  if ((value.kind === "added" || value.kind === "moved") && isNumber(value.childIndex)) {
+    return { kind: value.kind, childIndex: value.childIndex };
+  }
+  if (value.kind === "changed" && isNumber(value.childIndex) && isString(value.baseText)) {
+    return { kind: "changed", childIndex: value.childIndex, baseText: value.baseText };
+  }
+  if (value.kind === "removed" && isNumber(value.anchorIndex) && isString(value.removedText)) {
+    return { kind: "removed", anchorIndex: value.anchorIndex, removedText: value.removedText };
+  }
+  return null;
 }
 
 function parseDiffEntry(value: unknown): DiffEntryPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
   if (
-    !isRecord(value) ||
-    !isDiffKind(value.kind) ||
-    !isNumber(value.lineStart) ||
-    !isNumber(value.lineEnd) ||
-    !isNumber(value.anchorLine) ||
-    !isString(value.removedText) ||
-    !isString(value.baseText) ||
-    !isString(value.baseSource)
+    (value.kind === "added" || value.kind === "moved") &&
+    isNumber(value.lineStart) &&
+    isNumber(value.lineEnd)
   ) {
-    return null;
+    return { kind: value.kind, lineStart: value.lineStart, lineEnd: value.lineEnd };
   }
-  const children = parseArray(value.children, parseChildDiff);
-  if (children === null) {
-    return null;
+  if (value.kind === "removed" && isNumber(value.anchorLine) && isString(value.removedText)) {
+    return { kind: "removed", anchorLine: value.anchorLine, removedText: value.removedText };
   }
-  return {
-    kind: value.kind,
-    lineStart: value.lineStart,
-    lineEnd: value.lineEnd,
-    anchorLine: value.anchorLine,
-    removedText: value.removedText,
-    children,
-    baseText: value.baseText,
-    baseSource: value.baseSource,
-  };
+  if (
+    value.kind === "changed" &&
+    isNumber(value.lineStart) &&
+    isNumber(value.lineEnd) &&
+    isString(value.baseText) &&
+    isString(value.baseSource)
+  ) {
+    const children = parseArray(value.children, parseChildDiff);
+    if (children === null) {
+      return null;
+    }
+    return {
+      kind: "changed",
+      lineStart: value.lineStart,
+      lineEnd: value.lineEnd,
+      children,
+      baseText: value.baseText,
+      baseSource: value.baseSource,
+    };
+  }
+  return null;
 }
 
 export function parseDiffResult(value: unknown): DiffResultPayload | null {

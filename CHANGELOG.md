@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- The `diff.result` wire contract is now discriminated by `kind` instead of one flat record padded with
+  sentinels (`anchorLine: -1`, `removedText: ""`, empty `children`, `""` bases for the cases that don't use
+  them). Each kind carries only its own fields on the wire — a removed block/child has an anchor and text
+  but no line range; a changed block/child has a base but no anchor — so "a removed block with a range" or
+  "a changed block with no base" is now unrepresentable. On the C# side the payloads are `[JsonPolymorphic]`
+  hierarchies (`AddedDiffEntry`/`ChangedDiffEntry`/`RemovedDiffEntry`/… and the `ChildDiffPayload` peers);
+  the F# `DiffWire` producer builds through per-kind smart constructors; the webview mirrors them as
+  discriminated unions (`DiffEntryPayload`, `ChildDiffPayload`, and the editors' `DiffMark`) so both panes
+  gate their rendering on an exhaustive `kind` match rather than a mix of `kind` / `sub` / `!== undefined`
+  checks. Behavior is unchanged; the change closes the class of drift where the two panes disagreed on how
+  to read the flat shape.
 - The webview's starting view mode (Code/Split/Formatted) is now declared exactly once, in `#panes`'s
   `data-mode` attribute in `webview/index.html`; `webview/src/index.ts` reads it back at startup instead
   of repeating a `"split"` literal of its own, and reflects it into the mode radiogroup through the same
