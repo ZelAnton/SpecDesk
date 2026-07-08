@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { applyWordDiff, diffLabel, removedMarkerLabel } from "../../src/review/diff-decoration.js";
+import { applyWordDiff, diffLabel } from "../../src/review/diff-decoration.js";
 
-// diff-decoration is the single source of truth for both review panes' overlays (a fix lands in both
-// the Code and Formatted panes at once). It is pure and DOM-free but branchy — the change labels, the
-// removed-block marker text, and applyWordDiff's three whole-block-wash fallbacks. A silent regression
-// here corrupts what the reviewer sees without crashing, so pin the branches directly.
+// diff-decoration is the single source of truth for both review panes' inline word-diff (a fix lands in
+// both the Code and Formatted panes at once). It is pure and DOM-free but branchy — the change labels and
+// applyWordDiff's three whole-block-wash fallbacks. A silent regression here corrupts what the reviewer
+// sees without crashing, so pin the branches directly. (The removed-marker text policy moved up to
+// overlay-plan.ts — see overlay-plan.test.ts.)
 
 describe("diffLabel", () => {
   it("labels each known change kind as the author's own", () => {
@@ -17,25 +18,6 @@ describe("diffLabel", () => {
   it("falls back to a generic label for an unknown kind", () => {
     expect(diffLabel("")).toBe("Changed by you");
     expect(diffLabel("something-else")).toBe("Changed by you");
-  });
-});
-
-describe("removedMarkerLabel", () => {
-  it("previews a single removed line", () => {
-    expect(removedMarkerLabel("a heading")).toBe("Deleted by you — a heading");
-  });
-
-  it("shows a placeholder when the removed block is empty", () => {
-    expect(removedMarkerLabel("")).toBe("Deleted by you — (empty block)");
-    expect(removedMarkerLabel("   ")).toBe("Deleted by you — (empty block)");
-  });
-
-  it("previews the first line and counts the lines for a multi-line block", () => {
-    expect(removedMarkerLabel("first\nsecond\nthird")).toBe("Deleted by you — first (… 3 lines)");
-  });
-
-  it("trims the previewed first line", () => {
-    expect(removedMarkerLabel("  spaced  \nmore")).toBe("Deleted by you — spaced (… 2 lines)");
   });
 });
 

@@ -21,14 +21,16 @@ import {
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
-import { applyWordDiff, removedMarkerLabel } from "../review/diff-decoration.js";
+import { applyWordDiff } from "../review/diff-decoration.js";
 import type { DiffMark } from "../review/diff-marks.js";
+import { buildOverlayPlan, type RemovedAnchor } from "../review/overlay-plan.js";
 import type { EditorSpacer } from "../sync/height-sync.js";
 import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
 import { isRecord } from "../wire/decoders.js";
+import { splitTopLevelBlocks } from "./md-blocks.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { computeTextPatch } from "./mirror-patch.js";
 
@@ -127,21 +129,22 @@ const activeLineField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-/** A block widget standing in for a removed block (which is absent from the head document). */
+/** A block widget standing in for a removed block (which is absent from the head document). `label` is
+ *  the already-composed marker text (the single removed-text policy lives in overlay-plan.ts). */
 class RemovedWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(readonly label: string) {
     super();
   }
 
   override eq(other: RemovedWidget): boolean {
-    return other.text === this.text;
+    return other.label === this.label;
   }
 
   toDOM(): HTMLElement {
     const element = document.createElement("div");
     element.className = "cm-diff-removed-marker";
     element.setAttribute("aria-hidden", "true");
-    element.textContent = removedMarkerLabel(this.text);
+    element.textContent = this.label;
     return element;
   }
 }
@@ -200,12 +203,39 @@ function pushInlineSourceWords(
   );
 }
 
+/** The 0-based source line a removed-block marker sits at, or null to plant it below the last line —
+ *  the Code pane's line-coordinate reading of the single {@link RemovedAnchor}. A top-level anchor's
+ *  `line` is a real block start (always in range); a row/item anchor past the document end plants below
+ *  the last line, like a deletion after all head content. */
+function removedLineFor(anchor: RemovedAnchor, lineCount: number): number | null {
+  switch (anchor.at) {
+    case "end":
+      return null;
+    case "block":
+      return anchor.line;
+    case "child":
+      return anchor.line >= lineCount ? null : anchor.line;
+    default:
+      return assertNever(anchor);
+  }
+}
+
+// Thin adapter: turn the pane-independent overlay plan (overlay-plan.ts) into CodeMirror decorations.
+// The plan owns the removed-marker anchoring + text policy; here we only map its instructions to line
+// washes, inline source word marks, and block widgets.
 function buildDiffDecorations(state: EditorState, marks: DiffMark[]): DecorationSet {
   const lineCount = state.doc.lines;
   const ranges: Range<Decoration>[] = [];
+  // The block start lines are needed only to anchor a removed TOP-LEVEL block; skip the source split
+  // entirely when the diff has none (the common case).
+  const needsBlocks = marks.some((mark) => mark.kind === "removed" && !mark.sub);
+  const blockLineStarts = needsBlocks
+    ? splitTopLevelBlocks(state.doc.toString()).map((block) => block.lineStart)
+    : [];
+  const plan = buildOverlayPlan(marks, blockLineStarts);
 
-  // Wash a whole-block range (added/moved/changed) by kind; returns the clamped 1-based CM line span so a
-  // changed block can refine it with inline word highlights.
+  // Wash a whole-block range by kind; returns the clamped 1-based CM line span so a changed block can
+  // refine it with inline word highlights.
   const washLines = (
     kind: "added" | "moved" | "changed",
     lineStart: number,
@@ -220,38 +250,38 @@ function buildDiffDecorations(state: EditorState, marks: DiffMark[]): Decoration
     return [start, end];
   };
 
-  for (const mark of marks) {
-    switch (mark.kind) {
+  for (const instr of plan) {
+    switch (instr.type) {
+      case "fill":
+        washLines(instr.kind, instr.lineStart, instr.lineEnd);
+        break;
+      case "inline": {
+        // A changed block always keeps its line wash as the block-level signal (the Code pane has no
+        // annotation pill), refined with inline word highlights on top. A row/item (sub) changed mark has
+        // no own code-pane source (baseSource is null) and keeps just the wash.
+        const [start, end] = washLines("changed", instr.lineStart, instr.lineEnd);
+        if (instr.baseSource !== null) {
+          pushInlineSourceWords(ranges, state, instr.baseSource, start, end);
+        }
+        break;
+      }
       case "removed": {
-        const widget = new RemovedWidget(mark.removedText);
-        if (mark.anchorLine >= lineCount) {
+        const widget = new RemovedWidget(instr.label);
+        const line = removedLineFor(instr.anchor, lineCount);
+        if (line === null) {
           // Deleted past the last head line — a marker below the last line.
           ranges.push(
             Decoration.widget({ widget, block: true, side: 1 }).range(state.doc.line(lineCount).to),
           );
         } else {
           // A marker above the line the deleted block sat before.
-          const line = state.doc.line(Math.max(mark.anchorLine + 1, 1));
-          ranges.push(Decoration.widget({ widget, block: true, side: -1 }).range(line.from));
-        }
-        break;
-      }
-      case "added":
-      case "moved":
-        washLines(mark.kind, mark.lineStart, mark.lineEnd);
-        break;
-      case "changed": {
-        const [start, end] = washLines("changed", mark.lineStart, mark.lineEnd);
-        // On a whole-block changed paragraph/heading, refine the line wash with inline word highlights (the
-        // wash stays as the block-level signal — the Code pane has no annotation pill). A row/item (sub)
-        // changed mark has no own code-pane source (baseSource is null) and keeps just the wash.
-        if (mark.baseSource !== null) {
-          pushInlineSourceWords(ranges, state, mark.baseSource, start, end);
+          const at = state.doc.line(Math.max(line + 1, 1));
+          ranges.push(Decoration.widget({ widget, block: true, side: -1 }).range(at.from));
         }
         break;
       }
       default:
-        assertNever(mark);
+        assertNever(instr);
     }
   }
 

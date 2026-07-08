@@ -93,6 +93,50 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
   });
 });
 
+describe("MarkdownEditor removed-marker parity with the Formatted pane (jsdom, T-078)", () => {
+  // Both panes now share overlay-plan.ts's single anchoring + removed-text policy — the Code pane no
+  // longer clamps a raw anchor line by line count, nor shows the removed block's raw Markdown source.
+
+  it("flattens a removed whole block's raw Markdown source in the marker (no leaked syntax)", () => {
+    const { ed, host } = mount();
+    ed.setText("# Keep\n\nkeep\n");
+    // A whole removed block arrives as RAW source; the single policy strips the leading heading marker so
+    // the marker reads as plain language in the Code pane too, matching the WYSIWYG pane.
+    ed.setDiff([
+      { kind: "removed", sub: false, anchorLine: 0, removedText: "## Gone Section\n\nbody text" },
+    ]);
+    const marker = host.querySelector(".cm-diff-removed-marker");
+    expect(marker?.textContent).toContain("Gone Section");
+    expect(marker?.textContent).not.toContain("#");
+    expect(marker?.textContent).toContain("(… 3 lines)");
+    expect(host.querySelectorAll(".cm-diff-removed-marker")).toHaveLength(1);
+  });
+
+  it("snaps a top-level removal anchored in the inter-block gap to the following block", () => {
+    const { ed, host } = mount();
+    // Blocks: "# H" (line 0), "keep" (line 2). anchorLine 1 is the blank gap between them — the edge the
+    // old raw-line Code anchor and the block-scan Formatted anchor used to place differently. The single
+    // policy snaps both to the following block (its exact position is pinned by the overlay-plan scan
+    // test); here we just confirm the adapter renders exactly one marker without error.
+    ed.setText("# H\n\nkeep\n");
+    expect(() =>
+      ed.setDiff([{ kind: "removed", sub: false, anchorLine: 1, removedText: "gone" }]),
+    ).not.toThrow();
+    expect(host.querySelectorAll(".cm-diff-removed-marker")).toHaveLength(1);
+  });
+
+  it("plants a removed row/item marker whose anchor line is past the document without throwing", () => {
+    const { ed, host } = mount();
+    ed.setText("- one\n- two\n");
+    // A sub anchor past the document end (a row/item deleted after the last one) plants the marker below
+    // the last line rather than clamping onto a wrong line.
+    expect(() =>
+      ed.setDiff([{ kind: "removed", sub: true, anchorLine: 99, removedText: "gone item" }]),
+    ).not.toThrow();
+    expect(host.querySelector(".cm-diff-removed-marker")?.textContent).toContain("gone item");
+  });
+});
+
 describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => {
   // The height-sync lead is a stable fixed point only because `naturalLineTops` is invariant to the
   // leading spacer we apply: CodeMirror folds a leading block widget (side −1 at pos 0) into line 0's

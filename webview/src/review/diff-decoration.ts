@@ -1,8 +1,10 @@
 /**
  * Pure helpers shared by the two editor panes' review/compare overlays (PoC-6). The Code (CodeMirror)
- * and Formatted (ProseMirror) panes build their own decorations, but the *logic* — the change-kind
- * label, the removed-block marker text, and the inline word-diff application (thresholds + iteration) —
- * is identical and lives here so a fix lands in both panes at once. No editor/DOM imports.
+ * and Formatted (ProseMirror) panes build their own decorations, but the *logic* — the change-kind label
+ * and the inline word-diff application (thresholds + iteration) — is identical and lives here so a fix
+ * lands in both panes at once. The removed-block marker's text and placement, and the mark→instruction
+ * shaping, live one level up in overlay-plan.ts (which reuses {@link diffLabel} below). No editor/DOM
+ * imports.
  */
 
 import { INLINE_DIFF_MAX_RATIO, wordDiff } from "./word-diff.js";
@@ -24,17 +26,6 @@ export function diffLabel(kind: string): string {
     default:
       return "Changed by you";
   }
-}
-
-/** The text for a removed-block marker (a stand-in for content absent from the head): the "Deleted by
- *  you" label, then a preview of the first removed line and a count when it spanned several. */
-export function removedMarkerLabel(text: string): string {
-  const lines = text.split("\n");
-  const first = (lines[0] ?? "").trim();
-  const preview = first || "(empty block)";
-  return lines.length > 1
-    ? `${diffLabel("removed")} — ${preview} (… ${lines.length} lines)`
-    : `${diffLabel("removed")} — ${preview}`;
 }
 
 // Above this length the O(tokens²) word-LCS would stall on a pathological block — wash it whole instead.

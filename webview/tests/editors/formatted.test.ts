@@ -323,6 +323,36 @@ describe("FormattedEditor (jsdom)", () => {
     expect(marker && two && follows(marker, two)).toBe(true); // before the second item
   });
 
+  // T-078 parity: the same single anchoring + removed-text policy the Code pane now uses (overlay-plan.ts).
+  it("flattens a removed whole block's raw Markdown source in the marker (no leaked syntax)", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("# Keep\n\nkeep\n");
+    // A whole removed block arrives as RAW source. Before T-078 the WYSIWYG marker lit up the raw
+    // Markdown ("## Gone Section"); the single policy now strips the leading block marker in both panes.
+    ed.setDiff([
+      { kind: "removed", sub: false, anchorLine: 0, removedText: "## Gone Section\n\nbody text" },
+    ]);
+    const marker = host.querySelector(".sd-diff-removed-marker");
+    expect(marker?.textContent).toContain("Gone Section");
+    expect(marker?.textContent).not.toContain("#");
+    expect(marker?.textContent).toContain("(… 3 lines)");
+    expect(host.querySelectorAll(".sd-diff-removed-marker")).toHaveLength(1);
+  });
+
+  it("plants a removed row/item marker at the document end when its anchor line is past the document", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("- one\n- two\n");
+    // A sub anchor past the document (a row/item deleted after the last one) resolves to no node, so the
+    // marker falls to the document end — the same 'nothing at/after the anchor' outcome the Code pane
+    // reaches by planting below the last line.
+    ed.setDiff([{ kind: "removed", sub: true, anchorLine: 99, removedText: "gone item" }]);
+    const marker = host.querySelector(".sd-diff-removed-marker");
+    const items = [...host.querySelectorAll("li")];
+    const last = items[items.length - 1];
+    expect(marker?.textContent).toContain("gone item");
+    expect(last && marker && follows(last, marker)).toBe(true); // after the last item
+  });
+
   it("highlights changed words inside a changed list item (no whole-item wash, no pill)", () => {
     const { ed, host } = mountWithHost();
     // A long second item with a single word changed, so the diff stays under the inline threshold.

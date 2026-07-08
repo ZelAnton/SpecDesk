@@ -16,8 +16,9 @@ import { keymap } from "prosemirror-keymap";
 import type { Node as PmNode, ResolvedPos } from "prosemirror-model";
 import { EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
-import { applyWordDiff, diffLabel, removedMarkerLabel } from "../review/diff-decoration.js";
+import { applyWordDiff, diffLabel } from "../review/diff-decoration.js";
 import type { DiffMark } from "../review/diff-marks.js";
+import { buildOverlayPlan, type RemovedAnchor } from "../review/overlay-plan.js";
 import type { BlockGeometry } from "../review/preview.js";
 import { lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
 import { assertNever } from "../util/assert.js";
@@ -115,12 +116,13 @@ function removedWordDOM(text: string): HTMLElement {
   return span;
 }
 
-/** The block-widget DOM standing in for a removed block (absent from the head document). */
-function removedMarkerDOM(text: string): HTMLElement {
+/** The block-widget DOM standing in for a removed block (absent from the head document). `label` is the
+ *  already-composed marker text (the single removed-text policy lives in overlay-plan.ts). */
+function removedMarkerDOM(label: string): HTMLElement {
   const element = document.createElement("div");
   element.className = "sd-diff-removed-marker";
   element.setAttribute("aria-hidden", "true");
-  element.textContent = removedMarkerLabel(text);
+  element.textContent = label;
   return element;
 }
 
@@ -577,21 +579,48 @@ export class FormattedEditor {
     this.pushHighlights();
   }
 
-  /** Build and push the review/compare decorations from the current diff marks (resolved to blocks). */
+  /** The document position a removed-block marker anchors before — the Formatted pane's node-coordinate
+   *  reading of the single {@link RemovedAnchor} (overlay-plan.ts resolves WHICH block/child; here we turn
+   *  that into a ProseMirror position). A top-level anchor sits before the whole block; a row/item anchor
+   *  before the resolved row/item node; an out-of-range anchor at the document end. */
+  private removedAnchorPos(anchor: RemovedAnchor): number {
+    const doc = this.view.state.doc;
+    switch (anchor.at) {
+      case "end":
+        return doc.content.size;
+      case "block":
+        return anchor.blockIndex < doc.childCount
+          ? blockRange(doc, anchor.blockIndex)[0]
+          : doc.content.size;
+      case "child":
+        return this.nodeRangeForLine(anchor.line)?.[0] ?? doc.content.size;
+      default:
+        return assertNever(anchor);
+    }
+  }
+
+  /** Build and push the review/compare decorations from the current diff marks. Thin adapter: the
+   *  pane-independent overlay plan (overlay-plan.ts) decides what to wash, what to word-diff inline, and
+   *  where the removed markers go; here we only resolve those instructions to ProseMirror node/widget
+   *  decorations. */
   private pushDiff(): void {
     const doc = this.view.state.doc;
     if (this.diffMarks === null) {
       this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.empty));
       return;
     }
+    const plan = buildOverlayPlan(
+      this.diffMarks,
+      this.blocks.map((block) => block.lineStart),
+    );
     const decos: Decoration[] = [];
     // Distinct keys so adjacent deletions (which share an anchor position) stay separate widgets that
     // ProseMirror can tell apart across redraws rather than collapsing into one.
     let removedSeq = 0;
 
     // Whole-block (or row/item) wash by kind. `data-diff-label` drives the CSS ::before annotation pill —
-    // for whole-block changes only; a row/item (mark.sub) skips it (it would clutter, and a <tr> can't
-    // anchor a label).
+    // for whole-block changes only; a row/item (sub) skips it (it would clutter, and a <tr> can't anchor
+    // a label).
     const washBlock = (
       kind: "added" | "moved" | "changed",
       sub: boolean,
@@ -604,69 +633,43 @@ export class FormattedEditor {
       decos.push(Decoration.node(range[0], range[1], attrs));
     };
 
-    for (const mark of this.diffMarks) {
-      switch (mark.kind) {
-        case "removed": {
-          // A removed ROW/ITEM (mark.sub) anchors at the following row/item inside its container, so the
-          // marker sits between the surrounding rows/items rather than at the container's edge.
-          const childRange = mark.sub ? this.nodeRangeForLine(mark.anchorLine) : null;
-          let pos: number;
-          if (childRange !== null) {
-            pos = childRange[0];
-          } else {
-            // A removed top-level BLOCK: before the FIRST head block starting at/after the anchor line.
-            // Keying on block STARTS (lineStart) is robust to where trailing blank lines land (block ENDS
-            // can differ between the native AST that set the anchor and this pane's splitter). anchorLine 0
-            // targets the first block (top); nothing at/after the anchor (deleted at the end) → doc end.
-            let following = -1;
-            for (let i = 0; i < this.blocks.length; i++) {
-              const block = this.blocks[i];
-              if (block !== undefined && block.lineStart >= mark.anchorLine) {
-                following = i;
-                break;
-              }
-            }
-            pos =
-              following < 0 || following >= doc.childCount
-                ? doc.content.size
-                : blockRange(doc, following)[0];
-          }
-          decos.push(
-            Decoration.widget(pos, removedMarkerDOM(mark.removedText), {
-              side: -1,
-              key: `sd-removed-${removedSeq++}`,
-            }),
-          );
-          break;
-        }
-        case "added":
-        case "moved": {
-          // Resolve the node to wash: a whole top-level block, or — for a sub-block mark (a table row /
-          // list item) — the individual row/item that nodeRangeForLine narrows to inside a table/list.
-          const range = this.nodeRangeForLine(mark.lineStart);
+    for (const instr of plan) {
+      switch (instr.type) {
+        case "fill": {
+          // Resolve the node to wash: a whole top-level block, or — for a sub-block instruction (a table
+          // row / list item) — the individual row/item nodeRangeForLine narrows to inside a table/list.
+          const range = this.nodeRangeForLine(instr.lineStart);
           if (range !== null) {
-            washBlock(mark.kind, mark.sub, range);
+            washBlock(instr.kind, instr.sub, range);
           }
           break;
         }
-        case "changed": {
-          const range = this.nodeRangeForLine(mark.lineStart);
+        case "inline": {
+          const range = this.nodeRangeForLine(instr.lineStart);
           if (range === null) {
             break;
           }
           // A changed block tries an inline word-diff first (highlight the changed words rather than wash
           // the whole thing): a top-level paragraph/heading on its own node, or a row/item (sub) on its
-          // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub mark gets
-          // no annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
-          const inlineFrom = mark.sub ? range[0] + 1 : range[0];
-          if (this.pushInlineWordDiff(decos, inlineFrom, mark.baseText, !mark.sub)) {
+          // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub gets no
+          // annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
+          const inlineFrom = instr.sub ? range[0] + 1 : range[0];
+          if (this.pushInlineWordDiff(decos, inlineFrom, instr.baseText, !instr.sub)) {
             break;
           }
-          washBlock("changed", mark.sub, range);
+          washBlock("changed", instr.sub, range);
           break;
         }
+        case "removed":
+          decos.push(
+            Decoration.widget(this.removedAnchorPos(instr.anchor), removedMarkerDOM(instr.label), {
+              side: -1,
+              key: `sd-removed-${removedSeq++}`,
+            }),
+          );
+          break;
         default:
-          assertNever(mark);
+          assertNever(instr);
       }
     }
     this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.create(doc, decos)));
