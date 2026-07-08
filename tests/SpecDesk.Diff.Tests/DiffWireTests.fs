@@ -120,3 +120,56 @@ let ``a real text edit inside a list item still emits a per-child diff, not a wh
     let w = toWire "- one\n- two\n- three\n" "- one\n- two changed\n- three\n"
     Assert.That(w.[0].Children.Length, Is.EqualTo 1)
     Assert.That(w.[0].BaseText, Is.Empty)
+
+// T-098: a changed child now also carries its base RAW SOURCE slice (BaseSource), the Code-pane inline
+// word-diff basis — symmetric to a top-level Changed block's BaseSource. It is the base child's own
+// source lines (marker/pipes included), not the flattened BaseText.
+
+[<Test>]
+let ``a changed list item carries its base source slice in BaseSource`` () =
+    let w = toWire "- one\n- two\n- three\n" "- one\n- two changed\n- three\n"
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    let child = w.[0].Children.[0]
+    Assert.That(child.Kind, Is.EqualTo "changed")
+    Assert.That(child.ChildIndex, Is.EqualTo 1)
+    // The base item's own source line — the list marker is part of the slice, unlike the flattened BaseText.
+    Assert.That(child.BaseSource, Is.EqualTo "- two")
+
+[<Test>]
+let ``a changed table row carries its base source slice in BaseSource`` () =
+    // Children: 0 = header row, 1 = first body row, 2 = second body row. The first body row's cell changes.
+    // The edit ADDS a word (keeping the base tokens a subset) so the row stays above the change-similarity
+    // threshold and is matched as one changed child, not split into a removed + added pair.
+    let w =
+        toWire
+            "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
+            "| A | B |\n| - | - |\n| 1 | 2 changed |\n| 3 | 4 |\n"
+
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    let child = w.[0].Children.[0]
+    Assert.That(child.Kind, Is.EqualTo "changed")
+    Assert.That(child.ChildIndex, Is.EqualTo 1)
+    // The base row's own source line (the delimiter row on line 1 is NOT a child), pipes included.
+    Assert.That(child.BaseSource, Is.EqualTo "| 1 | 2 |")
+
+[<Test>]
+let ``a changed multi-paragraph list item carries its full multi-line base source`` () =
+    // The first item spans its marker line, a blank line and a continuation paragraph — its BaseSource
+    // must cover the whole item, not just the marker line, so the Code-pane word-diff sees the full item.
+    let baseText = "- india\n\n  second paragraph of india\n\n- juliett\n"
+    let headText = "- india edited\n\n  second paragraph of india\n\n- juliett\n"
+    let w = toWire baseText headText
+    Assert.That(w.[0].Children.Length, Is.EqualTo 1)
+    let child = w.[0].Children.[0]
+    Assert.That(child.Kind, Is.EqualTo "changed")
+    Assert.That(child.ChildIndex, Is.EqualTo 0)
+    Assert.That(child.BaseSource, Does.StartWith "- india")
+    Assert.That(child.BaseSource, Does.Contain "second paragraph of india")
+    Assert.That(child.BaseSource, Does.Contain "\n") // the slice is genuinely multi-line
+
+[<Test>]
+let ``a non-changed child carries an empty BaseSource`` () =
+    // A removed child has no head/base pairing to word-diff — BaseSource stays the neutral "".
+    let w = toWire "- one\n- two\n- three\n" "- one\n- three\n"
+    Assert.That(w.[0].Children.[0].Kind, Is.EqualTo "removed")
+    Assert.That(w.[0].Children.[0].BaseSource, Is.Empty)

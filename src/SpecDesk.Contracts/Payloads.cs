@@ -162,9 +162,11 @@ public sealed record AddedChildDiff(int ChildIndex) : ChildDiffPayload;
 /// <summary>A moved child: the 0-based HEAD child ordinal the reordered row/item now occupies.</summary>
 public sealed record MovedChildDiff(int ChildIndex) : ChildDiffPayload;
 
-/// <summary>A changed child: its 0-based HEAD child ordinal and the base child's flattened text (the
-/// inline word-diff inside the row/item).</summary>
-public sealed record ChangedChildDiff(int ChildIndex, string BaseText) : ChildDiffPayload;
+/// <summary>A changed child: its 0-based HEAD child ordinal, the base child's flattened text
+/// (<paramref name="BaseText"/>, the Formatted pane's inline word-diff inside the row/item) and the base
+/// child's raw source slice (<paramref name="BaseSource"/>, the Code pane's inline word-diff) — symmetric
+/// to <see cref="ChangedDiffEntry"/>'s BaseText/BaseSource for a whole changed block.</summary>
+public sealed record ChangedChildDiff(int ChildIndex, string BaseText, string BaseSource) : ChildDiffPayload;
 
 /// <summary>A removed child: the head child it sat before (<paramref name="AnchorIndex"/>) and the deleted
 /// child's flattened text (<paramref name="RemovedText"/>, for the marker). It has no head ordinal.</summary>

@@ -175,3 +175,59 @@ let toAst (text: string) : Ast.Document =
                     Ast.LineStart = block.Line
                     Ast.LineEnd = endLine lines block }
           | None -> () ]
+
+/// The 0-based, inclusive source line ranges of a container block's children (list items / table rows),
+/// in the SAME child-ordinal order `SpecDesk.Diff.DiffWire`'s childTexts and the webview's
+/// `childLineStarts` use — list items in order; a table's header row first (when it has cells), then its
+/// body rows. None for a non-container block.
+///
+/// Kept deliberately OUT of the `Ast` (nested blocks carry no line range of their own there — see the
+/// Block comment in Ast.fs) so a block's structural equality stays position-independent, which the
+/// AstDiff backbone relies on to keep an unchanged-but-shifted list/table Unchanged rather than
+/// re-matching it. The per-child ranges are instead derived here, beside the projection, from the same
+/// Markdig parse — so the diff can still slice a changed child's base source without the Ast losing that
+/// property.
+let private childRangesOf (lines: Lines.Index) (block: Block) : (int * int) list option =
+    match block with
+    | :? ListBlock as list ->
+        Some
+            [ for item in list do
+                  match item with
+                  | :? ListItemBlock as li -> yield li.Line, endLine lines li
+                  | _ -> () ]
+    | :? Table as table ->
+        let rows =
+            [ for r in table do
+                  match r with
+                  | :? TableRow as tr -> yield tr
+                  | _ -> () ]
+
+        // Mirror tableOf's header/body split AND childTexts's "the header takes an ordinal only when it
+        // has cells": a header row with zero cells contributes no AST header, so it takes no ordinal
+        // either. (An empty-CELL header — `|  |  |` — still has cells, so it keeps ordinal 0.)
+        let headerRow =
+            rows
+            |> List.tryFind (fun r -> r.IsHeader && (r |> Seq.exists (fun c -> c :? TableCell)))
+
+        let bodyRows = rows |> List.filter (fun r -> not r.IsHeader)
+
+        Some
+            [ match headerRow with
+              | Some hr -> yield hr.Line, endLine lines hr
+              | None -> ()
+              yield! bodyRows |> List.map (fun r -> r.Line, endLine lines r) ]
+    | _ -> None
+
+/// The container-child source ranges of every top-level container block, keyed by the block's 0-based
+/// start line (its Ast Node LineStart — the key `SpecDesk.Diff.DiffWire.toWire` looks a changed base
+/// container up by). Empty for a document with no list/table. Parsed with the shared pipeline exactly as
+/// toAst, so the child ordinals and line numbers agree with the AST the diff runs on.
+let childLineRanges (text: string) : Map<int, (int * int) list> =
+    let doc = Markdown.Parse(text, Pipeline.shared)
+    let lines = Lines.build text
+
+    (Map.empty, doc)
+    ||> Seq.fold (fun acc block ->
+        match childRangesOf lines block with
+        | Some ranges -> Map.add block.Line ranges acc
+        | None -> acc)

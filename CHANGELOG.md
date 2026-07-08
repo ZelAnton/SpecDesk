@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate their rendering on an exhaustive `kind` match rather than a mix of `kind` / `sub` / `!== undefined`
   checks. Behavior is unchanged; the change closes the class of drift where the two panes disagreed on how
   to read the flat shape.
+- A changed per-child diff entry (`ChangedChildDiff` / the F# `ChildWireEntry`) now also carries the
+  changed table row / list item's base raw source in a new `baseSource` field — symmetric to a whole
+  changed block's `baseSource` — so the Code pane's inline word-diff can extend to individual rows/items,
+  not just whole blocks (the webview that consumes it lands separately). A container's per-child base
+  source ranges are derived from the same Markdig parse as a sidecar to the `Ast` (`Projection.childLineRanges`),
+  which keeps nested blocks range-free so a block's structural equality stays position-independent — the
+  AstDiff backbone that keeps an unchanged-but-shifted list/table Unchanged.
 - The webview's starting view mode (Code/Split/Formatted) is now declared exactly once, in `#panes`'s
   `data-mode` attribute in `webview/index.html`; `webview/src/index.ts` reads it back at startup instead
   of repeating a `"split"` literal of its own, and reflects it into the mode radiogroup through the same

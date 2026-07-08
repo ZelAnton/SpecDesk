@@ -78,7 +78,8 @@
           {
             "kind": "changed",
             "childIndex": 1,
-            "baseText": "Net 30"
+            "baseText": "Net 30",
+            "baseSource": "| Terms | Net 30 |"
           },
           {
             "kind": "removed",

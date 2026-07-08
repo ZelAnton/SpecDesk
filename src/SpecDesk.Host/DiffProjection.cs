@@ -57,7 +57,7 @@ internal static class DiffProjection
             {
                 DiffWire.DiffKind.Added => new AddedChildDiff(c.ChildIndex),
                 DiffWire.DiffKind.Moved => new MovedChildDiff(c.ChildIndex),
-                DiffWire.DiffKind.Changed => new ChangedChildDiff(c.ChildIndex, c.BaseText),
+                DiffWire.DiffKind.Changed => new ChangedChildDiff(c.ChildIndex, c.BaseText, c.BaseSource),
                 DiffWire.DiffKind.Removed => new RemovedChildDiff(c.AnchorIndex, c.RemovedText),
                 _ => throw new InvalidOperationException($"Unknown child diff wire kind '{c.Kind}'."),
             });

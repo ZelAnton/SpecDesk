@@ -52,10 +52,11 @@ public sealed class ContractFixtureTests
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.
 			new ChangedDiffEntry(2, 2, [], "The refund window is 14 days.", "The refund window is 14 days."),
-			// A changed container (list/table) carries per-child entries: a changed item and a removed item.
+			// A changed container (list/table) carries per-child entries: a changed row (with its base
+			// flattened text AND base raw source slice for the two panes' inline word-diff) and a removed item.
 			new ChangedDiffEntry(4, 6,
 			[
-				new ChangedChildDiff(1, "Net 30"),
+				new ChangedChildDiff(1, "Net 30", "| Terms | Net 30 |"),
 				new RemovedChildDiff(2, "Legacy clause"),
 			], "", ""),
 			// A removed top-level block: not in the head, so it anchors before a head line and carries its source.

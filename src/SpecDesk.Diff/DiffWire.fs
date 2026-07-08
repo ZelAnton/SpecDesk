@@ -43,7 +43,8 @@ type ChildWireEntry =
       ChildIndex: int // head child ordinal (added/changed/moved); -1 for removed
       AnchorIndex: int // for removed: the head child it sat before; -1 otherwise
       RemovedText: string // for removed: the base child's flattened text; "" otherwise
-      BaseText: string // for changed: the base child's flattened text (inline word-diff inside the item)
+      BaseText: string // for changed: the base child's flattened text (Formatted-pane inline word-diff inside the item)
+      BaseSource: string // for changed: the base child's raw source slice (Code-pane inline word-diff); "" otherwise
     }
 
 /// One changed top-level block — the flat intermediate the host reads by field (CLIMutable) and then
@@ -75,28 +76,32 @@ module private Build =
           ChildIndex = childIndex
           AnchorIndex = -1
           RemovedText = ""
-          BaseText = "" }
+          BaseText = ""
+          BaseSource = "" }
 
     let childMoved (childIndex: int) : ChildWireEntry =
         { Kind = DiffKind.Moved
           ChildIndex = childIndex
           AnchorIndex = -1
           RemovedText = ""
-          BaseText = "" }
+          BaseText = ""
+          BaseSource = "" }
 
-    let childChanged (childIndex: int) (baseText: string) : ChildWireEntry =
+    let childChanged (childIndex: int) (baseText: string) (baseSource: string) : ChildWireEntry =
         { Kind = DiffKind.Changed
           ChildIndex = childIndex
           AnchorIndex = -1
           RemovedText = ""
-          BaseText = baseText }
+          BaseText = baseText
+          BaseSource = baseSource }
 
     let childRemoved (anchorIndex: int) (removedText: string) : ChildWireEntry =
         { Kind = DiffKind.Removed
           ChildIndex = -1
           AnchorIndex = anchorIndex
           RemovedText = removedText
-          BaseText = "" }
+          BaseText = ""
+          BaseSource = "" }
 
     let added (lineStart: int) (lineEnd: int) : DiffWireEntry =
         { Kind = DiffKind.Added
@@ -179,9 +184,17 @@ let private synthDoc (texts: string list) : Ast.Document =
 
 /// Diff a container's children (base vs head) into per-child wire entries, in child order. Mirrors the
 /// top-level walk but in child-ordinal space: Unchanged omitted; a removed child anchors after the
-/// previous head-present child.
-let private childDiff (baseTexts: string list) (headTexts: string list) : ChildWireEntry[] =
+/// previous head-present child. `baseChildRanges` holds each BASE child's source line range (in base
+/// child-ordinal order, from Projection.childLineRanges) so a changed child can carry its base source
+/// slice — the inline word-diff the Code pane runs on a row/item, symmetric to a top-level Changed block.
+let private childDiff
+    (baseLines: string[])
+    (baseChildRanges: (int * int) list)
+    (baseTexts: string list)
+    (headTexts: string list)
+    : ChildWireEntry[] =
     let entries = ResizeArray<ChildWireEntry>()
+    let baseRanges = List.toArray baseChildRanges
     let mutable lastHeadChild = -1
 
     // Record a head-present child and advance the anchor cursor past it (a later removed child anchors
@@ -190,13 +203,26 @@ let private childDiff (baseTexts: string list) (headTexts: string list) : ChildW
         entries.Add child
         lastHeadChild <- headEnd
 
+    // The base source slice for a base child ordinal — the synthetic node's LineStart IS that ordinal
+    // (synthDoc). "" when the ordinal has no range (a childRanges/childTexts count mismatch), so the
+    // field degrades to empty rather than slicing the wrong child.
+    let baseSourceOf (baseOrdinal: int) : string =
+        if baseOrdinal >= 0 && baseOrdinal < baseRanges.Length then
+            let ls, le = baseRanges.[baseOrdinal]
+            slice baseLines ls le
+        else
+            ""
+
     for entry in AstDiff.diff (synthDoc baseTexts) (synthDoc headTexts) do
         match entry with
         | AstDiff.Unchanged node -> lastHeadChild <- node.LineEnd
         | AstDiff.Added node -> emit (Build.childAdded node.LineStart) node.LineEnd
-        // A changed child carries its base text so the webview can word-diff the row/item inline.
+        // A changed child carries its base flattened text (Formatted-pane word-diff) and base source slice
+        // (Code-pane word-diff) so the webview can word-diff the row/item inline in either pane.
         | AstDiff.Changed(before, after) ->
-            emit (Build.childChanged after.LineStart (AstDiff.blockText before.Content)) after.LineEnd
+            emit
+                (Build.childChanged after.LineStart (AstDiff.blockText before.Content) (baseSourceOf before.LineStart))
+                after.LineEnd
         | AstDiff.Moved(_, after) -> emit (Build.childMoved after.LineStart) after.LineEnd
         | AstDiff.Removed node -> entries.Add(Build.childRemoved (lastHeadChild + 1) (AstDiff.blockText node.Content))
 
@@ -206,6 +232,11 @@ let private childDiff (baseTexts: string list) (headTexts: string list) : ChildW
 /// block's end line + 1 (0 when the deletion precedes all head content).
 let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
     let baseLines = baseText.Split('\n')
+    // The base's container-child source ranges, keyed by the base container's top-level start line, so a
+    // changed child (below) can be sliced back to its base source. A second (cheap, O(n)) parse of the
+    // base next to AstDiff's — kept out of the Ast so a block's structural equality (the diff backbone)
+    // stays position-independent (see Projection.childLineRanges).
+    let baseChildRanges = Projection.childLineRanges baseText
     let entries = ResizeArray<DiffWireEntry>()
     let mutable lastHeadLineEnd = -1
 
@@ -226,7 +257,13 @@ let toWire (baseText: string) (headText: string) : DiffWireEntry[] =
             // much changed, fall back to a whole-block wash).
             match childTexts before.Content, childTexts after.Content with
             | Some baseChildren, Some headChildren ->
-                let children = childDiff baseChildren headChildren
+                // The base container's per-child source ranges (base child-ordinal order), looked up by
+                // its top-level start line — the same line Projection.childLineRanges keyed them by.
+                let childRanges =
+                    baseChildRanges |> Map.tryFind before.LineStart |> Option.defaultValue []
+
+                let children = childDiff baseLines childRanges baseChildren headChildren
+
                 if Array.isEmpty children then
                     // The container-level AstDiff classified this as Changed (its real, mark-aware content
                     // differs), but childDiff's own per-child comparison runs on FLATTENED (mark-stripped)

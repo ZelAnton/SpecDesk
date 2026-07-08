@@ -222,3 +222,44 @@ let ``editing a definition body changes the projected definition list`` () =
     let original = Projection.toAst "Term\n:   Original definition"
     let edited = Projection.toAst "Term\n:   Edited definition"
     Assert.That(original <> edited, Is.True)
+
+// T-098: childLineRanges is the diff's sidecar for slicing a changed container child's base source. It
+// is deliberately kept OUT of the Ast (nested blocks carry no line range there, so a block's structural
+// equality stays position-independent — the AstDiff backbone), yet is derived from the same parse, so
+// its child ordinals/lines agree with toAst. These pin the ordinal space and the line numbers.
+
+[<Test>]
+let ``childLineRanges gives each list item its 0-based source line range`` () =
+    let ranges = Projection.childLineRanges "- a\n- b\n- c\n"
+    // The list starts on line 0; its three items sit on lines 0, 1, 2.
+    Assert.That(ranges.[0] = [ (0, 0); (1, 1); (2, 2) ], Is.True)
+
+[<Test>]
+let ``childLineRanges gives a table its header row first, then body rows`` () =
+    let ranges = Projection.childLineRanges "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
+    // Header on line 0; the delimiter (line 1) is NOT a child; body rows on lines 2 and 3.
+    Assert.That(ranges.[0] = [ (0, 0); (2, 2); (3, 3) ], Is.True)
+
+[<Test>]
+let ``childLineRanges spans a multi-paragraph list item across its whole source range`` () =
+    let ranges = Projection.childLineRanges "- india\n\n  second paragraph of india\n\n- juliett\n"
+
+    match Map.tryFind 0 ranges with
+    | Some [ (0, indiaEnd); (juliettStart, _) ] ->
+        // The first item runs from its marker (line 0) through its continuation paragraph (line 2),
+        // before the second item at line 4 — so its slice covers the whole item, not just line 0.
+        Assert.That(indiaEnd, Is.GreaterThanOrEqualTo 2)
+        Assert.That(juliettStart, Is.EqualTo 4)
+    | other -> Assert.Fail($"expected two item ranges, got %A{other}")
+
+[<Test>]
+let ``childLineRanges keys a container by its own top-level start line`` () =
+    // A leading paragraph pushes the list down; the key must be the list's own start line (2) — the same
+    // LineStart toAst stamps and DiffWire.toWire looks the base container up by.
+    let ranges = Projection.childLineRanges "intro\n\n- a\n- b\n"
+    Assert.That(ranges.ContainsKey 2, Is.True)
+    Assert.That(ranges.[2] = [ (2, 2); (3, 3) ], Is.True)
+
+[<Test>]
+let ``childLineRanges is empty for a document with no container`` () =
+    Assert.That(Projection.childLineRanges "# Heading\n\nA paragraph.\n" |> Map.isEmpty, Is.True)
