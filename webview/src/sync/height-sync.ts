@@ -16,6 +16,16 @@ import type { BlockGeometry } from "../review/preview.js";
 export interface GeometrySource {
   blockGeometry(): BlockGeometry[];
   contentWidth(): number;
+  /** Whether this pane has an edit typed that hasn't been reported via its own debounce yet — mirrors
+   *  {@link MarkdownEditor.hasPendingChange}. Checked by {@link HeightSync.reconcile} before applying
+   *  anchors (T-084): a pane with a pending edit is mid-write, so its `blockGeometry()`/text is about to
+   *  change underneath the reconcile that's reading it right now. */
+  hasPendingChange(): boolean;
+  /** This pane's current text — compared against the editor's `getText()` by {@link HeightSync.reconcile}
+   *  (T-084) to catch a divergence `hasPendingChange()` alone can miss: the cross-pane mirror in index.ts
+   *  is guarded by the DESTINATION's `hasPendingChange()`, not the source's, so a settled pane whose text
+   *  hasn't been mirrored into (yet-pending) sibling can still disagree with it for a beat. */
+  getText(): string;
 }
 
 /** A spacer to insert below a block's last source line, of the given pixel height. */
@@ -205,8 +215,29 @@ export class HeightSync {
    * prefix sum, so this is a stable fixed point with no tracked state. Idempotent by design: calling
    * it again on an unchanged geometry recomputes the same spacers and skips re-dispatching them (see
    * {@link apply}), so it can be driven every time CodeMirror re-measures without flickering.
+   *
+   * Gated on pane consistency (T-084): every caller (onContentResize, window resize,
+   * onGeometryChange, onEditorChange/onFormattedChange in index.ts) drives this unconditionally, but
+   * between an edit and its 120ms debounce-mirror settling the two panes' texts can disagree — the
+   * `blockGeometry()` anchors below would then belong to a DIFFERENT document than the one
+   * `naturalLineTops` is about to measure against, producing spacers on the wrong lines (duplicated
+   * anchors, negative gaps). When either pane has a pending (not-yet-mirrored) edit, or their texts
+   * simply disagree, this returns WITHOUT applying anything — the stale spacer set (if any) is left in
+   * place rather than replaced with a wrong one. This is not a dead end: once the mirror lands (the
+   * pending pane's own debounce fires `onEditorChange`/`onFormattedChange`, which mirrors the text and
+   * then unconditionally calls `reconcileHeights()` again — see index.ts), reconcile runs again with
+   * consistent panes and catches the geometry up.
    */
   reconcile(): void {
+    if (this.editor.hasPendingChange() || this.source.hasPendingChange()) {
+      this.onDebug?.("height-sync: deferred — a pane has a pending (unmirrored) edit");
+      return;
+    }
+    if (this.editor.getText() !== this.source.getText()) {
+      this.onDebug?.("height-sync: deferred — panes' texts disagree (mirror not settled yet)");
+      return;
+    }
+
     const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {
       this.apply(0, []);
@@ -215,6 +246,12 @@ export class HeightSync {
     }
 
     const editorTops = this.editor.naturalLineTops(geometry.map((block) => block.lineStart));
+    if (editorTops.some((top) => top === null)) {
+      this.onDebug?.(
+        "height-sync: deferred — stale anchor line(s) outside the editor's current document",
+      );
+      return;
+    }
     const anchors: AnchorMetrics[] = geometry.map((block, index) => ({
       lineEnd: block.lineEnd,
       editorTop: editorTops[index] ?? 0,

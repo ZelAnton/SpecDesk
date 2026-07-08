@@ -175,6 +175,14 @@ class FakeEditor {
   // Defaults to line 0 — with no viewport scroll below the document top, computeScrollCompensation
   // never counts the lead and the existing (pre-T-066) tests below never trigger a compensation call.
   private viewportLine = 0;
+  // Pane-consistency gate (T-084): both default to the "settled, in sync" state so the pre-existing
+  // suites below (written before the gate existed) keep exercising reconcile() unhindered; the
+  // dedicated gate suite further down flips these explicitly.
+  private pendingChange = false;
+  private text = "";
+  // Lines naturalLineTops() should refuse (return null for) instead of resolving a top for — models an
+  // anchor minted against a since-diverged sibling document (T-084).
+  private staleLines = new Set<number>();
 
   setTops(pairs: Array<[line: number, top: number]>): void {
     this.tops = new Map(pairs);
@@ -184,12 +192,34 @@ class FakeEditor {
     this.viewportLine = line;
   }
 
-  naturalLineTops(lines: number[]): number[] {
-    return lines.map((lineStart) => this.tops.get(lineStart) ?? 0);
+  setPendingChange(pending: boolean): void {
+    this.pendingChange = pending;
+  }
+
+  setText(text: string): void {
+    this.text = text;
+  }
+
+  setStaleLines(lines: number[]): void {
+    this.staleLines = new Set(lines);
+  }
+
+  naturalLineTops(lines: number[]): (number | null)[] {
+    return lines.map((lineStart) =>
+      this.staleLines.has(lineStart) ? null : (this.tops.get(lineStart) ?? 0),
+    );
   }
 
   topVisibleLine(): number {
     return this.viewportLine;
+  }
+
+  hasPendingChange(): boolean {
+    return this.pendingChange;
+  }
+
+  getText(): string {
+    return this.text;
   }
 
   adjustScrollTop(delta: number): void {
@@ -205,10 +235,25 @@ class FakeEditor {
   }
 }
 
+/** A `GeometrySource` fake that also satisfies the pane-consistency gate's `hasPendingChange`/`getText`
+ *  (T-084), defaulting to "settled, matching text" so the pre-existing suites (written before the gate
+ *  existed) aren't gated by default. */
+function fakeSource(
+  geometry: BlockGeometry[],
+  overrides?: { pendingChange?: boolean; text?: string },
+): GeometrySource {
+  return {
+    blockGeometry: () => geometry,
+    contentWidth: () => 800,
+    hasPendingChange: () => overrides?.pendingChange ?? false,
+    getText: () => overrides?.text ?? "",
+  };
+}
+
 describe("HeightSync.reconcile (T-062: self-heal after re-measure, no flicker loop)", () => {
   function make(geometry: BlockGeometry[]): { editor: FakeEditor; sync: HeightSync } {
     const editor = new FakeEditor();
-    const source: GeometrySource = { blockGeometry: () => geometry, contentWidth: () => 800 };
+    const source = fakeSource(geometry);
     const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
     return { editor, sync };
   }
@@ -273,7 +318,7 @@ describe("HeightSync.reconcile (T-062: self-heal after re-measure, no flicker lo
       { lineStart: 2, lineEnd: 2, top: 60, height: 40 },
     ];
     const editor = new FakeEditor();
-    const source: GeometrySource = { blockGeometry: () => leadGeometry, contentWidth: () => 800 };
+    const source = fakeSource(leadGeometry);
     const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
     editor.setTops([
       [0, 0],
@@ -319,7 +364,7 @@ describe("HeightSync viewport scroll compensation (T-066)", () => {
 
   function make(): { editor: FakeEditor; sync: HeightSync } {
     const editor = new FakeEditor();
-    const source: GeometrySource = { blockGeometry: () => geometry, contentWidth: () => 800 };
+    const source = fakeSource(geometry);
     const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
     return { editor, sync };
   }
@@ -388,5 +433,96 @@ describe("HeightSync viewport scroll compensation (T-066)", () => {
     // is ever computed for them, let alone applied.
     expect(editor.calls).toHaveLength(1);
     expect(editor.scrollAdjustments).toEqual([110]);
+  });
+});
+
+describe("HeightSync.reconcile pane-consistency gate (T-084)", () => {
+  const geometry: BlockGeometry[] = [
+    { lineStart: 0, lineEnd: 5, top: 0, height: 200 },
+    { lineStart: 7, lineEnd: 7, top: 200, height: 40 },
+  ];
+
+  function make(overrides?: { pendingChange?: boolean; text?: string }): {
+    editor: FakeEditor;
+    sync: HeightSync;
+  } {
+    const editor = new FakeEditor();
+    const source = fakeSource(geometry, overrides);
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
+    editor.setTops([
+      [0, 0],
+      [7, 90],
+    ]);
+    return { editor, sync };
+  }
+
+  it("does not apply anchors while the EDITOR has a pending (unmirrored) edit", () => {
+    const { editor, sync } = make();
+    editor.setPendingChange(true);
+
+    sync.reconcile();
+
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("does not apply anchors while the SOURCE (formatted) pane has a pending edit", () => {
+    const { editor, sync } = make({ pendingChange: true });
+
+    sync.reconcile();
+
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("does not apply anchors while the panes' texts disagree, even with neither pending", () => {
+    const { editor, sync } = make({ text: "formatted pane's text" });
+    editor.setText("editor's (different) text");
+
+    sync.reconcile();
+
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("retries and applies correct spacers once the mirror settles (matching texts, no pending)", () => {
+    // The scenario the description calls out: reconcile is driven (e.g. by onContentResize) inside the
+    // 120ms debounce window, before the destination pane has accepted the mirrored edit — no spacers
+    // must be built off the mismatched pair. Once the mirror lands (texts converge, pending clears —
+    // what onEditorChange/onFormattedChange do before their own unconditional reconcileHeights() call),
+    // the very next reconcile() must produce the correct spacers, with nothing left over from the gated
+    // attempt.
+    const { editor, sync } = make({ text: "same text" });
+    editor.setText("different text (mid-mirror)");
+    editor.setPendingChange(true);
+
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(0);
+
+    // The mirror settles: pending clears, texts converge.
+    editor.setPendingChange(false);
+    editor.setText("same text");
+
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(1);
+    expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
+  });
+
+  it("does not apply anchors when one is minted against an out-of-range (stale) source line", () => {
+    const { editor, sync } = make();
+    editor.setStaleLines([7]); // the formatted pane's second block outlives the editor's document
+
+    sync.reconcile();
+
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("recovers once the stale line becomes valid again (the editor's document catches up)", () => {
+    const { editor, sync } = make();
+    editor.setStaleLines([7]);
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(0);
+
+    editor.setStaleLines([]);
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(1);
+    expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
   });
 });

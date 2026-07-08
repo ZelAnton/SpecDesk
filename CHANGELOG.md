@@ -551,6 +551,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays put. The new `computeScrollCompensation` (pure, unit-tested) computes the delta from the
   previous vs. next spacer set and the source line currently at the viewport top
   (`MarkdownEditor.topVisibleLine()`).
+- Split view's height-synced scroll no longer occasionally pads the source editor against the OTHER
+  pane's mid-write document. `HeightSync.reconcile()` is driven unconditionally from several paths
+  (a formatted-pane content resize, a window resize, an editor wrap toggle, and every settled edit), so
+  it could fire inside the 120ms window between an edit and its cross-pane mirror landing, applying the
+  formatted pane's block anchors against a source editor whose text had already moved on (or vice
+  versa) — producing duplicated/misplaced spacers and negative gaps. `reconcile()` now defers (applies
+  nothing, leaving whatever spacers were already there) whenever either pane has a pending unmirrored
+  edit or the two panes' texts simply disagree; the deferred reconcile is naturally retried once the
+  mirror lands, because the pane that was mid-write calls `reconcileHeights()` again unconditionally as
+  soon as its own debounce settles. Separately, `MarkdownEditor.naturalLineTops`/`setSpacers` no longer
+  silently clamp a source line outside the CURRENT document to the last line (which could still plant a
+  spacer on the wrong line if a stale anchor slipped past the gate) — an out-of-range line/spacer is now
+  refused outright, with a diagnostic through the editor's own `onDebug` callback (mirroring
+  `HeightSync`'s existing one).
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked
