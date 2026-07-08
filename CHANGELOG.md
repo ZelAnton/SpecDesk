@@ -150,7 +150,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
-- "Show changes" no longer floods the review overlay with thousands of removed-block decorations (and
+- The formatting toolbar now produces the same Markdown regardless of which panel (Code or Formatted)
+  was focused when a button was pressed — the two editors implement toolbar commands independently
+  (line-based text transforms in `webview/src/editors/md-format.ts` vs. structural ProseMirror commands
+  in `webview/src/editors/pm-commands.ts`), and several had drifted: toggling bullet/numbered list on a
+  line already carrying the OTHER list marker used to prefix the new marker onto the raw line instead of
+  converting it (`1. x` → `- 1. x`); toggling heading on a list/quote line used to put the `#` before the
+  container marker instead of nesting inside it (`- item` → `# - item` instead of `- # item`); toggling
+  code on a heading line fenced the raw `# ` syntax instead of the heading's bare text; toggling quote
+  off a quoted list item in the Formatted view lifted the nested list out instead of the quote itself
+  (`> - a` → `> a` instead of `- a`); and toggling heading over a selection spanning several
+  soft-wrapped lines of one paragraph turned every physical line into its own heading instead of the
+  one heading the paragraph represents.
   ships every removed block's full text over IPC) for a pathologically large document, once `AstDiff.diff`
   (`src/SpecDesk.Diff/AstDiff.fs`) has fallen back to its flat, coarse Removed+Added listing above
   `maxNodePairs` base×head node pairs. `DiffWire.toWireDetailed` (used by `DiffProjection.Build` instead of

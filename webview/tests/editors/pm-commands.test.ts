@@ -70,6 +70,17 @@ describe("commandFor — blocks", () => {
     expect(md(quoted)).toBe("> hello");
     expect(md(run(select(quoted, 2, 7), "quote"))).toBe("hello");
   });
+
+  // T-090 regression guard: toggleQuote used to lift with the generic prosemirror-commands `lift`,
+  // which lifts whichever ancestor is CLOSEST to liftable — for a list nested inside a blockquote,
+  // that's the list itself, so toggling quote off a quoted list item used to strip the LIST and keep
+  // the quote ("> - a" -> "> a") instead of stripping the quote and keeping the list. Targeting the
+  // blockquote specifically (via blockRange's predicate) fixes it to match the Code tract's own
+  // (always outer-marker-only) line-prefix toggle.
+  it("toggling quote off a quoted list item strips only the quote, keeping the list (T-090)", () => {
+    const quotedList = select(stateFrom("> - a\n"), 5);
+    expect(md(run(quotedList, "quote"))).toBe("- a");
+  });
 });
 
 describe("commandFor — lists", () => {

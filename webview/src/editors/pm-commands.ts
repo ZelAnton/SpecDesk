@@ -6,10 +6,11 @@
  * pressed-button state). FormattedEditor.format() / activeFormats() are thin delegators to these.
  */
 
-import { lift, setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
+import { setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
 import type { MarkType, NodeType, ResolvedPos } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
 import type { Command, EditorState } from "prosemirror-state";
+import { liftTarget } from "prosemirror-transform";
 import { assertNever } from "../util/assert.js";
 import {
   FORMAT_REGISTRY,
@@ -83,12 +84,31 @@ function toggleList(type: NodeType): Command {
   };
 }
 
-/** Toggle a blockquote around the selection. */
+/**
+ * Toggle a blockquote around the selection. Already inside one → lift the enclosing BLOCKQUOTE
+ * specifically back out (not the generic `lift` command from prosemirror-commands, which lifts
+ * whichever ancestor is closest to liftable — for a selection inside a list nested in a blockquote,
+ * that closest ancestor is the LIST, so generic `lift` would strip the list and leave the quote
+ * (`- a` inside `> ` becomes `> a`), the opposite of what toggling quote off should do). Targeting the
+ * blockquote's own child range via `$from.blockRange($to, pred)` guarantees exactly the quote wrapper
+ * comes off, leaving any nested list/heading/etc. untouched — mirroring the Code tract's line-prefix
+ * toggle, which only ever touches the outermost `> ` marker.
+ */
 function toggleQuote(): Command {
-  return (state, dispatch) =>
-    inNodeType(state.selection.$from, nodeType("blockquote"))
-      ? lift(state, dispatch)
-      : wrapIn(nodeType("blockquote"))(state, dispatch);
+  return (state, dispatch) => {
+    const quote = nodeType("blockquote");
+    if (inNodeType(state.selection.$from, quote)) {
+      const { $from, $to } = state.selection;
+      const range = $from.blockRange($to, (node) => node.type === quote);
+      const target = range !== null ? liftTarget(range) : null;
+      if (range === null || target == null) {
+        return false;
+      }
+      dispatch?.(state.tr.lift(range, target).scrollIntoView());
+      return true;
+    }
+    return wrapIn(quote)(state, dispatch);
+  };
 }
 
 /**

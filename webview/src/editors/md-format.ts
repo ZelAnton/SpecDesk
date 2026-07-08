@@ -229,7 +229,12 @@ function blockEdit(blockStart: number, blockEnd: number, insert: string): Format
  * Toggle a fenced code block. Toggles OFF by unwrapping the enclosing FencedCode syntax node (see
  * {@link unwrapFence}) rather than by re-deriving a line range from the raw selection — a selection that
  * sits anywhere inside an existing fence (not just spanning its outer ``` lines) must unwrap; otherwise
- * wraps the selection's whole lines in a fresh fence.
+ * wraps the selection's whole lines in a fresh fence, stripping any ATX heading marker each wrapped
+ * line carries first: a `# heading` line the selection touches is its own standalone Heading block in
+ * the source grammar (never mere text that happens to start with `#`), and a fenced code_block's content
+ * is plain text with no block markup of its own — matching the PM tract's `setBlockType(code_block)`,
+ * which takes the heading node's inline text and necessarily drops its ATX marker (the node has none;
+ * `#` is a serialization detail of the heading node, not part of its text content).
  */
 function toggleFence(doc: string, from: number, to: number): FormatEdit {
   const unwrapped = unwrapFence(doc, from, to);
@@ -237,11 +242,23 @@ function toggleFence(doc: string, from: number, to: number): FormatEdit {
     return unwrapped;
   }
   const [blockStart, blockEnd] = blockLineRange(doc, from, to);
-  const lines = doc.slice(blockStart, blockEnd).split("\n");
+  const lines = doc
+    .slice(blockStart, blockEnd)
+    .split("\n")
+    .map((line) => line.replace(HEADING_RE, ""));
   return blockEdit(blockStart, blockEnd, wrapFence(lines));
 }
 
-/** Toggle a per-line prefix construct (heading / list / quote) over the selection's whole lines. */
+/**
+ * Toggle a per-line prefix construct (heading / list / quote) over the selection's whole lines. Heading
+ * gets one extra step first: when the selection's line range is entirely inside a single multi-line
+ * Paragraph syntax node — several PHYSICAL lines joined by CommonMark soft breaks into one LOGICAL
+ * block, e.g. a manually word-wrapped paragraph — the lines are collapsed to one logical line (soft
+ * breaks become spaces, mirroring how the parsed Markdown treats them) before the heading prefix is
+ * applied. An ATX heading occupies exactly the line it starts on (no lazy continuation), so prefixing
+ * every physical line individually would fragment one paragraph into N one-line headings instead of
+ * producing the single heading the selection's logical content represents.
+ */
 function toggleBlockPrefix(
   doc: string,
   from: number,
@@ -249,14 +266,64 @@ function toggleBlockPrefix(
   kind: LinePrefixKind,
 ): FormatEdit {
   const [blockStart, blockEnd] = blockLineRange(doc, from, to);
-  const lines = doc.slice(blockStart, blockEnd).split("\n");
-  return blockEdit(blockStart, blockEnd, toggleLinePrefix(lines, kind));
+  const raw = doc.slice(blockStart, blockEnd);
+  if (
+    kind.type === "heading" &&
+    raw.includes("\n") &&
+    inSingleParagraph(doc, blockStart, blockEnd)
+  ) {
+    const joined = raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join(" ");
+    return blockEdit(blockStart, blockEnd, toggleLinePrefix([joined], kind));
+  }
+  return blockEdit(blockStart, blockEnd, toggleLinePrefix(raw.split("\n"), kind));
+}
+
+/** Whether [start, end) sits entirely inside a single (necessarily multi-line, since a one-line span
+ *  can't straddle anything) Paragraph syntax node — the {@link toggleBlockPrefix} heading join guard. */
+function inSingleParagraph(doc: string, start: number, end: number): boolean {
+  const tree = markdownLanguage.parser.parse(doc);
+  for (let node: MdNode | null = tree.resolveInner(start, 1); node !== null; node = node.parent) {
+    if (node.name === "Paragraph") {
+      return node.from <= start && node.to >= end;
+    }
+  }
+  return false;
 }
 
 const HEADING_RE = /^#{1,6} +/;
 const BULLET_RE = /^[-*+] +/;
 const ORDERED_RE = /^\d+\. +/;
 const QUOTE_RE = /^> ?/;
+
+/**
+ * A line's leading CONTAINER markers — an optional blockquote marker (outermost) and, nested inside it,
+ * an optional list marker (bullet or ordered) — and the bare content after them. Mirrors how these two
+ * kinds nest as ProseMirror ancestors (a blockquote can wrap a list, per CommonMark): the heading command
+ * peels both off, applies its own prefix logic to the bare `rest`, and reattaches `prefix` UNCHANGED
+ * around the result, so `# ` on a list line inside a quote lands as `> - # item` rather than jumbling the
+ * markers' relative order (`# > - item`) or losing the container altogether.
+ */
+function splitContainers(line: string): { prefix: string; rest: string } {
+  const quote = QUOTE_RE.exec(line);
+  const afterQuote = quote !== null ? line.slice(quote[0].length) : line;
+  const quotePrefix = quote !== null ? quote[0] : "";
+  const list = BULLET_RE.exec(afterQuote) ?? ORDERED_RE.exec(afterQuote);
+  return list !== null
+    ? { prefix: quotePrefix + list[0], rest: afterQuote.slice(list[0].length) }
+    : { prefix: quotePrefix, rest: afterQuote };
+}
+
+/** Strip a line's existing list marker (bullet OR ordered, whichever is present — a line can only
+ *  carry one) — the {@link toggleLinePrefix} list case's shared "convert the other kind in place"
+ *  step, mirroring the PM tract's `toggleList` (which converts a list of the other type rather than
+ *  nesting a new one inside it). */
+function stripListMarker(line: string): string {
+  return line.replace(BULLET_RE, "").replace(ORDERED_RE, "");
+}
 
 /**
  * Add the kind's line prefix to every line, or strip it if every (non-blank) line already has it. The
@@ -270,14 +337,18 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
   switch (kind.type) {
     case "heading": {
       const prefix = `${"#".repeat(kind.level)} `;
-      const allAtLevel = has(HEADING_RE) && nonBlank.every((line) => line.startsWith(prefix));
+      const parts = lines.map((line) => (line.trim() === "" ? null : splitContainers(line)));
+      const nonBlankRest = parts.filter((part) => part !== null).map((part) => part.rest);
+      const allAtLevel =
+        nonBlankRest.length > 0 && nonBlankRest.every((rest) => rest.startsWith(prefix));
       return lines
-        .map((line) => {
-          if (line.trim() === "") {
+        .map((line, i) => {
+          const part = parts[i];
+          if (part === undefined || part === null) {
             return line;
           }
-          const bare = line.replace(HEADING_RE, "");
-          return allAtLevel ? bare : prefix + bare;
+          const bare = part.rest.replace(HEADING_RE, "");
+          return part.prefix + (allAtLevel ? bare : prefix + bare);
         })
         .join("\n");
     }
@@ -291,8 +362,7 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
               return line;
             }
             n += 1;
-            const bare = line.replace(ORDERED_RE, "");
-            return numbered ? bare : `${n}. ${bare}`;
+            return numbered ? line.replace(ORDERED_RE, "") : `${n}. ${stripListMarker(line)}`;
           })
           .join("\n");
       }
@@ -302,8 +372,7 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
           if (line.trim() === "") {
             return line;
           }
-          const bare = line.replace(BULLET_RE, "");
-          return allBulleted ? bare : `- ${bare}`;
+          return allBulleted ? line.replace(BULLET_RE, "") : `- ${stripListMarker(line)}`;
         })
         .join("\n");
     }
