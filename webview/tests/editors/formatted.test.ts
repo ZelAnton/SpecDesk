@@ -423,6 +423,92 @@ describe("FormattedEditor (jsdom)", () => {
     );
   });
 
+  // T-075: a whole-container (sub: false) diff mark must wash the ENTIRE table/list, not just the first
+  // row/item nodeRangeForLine would otherwise narrow to — the Code pane (editor.ts) already gets this
+  // right and is the parity reference these assert against.
+  it("an added table container washes the whole table, not just its first row", () => {
+    const { ed, host } = mountWithHost();
+    // "Intro" (line 0), table (lines 2-3: header row + one data row).
+    ed.setText("Intro\n\n| A | B |\n| - | - |\n| 1 | 2 |\n");
+    ed.setDiff([{ kind: "added", sub: false, lineStart: 2, lineEnd: 3 }]);
+
+    const washed = host.querySelector(".sd-diff-added");
+    expect(washed?.tagName.toLowerCase()).toBe("table");
+    expect(washed?.querySelectorAll("tr")).toHaveLength(2); // header row AND data row both inside
+    expect(washed?.textContent).toContain("A");
+    expect(washed?.textContent).toContain("1");
+    expect(washed?.getAttribute("data-diff-label")).toBe("Added by you");
+  });
+
+  it("an added list container washes every item, not just the first", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("Intro\n\n- one\n- two\n- three\n");
+    ed.setDiff([{ kind: "added", sub: false, lineStart: 2, lineEnd: 4 }]);
+
+    const washed = host.querySelector(".sd-diff-added");
+    expect(washed?.tagName.toLowerCase()).toBe("ul");
+    expect(washed?.querySelectorAll("li")).toHaveLength(3);
+    expect(washed?.textContent).toContain("one");
+    expect(washed?.textContent).toContain("three");
+    expect(washed?.getAttribute("data-diff-label")).toBe("Added by you");
+  });
+
+  it("a moved container (table or list) washes the whole container, not just its first row/item", () => {
+    const { ed: tableEd, host: tableHost } = mountWithHost();
+    tableEd.setText("| A | B |\n| - | - |\n| 1 | 2 |\n");
+    tableEd.setDiff([{ kind: "moved", sub: false, lineStart: 0, lineEnd: 1 }]);
+    const washedTable = tableHost.querySelector(".sd-diff-moved");
+    expect(washedTable?.tagName.toLowerCase()).toBe("table");
+    expect(washedTable?.querySelectorAll("tr")).toHaveLength(2);
+    expect(washedTable?.getAttribute("data-diff-label")).toBe("Moved by you");
+
+    const { ed: listEd, host: listHost } = mountWithHost();
+    listEd.setText("- one\n- two\n- three\n");
+    listEd.setDiff([{ kind: "moved", sub: false, lineStart: 0, lineEnd: 2 }]);
+    const washedList = listHost.querySelector(".sd-diff-moved");
+    expect(washedList?.tagName.toLowerCase()).toBe("ul");
+    expect(washedList?.querySelectorAll("li")).toHaveLength(3);
+    expect(washedList?.getAttribute("data-diff-label")).toBe("Moved by you");
+  });
+
+  it("a changed-container fallback (no per-child diff) washes the whole table/list, not just its first row/item", () => {
+    const { ed: tableEd, host: tableHost } = mountWithHost();
+    tableEd.setText("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
+    // sub: false with children.length === 0 (an empty childDiff, per expandDiffMarks) — the container's
+    // node text isn't pure, so pushInlineWordDiff bows out and pushDiff must wash the whole container.
+    tableEd.setDiff([
+      {
+        kind: "changed",
+        sub: false,
+        lineStart: 0,
+        lineEnd: 3,
+        baseText: "irrelevant",
+        baseSource: null,
+      },
+    ]);
+    const washedTable = tableHost.querySelector(".sd-diff-changed");
+    expect(washedTable?.tagName.toLowerCase()).toBe("table");
+    expect(washedTable?.querySelectorAll("tr")).toHaveLength(3);
+    expect(washedTable?.getAttribute("data-diff-label")).toBe("Updated by you");
+
+    const { ed: listEd, host: listHost } = mountWithHost();
+    listEd.setText("- one\n- two\n- three\n");
+    listEd.setDiff([
+      {
+        kind: "changed",
+        sub: false,
+        lineStart: 0,
+        lineEnd: 2,
+        baseText: "irrelevant",
+        baseSource: null,
+      },
+    ]);
+    const washedList = listHost.querySelector(".sd-diff-changed");
+    expect(washedList?.tagName.toLowerCase()).toBe("ul");
+    expect(washedList?.querySelectorAll("li")).toHaveLength(3);
+    expect(washedList?.getAttribute("data-diff-label")).toBe("Updated by you");
+  });
+
   it("format() applies ProseMirror commands and reports the active marks/blocks", () => {
     const ed = mount();
     ed.setText("hello\n");

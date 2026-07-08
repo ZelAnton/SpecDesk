@@ -488,8 +488,16 @@ export class FormattedEditor {
 
   /**
    * [from, to] of the node to highlight for a source line: the top-level block, or — inside a table /
-   * list — the row / item the line falls in (so the caret highlights one row, not the whole table).
-   * Positions are computed against the current document so they are always valid.
+   * list, when `narrow` is true — the row / item the line falls in (so the caret highlights one row, not
+   * the whole table). Positions are computed against the current document so they are always valid.
+   *
+   * `narrow` defaults to true for the caret/hover callers ({@link pushHighlights}, {@link
+   * removedAnchorPos}'s `"child"` case), which always want the row/item a given line falls in. {@link
+   * pushDiff} passes `instr.sub` instead: a `sub === true` (row/item) mark still narrows, but a `sub ===
+   * false` mark addresses a table/list CONTAINER as a whole (added/moved wholesale, or a changed
+   * container's wash fallback) — its `lineStart` is the container's own first line, which without
+   * `narrow: false` would resolve to just that first row/item (the bug T-075 fixes), not the container
+   * `pushDiff` actually means to wash.
    *
    * md-blocks' `childLineStarts` (markdown-it) and this PM node's children (pm-markdown.ts) are built
    * from the same shared tokenizer config (md-config.ts), so their child COUNTS agree by construction
@@ -500,7 +508,7 @@ export class FormattedEditor {
    * container here is the same "detect and wash the container instead of guessing" contract DiffWire.fs
    * already applies natively (see its childDiff empty-fallback comment).
    */
-  private nodeRangeForLine(line: number | null): [number, number] | null {
+  private nodeRangeForLine(line: number | null, narrow = true): [number, number] | null {
     if (line === null) {
       return null;
     }
@@ -510,6 +518,9 @@ export class FormattedEditor {
       return null;
     }
     const [blockFrom, blockTo] = blockRange(doc, topIndex);
+    if (!narrow) {
+      return [blockFrom, blockTo];
+    }
     const block = doc.child(topIndex);
     const childStarts = this.blocks[topIndex]?.childLineStarts;
     if (
@@ -636,16 +647,22 @@ export class FormattedEditor {
     for (const instr of plan) {
       switch (instr.type) {
         case "fill": {
-          // Resolve the node to wash: a whole top-level block, or — for a sub-block instruction (a table
-          // row / list item) — the individual row/item nodeRangeForLine narrows to inside a table/list.
-          const range = this.nodeRangeForLine(instr.lineStart);
+          // Resolve the node to wash: for a sub-block instruction (a table row / list item),
+          // nodeRangeForLine narrows to that row/item inside its table/list; for a whole-container
+          // instruction (added/moved container, sub === false) it must NOT narrow — lineStart is the
+          // container's own first line, and narrowing would wash only its first row/item instead of the
+          // whole table/list (T-075).
+          const range = this.nodeRangeForLine(instr.lineStart, instr.sub);
           if (range !== null) {
             washBlock(instr.kind, instr.sub, range);
           }
           break;
         }
         case "inline": {
-          const range = this.nodeRangeForLine(instr.lineStart);
+          // Same narrow-only-for-sub rule as "fill" above: a whole-container changed mark (sub === false)
+          // must resolve to the whole table/list, both for the inline word-diff attempt (which then bows
+          // out on a container, since its text isn't pure) and for the whole-block wash fallback below.
+          const range = this.nodeRangeForLine(instr.lineStart, instr.sub);
           if (range === null) {
             break;
           }
