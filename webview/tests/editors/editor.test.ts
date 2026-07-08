@@ -4,7 +4,7 @@ import { MarkdownEditor } from "../../src/editors/editor.js";
 
 // Runtime check of the Code-pane diff overlay (CodeMirror): the inline source word-diff decorations.
 
-function mount(): { ed: MarkdownEditor; host: HTMLDivElement } {
+function mount(onDebug?: (summary: string) => void): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const ed = new MarkdownEditor(host, {
@@ -17,6 +17,7 @@ function mount(): { ed: MarkdownEditor; host: HTMLDivElement } {
     onEditAttempt: () => {},
     onFocus: () => {},
     onOpenLink: () => {},
+    ...(onDebug ? { onDebug } : {}),
   });
   return { ed, host };
 }
@@ -102,6 +103,45 @@ describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => 
     // Every anchor's natural (spacer-free) top is identical before and after — the whole point of the
     // fixed point. In particular the FIRST anchor does not swing by the lead height.
     expect(after).toEqual(before);
+  });
+});
+
+describe("MarkdownEditor stale-anchor refusal on the reconcile path (jsdom, T-084)", () => {
+  // A line/lineEnd from the sibling (formatted) pane's blockGeometry() that no longer fits this
+  // editor's document (mid-mirror, before the pane-consistency gate in HeightSync.reconcile catches
+  // it) must be REFUSED, not silently clamped to the last line — clamping would measure/pad the wrong
+  // line instead of surfacing the staleness.
+  it("naturalLineTops returns null (not the clamped last line's top) for an out-of-range line", () => {
+    const debug: string[] = [];
+    const { ed } = mount((summary) => debug.push(summary));
+    ed.setText("one\ntwo\nthree\n"); // 3 lines: 0, 1, 2
+
+    const tops = ed.naturalLineTops([0, 5]);
+
+    expect(tops[0]).not.toBeNull();
+    expect(tops[1]).toBeNull();
+    expect(debug.some((s) => s.includes("refused stale anchor line 5"))).toBe(true);
+  });
+
+  it("setSpacers drops a spacer at an out-of-range lineEnd instead of planting it on the last line", () => {
+    const debug: string[] = [];
+    const { ed, host } = mount((summary) => debug.push(summary));
+    ed.setText("one\ntwo\nthree\n"); // 3 lines: 0, 1, 2
+
+    expect(() =>
+      ed.setSpacers([
+        { lineEnd: 0, height: 40 },
+        { lineEnd: 5, height: 999 },
+      ]),
+    ).not.toThrow();
+
+    // Only the in-range spacer (40px, under line 0) was planted — the stale one (999px) was dropped,
+    // not clamped onto the last line where it would otherwise still show up.
+    const spacers = [...host.querySelectorAll(".cm-sync-spacer")].map(
+      (el) => (el as HTMLElement).style.height,
+    );
+    expect(spacers).toEqual(["40px"]);
+    expect(debug.some((s) => s.includes("refused stale spacer at line 5"))).toBe(true);
   });
 });
 
