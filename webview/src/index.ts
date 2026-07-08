@@ -478,12 +478,21 @@ function wire(): void {
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
-        editor.setText(payload.text);
+        // Silent: the host already has this text (it just sent it) — a non-silent setText would fire
+        // the source editor's onChange after its 120ms debounce, round-tripping it back to the host as
+        // a spurious editor.changed (bumping docVersion and triggering a redundant re-render) even
+        // though nothing was actually edited. sameDocument is left at its false default (unlike the
+        // Split mirror / mode-switch hydration silent calls): this IS a genuinely different document,
+        // so any pending image-insert marker from the previous one is dropped, not restored.
+        editor.setText(payload.text, true);
         // Resolve relative image links in the formatted view against the document's folder. Set before
         // setText so the image node views render with the correct app://repo/… src.
         formatted.setDocDir(payload.docDir);
-        // Hydrate the formatted view now too, so the Split pane isn't blank for one debounce interval
-        // until the editor's mirror fires. setText is silent (no onChange), so this sends nothing.
+        // Hydrate the formatted view now too — the source editor's setText above is silent, so it never
+        // fires onChange/mirrors into this pane on its own; without this explicit call the Split pane
+        // would stay blank (or show the previous document) after a load. formatted.setText is itself
+        // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
+        // nothing either.
         formatted.setText(payload.text);
         // Seed the synced highlight at the top of the document (both panes). No reveal: a freshly loaded
         // doc is scrolled to the top, so line 0 is already visible — and this is not a user navigation.

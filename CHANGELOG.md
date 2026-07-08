@@ -121,6 +121,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Loading a document (`doc.loaded`) no longer triggers a redundant `editor.changed` round-trip. The
+  source editor's hydration used a non-silent `setText`, so ~120ms later its debounced `onChange` fired
+  and sent the just-loaded text straight back to the host as if it had been edited — bumping the host's
+  `docVersion` and running a full re-render on every document load, and only avoiding a false "Unsaved
+  changes" notice by the accident of the load also resetting the lifecycle to Published (the disk-autosave
+  arm gates on the editing state). `webview/src/editors/editor.ts`'s `setText` now takes the marker-keep/
+  -drop decision (`sameDocument`) as an axis independent of the change-notification suppression (`silent`)
+  — previously the same flag drove both — so `doc.loaded` can hydrate silently while still dropping any
+  image-insert marker left over from the previous document, instead of restoring it at a now-meaningless
+  clamped position.
 - The Split view's source editor no longer keeps an inflated spacer before a block that sat below the
   viewport (e.g. a `### A code block` after a table). Height-sync reads each source block's top from
   CodeMirror, but a not-yet-measured region below the viewport — especially a wrapped line, estimated as

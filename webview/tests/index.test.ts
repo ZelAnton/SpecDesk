@@ -239,3 +239,38 @@ describe("index.ts: startup view mode has a single source of truth (jsdom)", () 
     expect(codeBtn?.getAttribute("aria-checked")).toBe("false");
   });
 });
+
+describe("index.ts: doc.loaded hydration is silent (T-069, jsdom)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  // Before the fix, the source editor's doc.loaded hydration used a non-silent setText: 120ms later the
+  // debounced onChange fired and sent editor.changed straight back to the host with the very text it
+  // just sent — an unnecessary round-trip that bumped the host's docVersion and re-ran a full render for
+  // every open document, and only avoided a false "Unsaved changes" by the accident of the load also
+  // resetting the lifecycle to Published (MarkDirtyAndScheduleDiskAutosave gates on the editing state).
+  it("does not emit editor.changed after loading a document, even once the debounce window elapses", async () => {
+    const bridge = await mountApp();
+
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: { path: "docs/spec.md", text: "# Hello\n", docDir: "docs" },
+    });
+
+    // Past the 120ms debounce the (non-silent, pre-fix) source-editor onChange would have fired.
+    vi.advanceTimersByTime(500);
+
+    expect(bridge.sent.some((message) => message.kind === Kinds.editorChanged)).toBe(false);
+
+    // The loaded document still reaches both panes — silencing the change notification must not
+    // degrade what the author actually sees.
+    expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Hello");
+    expect(document.querySelector("#formatted")?.textContent).toContain("Hello");
+  });
+});
