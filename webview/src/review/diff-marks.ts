@@ -41,9 +41,9 @@ export type DiffMark =
       /** The base rendered/flattened text. The Formatted pane word-diffs it against the block's current
        *  text to highlight the changed words inline (or washes the whole block if too much changed). */
       baseText: string;
-      /** The base raw source for the Code pane's inline word-diff on a WHOLE-BLOCK changed mark; `null`
-       *  for a row/item (sub) changed mark, which has no own code-pane source (so the Code pane keeps
-       *  just the line wash). The Formatted pane ignores it. */
+      /** The base raw source for the Code pane's inline word-diff, for both a whole-block changed mark and
+       *  a row/item (sub) changed mark; `null` only when the wire carries no source to diff against
+       *  (a container whose own children didn't resolve). The Formatted pane ignores it. */
       baseSource: string | null;
     };
 
@@ -101,15 +101,15 @@ function expandChild(
   const next = starts[child.childIndex + 1];
   const lineEnd = next !== undefined ? next - 1 : containerEnd;
   if (child.kind === "changed") {
-    // A changed row/item carries its base text so the Formatted pane can word-diff it inline; it has no
-    // own code-pane source (baseSource: null), so the Code pane keeps just the line wash.
+    // A changed row/item carries both its base text (Formatted pane word-diff) and its base source (Code
+    // pane word-diff), so both panes highlight the changed row/item inline symmetrically.
     marks.push({
       kind: "changed",
       sub: true,
       lineStart: start,
       lineEnd,
       baseText: child.baseText,
-      baseSource: null,
+      baseSource: child.baseSource,
     });
     return;
   }

@@ -45,10 +45,14 @@ describe("expandDiffMarks", () => {
     });
   });
 
-  it("resolves a changed list's child to the item's source line range (sub, with baseText)", () => {
+  it("resolves a changed list's child to the item's source line range (sub, with baseText and baseSource)", () => {
     // List items at source lines 0, 1, 2; the second item changed.
     const marks = expandDiffMarks(
-      [changedContainer(0, 2, [{ kind: "changed", childIndex: 1, baseText: "two" }])],
+      [
+        changedContainer(0, 2, [
+          { kind: "changed", childIndex: 1, baseText: "two", baseSource: "- two" },
+        ]),
+      ],
       "- one\n- two changed\n- three\n",
     );
     expect(marks).toHaveLength(1);
@@ -58,8 +62,8 @@ describe("expandDiffMarks", () => {
       lineEnd: 1,
       sub: true,
       baseText: "two",
-      // A sub (row/item) changed mark has no own code-pane source.
-      baseSource: null,
+      // A sub (row/item) changed mark carries its own code-pane source too, symmetrically with baseText.
+      baseSource: "- two",
     });
   });
 
@@ -83,7 +87,11 @@ describe("expandDiffMarks", () => {
     // and the Markdig AST's entry.lineStart — start at line 2. childLineStarts must be keyed by
     // that real start, not the pulled-back one, or the container falls back to a whole-block wash.
     const marks = expandDiffMarks(
-      [changedContainer(2, 4, [{ kind: "changed", childIndex: 1, baseText: "1 | 2" }])],
+      [
+        changedContainer(2, 4, [
+          { kind: "changed", childIndex: 1, baseText: "1 | 2", baseSource: "| 1 | 2 |" },
+        ]),
+      ],
       "\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
     );
     expect(marks).toHaveLength(1);
@@ -93,14 +101,18 @@ describe("expandDiffMarks", () => {
       lineStart: 4,
       lineEnd: 4,
       baseText: "1 | 2",
-      baseSource: null,
+      baseSource: "| 1 | 2 |",
     });
   });
 
   it("falls back to a whole-block mark when the container's children can't be resolved", () => {
     // entry.lineStart=5 matches no block in the (single-paragraph) text → no childLineStarts.
     const marks = expandDiffMarks(
-      [changedContainer(5, 5, [{ kind: "changed", childIndex: 0, baseText: "x" }])],
+      [
+        changedContainer(5, 5, [
+          { kind: "changed", childIndex: 0, baseText: "x", baseSource: "x" },
+        ]),
+      ],
       "just a paragraph\n",
     );
     expect(marks).toHaveLength(1);

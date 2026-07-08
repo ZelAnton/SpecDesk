@@ -80,8 +80,10 @@ export type ChildDiffPayload =
       kind: "changed";
       /** 0-based HEAD child ordinal of the changed row/item. */
       childIndex: number;
-      /** The base child's flattened text (inline word-diff inside the row/item). */
+      /** The base child's flattened text, for the Formatted pane's inline word-diff inside the row/item. */
       baseText: string;
+      /** The base child's raw source, for the Code pane's inline word-diff inside the row/item. */
+      baseSource: string;
     }
   | {
       kind: "removed";

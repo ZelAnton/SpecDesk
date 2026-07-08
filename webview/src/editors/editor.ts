@@ -257,8 +257,8 @@ function buildDiffDecorations(state: EditorState, marks: DiffMark[]): Decoration
         break;
       case "inline": {
         // A changed block always keeps its line wash as the block-level signal (the Code pane has no
-        // annotation pill), refined with inline word highlights on top. A row/item (sub) changed mark has
-        // no own code-pane source (baseSource is null) and keeps just the wash.
+        // annotation pill), refined with inline word highlights on top — both a whole-block and a row/item
+        // (sub) changed mark carry a source to diff against; only an unresolved case keeps just the wash.
         const [start, end] = washLines("changed", instr.lineStart, instr.lineEnd);
         if (instr.baseSource !== null) {
           pushInlineSourceWords(ranges, state, instr.baseSource, start, end);

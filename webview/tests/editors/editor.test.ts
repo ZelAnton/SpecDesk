@@ -91,6 +91,51 @@ describe("MarkdownEditor diff overlay (jsdom)", () => {
     expect(host.querySelectorAll(".cm-diff-word-removed").length).toBeGreaterThan(0);
     expect(host.querySelector(".cm-diff-removed-marker")?.textContent).toContain("gone block");
   });
+
+  // T-099: a changed row/item (sub) mark now carries its own baseSource, so the Code pane inline
+  // word-diffs a changed list item / table row too — symmetric with the Formatted pane.
+  it("highlights changed source words inline for a changed list item (sub mark)", () => {
+    const { ed, host } = mount();
+    ed.setText("- one\n- buy fresh apples from the market today\n- three\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 1,
+        lineEnd: 1,
+        baseText: "buy fresh oranges from the market today",
+        baseSource: "- buy fresh oranges from the market today",
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".cm-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(true);
+    const removed = [...host.querySelectorAll(".cm-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("oranges"))).toBe(true);
+    // The row's line wash stays as the block-level signal (no annotation pill in the Code pane).
+    expect(host.querySelectorAll(".cm-diff-changed").length).toBeGreaterThan(0);
+  });
+
+  it("highlights changed source words inline for a changed table row (sub mark)", () => {
+    const { ed, host } = mount();
+    ed.setText("| Term | Value |\n| --- | --- |\n| Terms | Net 45 |\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 2,
+        lineEnd: 2,
+        baseText: "Terms | Net 30",
+        baseSource: "| Terms | Net 30 |",
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".cm-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("45"))).toBe(true);
+    const removed = [...host.querySelectorAll(".cm-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("30"))).toBe(true);
+    expect(host.querySelectorAll(".cm-diff-changed").length).toBeGreaterThan(0);
+  });
 });
 
 describe("MarkdownEditor removed-marker parity with the Formatted pane (jsdom, T-078)", () => {

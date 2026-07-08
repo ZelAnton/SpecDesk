@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source ranges are derived from the same Markdig parse as a sidecar to the `Ast` (`Projection.childLineRanges`),
   which keeps nested blocks range-free so a block's structural equality stays position-independent — the
   AstDiff backbone that keeps an unchanged-but-shifted list/table Unchanged.
+- The Code pane now shows an inline word-diff for a changed table row / list item too, not just a whole
+  changed block — symmetric with the Formatted pane. The webview decodes the child `baseSource` field
+  above and threads it through `expandDiffMarks`'s sub-`DiffMark`s to the existing Code-pane inline-diff
+  gate (`buildDiffDecorations`), which already applied to whole blocks.
 - The webview's starting view mode (Code/Split/Formatted) is now declared exactly once, in `#panes`'s
   `data-mode` attribute in `webview/index.html`; `webview/src/index.ts` reads it back at startup instead
   of repeating a `"split"` literal of its own, and reflects it into the mode radiogroup through the same

@@ -49,7 +49,7 @@ export interface FillInstruction {
 /** Refine a changed block/row with an inline word-diff (highlight the changed words) rather than a wash.
  *  Carries BOTH bases so either pane word-diffs in its own coordinate space: `baseText` (flattened) for
  *  the Formatted pane against the rendered text, `baseSource` (raw) for the Code pane against the source
- *  (null for a row/item, which has no standalone source — the Code pane keeps just a line wash there). */
+ *  (null only when the wire carries no source to diff against — the Code pane keeps just a line wash then). */
 export interface InlineInstruction {
   type: "inline";
   sub: boolean;

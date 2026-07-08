@@ -115,6 +115,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
         kind: "changed",
         childIndex: 1,
         baseText: "Net 30",
+        baseSource: "| Terms | Net 30 |",
       });
       expect(container.children[1]).toMatchObject({
         kind: "removed",

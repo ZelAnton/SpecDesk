@@ -102,8 +102,18 @@ function parseChildDiff(value: unknown): ChildDiffPayload | null {
   if ((value.kind === "added" || value.kind === "moved") && isNumber(value.childIndex)) {
     return { kind: value.kind, childIndex: value.childIndex };
   }
-  if (value.kind === "changed" && isNumber(value.childIndex) && isString(value.baseText)) {
-    return { kind: "changed", childIndex: value.childIndex, baseText: value.baseText };
+  if (
+    value.kind === "changed" &&
+    isNumber(value.childIndex) &&
+    isString(value.baseText) &&
+    isString(value.baseSource)
+  ) {
+    return {
+      kind: "changed",
+      childIndex: value.childIndex,
+      baseText: value.baseText,
+      baseSource: value.baseSource,
+    };
   }
   if (value.kind === "removed" && isNumber(value.anchorIndex) && isString(value.removedText)) {
     return { kind: "removed", anchorIndex: value.anchorIndex, removedText: value.removedText };

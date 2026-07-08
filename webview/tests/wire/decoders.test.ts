@@ -43,11 +43,17 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
       lineEnd: 0,
       baseText: "",
       baseSource: "",
-      children: [{ kind: "changed", childIndex: 1, baseText: "two" }],
+      children: [{ kind: "changed", childIndex: 1, baseText: "two", baseSource: "| two |" }],
     };
     expect(parseDiffResult({ entries: [entry] })).toEqual({ entries: [entry] });
     expect(parseDiffResult({ entries: [{ ...entry, lineStart: "0" }] })).toBeNull(); // bad field
     expect(parseDiffResult({ entries: [{ ...entry, children: [{ kind: "x" }] }] })).toBeNull(); // bad child
+    // A changed child missing its baseSource is a contract drift (mirrors the whole-block field) — reject.
+    expect(
+      parseDiffResult({
+        entries: [{ ...entry, children: [{ kind: "changed", childIndex: 1, baseText: "two" }] }],
+      }),
+    ).toBeNull();
     // A removed entry with a head line range is not a valid removed shape (removed has no range) — but the
     // decoder simply reads removed's own fields (anchorLine/removedText) and ignores the stray range.
     expect(
