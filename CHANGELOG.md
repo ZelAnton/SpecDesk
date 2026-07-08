@@ -142,6 +142,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lineAtScrollTop`, already guards `height === 0`. Markdown-it's own top-level block tokens always carry
   a source map spanning at least one line, so this is defense-in-depth rather than a fix for an observed
   live scenario — but the interpolation is no longer implicitly relying on that invariant.
+- "Show changes" (`webview/src/review/review.ts`) no longer asks the host to diff a stale head:
+  clicking it while an editor still has an unsent edit pending (its own 120ms debounce hasn't fired
+  yet) used to diff the last-reported text while the local head had already moved on, silently
+  offsetting the resulting fills/anchors/child ordinals (worst in Split with a diverging, not-yet-
+  mirrored pane). The compare request is now deferred — polled on a bounded 20ms/15-attempt window —
+  until every pane reports no pending edit, then fired; unaffected by an ordinary click (fires
+  immediately, same as before).
 - Escape now closes/cancels an open inline prompt bar (draft name, version note, send-for-review)
   regardless of which of its own elements holds focus. Previously the Escape handling lived only on
   the text input/textarea, so a keyboard user focused on the Confirm/Cancel button got no reaction.

@@ -16,7 +16,22 @@ export interface DiffSurface {
   getText(): string;
   setDiff(marks: DiffMark[]): void;
   clearDiff(): void;
+  /** Whether an edit has been typed here that hasn't been reported via `onChange` yet (still waiting
+   *  out the editor's own debounce) — see the identical member on `MarkdownEditor`/`FormattedEditor`.
+   *  {@link ReviewController.toggle} polls this before asking the host to compare, so the request is
+   *  never taken against a stale head (see the class doc comment). */
+  hasPendingChange(): boolean;
 }
+
+/** How often {@link ReviewController.toggle} re-checks the surfaces while a compare is deferred. */
+const SETTLE_POLL_MS = 20;
+/** Upper bound on deferral: `MAX_SETTLE_POLLS * SETTLE_POLL_MS` (300ms) comfortably exceeds the
+ *  editors' own 120ms edit debounce, so a genuinely in-flight edit always settles within the window.
+ *  If a surface still reports pending past this bound (a caller in a state this class doesn't expect,
+ *  rather than an ordinary in-flight debounce), the request fires anyway — deferring indefinitely
+ *  would risk the overlay never opening at all, which is worse than the rare stale-head race this
+ *  guards against. */
+const MAX_SETTLE_POLLS = 15;
 
 export interface ReviewDeps {
   /** The editable panes the overlay washes (Split shows both at once); at least one. The first is the
@@ -40,13 +55,21 @@ export interface ReviewDeps {
 
 export class ReviewController {
   private reviewing = false;
+  // Bumped by every toggle() (a fresh deferred-compare chain) and by clear() (nothing should still be
+  // waiting to fire). requestCompareOnceSettled captures the token its own chain started with and
+  // compares it back before ever calling requestCompare, so a chain outlived by a clear()-then-toggle()
+  // re-arm recognizes it's stale and aborts instead of firing a second, spurious compare for the NEW
+  // (unrelated) toggle — reviewing alone can't tell the two apart, since a re-arm sets it back to true.
+  private settleToken = 0;
 
   constructor(private readonly deps: ReviewDeps) {}
 
   /** Toggle the overlay: clear a showing one, or start a fresh compare (press the button and ask the
    *  host to diff — the marks arrive later via {@link applyResult}). The local "Show changes" affordance
    *  always compares against the last saved version; PoC-7's PR/published affordances will call a
-   *  variant that passes a different base. */
+   *  variant that passes a different base. The compare request itself is deferred — see
+   *  {@link requestCompareOnceSettled} — until every surface reports no pending, not-yet-reported edit,
+   *  so the host is never asked to diff a head that's about to change out from under the reply. */
   toggle(): void {
     if (this.reviewing) {
       this.clear();
@@ -54,7 +77,25 @@ export class ReviewController {
     }
     this.reviewing = true;
     this.deps.setPressed(true);
-    this.deps.requestCompare("lastVersion");
+    this.settleToken += 1;
+    this.requestCompareOnceSettled(this.settleToken, 0);
+  }
+
+  /** Poll every surface's {@link DiffSurface.hasPendingChange}; fire the compare request once none are
+   *  pending (immediately, on the first check, when nothing was in flight — the common case), or after
+   *  {@link MAX_SETTLE_POLLS} bounded retries if one never settles. Aborts silently once `token` no
+   *  longer matches {@link settleToken} — this chain's own toggle() call was superseded by a clear() or
+   *  a fresh re-arm since it started. */
+  private requestCompareOnceSettled(token: number, attempt: number): void {
+    if (token !== this.settleToken) {
+      return;
+    }
+    const settled = this.deps.surfaces.every((surface) => !surface.hasPendingChange());
+    if (settled || attempt >= MAX_SETTLE_POLLS) {
+      this.deps.requestCompare("lastVersion");
+      return;
+    }
+    setTimeout(() => this.requestCompareOnceSettled(token, attempt + 1), SETTLE_POLL_MS);
   }
 
   /** Drop the overlay: un-press the button and clear the marks in every surface. A genuine edit, a
@@ -64,6 +105,7 @@ export class ReviewController {
       return;
     }
     this.reviewing = false;
+    this.settleToken += 1; // invalidate any deferred compare chain still polling for this overlay
     this.deps.setPressed(false);
     for (const surface of this.deps.surfaces) {
       surface.clearDiff();
@@ -73,9 +115,13 @@ export class ReviewController {
 
   /** Apply a `diff.result`. Dropped unless the overlay is still showing and the result matches the live
    *  version — i.e. the author hasn't edited past the snapshot the request was taken at (the same
-   *  version-gate the preview uses). Marks are expanded against the current head — the version-gate
-   *  guarantees it matches the diff's head — so a changed list/table resolves to per-row/item marks
-   *  rather than a whole-container wash. */
+   *  version-gate the preview uses). Marks are expanded against the current head. The version-gate alone
+   *  does NOT guarantee that head matches the diff's — a `docVersion` bump only happens once an edit's
+   *  debounce reports it, so a result computed against a head with a still-pending, not-yet-reported edit
+   *  would pass the gate (the version hasn't moved yet) while `getText()` already reflects that edit. What
+   *  closes the gap is {@link toggle} deferring the request itself until every surface is settled (see
+   *  {@link requestCompareOnceSettled}), so by the time a request is ever sent, the head it's taken
+   *  against is the one this expansion later reads. */
   applyResult(version: number, entries: DiffEntryPayload[]): void {
     if (!this.reviewing || version !== this.deps.docVersion()) {
       return;

@@ -1,15 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiffMark } from "../../src/review/diff-marks.js";
 import { type DiffSurface, ReviewController, type ReviewDeps } from "../../src/review/review.js";
 import type { DiffEntryPayload } from "../../src/wire/protocol.js";
 
-// A fake editor surface: getText is fixed, setDiff/clearDiff are spies. No DOM — the controller is
-// pure state + delegation, so the surfaces and host callbacks are all that need standing in.
-function surface(text = "head text") {
+// A fake editor surface: getText is fixed, setDiff/clearDiff are spies, hasPendingChange defaults to
+// "settled" (false) so the existing tests below (written before T-077) see no behavior change. No
+// DOM — the controller is pure state + delegation, so the surfaces and host callbacks are all that
+// need standing in.
+function surface(text = "head text", pending = false) {
   const setDiff = vi.fn<(marks: DiffMark[]) => void>();
   const clearDiff = vi.fn<() => void>();
-  const view: DiffSurface = { getText: () => text, setDiff, clearDiff };
-  return { view, setDiff, clearDiff };
+  let isPending = pending;
+  const hasPendingChange = vi.fn<() => boolean>(() => isPending);
+  const view: DiffSurface = { getText: () => text, setDiff, clearDiff, hasPendingChange };
+  return {
+    view,
+    setDiff,
+    clearDiff,
+    hasPendingChange,
+    setPending: (v: boolean) => {
+      isPending = v;
+    },
+  };
 }
 
 // A single changed plain block (no children) → one whole-block mark when expanded.
@@ -165,5 +177,85 @@ describe("ReviewController", () => {
     const h = harness(4);
     h.review.applyResult(4, []); // not reviewing → dropped
     expect(h.onEmptyState).not.toHaveBeenCalled();
+  });
+});
+
+// T-077: toggle() must not ask the host to diff a head one of the surfaces is about to change out
+// from under (an unsent edit still waiting out its own 120ms debounce). These use fake timers since
+// the deferral polls on a bounded setTimeout chain.
+describe("ReviewController: deferred compare while a surface has a pending edit (T-077)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("defers requestCompare while a surface reports a pending edit, firing once it settles", () => {
+    const h = harness();
+    h.editor.setPending(true);
+    h.review.toggle();
+    // Pressed immediately (the button reflects the click right away), but the compare itself waits.
+    expect(h.setPressed).toHaveBeenCalledWith(true);
+    expect(h.requestCompare).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60);
+    expect(h.requestCompare).not.toHaveBeenCalled();
+    h.editor.setPending(false); // the debounce fires, the edit is reported
+    vi.advanceTimersByTime(20);
+    expect(h.requestCompare).toHaveBeenCalledTimes(1);
+    expect(h.requestCompare).toHaveBeenCalledWith("lastVersion");
+  });
+
+  it("both surfaces pending: compare fires only after both settle", () => {
+    const h = harness();
+    h.editor.setPending(true);
+    h.formatted.setPending(true);
+    h.review.toggle();
+    expect(h.requestCompare).not.toHaveBeenCalled();
+    h.editor.setPending(false); // only one settled so far
+    vi.advanceTimersByTime(20);
+    expect(h.requestCompare).not.toHaveBeenCalled();
+    h.formatted.setPending(false); // both settled now
+    vi.advanceTimersByTime(20);
+    expect(h.requestCompare).toHaveBeenCalledTimes(1);
+  });
+
+  it("no pending change: fires immediately, no regression", () => {
+    const h = harness();
+    h.review.toggle();
+    // No timer needed at all — the first (synchronous) settle check already passes.
+    expect(h.requestCompare).toHaveBeenCalledTimes(1);
+    expect(h.requestCompare).toHaveBeenCalledWith("lastVersion");
+  });
+
+  it("gives up and fires anyway after the bounded retry window if a surface never settles", () => {
+    const h = harness();
+    h.editor.setPending(true); // never cleared — simulates a surface that never reports settled
+    h.review.toggle();
+    expect(h.requestCompare).not.toHaveBeenCalled();
+    vi.runAllTimers(); // exhausts the bounded poll chain
+    expect(h.requestCompare).toHaveBeenCalledTimes(1);
+  });
+
+  it("clearing the overlay while a compare is deferred cancels it (no late spurious request)", () => {
+    const h = harness();
+    h.editor.setPending(true);
+    h.review.toggle();
+    h.review.clear();
+    h.editor.setPending(false);
+    vi.runAllTimers();
+    expect(h.requestCompare).not.toHaveBeenCalled();
+  });
+
+  it("clear-then-re-toggle while the old chain is still polling fires exactly once for the new overlay", () => {
+    const h = harness();
+    h.editor.setPending(true);
+    h.review.toggle(); // chain #1 starts, deferred
+    h.review.clear(); // overlay closed before chain #1 ever fired
+    h.review.toggle(); // re-armed: chain #2 starts fresh
+    h.editor.setPending(false); // settles for both chains' checks
+    vi.runAllTimers();
+    // Exactly one compare for the live (re-armed) overlay — chain #1 recognizes it was superseded.
+    expect(h.requestCompare).toHaveBeenCalledTimes(1);
   });
 });
