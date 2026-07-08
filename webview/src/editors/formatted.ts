@@ -126,6 +126,82 @@ function removedMarkerDOM(label: string): HTMLElement {
   return element;
 }
 
+/** The flattened text an inline word-diff runs against, plus the mapping back from an offset in it to a
+ *  document position — the shared return shape of {@link flattenLeaf} and {@link flattenRowOrItem}. */
+interface FlattenedText {
+  text: string;
+  toPos: (offset: number) => number;
+}
+
+/** Flatten a pure-text node (a top-level paragraph/heading) to its own `textContent`, for the non-sub
+ *  inline word-diff. `null` when the node isn't pure text (an offset couldn't map to a position safely —
+ *  e.g. an image or hard break sits between characters, so content size and text length diverge). A
+ *  pure-text node's text offset `o` maps to the document position `blockFrom + 1 + o`. */
+function flattenLeaf(node: PmNode, blockFrom: number): FlattenedText | null {
+  const text = node.textContent;
+  if (node.content.size !== text.length) {
+    return null;
+  }
+  const contentStart = blockFrom + 1;
+  return { text, toPos: (offset) => contentStart + offset };
+}
+
+/** Flatten a table row / list item's CHILDREN (cells / blocks) into one joined text, with the same
+ *  joiner the native side uses to flatten the whole row/item (DiffWire.fs `tableRowText`: cells joined
+ *  with `" | "`; `listItemText`: blocks joined with `" "`) — so the inline word-diff for a sub (row/item)
+ *  mark compares the SAME unit `baseText` was flattened from, not just the row/item's first child.
+ *
+ *  `null` when the row/item has no children, or any child isn't pure text (same guard as
+ *  {@link flattenLeaf}, applied per child) — the caller then falls back to washing the whole row/item.
+ *
+ *  The returned `toPos` maps an offset in the joined text back to a document position: inside a child's
+ *  own span it is that child's exact character position; inside the JOINER between two children (which
+ *  has no document counterpart of its own — it exists only in this synthetic joined string) it lands at
+ *  the start of the following child, a reasonable anchor for the rare add/del run that touches it (the
+ *  joiner is a literal shared by both sides, so it word-diffs as equal almost always). */
+function flattenRowOrItem(node: PmNode, rowFrom: number): FlattenedText | null {
+  const joiner = node.type.name === "table_row" ? " | " : " ";
+  const segments: { from: number; to: number; docFrom: number }[] = [];
+  let text = "";
+  let pure = true;
+  node.forEach((child, offset) => {
+    if (!pure) {
+      return;
+    }
+    const childText = child.textContent;
+    if (child.content.size !== childText.length) {
+      pure = false;
+      return;
+    }
+    if (text.length > 0) {
+      text += joiner;
+    }
+    const from = text.length;
+    text += childText;
+    // `offset` is child's position within the row/item's OWN content (0 at the position right after the
+    // row/item's opening token, i.e. document position `rowFrom + 1`); its content then starts one step
+    // further in, past the child's own opening token.
+    segments.push({ from, to: text.length, docFrom: rowFrom + 1 + offset + 1 });
+  });
+  const firstSegment = segments[0];
+  if (!pure || firstSegment === undefined) {
+    return null;
+  }
+  const lastSegment = segments[segments.length - 1] ?? firstSegment;
+  const toPos = (offset: number): number => {
+    for (const seg of segments) {
+      if (offset <= seg.to) {
+        // Clamp below `seg.from` too: an offset that lands in the joiner gap BEFORE this segment (no
+        // document position of its own) resolves to this segment's start.
+        return seg.docFrom + Math.max(0, Math.min(offset, seg.to) - seg.from);
+      }
+    }
+    // Past the last segment (offset === text.length, or a stray overshoot) — its content end.
+    return lastSegment.docFrom + (lastSegment.to - lastSegment.from);
+  };
+  return { text, toPos };
+}
+
 export interface FormattedEditorCallbacks {
   /** Fired ~120 ms after an edit, with the block-spliced Markdown of the current document. */
   onChange: (text: string) => void;
@@ -667,11 +743,12 @@ export class FormattedEditor {
             break;
           }
           // A changed block tries an inline word-diff first (highlight the changed words rather than wash
-          // the whole thing): a top-level paragraph/heading on its own node, or a row/item (sub) on its
-          // inner text node (range[0] + 1 steps inside the row/item to its first child). A sub gets no
-          // annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
-          const inlineFrom = instr.sub ? range[0] + 1 : range[0];
-          if (this.pushInlineWordDiff(decos, inlineFrom, instr.baseText, !instr.sub)) {
+          // the whole thing): a top-level paragraph/heading diffs its own text; a row/item (sub) diffs the
+          // WHOLE row/item's text (all its cells/blocks joined — see pushInlineWordDiff) against
+          // `instr.baseText`, which the native side flattens the same way (DiffWire.fs tableRowText /
+          // listItemText) — comparing the same unit on both sides, not just the row/item's first child. A
+          // sub gets no annotation pill. pushInlineWordDiff returns true when it applied (→ skip the wash).
+          if (this.pushInlineWordDiff(decos, range, instr.baseText, instr.sub)) {
             break;
           }
           washBlock("changed", instr.sub, range);
@@ -693,43 +770,49 @@ export class FormattedEditor {
   }
 
   /**
-   * Try to highlight the changed words inside a changed paragraph/heading instead of washing the whole
-   * block. Returns false — leaving the caller to wash — when the node isn't pure text (an offset can't
-   * map to a position safely), too much changed (word confetti), or nothing word-level differs (a
-   * markup-only edit). A pure-text block's content size equals its text length (no leaf nodes between
-   * characters), so a text offset `o` maps to the document position `blockFrom + 1 + o`.
+   * Try to highlight the changed words inside a changed paragraph/heading/row/item instead of washing the
+   * whole thing. Returns false — leaving the caller to wash — when the node (or, for a row/item, one of
+   * its cells/blocks) isn't pure text (an offset can't map to a position safely), too much changed (word
+   * confetti), or nothing word-level differs (a markup-only edit).
+   *
+   * `range[0]` is the node's own position (a top-level paragraph/heading when `sub` is false; a table row /
+   * list item when `sub` is true). A non-sub node diffs its own `textContent` directly. A sub node diffs
+   * the WHOLE row/item — {@link flattenRowOrItem} joins its cells/blocks the same way the native side does
+   * (DiffWire.fs `tableRowText`/`listItemText`: cells with `" | "`, item blocks with `" "`) — against
+   * `baseText`, which the native side flattens identically; comparing anything narrower (e.g. just the
+   * first cell/paragraph) would diff against the wrong unit and raise `changeRatio` on every other
+   * cell/paragraph's untouched text.
    */
   private pushInlineWordDiff(
     decos: Decoration[],
-    blockFrom: number,
+    range: [number, number],
     baseText: string,
-    withLabel: boolean,
+    sub: boolean,
   ): boolean {
-    const node = this.view.state.doc.nodeAt(blockFrom);
+    const node = this.view.state.doc.nodeAt(range[0]);
     if (node === null) {
       return false;
     }
-    const headText = node.textContent;
-    if (node.content.size !== headText.length) {
-      return false; // images / hard breaks break the offset→position identity — wash the whole block
+    const flattened = sub ? flattenRowOrItem(node, range[0]) : flattenLeaf(node, range[0]);
+    if (flattened === null) {
+      return false; // images / hard breaks / an impure cell — wash the whole row/item or block instead
     }
-    // A pure-text block's text offset `o` maps to the document position `blockFrom + 1 + o`.
-    const contentStart = blockFrom + 1;
+    const { text: headText, toPos } = flattened;
     let delSeq = 0;
     const applied = applyWordDiff(
       baseText,
       headText,
       (start, end) =>
         decos.push(
-          Decoration.inline(contentStart + start, contentStart + end, {
+          Decoration.inline(toPos(start), toPos(end), {
             class: "sd-diff-word-added",
           }),
         ),
       (at, text) =>
         decos.push(
-          Decoration.widget(contentStart + at, removedWordDOM(text), {
+          Decoration.widget(toPos(at), removedWordDOM(text), {
             side: -1,
-            key: `sd-delword-${blockFrom}-${delSeq++}`,
+            key: `sd-delword-${range[0]}-${delSeq++}`,
           }),
         ),
     );
@@ -738,9 +821,9 @@ export class FormattedEditor {
     }
     // The annotation pill only (sd-diff-inline = position:relative + ::before label), with no block wash.
     // A row/item (no pill) skips this — the inline word highlights are signal enough inside it.
-    if (withLabel) {
+    if (!sub) {
       decos.push(
-        Decoration.node(blockFrom, blockFrom + node.nodeSize, {
+        Decoration.node(range[0], range[0] + node.nodeSize, {
           class: "sd-diff-inline",
           "data-diff-label": diffLabel("changed"),
         }),
