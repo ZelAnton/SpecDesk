@@ -485,6 +485,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler quietly disconnected the first one — every current caller registers each kind exactly once,
   so a re-registration is always a bug, and it now surfaces immediately instead of dropping a handler
   with no signal.
+- Split view's height-synced scroll (`height-sync.ts`/`editor.ts`) no longer lets the visible text jump
+  while typing: whenever the editor spacers above the current viewport change weight (e.g. a below-
+  viewport block's estimated height gets corrected once CodeMirror finishes measuring it), `scrollTop`
+  is now nudged by that exact delta in the same dispatch, so the content already at the viewport top
+  stays put. The new `computeScrollCompensation` (pure, unit-tested) computes the delta from the
+  previous vs. next spacer set and the source line currently at the viewport top
+  (`MarkdownEditor.topVisibleLine()`).
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked

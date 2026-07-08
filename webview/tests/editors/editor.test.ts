@@ -105,6 +105,33 @@ describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => 
   });
 });
 
+describe("MarkdownEditor.topVisibleLine / adjustScrollTop (jsdom, T-066)", () => {
+  // Wiring-level sanity against a real CodeMirror view (the actual delta math lives in and is
+  // exhaustively covered by height-sync.test.ts's computeScrollCompensation suite) — this just confirms
+  // both methods work against a real `EditorView`/`scrollDOM` without throwing, since jsdom lacks real
+  // layout and `topVisibleLine` deliberately avoids `posAtCoords`/`getBoundingClientRect` for that reason.
+  it("reports line 0 at the default (unscrolled) position and does not throw applying spacers", () => {
+    const { ed } = mount();
+    ed.setText("one\ntwo\nthree\n");
+
+    expect(ed.topVisibleLine()).toBe(0);
+    expect(() => ed.setSpacers([{ lineEnd: 0, height: 40 }], 10)).not.toThrow();
+  });
+
+  it("adjustScrollTop nudges the live scrollDOM.scrollTop by the given delta", () => {
+    const { ed, host } = mount();
+    ed.setText("one\ntwo\nthree\n");
+    const scroller = host.querySelector(".cm-scroller") as HTMLElement;
+    scroller.scrollTop = 25;
+
+    ed.adjustScrollTop(15);
+    expect(scroller.scrollTop).toBe(40);
+
+    ed.adjustScrollTop(-10);
+    expect(scroller.scrollTop).toBe(30);
+  });
+});
+
 describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
