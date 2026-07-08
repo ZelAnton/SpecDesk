@@ -485,6 +485,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handler quietly disconnected the first one — every current caller registers each kind exactly once,
   so a re-registration is always a bug, and it now surfaces immediately instead of dropping a handler
   with no signal.
+- The Formatted pane's row/item highlight (`formatted.ts` `nodeRangeForLine`) no longer clamps a child
+  ordinal into a container node whose child count disagrees with md-blocks' `childLineStarts`. It used
+  to `Math.min` the computed index into range, which for a mismatched count could point at the wrong
+  row/item instead of the one the source line actually falls in; on a count mismatch it now washes the
+  whole container, matching how a per-child diff already falls back to a whole-block wash natively
+  (`DiffWire.fs`). md-blocks and the ProseMirror schema share one tokenizer config and agree on child
+  counts for any real document today, so this is a defense-in-depth guard, pinned by a new
+  cross-language ordinal fixture (`webview/tests/contract/container-ordinals.json`,
+  `tests/SpecDesk.Diff.Tests/ContainerOrdinalContractTests.fs`,
+  `webview/tests/contract/container-ordinals.test.ts`) covering a nested list inside an item, loose/tight
+  lists, a table with an empty header row, and a multi-paragraph list item.
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked

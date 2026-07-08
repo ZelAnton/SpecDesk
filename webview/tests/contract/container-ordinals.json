@@ -1,0 +1,54 @@
+[
+  {
+    "name": "nested list inside an item",
+    "base": "- old alpha\n  - nested-x\n  - nested-y\n- old bravo\n",
+    "head": "- alpha\n  - nested-x\n  - nested-y\n- bravo\n",
+    "childLines": [0, 3],
+    "childMarkers": ["alpha", "bravo"],
+    "changes": [
+      { "index": 0, "marker": "alpha" },
+      { "index": 1, "marker": "bravo" }
+    ]
+  },
+  {
+    "name": "loose list (blank line between items)",
+    "base": "- old charlie\n\n- old delta\n",
+    "head": "- charlie\n\n- delta\n",
+    "childLines": [0, 2],
+    "childMarkers": ["charlie", "delta"],
+    "changes": [
+      { "index": 0, "marker": "charlie" },
+      { "index": 1, "marker": "delta" }
+    ]
+  },
+  {
+    "name": "tight list (no blank line between items)",
+    "base": "- old echo\n- old foxtrot\n",
+    "head": "- echo\n- foxtrot\n",
+    "childLines": [0, 1],
+    "childMarkers": ["echo", "foxtrot"],
+    "changes": [
+      { "index": 0, "marker": "echo" },
+      { "index": 1, "marker": "foxtrot" }
+    ]
+  },
+  {
+    "name": "table with an empty header row",
+    "base": "|  |  |\n| - | - |\n| old-golf | old-hotel |\n",
+    "head": "|  |  |\n| - | - |\n| golf | hotel |\n",
+    "childLines": [0, 2],
+    "childMarkers": ["", "golf"],
+    "changes": [{ "index": 1, "marker": "golf" }]
+  },
+  {
+    "name": "list item spanning multiple paragraphs",
+    "base": "- old india\n\n  second paragraph of india\n\n- old juliett\n",
+    "head": "- india\n\n  second paragraph of india\n\n- juliett\n",
+    "childLines": [0, 4],
+    "childMarkers": ["india", "juliett"],
+    "changes": [
+      { "index": 0, "marker": "india" },
+      { "index": 1, "marker": "juliett" }
+    ]
+  }
+]

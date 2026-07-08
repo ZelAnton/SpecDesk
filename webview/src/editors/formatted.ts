@@ -384,6 +384,15 @@ export class FormattedEditor {
    * [from, to] of the node to highlight for a source line: the top-level block, or — inside a table /
    * list — the row / item the line falls in (so the caret highlights one row, not the whole table).
    * Positions are computed against the current document so they are always valid.
+   *
+   * md-blocks' `childLineStarts` (markdown-it) and this PM node's children (pm-markdown.ts) are built
+   * from the same shared tokenizer config (md-config.ts), so their child COUNTS agree by construction
+   * for any real document. If they ever disagree anyway (T-083: a markdown-it/ProseMirror parser
+   * divergence this guard exists to catch rather than assume away), a child ordinal computed from one
+   * side and clamped into the other's range would silently point at the WRONG row/item — worse than no
+   * highlight, since it reads as confidently (but incorrectly) precise. Falling back to the whole
+   * container here is the same "detect and wash the container instead of guessing" contract DiffWire.fs
+   * already applies natively (see its childDiff empty-fallback comment).
    */
   private nodeRangeForLine(line: number | null): [number, number] | null {
     if (line === null) {
@@ -397,7 +406,12 @@ export class FormattedEditor {
     const [blockFrom, blockTo] = blockRange(doc, topIndex);
     const block = doc.child(topIndex);
     const childStarts = this.blocks[topIndex]?.childLineStarts;
-    if (childStarts === undefined || childStarts.length === 0 || block.childCount === 0) {
+    if (
+      childStarts === undefined ||
+      childStarts.length === 0 ||
+      block.childCount === 0 ||
+      childStarts.length !== block.childCount
+    ) {
       return [blockFrom, blockTo];
     }
     let childIndex = 0;
@@ -406,7 +420,9 @@ export class FormattedEditor {
         childIndex = i;
       }
     }
-    childIndex = Math.min(childIndex, block.childCount - 1);
+    // childStarts.length === block.childCount was just verified above, so this index is already in
+    // range — no clamp needed (a clamp here would be exactly the silent wrong-row guess this guards
+    // against).
     let childPos = blockFrom + 1; // step inside the container node
     for (let i = 0; i < childIndex; i++) {
       childPos += block.child(i).nodeSize;
