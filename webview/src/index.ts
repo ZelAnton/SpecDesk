@@ -481,10 +481,11 @@ function wire(): void {
         // Silent: the host already has this text (it just sent it) — a non-silent setText would fire
         // the source editor's onChange after its 120ms debounce, round-tripping it back to the host as
         // a spurious editor.changed (bumping docVersion and triggering a redundant re-render) even
-        // though nothing was actually edited. sameDocument is left at its false default (unlike the
-        // Split mirror / mode-switch hydration silent calls): this IS a genuinely different document,
-        // so any pending image-insert marker from the previous one is dropped, not restored.
-        editor.setText(payload.text, true);
+        // though nothing was actually edited. sameDocument is passed false explicitly (it otherwise
+        // defaults to silent, i.e. true) — unlike the Split mirror / mode-switch hydration silent calls,
+        // this IS a genuinely different document, so any pending image-insert marker from the previous
+        // one is dropped, not restored.
+        editor.setText(payload.text, true, false);
         // Resolve relative image links in the formatted view against the document's folder. Set before
         // setText so the image node views render with the correct app://repo/… src.
         formatted.setDocDir(payload.docDir);

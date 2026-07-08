@@ -30,6 +30,34 @@ function mockBridge() {
   };
 }
 
+/** A minimal fake `DataTransferItem` — just the bits `attachImageCapture` reads (mirrors
+ *  image-capture.test.ts's helper of the same name). */
+function fileItem(file: File): DataTransferItem {
+  return { kind: "file", type: file.type, getAsFile: () => file } as unknown as DataTransferItem;
+}
+
+/** A fake `clipboardData`: an item list (array-like, not iterable — matches the real
+ *  DataTransferItemList) plus `getData("text/plain")` (mirrors image-capture.test.ts). */
+function clipboard(items: DataTransferItem[], text = ""): DataTransfer {
+  const list: Record<number, DataTransferItem> & { length: number } = { length: items.length };
+  items.forEach((item, i) => {
+    list[i] = item;
+  });
+  return {
+    items: list as unknown as DataTransferItemList,
+    getData: (format: string) => (format === "text/plain" ? text : ""),
+  } as unknown as DataTransfer;
+}
+
+/** Build and dispatch a real `Event` with `clipboardData` monkey-patched onto it — jsdom has no
+ *  working `ClipboardEvent` constructor that actually carries file data (mirrors image-capture.test.ts). */
+function dispatchPaste(dom: EventTarget, clipboardData: DataTransfer): Event {
+  const event = new Event("paste", { cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: clipboardData });
+  dom.dispatchEvent(event);
+  return event;
+}
+
 /** jsdom implements neither: index.ts's theme setup reads matchMedia unconditionally at boot. */
 function installMatchMediaStub(): void {
   if (!window.matchMedia) {
@@ -272,5 +300,61 @@ describe("index.ts: doc.loaded hydration is silent (T-069, jsdom)", () => {
     // degrade what the author actually sees.
     expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Hello");
     expect(document.querySelector("#formatted")?.textContent).toContain("Hello");
+  });
+});
+
+describe("index.ts: doc.loaded drops a stale image-insert marker (R-01, jsdom)", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  // R-01: setText's `sameDocument` parameter defaults to `silent` (not `false`) — the doc.loaded
+  // handler's silent hydration must pass `sameDocument: false` explicitly, or a marker left pending by
+  // an in-flight image paste against the PREVIOUS document gets restored (clamped) into the newly
+  // loaded, unrelated one instead of being dropped, and a belated insertAtMarker then splices the old
+  // paste's markdown into it.
+  it("does not land a pending image insert (from the previous document) in a freshly loaded document", async () => {
+    const bridge = await mountApp();
+    const contentDom = document.querySelector<HTMLElement>("#editor .cm-content");
+    expect(contentDom).not.toBeNull();
+
+    // Paste an image at the (empty, freshly booted) editor's caret — registers a tracked marker and
+    // fires the async image.paste round-trip to the host.
+    const file = new File(["fake-bytes"], "photo.png", { type: "image/png" });
+    const event = dispatchPaste(contentDom as HTMLElement, clipboard([fileItem(file)]));
+    expect(event.defaultPrevented).toBe(true);
+
+    const request = await vi.waitFor(() => {
+      const found = bridge.sent.find((message) => message.kind === Kinds.imagePaste);
+      if (!found) {
+        throw new Error("image.paste was not sent yet");
+      }
+      return found;
+    });
+    const requestId = request.id;
+    if (!requestId) {
+      throw new Error("image.paste request had no correlation id");
+    }
+
+    // The author switches to a different document while that paste round-trip is still in flight.
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: { path: "docs/other.md", text: "# Other doc\n", docDir: "docs" },
+    });
+    expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Other doc");
+
+    // The host's belated reply for the ORIGINAL (now-abandoned) paste arrives after the load.
+    bridge.emit({
+      kind: Kinds.imageInserted,
+      id: requestId,
+      payload: { markdown: "![photo](img/photo.png)" },
+    });
+    // Let the resolved request's continuation (insertAtMarker, or the no-op it should be) run.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The stale marker must have been dropped by doc.loaded's setText(..., true, false), so
+    // insertAtMarker is a no-op: the freshly loaded document is untouched by the old paste.
+    expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Other doc");
   });
 });
