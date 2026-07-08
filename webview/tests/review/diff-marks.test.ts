@@ -77,6 +77,26 @@ describe("expandDiffMarks", () => {
     });
   });
 
+  it("resolves a first-block table's child even with leading blank lines before it", () => {
+    // Two leading blank lines ride with the table as its "head" content (md-blocks.ts
+    // contentLineStart), so the block's own lineStart is pulled back to 0 while its real token —
+    // and the Markdig AST's entry.lineStart — start at line 2. childLineStarts must be keyed by
+    // that real start, not the pulled-back one, or the container falls back to a whole-block wash.
+    const marks = expandDiffMarks(
+      [changedContainer(2, 4, [{ kind: "changed", childIndex: 1, baseText: "1 | 2" }])],
+      "\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+    );
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toMatchObject({
+      kind: "changed",
+      sub: true,
+      lineStart: 4,
+      lineEnd: 4,
+      baseText: "1 | 2",
+      baseSource: null,
+    });
+  });
+
   it("falls back to a whole-block mark when the container's children can't be resolved", () => {
     // entry.lineStart=5 matches no block in the (single-paragraph) text → no childLineStarts.
     const marks = expandDiffMarks(

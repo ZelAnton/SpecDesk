@@ -130,7 +130,10 @@ export function expandDiffMarks(entries: DiffEntryPayload[], text: string): Diff
   if (hasContainers) {
     for (const block of splitTopLevelBlocks(text)) {
       if (block.childLineStarts !== undefined) {
-        childStartsByLine.set(block.lineStart, block.childLineStarts);
+        // Key by the block's real token start (contentLineStart on the first block, when it carries
+        // head content pulled back to line 0) so this matches entry.lineStart from the Markdig AST,
+        // which always reports the real content start.
+        childStartsByLine.set(block.contentLineStart ?? block.lineStart, block.childLineStarts);
       }
     }
   }
