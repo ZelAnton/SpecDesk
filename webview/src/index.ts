@@ -16,7 +16,7 @@ import { Preview } from "./review/preview.js";
 import { ReviewController } from "./review/review.js";
 import { ReviewsPanel } from "./review/reviews-panel.js";
 import { HeightSync } from "./sync/height-sync.js";
-import { ScrollSync } from "./sync/scroll-sync.js";
+import { type Pane, SplitSync } from "./sync/sync-coordinator.js";
 import { attachImageCapture } from "./util/image-capture.js";
 import { log } from "./util/log.js";
 import { rafThrottle } from "./util/raf.js";
@@ -146,11 +146,6 @@ function wire(): void {
   // version, so the two surfaces must share a single counter.
   let docVersion = 0;
 
-  // Block-level scroll-sync between the two editable panes in Split (they couple by source line, with
-  // no shared native render to height-equalise against). A driver lock keeps the actively-scrolled pane
-  // authoritative while the other's programmatic echo is ignored; see scroll-sync.ts.
-  const scrollSync = new ScrollSync();
-
   // The editors and their controllers are forward-declared here so every wiring group below can close
   // over them; wireEditors() / wireLifecycle() assign them. Every read happens later (inside a callback
   // or an ipc handler that fires after all four groups have run), so the forward reference is safe.
@@ -159,6 +154,10 @@ function wire(): void {
   let review: ReviewController;
   let formatToolbar: FormatToolbar;
   let heightSync: HeightSync;
+  // The single owner of both panes' Split scroll position: it couples them through the line↔px map,
+  // reveals the synced highlight, and restores the reading position on a mode switch — replacing the old
+  // ScrollSync driver lock with deterministic, echo-free writes (sync-coordinator.ts).
+  let splitSync: SplitSync;
   let lifecycleChrome: LifecycleChrome;
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
@@ -284,25 +283,16 @@ function wire(): void {
     // highlights the block containing it. Whichever pane the user interacts with reports its position
     // (rAF-throttled), and both panes are updated together, so the highlights stay in step in Split.
     // `reveal` is the pane the user just navigated the caret in (null = a text edit or a programmatic
-    // set — highlight only, no reveal). After a deliberate caret move in Split, bring the synced
-    // highlight into view on the OTHER (passive) pane: accumulated block-height drift can place it
-    // outside that pane's viewport, where it would be invisible. Reveal is minimal (nearest) and only
-    // touches the passive pane — never the one the user is reading. scrollSync.drive keeps the active pane
-    // authoritative so the passive reveal scroll doesn't echo back, while the active pane's own
-    // scroll-sync keeps working (scrollSync.suppress would have muted that too).
-    const setActive = (line: number | null, reveal: "editor" | "formatted" | null): void => {
+    // set — highlight only, no reveal). After a deliberate caret move in Split, hand the reveal to the
+    // coordinator: it brings the synced highlight into view on the OTHER (passive) pane — accumulated
+    // block-height drift can place it outside that pane's viewport — as the sole owner of that pane's
+    // scroll, so the reveal can't echo back, and it stands the reveal down while a scroll just coupled the
+    // panes (the one anti-judder fallback, replacing the old drive/syncedRecently lock).
+    const setActive = (line: number | null, reveal: Pane | null): void => {
       editor.setActiveLine(line);
       formatted.setActiveLine(line);
-      // Skip the reveal while scroll-sync is actively positioning the passive pane (a scroll drove it
-      // within the last window): the two would otherwise fight over its scrollTop and judder. A discrete
-      // caret move with no recent scroll (a click / single arrow) still reveals normally.
-      if (reveal !== null && line !== null && isSplit(mode) && !scrollSync.syncedRecently()) {
-        scrollSync.drive(reveal);
-        if (reveal === "editor") {
-          formatted.revealActiveBlock();
-        } else {
-          editor.revealSourceLine(line);
-        }
+      if (reveal !== null && line !== null && isSplit(mode)) {
+        splitSync.reveal(line, reveal);
       }
     };
     const setHover = (line: number | null): void => {
@@ -313,11 +303,15 @@ function wire(): void {
     // Height-sync: pad the source editor with spacers so each source block's top lines up with its
     // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
     // Only meaningful in Split; rAF-throttled so a burst of edits/resizes reconciles once per frame.
-    // scrollSync.suppress() guards against the spacer change nudging the editor's scroll into a false sync.
+    // Reconciling shifts the editor's line tops (new spacers) and can nudge its scrollTop (the spacer-
+    // weight compensation), so afterwards: invalidate the coordinator's maps (rebuilt from the new tops
+    // on the next couple) and absorb the editor's post-nudge scroll, so that programmatic move is not
+    // read as a user scroll and does not drive the formatted pane into a false sync.
     const reconcileHeights = rafThrottle(() => {
       if (isSplit(mode)) {
-        scrollSync.suppress();
         heightSync.reconcile();
+        splitSync.invalidate();
+        splitSync.absorb("editor");
       }
     });
 
@@ -335,9 +329,10 @@ function wire(): void {
       sendDoc(text);
       if (shouldMirrorInto(text, formatted)) {
         formatted.mirror(text);
+        // Re-align the just-mirrored pane to the editor's top line through the coordinator (which records
+        // the write, so the re-align can't echo back), so the mirrored content doesn't jump.
         if (isSplit(mode)) {
-          scrollSync.suppress();
-          formatted.scrollToSourceLine(editor.topVisibleLineExact());
+          splitSync.syncFrom("editor");
         }
       }
       reconcileHeights();
@@ -348,8 +343,7 @@ function wire(): void {
       if (shouldMirrorInto(text, editor)) {
         editor.mirror(text);
         if (isSplit(mode)) {
-          scrollSync.suppress();
-          editor.scrollToSourceLine(formatted.topVisibleSourceLine());
+          splitSync.syncFrom("formatted");
         }
       }
       reconcileHeights();
@@ -364,9 +358,10 @@ function wire(): void {
     editor = new MarkdownEditor(editorRoot, {
       onChange: onEditorChange,
       onScroll: () => {
-        if (isSplit(mode) && scrollSync.claim("editor")) {
-          formatted.scrollToSourceLine(editor.topVisibleLineExact());
-          scrollSync.markSynced();
+        // The coordinator decides: a genuine editor scroll couples the formatted pane; its own echo (the
+        // scrollTop it just wrote) is ignored deterministically — no driver lock.
+        if (isSplit(mode)) {
+          splitSync.onEditorScroll();
         }
       },
       onScrollSettle: () => {},
@@ -390,9 +385,8 @@ function wire(): void {
       onChange: onFormattedChange,
       onEditAttempt: offerDraft,
       onScroll: () => {
-        if (isSplit(mode) && scrollSync.claim("formatted")) {
-          editor.scrollToSourceLine(formatted.topVisibleSourceLine());
-          scrollSync.markSynced();
+        if (isSplit(mode)) {
+          splitSync.onFormattedScroll();
         }
       },
       onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
@@ -407,6 +401,10 @@ function wire(): void {
     // The source editor is padded to match the formatted view's block heights (formatted is the fixed
     // reference). Assigned now that both panes exist; reconcileHeights() drives it.
     heightSync = new HeightSync(editor, formatted);
+
+    // The single scroll coordinator, now that both panes exist. It owns each pane's scrollTop for Split
+    // coupling, reveal, and mode-switch restore — the editors expose the small line↔px surface it needs.
+    splitSync = new SplitSync(editor, formatted);
 
     // The review/compare overlay state machine, now that both surfaces exist. It washes changes in both
     // editors (the first is the canonical head it diffs against); the integrator keeps the ipc knowledge,
@@ -443,8 +441,8 @@ function wire(): void {
       mode: () => mode,
     });
 
-    // Re-measure CodeMirror on window resize and re-pad to the formatted heights (both panes reflow at
-    // a new width); block-level scroll-sync re-aligns on the next scroll.
+    // Re-measure CodeMirror on window resize and re-pad to the formatted heights (both panes reflow at a
+    // new width); reconcileHeights also invalidates the coordinator's maps, which the next scroll rebuilds.
     window.addEventListener("resize", () => {
       editor.refresh();
       reconcileHeights();
@@ -519,11 +517,10 @@ function wire(): void {
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
-        // panes generally disagree. suppress() mutes the resulting onScroll callbacks so this programmatic
-        // reset doesn't itself drive a cross-pane sync.
-        scrollSync.suppress();
-        editor.scrollToTop();
-        formatted.scrollToTop();
+        // panes generally disagree. The coordinator parks both at the top AND records the writes, so the
+        // programmatic reset can't drive a cross-pane sync. The new document also invalidates its maps.
+        splitSync.reset();
+        splitSync.invalidate();
         // Seed the synced highlight at the top of the document (both panes). No reveal: a freshly loaded
         // doc is scrolled to the top, so line 0 is already visible — and this is not a user navigation.
         setActive(0, null);
@@ -738,30 +735,38 @@ function wire(): void {
       // The format target depends on the mode (Code→source, Formatted→WYSIWYG), so refresh the buttons.
       formatToolbar.refresh();
 
-      // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll.
-      // CodeMirror's re-measure is asynchronous, so restore on the SECOND frame (the PoC-11 timing).
-      scrollSync.suppress();
+      // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll. The
+      // sync itself is now deterministic (the coordinator records every write, so no scroll heuristic is
+      // needed here); the ONE timing hop left is waiting for CodeMirror's ASYNCHRONOUS re-measure — its
+      // geometry is only correct on the SECOND frame (the PoC-11 timing). This double rAF is kept solely
+      // as that explicit relayout fallback, isolated from the (now heuristic-free) scroll coordination.
       editor.refresh();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          scrollSync.suppress();
           if (nextVis.preview) {
             formatted.refresh();
           }
           // Re-pad the editor to the formatted heights BEFORE restoring scroll, so the scroll target
           // accounts for the spacers. Outside Split there is nothing to align — drop the spacers so the
-          // source has no meaningless gaps.
+          // source has no meaningless gaps. Either way the geometry changed, so the coordinator's maps
+          // are stale — invalidate them (the next couple rebuilds from the new layout).
           if (isSplit(next)) {
             heightSync.reconcile();
           } else {
             heightSync.clear();
           }
-          if (nextVis.preview) {
-            formatted.scrollToSourceLine(Math.floor(line));
-          }
+          splitSync.invalidate();
+          // Restore the reading position on each newly-visible pane through the coordinator (self-contained
+          // per-pane scroll-to-line, so it works while the sibling is hidden; the write is recorded so it
+          // can't echo into a false sync).
+          const restorePanes: Pane[] = [];
           if (nextVis.editor) {
-            editor.scrollToSourceLine(Math.floor(line));
+            restorePanes.push("editor");
           }
+          if (nextVis.preview) {
+            restorePanes.push("formatted");
+          }
+          splitSync.restore(Math.floor(line), restorePanes);
         });
       });
     }

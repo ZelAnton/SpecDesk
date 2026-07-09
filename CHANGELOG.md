@@ -15,6 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- Split scroll synchronization is now driven by a single coordinator over one line↔px map instead of three
+  mutually-suppressing mechanisms. The former per-frame line-based scroll-sync (with its `ScrollSync` driver
+  lock), the caret reveal, and the mode-switch restore shared a web of timing heuristics (`suppress`/`drive`/
+  `syncedRecently`, a double `requestAnimationFrame`) to keep each from echoing the others. A new
+  `SplitSync` (`webview/src/sync/sync-coordinator.ts`) is the sole writer of each pane's `scrollTop`: it
+  couples the panes through a pure piecewise-linear line↔px map (`webview/src/sync/scroll-map.ts`) built from
+  the same block anchors height-sync measures, and suppresses its own echo deterministically — a scroll that
+  settles on the value it just wrote is ignored, so the two panes cannot ping-pong, with no timing window to
+  tune and no driver lock. Because coupling is by source LINE (read the active pane's top line, map it to the
+  sibling's pixels), height-sync's documented non-negative-spacer drift no longer leaks into where the two
+  viewports track each other. The old `ScrollSync` is removed; the one timing fallback that remains is a
+  short guard that stands a caret reveal down while a scroll just coupled the panes (anti-judder), and the
+  mode-switch relayout wait is kept solely as an explicit fallback for CodeMirror's asynchronous re-measure.
 - The `diff.result` wire contract is now discriminated by `kind` instead of one flat record padded with
   sentinels (`anchorLine: -1`, `removedText: ""`, empty `children`, `""` bases for the cases that don't use
   them). Each kind carries only its own fields on the wire — a removed block/child has an anchor and text

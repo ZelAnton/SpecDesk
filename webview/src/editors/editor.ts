@@ -924,31 +924,72 @@ export class MarkdownEditor {
     this.view.scrollDOM.scrollTop += delta;
   }
 
-  /** Scroll so the given 0-based source line is at the top of the viewport. */
-  scrollToSourceLine(line: number): void {
-    const target = this.view.state.doc.line(this.clampLine(line)).from;
-    this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "start" }) });
+  /** This pane's current scroll offset — the coordinator (sync-coordinator.ts) reads it to detect its own
+   *  echo (a scroll settling on a value the coordinator just wrote). */
+  scrollTop(): number {
+    return this.view.scrollDOM.scrollTop;
   }
 
   /**
-   * Hard-reset the viewport to the very start of the document. Unlike {@link scrollToSourceLine}
-   * this sets scrollTop directly rather than going through CodeMirror's measured scrollIntoView —
-   * used when hydrating a freshly loaded document, whose scrollTop otherwise still reflects wherever
-   * the PREVIOUS document happened to leave it.
+   * Set the scroll offset directly and SYNCHRONOUSLY — the coordinator's one write per pane. Direct (not
+   * CodeMirror's asynchronous `scrollIntoView`) so the resulting scrollTop can be read straight back for
+   * echo detection; the same `scrollDOM.scrollTop` write {@link adjustScrollTop} already relies on.
    */
-  scrollToTop(): void {
-    this.view.scrollDOM.scrollTop = 0;
+  setScrollTop(px: number): void {
+    this.view.scrollDOM.scrollTop = px;
+  }
+
+  /** The (fractional) 0-based source line at the viewport top — the coordinator's per-line-precise read
+   *  for coupling (delegates to {@link topVisibleLineExact}). */
+  topLine(): number {
+    return this.topVisibleLineExact();
   }
 
   /**
-   * Scroll the editor the minimum amount so the given 0-based source line is visible (no-op if it
-   * already is). Used in Split to reveal the synced active-line highlight when accumulated block-height
-   * drift pushed it outside this pane's viewport while the user works in the other pane. Unlike
-   * {@link scrollToSourceLine} (which snaps the line to the top) this uses "nearest" — the least move.
+   * The ACTUAL pixel top (including any height-sync spacers above it) of each given 0-based source line —
+   * the anchors the coordinator builds this pane's line↔px map from (sync-coordinator.ts). Unlike
+   * {@link naturalLineTops} this does NOT subtract the spacers: the map must reflect where each line
+   * really sits so scroll coupling accounts for the padded layout. An out-of-range line clamps to the
+   * nearest valid line's top (a scroll map is best-effort; a stale anchor just reads the document edge).
    */
-  revealSourceLine(line: number): void {
-    const target = this.view.state.doc.line(this.clampLine(line)).from;
-    this.view.dispatch({ effects: EditorView.scrollIntoView(target, { y: "nearest" }) });
+  topsForLines(lines: readonly number[]): number[] {
+    return lines.map((line) => {
+      const cmLine = Math.min(Math.max(line + 1, 1), this.view.state.doc.lines);
+      return this.view.lineBlockAt(this.view.state.doc.line(cmLine).from).top;
+    });
+  }
+
+  /**
+   * Scroll so the given (fractional) 0-based source line sits at the viewport top, directly and
+   * synchronously (the mode-switch restore; self-contained, so it works while the sibling pane is
+   * hidden). The fractional part is interpolated across the line's block — the inverse of
+   * {@link topVisibleLineExact}.
+   */
+  scrollToLine(line: number): void {
+    const line0 = Math.floor(line);
+    const cmLine = Math.min(Math.max(line0 + 1, 1), this.view.state.doc.lines);
+    const block = this.view.lineBlockAt(this.view.state.doc.line(cmLine).from);
+    const fraction = Math.max(0, Math.min(1, line - line0));
+    this.view.scrollDOM.scrollTop = block.top + fraction * block.height;
+  }
+
+  /**
+   * Scroll the editor the minimum amount so the given 0-based source line is visible (no-op if it already
+   * is), directly and synchronously. Used in Split to reveal the synced active-line highlight when
+   * accumulated block-height drift pushed it outside this pane's viewport while the user works in the
+   * other pane. Unlike {@link scrollToLine} (which snaps the line to the top) this is "nearest" — the
+   * least move — and direct-scrollTop so the coordinator can record it as its own write (echo-free).
+   */
+  reveal(line: number): void {
+    const block = this.view.lineBlockAt(this.view.state.doc.line(this.clampLine(line)).from);
+    const scroller = this.view.scrollDOM;
+    const margin = 8; // breathing room from the pane edge when we do scroll
+    if (block.top < scroller.scrollTop) {
+      scroller.scrollTop = block.top - margin;
+    } else if (block.bottom > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = block.bottom - scroller.clientHeight + margin;
+    }
+    // Already fully visible → no-op.
   }
 
   /**
@@ -1108,7 +1149,7 @@ export class MarkdownEditor {
   /**
    * Force CodeMirror to re-measure its geometry. Needed after the editor returns from `display:none`
    * to a new width (a view-mode switch): wrapping must reflow before `topVisibleLineExact()` and
-   * `scrollToSourceLine()` are read against fresh layout.
+   * `scrollToLine()` are read against fresh layout.
    */
   refresh(): void {
     this.view.requestMeasure();
@@ -1138,7 +1179,7 @@ export class MarkdownEditor {
   }
 
   /** Clamp a 0-based line to the nearest valid 1-based CM line — appropriate for a user/programmatic
-   *  scroll TARGET (`scrollToSourceLine`, `revealSourceLine`), where landing on the nearest line is the
+   *  scroll TARGET (`scrollToLine`, `reveal`), where landing on the nearest line is the
    *  right degraded behaviour for an out-of-range request. NOT used on the height-sync reconcile path
    *  (`naturalLineTops`, `setSpacers`, T-084): there, an out-of-range line means the anchor was minted
    *  against a since-diverged sibling document, and clamping would silently measure/pad the wrong line

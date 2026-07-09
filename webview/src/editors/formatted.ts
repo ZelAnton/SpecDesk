@@ -21,6 +21,7 @@ import type { DiffMark } from "../review/diff-marks.js";
 import { buildOverlayPlan, type RemovedAnchor } from "../review/overlay-plan.js";
 import type { BlockGeometry } from "../review/preview.js";
 import { type BlockBox, lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
+import type { ScrollAnchor } from "../sync/scroll-map.js";
 import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { closestElement } from "../util/dom.js";
@@ -284,8 +285,8 @@ export class FormattedEditor {
   private hoverLine: number | null = null;
   // The review/compare overlay marks (null = no overlay), remembered so a setText rebuild re-applies them.
   private diffMarks: DiffMark[] | null = null;
-  // The active node range resolved by the last pushHighlights, cached so revealSourceLine reuses it
-  // instead of recomputing the line→node mapping on the caret hot path.
+  // The active node range resolved by the last pushHighlights, cached so reveal() reuses it instead of
+  // recomputing the line→node mapping on the caret hot path.
   private activeNodeRange: [number, number] | null = null;
   // Whether the latest caret report is a pure navigation (click / arrow), not a text edit. Only a
   // navigation triggers the passive pane's reveal scroll (see index.ts setActive); typing must not.
@@ -895,14 +896,49 @@ export class FormattedEditor {
     return this.scrollEl.clientWidth;
   }
 
+  /** This pane's current scroll offset — the coordinator (sync-coordinator.ts) reads it to detect its own
+   *  echo (a scroll settling on a value the coordinator just wrote). */
+  scrollTop(): number {
+    return this.scrollEl.scrollTop;
+  }
+
+  /** Set the scroll offset directly and synchronously — the coordinator's one write per pane. The pane is
+   *  its own scroll container, so this is a plain `scrollTop` set (read straight back for echo detection). */
+  setScrollTop(px: number): void {
+    this.scrollEl.scrollTop = px;
+  }
+
+  /** The (fractional) 0-based source line at the viewport top — the coordinator's read for coupling
+   *  (delegates to {@link topVisibleSourceLine}). */
+  topLine(): number {
+    return this.topVisibleSourceLine();
+  }
+
+  /** Scroll so the given source line sits at the viewport top (the mode-switch restore; delegates to the
+   *  cached-geometry {@link scrollToSourceLine}, self-contained so it works while the sibling is hidden). */
+  scrollToLine(line: number): void {
+    this.scrollToSourceLine(line);
+  }
+
   /**
-   * Hard-reset the viewport to the very start of the document. Unlike {@link scrollToSourceLine}
-   * this does no block-geometry math (which needs a laid-out DOM the caller may not have yet) — used
-   * when hydrating a freshly loaded document, whose scrollTop otherwise still reflects wherever the
-   * PREVIOUS document happened to leave it.
+   * The block anchors the coordinator builds this pane's line↔px map from (sync-coordinator.ts): a
+   * (lineStart, top) per top-level block, in document order, plus a trailing anchor at the last block's
+   * bottom so lines within it interpolate too. Empty when the split diverged (no blocks) — the coordinator
+   * then leaves scroll untouched. Re-measures through {@link blockGeometry} (the reconcile path), so this
+   * is called on a geometry change, not per scroll frame.
    */
-  scrollToTop(): void {
-    this.scrollEl.scrollTop = 0;
+  blockAnchors(): ScrollAnchor[] {
+    const geometry = this.blockGeometry();
+    const last = geometry[geometry.length - 1];
+    if (last === undefined) {
+      return [];
+    }
+    const anchors: ScrollAnchor[] = geometry.map((block) => ({
+      line: block.lineStart,
+      px: block.top,
+    }));
+    anchors.push({ line: last.lineEnd + 1, px: last.top + last.height });
+    return anchors;
   }
 
   /**
@@ -994,12 +1030,14 @@ export class FormattedEditor {
 
   /**
    * Scroll the formatted pane the minimum amount so the active-block highlight is visible (no-op if it
-   * already is). Mirrors {@link MarkdownEditor.revealSourceLine}: reveals the synced active-block
-   * highlight when accumulated block-height drift pushed it outside this pane's viewport while the user
-   * works in the other pane. Targets the node range {@link pushHighlights} last resolved for the active
-   * line — a table row / list item inside a container, else the whole top-level block.
+   * already is). Mirrors {@link MarkdownEditor.reveal}: reveals the synced active-block highlight when
+   * accumulated block-height drift pushed it outside this pane's viewport while the user works in the
+   * other pane. Targets the node range {@link pushHighlights} last resolved for the active line — a table
+   * row / list item inside a container, else the whole top-level block — so it is precise to the row/item,
+   * not just the block. `line` (the coordinator's uniform reveal signature) is therefore unused here: the
+   * active range is already set by the {@link setActiveLine} call index.ts makes for the same line first.
    */
-  revealActiveBlock(): void {
+  reveal(_line: number): void {
     const range = this.activeNodeRange;
     if (range === null) {
       return;
