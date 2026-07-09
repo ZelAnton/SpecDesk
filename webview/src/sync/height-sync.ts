@@ -14,11 +14,13 @@ import type { BlockGeometry } from "../review/preview.js";
 /** Anything that can report per-block rendered geometry to align the editor against (the formatted
  *  WYSIWYG view in Split; formerly the read-only preview). The source is never padded — the editor is. */
 export interface GeometrySource {
-  /** Per top-level block, its source-line range and measured geometry — the anchors this aligns the
-   *  editor against. The formatted pane resolves these through the shared block-map (block-map.ts),
-   *  which pairs each source block with its ProseMirror node 1:1; a markdown-it/ProseMirror split
-   *  divergence yields NO blocks (rather than mispaired anchors), so {@link HeightSync.reconcile}'s
-   *  zero-block path simply clears the spacers until the split re-agrees. */
+  /** Per rendered LEAF unit (a heading/paragraph/blockquote/code/thematic-break, each table row, each
+   *  list item — nested included), its source-line range and measured geometry — the ordered anchors
+   *  this aligns the editor against, so individual rows/items line up, not just whole containers. The
+   *  formatted pane resolves these through the shared semantic-anchor projection (sync-anchors.ts) built
+   *  on the block-map (block-map.ts); a markdown-it/ProseMirror split divergence yields NO blocks (rather
+   *  than mispaired anchors), so {@link HeightSync.reconcile}'s zero-block path simply clears the spacers
+   *  until the split re-agrees. */
   blockGeometry(): BlockGeometry[];
   contentWidth(): number;
   /** Whether this pane has an edit typed that hasn't been reported via its own debounce yet — mirrors

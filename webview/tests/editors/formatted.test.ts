@@ -1023,6 +1023,82 @@ describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
   });
 });
 
+// T-101: the formatted pane publishes ONE ordered anchor snapshot at rendered-LEAF granularity — each
+// table row and each list item is its own anchor (source line + measured top), so height-sync and both
+// sides of the scroll map align a table row-by-row / a list item-by-item instead of interpolating the
+// whole container. jsdom has no layout, so each rendered ROW/ITEM element's getBoundingClientRect is
+// stubbed with a fixed top that scrolls with the pane (the same content-relative-top invariance the T-072
+// suite uses), and the pane's own rect is stubbed at the origin.
+describe("FormattedEditor per-row / per-item sync anchors (jsdom, T-101)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function rect(top: number, height: number): DOMRect {
+    return {
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  // Stub the given rendered elements with cumulative tops (each `step` tall) that scroll with the pane,
+  // so the pane's content-relative tops are 0, step, 2·step, … — scroll-invariant.
+  function stubTops(host: HTMLElement, elements: HTMLElement[], step: number): void {
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(rect(0, 0));
+    elements.forEach((el, i) => {
+      vi.spyOn(el, "getBoundingClientRect").mockImplementation(() =>
+        rect(i * step - host.scrollTop, step),
+      );
+    });
+  }
+
+  it("anchors each GFM table row on its own source line, not the whole table", () => {
+    const { ed, host } = mountWithHost();
+    // Header (line 0), delimiter (line 1, renders no row), body rows (lines 2, 3).
+    ed.setText("| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n");
+    const rows = [...viewOf(ed).dom.querySelectorAll("tr")] as HTMLElement[];
+    expect(rows).toHaveLength(3); // header + two body rows; the delimiter has no row
+    stubTops(host, rows, 20);
+
+    // One anchor per rendered ROW (lines 0, 2, 3) plus the trailing bottom anchor — the delimiter (line
+    // 1) is interpolated, never anchored, and the table is NOT one interpolated rectangle.
+    expect(ed.blockAnchors()).toEqual([
+      { line: 0, px: 0 },
+      { line: 2, px: 20 },
+      { line: 3, px: 40 },
+      { line: 5, px: 60 },
+    ]);
+    // Height-sync reads the same snapshot: one geometry per row, tops ascending.
+    expect(ed.blockGeometry().map((b) => [b.lineStart, b.top])).toEqual([
+      [0, 0],
+      [2, 20],
+      [3, 40],
+    ]);
+  });
+
+  it("anchors each list item (nested included) and reports the row/item at the viewport top", () => {
+    const { ed, host } = mountWithHost();
+    // Items at lines 0, 1, 4; item "two" (line 1) nests two sub-items (lines 2, 3).
+    ed.setText("- one\n- two\n  - two-a\n  - two-b\n- three\n");
+    const items = [...viewOf(ed).dom.querySelectorAll("li")] as HTMLElement[];
+    expect(items).toHaveLength(5); // three top items + two nested items
+    // querySelectorAll("li") is document order, matching the anchor order (one, two, two-a, two-b, three).
+    stubTops(host, items, 20);
+
+    expect(ed.blockAnchors().map((a) => a.line)).toEqual([0, 1, 2, 3, 4, 6]);
+    // Scrolling into the nested sub-item reports IT at the viewport top, not the whole list's first line.
+    host.scrollTop = 40; // the third rendered item's top (two-a, line 2)
+    expect(ed.topVisibleSourceLine()).toBe(2);
+  });
+});
+
 describe("FormattedEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();

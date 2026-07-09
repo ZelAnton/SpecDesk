@@ -193,3 +193,52 @@ describe("BlockMap.nodeRange", () => {
     expect(map.nodeRange(0, true)).toEqual([entry?.from, entry?.to]);
   });
 });
+
+// T-101: the row/item ranges the semantic sync anchors (sync-anchors.ts) and the caret/hover highlight
+// both resolve against, pinned on ONE mixed document (a table, several list items, a nested sub-list, a
+// blockquote) so a regression that mispairs a row/item with the wrong node is caught here.
+describe("BlockMap.nodeRange on a mixed document (T-101)", () => {
+  const MIXED = `# Title
+
+- one
+- two
+  - two-a
+  - two-b
+- three
+
+| A | B |
+| - | - |
+| 1 | 2 |
+| 3 | 4 |
+
+> a quote
+`;
+
+  it("narrows to the exact list item, addressing each top-level item by its own line", () => {
+    const { map, doc } = mapOf(MIXED);
+    const listEntry = map.entryForLine(2); // the bullet list block (items at lines 2,3,6)
+    const list = doc.child(listEntry?.index ?? 0);
+    const item0 = list.child(0).nodeSize;
+    const item1 = list.child(1).nodeSize;
+    const base = (listEntry?.from ?? 0) + 1;
+    // Line 2 → item "one" (first list_item); line 3 → item "two" (whole item, nested sub-list included).
+    expect(map.nodeRange(2, true)).toEqual([base, base + item0]);
+    expect(map.nodeRange(3, true)).toEqual([base + item0, base + item0 + item1]);
+  });
+
+  it("narrows to the right table row and folds the delimiter line onto the header row", () => {
+    const { map, doc } = mapOf(MIXED);
+    const tableEntry = map.entryForLine(8); // the table block (header 8, delimiter 9, body 10/11)
+    const table = doc.child(tableEntry?.index ?? 0);
+    const base = (tableEntry?.from ?? 0) + 1;
+    const headerSize = table.child(0).nodeSize;
+    // Header row (line 8) and the delimiter (line 9, which renders no row of its own) both resolve to the
+    // FIRST table_row; the first body row (line 10) resolves to the SECOND.
+    expect(map.nodeRange(8, true)).toEqual([base, base + headerSize]);
+    expect(map.nodeRange(9, true)).toEqual([base, base + headerSize]);
+    expect(map.nodeRange(10, true)).toEqual([
+      base + headerSize,
+      base + headerSize + table.child(1).nodeSize,
+    ]);
+  });
+});

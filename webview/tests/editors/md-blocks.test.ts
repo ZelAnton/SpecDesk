@@ -137,6 +137,38 @@ describe("splitTopLevelBlocks", () => {
     expect(blocks[0]?.childLineStarts).toEqual([0, 1]);
   });
 
+  // T-101: the exact child source lines the semantic sync anchors (sync-anchors.ts) build on, pinned on
+  // one mixed document — a table (delimiter excluded), a bullet list with a nested sub-list (direct items
+  // only), and a blockquote (a single unit with no child lines).
+  it("records the exact child source lines across a mixed document", () => {
+    const md = `# Title
+
+- one
+- two
+  - two-a
+  - two-b
+- three
+
+| A | B |
+| - | - |
+| 1 | 2 |
+| 3 | 4 |
+
+> a quote
+> more quote
+`;
+    const blocks = splitTopLevelBlocks(md);
+    const list = blocks.find((b) => b.text.includes("- one"));
+    const table = blocks.find((b) => b.text.includes("| A | B |"));
+    const quote = blocks.find((b) => b.text.includes("> a quote"));
+    // The bullet list's DIRECT items (lines 2, 3, 6); the nested sub-list items (4, 5) are not counted.
+    expect(list?.childLineStarts).toEqual([2, 3, 6]);
+    // The table's rendered rows (header 8, body 10 and 11); the delimiter row (line 9) is excluded.
+    expect(table?.childLineStarts).toEqual([8, 10, 11]);
+    // A blockquote is a single unit — no per-child source lines.
+    expect(quote?.childLineStarts).toBeUndefined();
+  });
+
   it("produces a contiguous partition covering every line", () => {
     const blocks = splitTopLevelBlocks(RICH);
     expect(blocks[0]?.lineStart).toBe(0);

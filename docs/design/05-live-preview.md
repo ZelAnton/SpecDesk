@@ -165,6 +165,13 @@ Switching modes must preserve the active comments/diff overlay and the caret/scr
 4. A "scroll lock" flag prevents feedback loops (a programmatic scroll must not re-trigger a
    sync the other way).
 
+In the live Split editor the anchor granularity is the rendered **leaf unit**, not the top-level
+block: each table row, each list item (nested items included), and each heading/paragraph/quote/code
+block is anchored on its own source line (`webview/src/editors/sync-anchors.ts`), so a tall table or a
+long list aligns row-by-row / item-by-item instead of interpolating one container rectangle. The
+table's delimiter row, reference definitions, and blank lines render no node, so they carry no anchor
+and are interpolated monotonically between their neighbours.
+
 ## Rendering details
 
 - **Image links** `![](path)` are rewritten to `app://repo/<resolved-path>` at render time so

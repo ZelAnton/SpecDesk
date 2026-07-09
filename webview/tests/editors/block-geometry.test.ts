@@ -97,3 +97,54 @@ describe("BlockGeometryCache.blockForLine (binary search over line starts)", () 
     expect(cache.blockForLine(-1)?.lineStart).toBe(0);
   });
 });
+
+// T-101: the cache now holds LEAF boxes (one per rendered table row / list item / block), not one per
+// top-level container. Boxes still arrive in document order with ascending tops and ascending line
+// starts, so the two binary searches resolve them the same way — even where a nested item's box sits
+// vertically INSIDE its parent's (the tops still ascend). These leaf boxes are hand-built (the cache is
+// layout-free); the FormattedEditor jsdom suite covers measuring the real rows/items into them.
+describe("BlockGeometryCache with leaf-granular boxes (T-101)", () => {
+  // A tiling leaf box: it owns pixels [top, top+height) and clamps a straddling line to `lineEnd`.
+  function leaf(lineStart: number, lineEnd: number, top: number, height: number): BlockBox {
+    return {
+      lineStart,
+      contentLineStart: undefined,
+      lineEnd,
+      contentLineEnd: lineStart + 1,
+      top,
+      height,
+    };
+  }
+
+  // A table's header (line 10) + two body rows (12, 13); the delimiter (line 11) has no box of its own.
+  // Then a bullet list whose second item (line 16) nests two sub-items (17, 18) — the parent's box is
+  // clipped to its first child's top so every box tiles, and the nested boxes sit inside the parent's
+  // pixel span while their tops still ascend.
+  const LEAVES: readonly BlockBox[] = [
+    leaf(10, 11, 0, 20), // table header row
+    leaf(12, 12, 20, 20), // body row 1
+    leaf(13, 15, 40, 20), // body row 2 (rides the trailing blank up to the list)
+    leaf(16, 16, 60, 15), // list item, clipped to its first nested child's top
+    leaf(17, 17, 75, 15), // nested sub-item a (inside the parent item's pixels)
+    leaf(18, 18, 90, 15), // nested sub-item b
+  ];
+
+  const cache = new BlockGeometryCache();
+  cache.set(LEAVES);
+
+  it("resolves the row/item straddling a scroll offset, nested boxes included", () => {
+    expect(cache.blockAtScrollTop(0)?.lineStart).toBe(10); // header row
+    expect(cache.blockAtScrollTop(25)?.lineStart).toBe(12); // body row 1
+    expect(cache.blockAtScrollTop(65)?.lineStart).toBe(16); // parent item's own pixels
+    expect(cache.blockAtScrollTop(80)?.lineStart).toBe(17); // scrolled into the nested sub-item
+    expect(cache.blockAtScrollTop(90)?.lineStart).toBe(18);
+  });
+
+  it("maps a source line to its row/item, folding the delimiter onto the header row", () => {
+    expect(cache.blockForLine(10)?.lineStart).toBe(10);
+    expect(cache.blockForLine(11)?.lineStart).toBe(10); // the delimiter line rides with the header row
+    expect(cache.blockForLine(12)?.lineStart).toBe(12);
+    expect(cache.blockForLine(17)?.lineStart).toBe(17); // a nested sub-item is addressable on its own
+    expect(cache.blockForLine(18)?.lineStart).toBe(18);
+  });
+});

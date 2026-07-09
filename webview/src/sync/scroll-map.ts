@@ -1,9 +1,10 @@
 /**
  * The deterministic piecewise-linear map between a pane's source lines and its scroll pixels — the one
  * line↔px correspondence the Split coordinator (sync-coordinator.ts) drives both panes through. It is
- * built from the SAME block anchors height-sync already measures (a top per top-level block, plus a
- * trailing anchor for the last block's bottom), so scroll-sync and height-sync read one geometry instead
- * of three competing mechanisms re-deriving it.
+ * built from the SAME semantic sync anchors height-sync already measures (a top per rendered leaf unit —
+ * each table row, each list item, each heading/paragraph/quote/code block — plus a trailing anchor for
+ * the last unit's bottom), so scroll-sync and height-sync read one geometry instead of three competing
+ * mechanisms re-deriving it.
  *
  * Why a map, and why absolute anchors. Each anchor pins a source line to an ABSOLUTE pixel offset
  * (content-relative scroll top), so the map is a fixed function of the measured layout — not a running

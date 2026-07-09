@@ -169,7 +169,8 @@ or run alongside the GitHub work). **Spike‑A (auth)** is the first real integr
 > **Planned upgrade — height-synced scroll (PoC‑2 follow-up).** Today sync is *anchor-based*, so
 > the panes drift between anchors when a rendered block is taller than its source (an image,
 > heading, or soft-wrapped line is one source line but tall when rendered). The fix used by mature
-> Markdown editors is **height equalization via spacers**: per top-level block, measure both
+> Markdown editors is **height equalization via spacers**: per rendered leaf unit (a block, but also
+> each table row and each list item — see `webview/src/editors/sync-anchors.ts`), measure both
 > heights (we already have the block↔line `lineMap`) and pad the *shorter* side to match — in the
 > editor via CodeMirror **block-widget decorations** below the source lines, and in the preview via
 > margins where the source is taller. Equal cumulative offsets ⇒ the panes align pixel-for-pixel

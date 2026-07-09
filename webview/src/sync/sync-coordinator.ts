@@ -11,8 +11,9 @@
  * deterministic value check, so there is no timing window to tune and no driver lock: the two panes cannot
  * ping-pong. A genuine user scroll moves scrollTop off the recorded value and drives the sibling once.
  *
- * The couple itself goes through the line↔px {@link ScrollMap} of each pane, built from the SAME block
- * anchors height-sync measures (scroll-map.ts). Coupling by LINE — read the source pane's viewport-top
+ * The couple itself goes through the line↔px {@link ScrollMap} of each pane, built from the SAME semantic
+ * sync anchors height-sync measures — one per rendered leaf unit, so a tall table couples row-by-row
+ * (scroll-map.ts, sync-anchors.ts). Coupling by LINE — read the source pane's viewport-top
  * line, map it to the sibling's pixels — is why height-sync's non-negative-spacer drift never leaks into
  * where the viewports track each other (T-073): the map reads the two panes' actual tops, so a "negative"
  * gap is expressed, not accumulated.
@@ -59,7 +60,8 @@ export interface EditorScrollTarget {
  *  both maps are built from. */
 export interface FormattedScrollTarget {
   topLine(): number;
-  /** The block anchors (a top per top-level block, plus the last block's bottom) in this pane's pixels. */
+  /** The semantic sync anchors (a top per rendered leaf unit — each table row / list item / block —
+   *  plus the last unit's bottom) in this pane's pixels. */
   blockAnchors(): readonly ScrollAnchor[];
   scrollTop(): number;
   setScrollTop(px: number): void;

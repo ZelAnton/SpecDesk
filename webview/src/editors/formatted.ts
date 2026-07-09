@@ -31,7 +31,7 @@ import { rafThrottle } from "../util/raf.js";
 import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
 import { FORMAT_REGISTRY } from "./format-registry.js";
-import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
+import { joinBlocks, type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
 import { commonEnds } from "./mirror-patch.js";
@@ -41,6 +41,7 @@ import {
   disabledFormats as computeDisabledFormats,
 } from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
+import { buildLeafAnchors } from "./sync-anchors.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
@@ -938,23 +939,24 @@ export class FormattedEditor {
   }
 
   /**
-   * The block anchors the coordinator builds this pane's line↔px map from (sync-coordinator.ts): a
-   * (lineStart, top) per top-level block, in document order, plus a trailing anchor at the last block's
-   * bottom so lines within it interpolate too. Empty when the split diverged (no blocks) — the coordinator
-   * then leaves scroll untouched. Re-measures through {@link blockGeometry} (the reconcile path), so this
-   * is called on a geometry change, not per scroll frame.
+   * The semantic sync anchors the coordinator builds this pane's line↔px map from (sync-coordinator.ts):
+   * a (line, top) per rendered LEAF unit — heading/paragraph/blockquote/code/thematic-break, EACH table
+   * row, EACH list item (nested included; see sync-anchors.ts) — in document order, plus a trailing
+   * anchor at the last unit's bottom so lines within it interpolate too. The delimiter row / ref-defs /
+   * blank lines have no anchor; the map interpolates them between neighbours. Empty when the split
+   * diverged (no anchors) — the coordinator then leaves scroll untouched. Re-measures through
+   * {@link measureBlocks} (the reconcile path), so this is called on a geometry change, not per frame.
    */
   blockAnchors(): ScrollAnchor[] {
-    // Measure the boxes directly (not through blockGeometry, which drops contentLineStart): the first
-    // block's anchor LINE must be where its rendered content actually starts, so the map doesn't attribute
-    // the block's pixels to leading blank lines / ref-definitions that render nothing (T-065). Store the
-    // fresh boxes so the next scroll frame reads them cache-hit, exactly as blockGeometry does.
     const boxes = this.measureBlocks();
     this.geometryCache.set(boxes);
     const last = boxes[boxes.length - 1];
     if (last === undefined) {
       return [];
     }
+    // Each box's lineStart is already the anchor's rendered-content start (leading blank lines /
+    // ref-definitions of a first block are excluded by the projection), so the map never attributes a
+    // unit's pixels to a line that renders nothing (T-065). The trailing anchor closes the last unit.
     const anchors: ScrollAnchor[] = boxes.map((box) => ({
       line: box.contentLineStart ?? box.lineStart,
       px: box.top,
@@ -964,11 +966,13 @@ export class FormattedEditor {
   }
 
   /**
-   * Per-top-level-block source-line range plus measured pixel geometry, in document order. This is
-   * the reference height-sync (height-sync.ts) pads the source editor against, so each source block's
-   * top lines up with its rendered block. Granularity is top-level blocks (md-blocks); rows of a
-   * table or items of a list are not aligned individually. Tops are container-relative + scrollTop, in
-   * one coordinate system, matching {@link Preview.blockGeometry}.
+   * Per-rendered-leaf source-line range plus measured pixel geometry, in document order — the SAME
+   * ordered anchor snapshot {@link blockAnchors} exposes, shaped for height-sync (height-sync.ts). The
+   * source editor is padded so each unit's top lines up with its rendered counterpart, so granularity is
+   * now the visual leaf: individual table rows and list items align, not just whole containers. `lineEnd`
+   * is the spacer-insertion line derived from anchor ORDER (the line just before the next anchor), NOT a
+   * node's own source span — nested spans overlap. Tops are container-relative + scrollTop, one
+   * coordinate system, matching {@link Preview.blockGeometry}.
    */
   blockGeometry(): BlockGeometry[] {
     // The reconcile path (height-sync.ts) runs right after the blocks relaid out and needs the freshest
@@ -986,37 +990,68 @@ export class FormattedEditor {
   }
 
   /**
-   * Measure each top-level block's rendered geometry into a scroll-invariant {@link BlockBox} (its
+   * Measure each rendered LEAF unit's geometry into a scroll-invariant {@link BlockBox} (its
    * content-relative top + height), in document order. The single forced-layout pass the geometry cache
    * amortizes: {@link blockGeometry} calls it every reconcile, {@link ensureGeometry} once per
-   * invalidation for the scroll path. One block↔node pairing for the whole scan (block-map.ts); a
-   * diverged split yields no entries, so height-sync/scroll see zero blocks (clearing spacers, falling
-   * back to the first line) rather than aligning against mispaired anchors.
+   * invalidation for the scroll path. The ordered leaf anchors (source line + PM position per unit) come
+   * from the shared projection (sync-anchors.ts), built from the block-map's top-level pairing plus the
+   * source outline; a diverged split yields no anchors, so height-sync/scroll see zero blocks (clearing
+   * spacers, falling back to the first line) rather than aligning against mispaired anchors.
+   *
+   * The measured anchor POINTS are turned into a TILING box set: each box owns the pixels from its own
+   * top down to the NEXT anchor's top, and the source lines from its own start up to its own content end
+   * (clipped so a nested-parent item excludes the children that have their own anchors). Tiling keeps the
+   * scroll hot path's binary-search + within-box interpolation (block-geometry.ts / scroll-geometry.ts)
+   * continuous and monotonic even where boxes NEST — a list item's rendered box vertically contains its
+   * sub-items' — because the anchor tops still ascend in document order.
    */
   private measureBlocks(): BlockBox[] {
-    const map = this.blockMap();
+    const anchors = buildLeafAnchors(this.blockMap(), joinBlocks(this.blocks));
+    if (anchors.length === 0) {
+      return [];
+    }
     const containerTop = this.scrollEl.getBoundingClientRect().top;
     const scrollTop = this.scrollEl.scrollTop;
-    const boxes: BlockBox[] = [];
-    for (const entry of map.entries) {
-      const dom = this.view.nodeDOM(entry.from);
+    // Content-relative top (px from the content top), invariant to scrollTop — see block-geometry.ts — so
+    // a point measured now stays valid across later scroll frames. Drop any anchor whose node currently
+    // has no DOM element (mid-render), keeping order.
+    const points: { line: number; ownEnd: number; top: number; height: number }[] = [];
+    for (const anchor of anchors) {
+      const dom = this.view.nodeDOM(anchor.from);
       if (dom instanceof HTMLElement) {
         const rect = dom.getBoundingClientRect();
-        boxes.push({
-          lineStart: entry.block.lineStart,
-          // Only the first block ever carries this (its leading blank lines / ref-definitions); it makes
-          // the scroll interpolation span the block's RENDERED content (scroll-geometry.ts), not the
-          // earlier source line those leading lines sit on — so the block's pixels aren't attributed to
-          // lines that produce no render.
-          contentLineStart: entry.block.contentLineStart,
-          lineEnd: entry.block.lineEnd,
-          contentLineEnd: entry.block.contentLineEnd,
-          // Content-relative (px from the content top), hence invariant to scrollTop — see
-          // block-geometry.ts — so a box measured now stays valid across later scroll frames.
+        points.push({
+          line: anchor.line,
+          ownEnd: anchor.ownEnd,
           top: rect.top - containerTop + scrollTop,
           height: rect.height,
         });
       }
+    }
+    const lastBlock = this.blocks[this.blocks.length - 1];
+    const boxes: BlockBox[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i];
+      if (point === undefined) {
+        continue;
+      }
+      const next = points[i + 1];
+      boxes.push({
+        // The projection already reports each unit's rendered-content start, so lineStart IS that start
+        // (no separate contentLineStart to carry).
+        lineStart: point.line,
+        contentLineStart: undefined,
+        // The spacer/clamp line: the line just before the next anchor (from anchor order), or the last
+        // top-level block's end for the final unit. Never a node's own (overlapping) span.
+        lineEnd: next ? Math.max(point.line, next.line - 1) : (lastBlock?.lineEnd ?? point.ownEnd),
+        // Own content span end, clipped to the next anchor so a nested parent's interpolation excludes
+        // its children's lines.
+        contentLineEnd: next ? Math.min(point.ownEnd, next.line) : point.ownEnd,
+        top: point.top,
+        // Tile down to the next anchor's top; the final unit keeps its measured height (its bottom is the
+        // content bottom the trailing scroll anchor reads).
+        height: next ? Math.max(0, next.top - point.top) : point.height,
+      });
     }
     return boxes;
   }

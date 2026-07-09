@@ -206,6 +206,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view now aligns tall tables and long lists row-by-row and item-by-item: the Formatted pane's
+  scroll and height synchronization anchor every rendered table row and list item (nested items included)
+  on its own source line, instead of treating a whole table or list as one block and guessing interior
+  rows by height, so scrolling through a large table or list stays lined up with the source.
 - Split view no longer jitters the Formatted pane after its scroll is echoed into the Code pane and settles.
 - Split view now precisely re-snaps the Formatted pane through the scroll coordinator after momentum
   scrolling stops in the Code pane.
