@@ -95,6 +95,18 @@ function setupDom(panesMarkup = ""): void {
   `;
 }
 
+// wire() registers window-level listeners ("resize", "focus") it has no way to unregister. Each
+// mountApp() call gives the test a FRESH module instance (vi.resetModules()), but `window` itself
+// is shared across the whole file, so without this cleanup it keeps accumulating one stale listener
+// per prior mountApp() call — each still closing over that prior test's own module state. That was
+// previously inert, but the Split-echo mocks below simulate a coordinator-written scroll by calling
+// straight back into the shared editorCallbacks/formattedCallbacks (which by then point at the
+// CURRENT test's callbacks) — so a stale listener firing on a later test's
+// window.dispatchEvent(resize) invokes the CURRENT test's real onScroll handler carrying the PRIOR
+// test's stale leadingPane, corrupting it. Strip the previous mountApp()'s listeners before wiring a
+// fresh one.
+let wiredWindowListeners: Array<[string, EventListenerOrEventListenerObject]> = [];
+
 /** Boot the real index.ts wiring against a mocked host bridge. The ipc.ts singleton reads
  *  `window.external` at module-eval time, so the bridge must be installed and the module graph reset
  *  before each fresh import. */
@@ -103,8 +115,26 @@ async function mountApp(panesMarkup = ""): Promise<ReturnType<typeof mockBridge>
   installMatchMediaStub();
   const bridge = mockBridge();
   Object.defineProperty(globalThis, "external", { value: bridge, configurable: true });
-  vi.resetModules();
-  await import("../src/index.js");
+
+  for (const [type, listener] of wiredWindowListeners) {
+    window.removeEventListener(type, listener);
+  }
+  wiredWindowListeners = [];
+  const rawAddEventListener = window.addEventListener.bind(window);
+  window.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ) => {
+    wiredWindowListeners.push([type, listener]);
+    rawAddEventListener(type, listener, options);
+  }) as typeof window.addEventListener;
+  try {
+    vi.resetModules();
+    await import("../src/index.js");
+  } finally {
+    window.addEventListener = rawAddEventListener;
+  }
   return bridge;
 }
 
@@ -449,6 +479,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
   class MockSplitSync {
     readonly syncFromCalls: Pane[] = [];
     readonly scrollCalls: Pane[] = [];
+    private readonly echoPanes = new Set<Pane>();
 
     constructor() {
       splitSyncInstances.push(this);
@@ -476,14 +507,38 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
 
     syncFrom(pane: Pane): void {
       this.syncFromCalls.push(pane);
+      this.emitEcho(pane === "editor" ? "formatted" : "editor");
     }
 
     onEditorScroll(): void {
       this.scrollCalls.push("editor");
+      if (!this.isEcho("editor")) {
+        this.emitEcho("formatted");
+      }
     }
 
     onFormattedScroll(): void {
       this.scrollCalls.push("formatted");
+      if (!this.isEcho("formatted")) {
+        this.emitEcho("editor");
+      }
+    }
+
+    isEcho(pane: Pane): boolean {
+      return this.echoPanes.has(pane);
+    }
+
+    private emitEcho(pane: Pane): void {
+      this.echoPanes.add(pane);
+      try {
+        if (pane === "editor") {
+          editorCallbacks?.onScroll();
+        } else {
+          formattedCallbacks?.onScroll();
+        }
+      } finally {
+        this.echoPanes.delete(pane);
+      }
     }
   }
 
@@ -546,8 +601,25 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     window.dispatchEvent(new Event("resize"));
     await flushFrame();
 
-    expect(splitSyncInstances[0]?.scrollCalls).toEqual(["editor"]);
+    // Two "formatted" scroll events: the user's editor scroll couples formatted once, and the
+    // resize reflow's syncFrom("editor") couples it again — both are the coordinator's own echoes
+    // (isEcho("formatted") is true both times), so neither reassigns leadingPane.
+    expect(splitSyncInstances[0]?.scrollCalls).toEqual(["editor", "formatted", "formatted"]);
     expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
+  });
+
+  it("keeps the same leading pane through repeated reflow echoes with no user scroll between them", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    editorCallbacks?.onScroll();
+    window.dispatchEvent(new Event("resize"));
+    await flushFrame();
+    window.dispatchEvent(new Event("resize"));
+    await flushFrame();
+
+    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor", "editor"]);
   });
 
   it("lets focused pane override the last scrolled pane for resize re-align", async () => {

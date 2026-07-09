@@ -365,7 +365,9 @@ function wire(): void {
         // The coordinator decides: a genuine editor scroll couples the formatted pane; its own echo (the
         // scrollTop it just wrote) is ignored deterministically — no driver lock.
         if (isSplit(mode)) {
-          leadingPane = "editor";
+          if (!splitSync.isEcho("editor")) {
+            leadingPane = "editor";
+          }
           splitSync.onEditorScroll();
         }
       },
@@ -394,7 +396,9 @@ function wire(): void {
       onEditAttempt: offerDraft,
       onScroll: () => {
         if (isSplit(mode)) {
-          leadingPane = "formatted";
+          if (!splitSync.isEcho("formatted")) {
+            leadingPane = "formatted";
+          }
           splitSync.onFormattedScroll();
         }
       },
