@@ -374,7 +374,7 @@ function wire(): void {
       onScrollSettle: () => {
         // The rAF-coupled frames can trail a momentum scroll's final position. Re-run the same exact
         // coordinator path used by manual re-sync once the source pane stops moving.
-        if (isSplit(mode)) {
+        if (isSplit(mode) && !splitSync.isEcho("editor")) {
           splitSync.syncFrom("editor");
         }
       },

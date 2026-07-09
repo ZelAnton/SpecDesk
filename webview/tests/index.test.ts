@@ -483,7 +483,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
   class MockSplitSync {
     readonly syncFromCalls: Pane[] = [];
     readonly scrollCalls: Pane[] = [];
-    private readonly echoPanes = new Set<Pane>();
+    private lastWrittenPane: Pane | null = null;
 
     constructor() {
       splitSyncInstances.push(this);
@@ -529,19 +529,15 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     }
 
     isEcho(pane: Pane): boolean {
-      return this.echoPanes.has(pane);
+      return this.lastWrittenPane === pane;
     }
 
     private emitEcho(pane: Pane): void {
-      this.echoPanes.add(pane);
-      try {
-        if (pane === "editor") {
-          editorCallbacks?.onScroll();
-        } else {
-          formattedCallbacks?.onScroll();
-        }
-      } finally {
-        this.echoPanes.delete(pane);
+      this.lastWrittenPane = pane;
+      if (pane === "editor") {
+        editorCallbacks?.onScroll();
+      } else {
+        formattedCallbacks?.onScroll();
       }
     }
   }
@@ -620,6 +616,19 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     editorCallbacks?.onScrollSettle();
 
     expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
+  });
+
+  it("does not re-couple from an editor echo when its scroll callback settles", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(formattedCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    formattedCallbacks?.onScroll();
+    editorCallbacks?.onScrollSettle();
+
+    expect(splitSyncInstances[0]?.scrollCalls).toEqual(["formatted", "editor"]);
+    expect(splitSyncInstances[0]?.syncFromCalls).toEqual([]);
   });
 
   it("keeps the same leading pane through repeated reflow echoes with no user scroll between them", async () => {

@@ -206,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view no longer jitters the Formatted pane after its scroll is echoed into the Code pane and settles.
 - Split view now precisely re-snaps the Formatted pane through the scroll coordinator after momentum
   scrolling stops in the Code pane.
 - Split scroll synchronization timing is no longer disrupted by system clock adjustments.
