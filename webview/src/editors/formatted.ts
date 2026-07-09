@@ -25,7 +25,9 @@ import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
+import { log } from "../util/log.js";
 import { rafThrottle } from "../util/raf.js";
+import { BlockMap, startOfChild } from "./block-map.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
@@ -63,23 +65,6 @@ const highlightKey = new PluginKey<DecorationSet>("sd-formatted-highlight");
  *  this is the single isolated narrowing — the value is one we set ourselves, never external. */
 function decorationMeta(tr: Transaction, key: PluginKey<DecorationSet>): DecorationSet | undefined {
   return tr.getMeta(key) as DecorationSet | undefined;
-}
-
-/** Document position where the top-level child at `index` starts — the sum of every prior child's
- *  size. O(index); a scan that visits every block in order should accumulate the position inline
- *  (`pos += doc.child(i).nodeSize` per step) rather than call this per block, which would be O(n²). */
-function startOfChild(doc: PmNode, index: number): number {
-  let pos = 0;
-  for (let i = 0; i < index; i++) {
-    pos += doc.child(i).nodeSize;
-  }
-  return pos;
-}
-
-/** [from, to] document positions of the top-level child at `index`. */
-function blockRange(doc: PmNode, index: number): [number, number] {
-  const from = startOfChild(doc, index);
-  return [from, from + doc.child(index).nodeSize];
 }
 
 const highlightPlugin = new Plugin<DecorationSet>({
@@ -251,7 +236,12 @@ export class FormattedEditor {
   // The top-level block split of the CURRENT document source (= `original` at load, then refreshed
   // after each in-pane edit), cached so the per-frame highlight/scroll line↔node mapping doesn't
   // re-parse on every caret/mouse move. Distinct from `original`, which stays the splice baseline.
+  // Paired with the live ProseMirror doc into a {@link BlockMap} on demand (see {@link blockMap}).
   private blocks: MdBlock[] = [];
+  // Edge-triggered guard so a markdown-it/ProseMirror split divergence (which {@link blockMap} then
+  // falls back on) is logged once when it starts, not on every per-frame map build, and re-armed once
+  // the split re-agrees. See {@link blockMap}.
+  private divergenceLogged = false;
   // The last getText() result, keyed by the (original, doc) pair it was serialized from. The Split
   // cross-pane mirror (index.ts) calls getText() on every SOURCE-side debounce tick just to compare this
   // pane's text against the incoming edit — but this pane's document is untouched between those ticks, so
@@ -545,90 +535,37 @@ export class FormattedEditor {
     this.cachedText = { original: text, doc: this.view.state.doc, text };
   }
 
-  /** Map a 0-based source line to the index of the top-level block that contains it. */
-  private blockIndexForLine(line: number | null): number | null {
-    if (line === null) {
-      return null;
-    }
-    let index: number | null = this.blocks.length > 0 ? 0 : null;
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i];
-      if (block !== undefined && line >= block.lineStart) {
-        index = i;
-      }
-    }
-    // A line past the last block (a stale synced line from a now-shorter doc) clears the highlight
-    // rather than pinning the final block — matching the source editor's activeLineField (see
-    // editor.ts), which resets rather than clamps to its last line for the same stale-index case.
-    if (index !== null && line > (this.blocks[index]?.lineEnd ?? Number.POSITIVE_INFINITY)) {
-      return null;
-    }
-    return index;
-  }
-
   /**
-   * [from, to] of the node to highlight for a source line: the top-level block, or — inside a table /
-   * list, when `narrow` is true — the row / item the line falls in (so the caret highlights one row, not
-   * the whole table). Positions are computed against the current document so they are always valid.
+   * The single line↔block↔PM-node↔DOM correspondence for the current frame — the source-block split
+   * ({@link blocks}) paired 1:1 with the live ProseMirror doc (see block-map.ts). Built on demand
+   * (O(n), the cost the inline pairing loops it replaced already paid) so every hot path reads the
+   * SAME structure instead of re-deriving `blocks[i]`/`doc.child(i)` by a bare index.
    *
-   * `narrow` defaults to true for the caret/hover callers ({@link pushHighlights}, {@link
-   * removedAnchorPos}'s `"child"` case), which always want the row/item a given line falls in. {@link
-   * pushDiff} passes `instr.sub` instead: a `sub === true` (row/item) mark still narrows, but a `sub ===
-   * false` mark addresses a table/list CONTAINER as a whole (added/moved wholesale, or a changed
-   * container's wash fallback) — its `lineStart` is the container's own first line, which without
-   * `narrow: false` would resolve to just that first row/item (the bug T-075 fixes), not the container
-   * `pushDiff` actually means to wash.
-   *
-   * md-blocks' `childLineStarts` (markdown-it) and this PM node's children (pm-markdown.ts) are built
-   * from the same shared tokenizer config (md-config.ts), so their child COUNTS agree by construction
-   * for any real document. If they ever disagree anyway (T-083: a markdown-it/ProseMirror parser
-   * divergence this guard exists to catch rather than assume away), a child ordinal computed from one
-   * side and clamped into the other's range would silently point at the WRONG row/item — worse than no
-   * highlight, since it reads as confidently (but incorrectly) precise. Falling back to the whole
-   * container here is the same "detect and wash the container instead of guessing" contract DiffWire.fs
-   * already applies natively (see its childDiff empty-fallback comment).
+   * If the two sides diverge — a markdown-it/ProseMirror parse mismatch (T-083); {@link setText}
+   * already declines to prime its round-trip cache on it — the map is empty, so callers degrade to a
+   * safe no-op (no highlight, no spacers, no scroll) rather than pairing a block with the wrong node.
+   * The divergence is logged ONCE per occurrence (edge-triggered) as a diagnostic instead of silently.
    */
-  private nodeRangeForLine(line: number | null, narrow = true): [number, number] | null {
-    if (line === null) {
-      return null;
-    }
-    const topIndex = this.blockIndexForLine(line);
-    const doc = this.view.state.doc;
-    if (topIndex === null || topIndex < 0 || topIndex >= doc.childCount) {
-      return null;
-    }
-    const [blockFrom, blockTo] = blockRange(doc, topIndex);
-    if (!narrow) {
-      return [blockFrom, blockTo];
-    }
-    const block = doc.child(topIndex);
-    const childStarts = this.blocks[topIndex]?.childLineStarts;
-    if (
-      childStarts === undefined ||
-      childStarts.length === 0 ||
-      block.childCount === 0 ||
-      childStarts.length !== block.childCount
-    ) {
-      return [blockFrom, blockTo];
-    }
-    let childIndex = 0;
-    for (let i = 0; i < childStarts.length; i++) {
-      if (line >= (childStarts[i] ?? Number.POSITIVE_INFINITY)) {
-        childIndex = i;
+  private blockMap(): BlockMap {
+    const map = BlockMap.build(this.view.state.doc, this.blocks);
+    if (map.divergence !== null) {
+      if (!this.divergenceLogged) {
+        log.warn(
+          "formatted block-map: markdown-it/ProseMirror split diverged — falling back to no-op",
+          map.divergence,
+        );
+        this.divergenceLogged = true;
       }
+    } else {
+      this.divergenceLogged = false;
     }
-    // childStarts.length === block.childCount was just verified above, so this index is already in
-    // range — no clamp needed (a clamp here would be exactly the silent wrong-row guess this guards
-    // against).
-    let childPos = blockFrom + 1; // step inside the container node
-    for (let i = 0; i < childIndex; i++) {
-      childPos += block.child(i).nodeSize;
-    }
-    return [childPos, childPos + block.child(childIndex).nodeSize];
+    return map;
   }
 
   /** The source line a resolved position maps to: the row/item line inside a table/list, else the
-   *  containing top-level block's line. The inverse of {@link nodeRangeForLine}, for caret/hover reports. */
+   *  containing top-level block's line. The inverse of {@link BlockMap.nodeRange}, for caret/hover
+   *  reports. Reads {@link blocks} directly by the position's own top-level index — an inherently
+   *  consistent pairing (the index comes from the live doc), so it needs no block-map build. */
   private sourceLineForPos($pos: ResolvedPos): number | null {
     const block = this.blocks[$pos.index(0)];
     if (block === undefined) {
@@ -643,13 +580,14 @@ export class FormattedEditor {
   /** Build and push the active/hover decorations from the synced source lines (resolved to nodes). */
   private pushHighlights(): void {
     const doc = this.view.state.doc;
+    const map = this.blockMap();
     const decos: Decoration[] = [];
-    const active = this.nodeRangeForLine(this.activeLine);
+    const active = map.nodeRange(this.activeLine, true);
     this.activeNodeRange = active;
     if (active !== null) {
       decos.push(Decoration.node(active[0], active[1], { class: "sd-active-block" }));
     }
-    const hover = this.nodeRangeForLine(this.hoverLine);
+    const hover = map.nodeRange(this.hoverLine, true);
     if (hover !== null && !(active !== null && hover[0] === active[0] && hover[1] === active[1])) {
       decos.push(Decoration.node(hover[0], hover[1], { class: "sd-hover-block" }));
     }
@@ -672,19 +610,18 @@ export class FormattedEditor {
 
   /** The document position a removed-block marker anchors before — the Formatted pane's node-coordinate
    *  reading of the single {@link RemovedAnchor} (overlay-plan.ts resolves WHICH block/child; here we turn
-   *  that into a ProseMirror position). A top-level anchor sits before the whole block; a row/item anchor
-   *  before the resolved row/item node; an out-of-range anchor at the document end. */
-  private removedAnchorPos(anchor: RemovedAnchor): number {
+   *  that into a ProseMirror position, via the shared {@link BlockMap}). A top-level anchor sits before
+   *  the whole block; a row/item anchor before the resolved row/item node; an out-of-range anchor (or a
+   *  diverged map) at the document end. */
+  private removedAnchorPos(map: BlockMap, anchor: RemovedAnchor): number {
     const doc = this.view.state.doc;
     switch (anchor.at) {
       case "end":
         return doc.content.size;
       case "block":
-        return anchor.blockIndex < doc.childCount
-          ? blockRange(doc, anchor.blockIndex)[0]
-          : doc.content.size;
+        return map.entryAt(anchor.blockIndex)?.from ?? doc.content.size;
       case "child":
-        return this.nodeRangeForLine(anchor.line)?.[0] ?? doc.content.size;
+        return map.nodeRange(anchor.line, true)?.[0] ?? doc.content.size;
       default:
         return assertNever(anchor);
     }
@@ -700,6 +637,10 @@ export class FormattedEditor {
       this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.empty));
       return;
     }
+    // The overlay plan's block anchors are SOURCE-side line starts (matching the Code pane, which
+    // derives them from the same head split), so it reads `blocks` directly and stays valid even if the
+    // PM doc diverges; only resolving an instruction to a node position needs the paired map below.
+    const map = this.blockMap();
     const plan = buildOverlayPlan(
       this.diffMarks,
       this.blocks.map((block) => block.lineStart),
@@ -728,11 +669,11 @@ export class FormattedEditor {
       switch (instr.type) {
         case "fill": {
           // Resolve the node to wash: for a sub-block instruction (a table row / list item),
-          // nodeRangeForLine narrows to that row/item inside its table/list; for a whole-container
+          // BlockMap.nodeRange narrows to that row/item inside its table/list; for a whole-container
           // instruction (added/moved container, sub === false) it must NOT narrow — lineStart is the
           // container's own first line, and narrowing would wash only its first row/item instead of the
           // whole table/list (T-075).
-          const range = this.nodeRangeForLine(instr.lineStart, instr.sub);
+          const range = map.nodeRange(instr.lineStart, instr.sub);
           if (range !== null) {
             washBlock(instr.kind, instr.sub, range);
           }
@@ -742,7 +683,7 @@ export class FormattedEditor {
           // Same narrow-only-for-sub rule as "fill" above: a whole-container changed mark (sub === false)
           // must resolve to the whole table/list, both for the inline word-diff attempt (which then bows
           // out on a container, since its text isn't pure) and for the whole-block wash fallback below.
-          const range = this.nodeRangeForLine(instr.lineStart, instr.sub);
+          const range = map.nodeRange(instr.lineStart, instr.sub);
           if (range === null) {
             break;
           }
@@ -760,10 +701,14 @@ export class FormattedEditor {
         }
         case "removed":
           decos.push(
-            Decoration.widget(this.removedAnchorPos(instr.anchor), removedMarkerDOM(instr.label), {
-              side: -1,
-              key: `sd-removed-${removedSeq++}`,
-            }),
+            Decoration.widget(
+              this.removedAnchorPos(map, instr.anchor),
+              removedMarkerDOM(instr.label),
+              {
+                side: -1,
+                key: `sd-removed-${removedSeq++}`,
+              },
+            ),
           );
           break;
         default:
@@ -936,24 +881,23 @@ export class FormattedEditor {
    * one coordinate system, matching {@link Preview.blockGeometry}.
    */
   blockGeometry(): BlockGeometry[] {
-    const doc = this.view.state.doc;
+    const map = this.blockMap();
     const containerTop = this.scrollEl.getBoundingClientRect().top;
     const scrollTop = this.scrollEl.scrollTop;
     const result: BlockGeometry[] = [];
-    let pos = 0;
-    for (let i = 0; i < doc.childCount; i++) {
-      const dom = this.view.nodeDOM(pos);
-      const block = this.blocks[i];
-      if (dom instanceof HTMLElement && block !== undefined) {
+    // One block↔node pairing for the whole scan (block-map.ts); a diverged split yields no entries, so
+    // height-sync sees zero blocks and clears its spacers rather than aligning against mispaired anchors.
+    for (const entry of map.entries) {
+      const dom = this.view.nodeDOM(entry.from);
+      if (dom instanceof HTMLElement) {
         const rect = dom.getBoundingClientRect();
         result.push({
-          lineStart: block.lineStart,
-          lineEnd: block.lineEnd,
+          lineStart: entry.block.lineStart,
+          lineEnd: entry.block.lineEnd,
           top: rect.top - containerTop + scrollTop,
           height: rect.height,
         });
       }
-      pos += doc.child(i).nodeSize;
     }
     return result;
   }
@@ -969,26 +913,20 @@ export class FormattedEditor {
   topVisibleSourceLine(): number {
     const containerTop = this.scrollEl.getBoundingClientRect().top;
     const scrollTop = this.scrollEl.scrollTop;
-    const doc = this.view.state.doc;
-    // `blocks` and the PM doc are parallel-indexed and normally 1:1; bound the scan by the shorter so
-    // that on a divergence we stop at the last matched block rather than skipping past a hole and
-    // pinning an earlier one. (A deeper index↔node misalignment is a pre-existing module-wide concern
-    // shared with blockGeometry/nodeRangeForLine, not specific to scroll-sync.)
-    const limit = Math.min(doc.childCount, this.blocks.length);
-    let pos = 0;
+    // One block↔node pairing for the scan (block-map.ts); a diverged split yields no entries, so this
+    // falls through to the first-line fallback below rather than pinning a mispaired block.
+    const map = this.blockMap();
     let current: { top: number; height: number; block: MdBlock } | undefined;
-    for (let i = 0; i < limit; i++) {
-      const dom = this.view.nodeDOM(pos);
-      const block = this.blocks[i];
-      if (dom instanceof HTMLElement && block !== undefined) {
+    for (const entry of map.entries) {
+      const dom = this.view.nodeDOM(entry.from);
+      if (dom instanceof HTMLElement) {
         const rect = dom.getBoundingClientRect();
         const top = rect.top - containerTop + scrollTop;
         if (top > scrollTop) {
           break; // first block below the viewport top — the previous one straddles it
         }
-        current = { top, height: rect.height, block };
+        current = { top, height: rect.height, block: entry.block };
       }
-      pos += doc.child(i).nodeSize;
     }
     if (current === undefined) {
       return this.blocks[0]?.lineStart ?? 0;
@@ -1049,19 +987,15 @@ export class FormattedEditor {
    * within a tall block instead of snapping to block tops.
    */
   scrollToSourceLine(line: number): void {
-    let index = 0;
-    for (let i = 0; i < this.blocks.length; i++) {
-      const block = this.blocks[i];
-      if (block !== undefined && line >= block.lineStart) {
-        index = i;
-      }
+    // The nearest block at or before the line (block-map.ts); null only when the map is empty or a
+    // diverged split left it unpaired, in which case there is no safe block to scroll to.
+    const entry = this.blockMap().entryForScroll(line);
+    if (entry === null) {
+      return;
     }
-    const doc = this.view.state.doc;
-    const clamped = Math.max(0, Math.min(index, doc.childCount - 1));
-    const block = this.blocks[clamped];
-    const pos = startOfChild(doc, clamped);
-    const dom = this.view.nodeDOM(pos);
-    if (block === undefined || !(dom instanceof HTMLElement)) {
+    const block = entry.block;
+    const dom = this.view.nodeDOM(entry.from);
+    if (!(dom instanceof HTMLElement)) {
       return;
     }
     const rect = dom.getBoundingClientRect();

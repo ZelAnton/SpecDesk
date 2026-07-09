@@ -9,6 +9,7 @@
  * rather than kept unwired — see T-089. (docs/design/05-live-preview.md.)
  */
 
+import { lastIndexAtOrBefore } from "../editors/block-map.js";
 import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
 
@@ -37,20 +38,18 @@ export function isFresh(lastAppliedVersion: number, version: number): boolean {
 
 /**
  * The block whose source range contains `line`, or — when none does (e.g. a blank line between
- * blocks) — the last block that starts at or before it. Pure and layout-free, so it is
- * unit-tested without a DOM.
+ * blocks) — the last block that starts at or before it; the first block for a line before them all.
+ * Pure and layout-free, so it is unit-tested without a DOM. Uses the shared block-by-line search
+ * ({@link lastIndexAtOrBefore}) so this pane resolves a line to a block the same single way the
+ * formatted editor's block-map does — for an ascending, ordered partition the last block starting at
+ * or before the line IS the containing block when the line falls in its range.
  */
 export function blockForLine(blocks: PreviewBlock[], line: number): PreviewBlock | undefined {
-  let candidate: PreviewBlock | undefined;
-  for (const block of blocks) {
-    if (line >= block.lineStart && line <= block.lineEnd) {
-      return block;
-    }
-    if (line >= block.lineStart) {
-      candidate = block;
-    }
-  }
-  return candidate ?? blocks[0];
+  const index = lastIndexAtOrBefore(
+    blocks.map((block) => block.lineStart),
+    line,
+  );
+  return index < 0 ? blocks[0] : blocks[index];
 }
 
 export class Preview {

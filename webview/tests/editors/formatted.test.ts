@@ -4,6 +4,8 @@ import { TextSelection } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FormattedEditor } from "../../src/editors/formatted.js";
+import type { MdBlock } from "../../src/editors/md-blocks.js";
+import { log } from "../../src/util/log.js";
 
 // Runtime check of the ProseMirror integration (which can't be verified headlessly in the app):
 // constructing the view, parsing Markdown into it, and serializing back via block-splice. Layout-
@@ -725,6 +727,57 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setEditable(true);
     view.dispatch(view.state.tr.insertText("X", 1));
     expect(ed.getText()).not.toBe("# H\n\npara\n");
+  });
+});
+
+// T-071: when the markdown-it source-block split and the ProseMirror doc disagree on top-level count (a
+// parse divergence), the shared block-map (block-map.ts) reports NO entries, so every consumer degrades
+// to a safe no-op — no geometry, no highlight — rather than pairing a source block with the wrong node
+// and silently corrupting height-sync/scroll-sync. The divergence is also logged once as a diagnostic.
+describe("FormattedEditor block-map divergence fallback (jsdom, T-071)", () => {
+  // Force the divergence by desyncing the cached source-block split from the live doc: a 0-length split
+  // against a non-empty ProseMirror doc is exactly the count mismatch the block-map guards. Test-only
+  // internal access, isolated to this helper (the same private-field pattern as viewOf above).
+  function desyncBlocks(ed: FormattedEditor): void {
+    (ed as unknown as { blocks: MdBlock[] }).blocks = [];
+  }
+
+  it("reports no geometry and clears the highlight instead of mispairing when the split diverges", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("# H\n\npara\n\n- a\n- b\n");
+    ed.setActiveLine(0);
+    expect(host.querySelectorAll(".sd-active-block")).toHaveLength(1);
+    expect(ed.blockGeometry().length).toBeGreaterThan(0);
+
+    desyncBlocks(ed);
+    // No blocks reported → height-sync's zero-block path clears its spacers (vs mispaired anchors).
+    expect(ed.blockGeometry()).toEqual([]);
+    // Re-pushing the highlight against the diverged map resolves no node → the decoration is cleared.
+    ed.setActiveLine(0);
+    expect(host.querySelectorAll(".sd-active-block")).toHaveLength(0);
+  });
+
+  it("logs the divergence once per occurrence (a diagnostic, not silent) and re-arms after it clears", () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      const { ed } = mountWithHost();
+      ed.setText("# H\n\npara\n");
+      expect(warn).not.toHaveBeenCalled();
+
+      desyncBlocks(ed);
+      ed.blockGeometry();
+      ed.blockGeometry(); // still diverged — must NOT re-log on every per-frame map build
+      expect(warn).toHaveBeenCalledTimes(1);
+
+      // A fresh setText re-pairs the split (blocks match the doc again), re-arming the guard so a later
+      // divergence is diagnosed anew rather than swallowed.
+      ed.setText("# H\n\npara\n");
+      desyncBlocks(ed);
+      ed.blockGeometry();
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

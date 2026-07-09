@@ -58,6 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `(original → {doc, blocks})` pair is memoized — and the formatted editor caches its own `getText()`
   result on the (baseline, document) pair so the Split cross-pane mirror's per-tick equality check no
   longer re-parses/serializes an unchanged document. No observable editor behavior changes.
+- The formatted editor's line↔block↔ProseMirror-node↔DOM correspondence now lives in one `BlockMap`
+  abstraction (`webview/src/editors/block-map.ts`) instead of being re-derived by a bare
+  `blocks[i]`/`doc.child(i)` index in five separate places (`blockGeometry`, `topVisibleSourceLine`,
+  the caret/hover/overlay `nodeRangeForLine`, `scrollToSourceLine`, and the review overlay `pushDiff`)
+  plus a duplicated "last block starting at or before this line" scan (thrice in `formatted.ts`, and
+  `blockForLine` in `webview/src/review/preview.ts`, which now shares the single search). The map pairs
+  each source block with its ProseMirror node once per frame and, crucially, DETECTS a markdown-it vs
+  ProseMirror top-level split divergence (a parse mismatch) — exposing no entries and logging a
+  one-per-occurrence diagnostic, so every consumer degrades to a safe no-op (no geometry/spacers, no
+  highlight, no scroll target) rather than silently pairing a source range with the wrong DOM element
+  and corrupting height-sync/scroll-sync. For consistent documents (the norm — both sides share one
+  tokenizer config) behavior is unchanged; the divergence path is now a detected fallback instead of
+  quiet corruption. This is also the shared foundation for the upcoming geometry cache and sync
+  coordinator.
 - The product's name and version, and the `%LOCALAPPDATA%\SpecDesk` data root, are now defined once in a
   new `SpecDesk.AppInfo` project (`ProductInfo`, `AppPaths`) instead of being hand-duplicated across the
   tree: the AppData root (previously assembled independently for the sample repo, the GitHub auth/token
