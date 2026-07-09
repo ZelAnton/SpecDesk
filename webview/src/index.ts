@@ -751,16 +751,16 @@ function wire(): void {
       // The format target depends on the mode (Code→source, Formatted→WYSIWYG), so refresh the buttons.
       formatToolbar.refresh();
 
-      // The visible pane(s) changed width / were un-hidden, so re-measure before restoring scroll. The
-      // sync itself is now deterministic (the coordinator records every write, so no scroll heuristic is
-      // needed here); the ONE timing hop left is waiting for CodeMirror's ASYNCHRONOUS re-measure — its
-      // geometry is only correct on the SECOND frame (the PoC-11 timing). This double rAF is kept solely
-      // as that explicit relayout fallback, isolated from the (now heuristic-free) scroll coordination.
+      // The visible pane(s) changed width / were un-hidden. CodeMirror re-measures asynchronously after
+      // refresh(), so wait two frames before reading pane geometry and restoring scroll (PoC-11 timing):
+      // the first lets its measurement run, the second performs height reconciliation and restoration.
+      // ProseMirror needs no refresh call because the browser reflows its existing DOM automatically;
+      // only SpecDesk's cached formatted-block measurements must be discarded before they are read.
       editor.refresh();
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (nextVis.preview) {
-            formatted.refresh();
+            formatted.invalidateGeometry();
           }
           // Re-pad the editor to the formatted heights BEFORE restoring scroll, so the scroll target
           // accounts for the spacers. Outside Split there is nothing to align — drop the spacers so the

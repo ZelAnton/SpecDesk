@@ -263,9 +263,10 @@ export class FormattedEditor {
   // ({@link topVisibleSourceLine}/{@link scrollToSourceLine}) binary-searches it instead of measuring
   // every block's DOM per frame. Scroll-invariant, so it survives across scroll frames; invalidated on
   // every event that relays the blocks out — a document edit ({@link dispatchTransaction}), a whole-doc
-  // {@link setText}, a review-overlay marker ({@link pushDiff}), an image decode, or a {@link refresh}
-  // resize. {@link blockGeometry} (the reconcile path) always re-measures and refreshes it. See
-  // block-geometry.ts for why a content-relative top is scroll-invariant.
+  // {@link setText}, a review-overlay marker ({@link pushDiff}), an image decode, or an explicit
+  // {@link invalidateGeometry} after a pane-width change. {@link blockGeometry} (the reconcile path)
+  // always re-measures and refreshes it. See block-geometry.ts for why a content-relative top is
+  // scroll-invariant.
   private readonly geometryCache = new BlockGeometryCache();
   // The last getText() result, keyed by the (original, doc) pair it was serialized from. The Split
   // cross-pane mirror (index.ts) calls getText() on every SOURCE-side debounce tick just to compare this
@@ -895,11 +896,11 @@ export class FormattedEditor {
     return computeDisabledFormats(this.view.state);
   }
 
-  /** Force a re-render after the pane returns from display:none to a new width. */
-  refresh(): void {
-    // The new width reflows every block, so the cached geometry is stale — drop it before re-rendering.
+  /** Drop block measurements after CSS changes the pane's width or visibility. The browser reflows the
+   * existing ProseMirror DOM itself; updating the view with its current state neither measures nor
+   * re-renders it. */
+  invalidateGeometry(): void {
     this.geometryCache.invalidate();
-    this.view.updateState(this.view.state);
   }
 
   /** Move keyboard focus into the formatted editor (used by the skip-to-editor link). */

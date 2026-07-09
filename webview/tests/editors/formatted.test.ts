@@ -90,6 +90,51 @@ describe("FormattedEditor (jsdom)", () => {
     expect(() => mount()).not.toThrow();
   });
 
+  it("does not re-render or measure when updateState receives the current state", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("A paragraph that wraps when the pane narrows.\n");
+    const view = viewOf(ed);
+    const block = view.dom.firstElementChild as HTMLElement;
+    let paneWidth = 600;
+    const geometryRead = vi.spyOn(block, "getBoundingClientRect").mockImplementation(() => {
+      const height = paneWidth < 400 ? 48 : 24;
+      return {
+        x: 0,
+        y: 0,
+        top: 0,
+        right: paneWidth,
+        bottom: height,
+        left: 0,
+        width: paneWidth,
+        height,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    const blockBefore = block;
+    const domBefore = host.innerHTML;
+    const geometryBefore = block.getBoundingClientRect();
+
+    paneWidth = 320;
+    geometryRead.mockClear();
+    view.updateState(view.state);
+
+    // The identical state causes neither a ProseMirror DOM update nor a layout read. The changed box
+    // below comes solely from the browser's width-dependent layout (simulated because jsdom has no
+    // layout engine), which is observable without asking ProseMirror to update the same state.
+    expect(geometryRead).not.toHaveBeenCalled();
+    expect(view.dom.firstElementChild).toBe(blockBefore);
+    expect(host.innerHTML).toBe(domBefore);
+    const geometryAfter = block.getBoundingClientRect();
+    expect({ width: geometryBefore.width, height: geometryBefore.height }).toEqual({
+      width: 600,
+      height: 24,
+    });
+    expect({ width: geometryAfter.width, height: geometryAfter.height }).toEqual({
+      width: 320,
+      height: 48,
+    });
+  });
+
   for (const [name, md] of [
     ["rich fixture (table, list, code, quote, hr)", RICH],
     ["heading + paragraph", "# H\n\nA paragraph.\n"],

@@ -427,6 +427,10 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
       return;
     }
 
+    invalidateGeometry(): void {
+      return;
+    }
+
     focus(): void {
       return;
     }
