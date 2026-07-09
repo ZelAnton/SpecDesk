@@ -307,11 +307,15 @@ function wire(): void {
     // weight compensation), so afterwards: invalidate the coordinator's maps (rebuilt from the new tops
     // on the next couple) and absorb the editor's post-nudge scroll, so that programmatic move is not
     // read as a user scroll and does not drive the formatted pane into a false sync.
+    let leadingPane: Pane | null = null;
     const reconcileHeights = rafThrottle(() => {
       if (isSplit(mode)) {
         heightSync.reconcile();
         splitSync.invalidate();
         splitSync.absorb("editor");
+        if (leadingPane !== null) {
+          splitSync.syncFrom(leadingPane);
+        }
       }
     });
 
@@ -361,6 +365,9 @@ function wire(): void {
         // The coordinator decides: a genuine editor scroll couples the formatted pane; its own echo (the
         // scrollTop it just wrote) is ignored deterministically — no driver lock.
         if (isSplit(mode)) {
+          if (!splitSync.isEcho("editor")) {
+            leadingPane = "editor";
+          }
           splitSync.onEditorScroll();
         }
       },
@@ -374,7 +381,10 @@ function wire(): void {
       onHover: (line) => setHover(line),
       onGeometryChange: () => reconcileHeights(),
       onEditAttempt: offerDraft,
-      onFocus: () => formatToolbar.setFocused("editor"),
+      onFocus: () => {
+        leadingPane = "editor";
+        formatToolbar.setFocused("editor");
+      },
       // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
     });
@@ -386,13 +396,19 @@ function wire(): void {
       onEditAttempt: offerDraft,
       onScroll: () => {
         if (isSplit(mode)) {
+          if (!splitSync.isEcho("formatted")) {
+            leadingPane = "formatted";
+          }
           splitSync.onFormattedScroll();
         }
       },
       onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
       onHover: (line) => setHover(line),
       onContentResize: () => reconcileHeights(),
-      onFocus: () => formatToolbar.setFocused("formatted"),
+      onFocus: () => {
+        leadingPane = "formatted";
+        formatToolbar.setFocused("formatted");
+      },
       onActiveChange: () => formatToolbar.refresh(),
       // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),

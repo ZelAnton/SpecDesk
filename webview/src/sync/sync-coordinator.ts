@@ -174,16 +174,17 @@ export class SplitSync {
     this.lastWritten[pane] = this.scrollTopOf(pane);
   }
 
+  /** Whether the pane's current scroll event is a coordinator-written echo, not a user scroll. */
+  isEcho(pane: Pane): boolean {
+    const written = this.lastWritten[pane];
+    return Number.isFinite(written) && Math.abs(this.scrollTopOf(pane) - written) <= ECHO_EPSILON;
+  }
+
   private onScroll(source: Pane): void {
     if (this.isEcho(source)) {
       return;
     }
     this.couple(source);
-  }
-
-  private isEcho(pane: Pane): boolean {
-    const written = this.lastWritten[pane];
-    return Number.isFinite(written) && Math.abs(this.scrollTopOf(pane) - written) <= ECHO_EPSILON;
   }
 
   private couple(source: Pane): void {

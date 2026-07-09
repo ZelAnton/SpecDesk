@@ -220,6 +220,16 @@ describe("SplitSync.syncFrom (programmatic mirror re-align)", () => {
     sync.onFormattedScroll();
     expect(ed.scroll).toBe(350);
   });
+
+  it("reports whether the current pane scroll is a coordinator-written echo", () => {
+    const { ed, fm, sync } = make();
+    ed.userScrollTo(350);
+    sync.syncFrom("editor");
+
+    expect(sync.isEcho("formatted")).toBe(true);
+    fm.userScrollTo(351);
+    expect(sync.isEcho("formatted")).toBe(false);
+  });
 });
 
 describe("SplitSync.reveal (passive-pane reveal, guarded against active-scroll couples)", () => {
