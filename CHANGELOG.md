@@ -611,6 +611,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-document re-parse is gone). A document using a link reference definition — the one CommonMark
   construct whose meaning crosses block boundaries — falls back to a full in-context rebuild so its
   links can't misresolve.
+- The Formatted pane's inline word-diff for a changed table row / list item (sub-mark) now compares the
+  WHOLE row/item — every cell/paragraph joined with the same separator the native side flattens it with
+  (`DiffWire.fs`: table cells via `" | "`, list-item blocks via `" "`) — against the wire's already
+  row/item-flattened `baseText`, instead of just the row/item's FIRST cell/paragraph. Comparing only the
+  first cell/paragraph against a base that covers the whole row/item raised `changeRatio` on every
+  multi-cell row or multi-paragraph item (an untouched second cell/paragraph read as wholesale deleted
+  text), almost always falling back to a whole-row/item wash instead of the intended inline highlight, or
+  in a degenerate case producing spurious highlights. `formatted.ts` gained `flattenRowOrItem`, which joins
+  a table row's/list item's children the same way and maps a synthetic-text offset back to its real
+  document position for the word-diff decorations; a plain top-level paragraph/heading (not a row/item)
+  is unaffected. The Code pane, which already diffs the row/item's actual raw source span, needed no change.
 
 ### Changed
 - `webview/tests/reviews-panel.test.ts` and `webview/tests/preview.test.ts` no longer use an unchecked

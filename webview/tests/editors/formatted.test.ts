@@ -375,6 +375,95 @@ describe("FormattedEditor (jsdom)", () => {
     expect(host.querySelectorAll(".sd-diff-inline")).toHaveLength(0);
   });
 
+  // T-076: a sub (row/item) inline word-diff must compare the WHOLE row/item — cells/blocks joined the
+  // same way the native side flattens it (DiffWire.fs tableRowText/listItemText) — not just its first
+  // cell/paragraph, or an untouched second cell/paragraph would read as almost entirely different text
+  // and either raise changeRatio into a whole-item wash or spuriously mark the rest as deleted.
+  it("highlights a changed word in a multi-cell table row using the whole row, not just its first cell", () => {
+    const { ed, host } = mountWithHost();
+    // Data row at line 2 (line 0 header, line 1 the separator, line 2 the one data row).
+    ed.setText("| Name | Notes |\n| - | - |\n| Alice | buy fresh apples today |\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 2,
+        lineEnd: 2,
+        // Native tableRowText joins cells with " | ": "Alice | buy fresh oranges today".
+        baseText: "Alice | buy fresh oranges today",
+        baseSource: null,
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(true);
+    const removed = [...host.querySelectorAll(".sd-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("oranges"))).toBe(true);
+    // The untouched first cell ("Alice") must not be marked as changed, and the row keeps no whole-row
+    // wash (the old first-cell-only comparison would either wash the row or leave "Notes" looking almost
+    // entirely rewritten, since the whole-row base was compared against just the first cell's text).
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    expect(added.some((w) => w.textContent?.includes("Alice"))).toBe(false);
+  });
+
+  it("highlights a changed word in a multi-paragraph list item using the whole item, not just its first paragraph", () => {
+    const { ed, host } = mountWithHost();
+    // Item "two" (line 1) carries a second paragraph, indented to stay inside the item (line 3).
+    ed.setText("- one\n- buy fresh apples today\n\n  the market closes on Friday\n- three\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 1,
+        lineEnd: 3,
+        // Native listItemText joins the item's blocks with " ".
+        baseText: "buy fresh apples today the market closes on Thursday",
+        baseSource: null,
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("Friday"))).toBe(true);
+    const removed = [...host.querySelectorAll(".sd-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("Thursday"))).toBe(true);
+    // The untouched first paragraph must not be marked as changed, and the item keeps no whole-item wash
+    // (the old first-paragraph-only comparison would have read the second paragraph as wholly deleted).
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(false);
+  });
+
+  // R-01 (T-076 review): flattenRowOrItem used to gate the joiner on accumulated text LENGTH
+  // (`text.length > 0`), so a leading empty cell — itself contributing zero characters — left the
+  // joiner out entirely, producing "changed" instead of the native side's " | changed". Fixed to gate
+  // on segment COUNT instead, so an empty leading cell still gets its joiner.
+  it("highlights a changed word in a table row with a leading empty cell", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("| Name | Notes |\n| - | - |\n|  | buy fresh apples today |\n");
+    ed.setDiff([
+      {
+        kind: "changed",
+        sub: true,
+        lineStart: 2,
+        lineEnd: 2,
+        // Native tableRowText joins ["", "buy fresh oranges today"] with " | ": " | buy fresh oranges today".
+        baseText: " | buy fresh oranges today",
+        baseSource: null,
+      },
+    ]);
+
+    const added = [...host.querySelectorAll(".sd-diff-word-added")];
+    expect(added.some((w) => w.textContent?.includes("apples"))).toBe(true);
+    const removed = [...host.querySelectorAll(".sd-diff-word-removed")];
+    expect(removed.some((w) => w.textContent?.includes("oranges"))).toBe(true);
+    // The missing joiner would inflate changeRatio (comparing "buy fresh apples today" against the
+    // joiner-prefixed base) and fall back to a whole-row wash instead of the inline highlight above.
+    expect(host.querySelectorAll(".sd-diff-changed")).toHaveLength(0);
+    // The dropped joiner (the actual R-01 bug) would also misalign the leading " | " itself, surfacing it
+    // as a spurious removed run — asserting its absence is what pins the regression down to the joiner,
+    // not just the ratio staying under threshold by coincidence.
+    expect(removed.some((w) => w.textContent?.includes("|"))).toBe(false);
+  });
+
   it("highlights changed words inline inside an edited paragraph (no whole-block wash)", () => {
     const { ed, host } = mountWithHost();
     ed.setText("The quick brown fox jumps over the lazy dog today.\n");
