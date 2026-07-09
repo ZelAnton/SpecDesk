@@ -73,6 +73,18 @@ function viewOf(ed: FormattedEditor): EditorView {
   return (ed as unknown as { view: EditorView }).view;
 }
 
+function pressModB(view: EditorView): boolean {
+  return view.dom.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "b",
+      code: "KeyB",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 describe("FormattedEditor (jsdom)", () => {
   it("constructs a ProseMirror view without throwing", () => {
     expect(() => mount()).not.toThrow();
@@ -693,6 +705,46 @@ describe("FormattedEditor (jsdom)", () => {
     ed.setText("hello\n");
     ed.setEditable(false);
     ed.format("bold");
+    expect(attempts).toBe(1);
+    expect(ed.getText()).toBe("hello\n");
+  });
+
+  it("routes Ctrl+B through format() in the formatted editor", () => {
+    const ed = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+
+    pressModB(view);
+
+    expect(ed.getText()).toBe("**hello**\n");
+  });
+
+  it("keeps the format() read-only gate for keyboard shortcuts", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    let attempts = 0;
+    const ed = new FormattedEditor(host, {
+      onChange: () => {},
+      onEditAttempt: () => {
+        attempts += 1;
+      },
+      onScroll: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+      onOpenLink: () => {},
+    });
+    ed.setText("hello\n");
+    ed.setEditable(false);
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+
+    pressModB(view);
+
     expect(attempts).toBe(1);
     expect(ed.getText()).toBe("hello\n");
   });

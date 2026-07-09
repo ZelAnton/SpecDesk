@@ -11,7 +11,10 @@ function viewOf(ed: MarkdownEditor): EditorView {
 
 // Runtime check of the Code-pane diff overlay (CodeMirror): the inline source word-diff decorations.
 
-function mount(onDebug?: (summary: string) => void): { ed: MarkdownEditor; host: HTMLDivElement } {
+function mount(
+  onDebug?: (summary: string) => void,
+  onEditAttempt?: () => void,
+): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const ed = new MarkdownEditor(host, {
@@ -21,12 +24,24 @@ function mount(onDebug?: (summary: string) => void): { ed: MarkdownEditor; host:
     onCursor: () => {},
     onHover: () => {},
     onGeometryChange: () => {},
-    onEditAttempt: () => {},
+    onEditAttempt: onEditAttempt ?? (() => {}),
     onFocus: () => {},
     onOpenLink: () => {},
     ...(onDebug ? { onDebug } : {}),
   });
   return { ed, host };
+}
+
+function pressModB(view: EditorView): boolean {
+  return view.contentDOM.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "b",
+      code: "KeyB",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
 }
 
 describe("MarkdownEditor diff overlay (jsdom)", () => {
@@ -592,6 +607,59 @@ describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
       expect(() => ed.applyFormat(command)).not.toThrow();
     });
   }
+});
+
+describe("MarkdownEditor formatting keymap (jsdom, T-095)", () => {
+  it("routes Ctrl+B through applyFormat in the source editor", () => {
+    const { ed } = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 0, head: 5 } });
+
+    pressModB(view);
+
+    expect(ed.getText()).toBe("**hello**\n");
+  });
+
+  it("keeps the applyFormat read-only gate for keyboard shortcuts", () => {
+    let attempts = 0;
+    const { ed } = mount(undefined, () => {
+      attempts += 1;
+    });
+    ed.setText("hello\n");
+    ed.setEditable(false);
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 0, head: 5 } });
+
+    pressModB(view);
+
+    expect(attempts).toBe(1);
+    expect(ed.getText()).toBe("hello\n");
+  });
+
+  // @codemirror/commands' own defaultKeymap (part of basicSetup, registered BEFORE our formatting
+  // keymap in the extensions array) already binds Mod-i to selectParentSyntax. Our formatting keymap
+  // must still win this one — pinning that ours isn't shadowed by basicSetup's default bindings.
+  it("routes Ctrl+I through applyFormat, not basicSetup's default Mod-i binding", () => {
+    const { ed } = mount();
+    ed.setText("hello\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 0, head: 5 } });
+
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "i",
+        code: "KeyI",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(ed.getText()).toBe("*hello*\n");
+  });
 });
 
 // T-100: the source pane's toolbar pressed state, read from the lang-markdown Lezer syntax tree at the

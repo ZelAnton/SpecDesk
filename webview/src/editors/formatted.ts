@@ -30,6 +30,7 @@ import { log } from "../util/log.js";
 import { rafThrottle } from "../util/raf.js";
 import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
+import { FORMAT_REGISTRY } from "./format-registry.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
 import { serializeWithSplice } from "./md-splice.js";
@@ -43,6 +44,20 @@ import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 
 const DEBOUNCE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
+
+function formattingKeymapFor(
+  apply: (command: FormatCommand) => void,
+): Record<string, () => boolean> {
+  return Object.fromEntries(
+    FORMAT_REGISTRY.map((command) => [
+      command.hotkey,
+      () => {
+        apply(command.id);
+        return true;
+      },
+    ]),
+  );
+}
 
 // A link reference definition (`[id]: url`) is the one CommonMark construct whose meaning crosses
 // top-level block boundaries: a `[text][id]` link in one block resolves against a definition that may
@@ -426,6 +441,7 @@ export class FormattedEditor {
       plugins: [
         history(),
         keymap({ "Mod-z": undo, "Mod-y": redo, "Shift-Mod-z": redo }),
+        keymap(formattingKeymapFor((command) => this.format(command))),
         keymap(baseKeymap),
         highlightPlugin,
         diffPlugin,

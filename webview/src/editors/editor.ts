@@ -18,7 +18,14 @@ import {
   StateEffect,
   StateField,
 } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  type KeyBinding,
+  keymap,
+  WidgetType,
+} from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { applyWordDiff } from "../review/diff-decoration.js";
@@ -66,6 +73,16 @@ function syntaxNodeNameFor(kind: FormatKind): string {
     default:
       return assertNever(kind);
   }
+}
+
+function formattingKeymapFor(apply: (command: FormatCommand) => void): readonly KeyBinding[] {
+  return FORMAT_REGISTRY.map((command) => ({
+    key: command.hotkey,
+    run: () => {
+      apply(command.id);
+      return true;
+    },
+  }));
 }
 
 /** A zero-content block of a fixed pixel height, inserted to match a taller rendered block. */
@@ -594,6 +611,7 @@ export class MarkdownEditor {
           // {@link activeFormats} (T-100, which reads THIS live tree via `syntaxTree()`) can recognize a
           // Strikethrough node at all.
           markdown({ base: markdownLanguage }),
+          keymap.of(formattingKeymapFor((command) => this.applyFormat(command))),
           editorTheme,
           syntaxHighlighting(editorHighlight),
           this.wrap.of(EditorView.lineWrapping),

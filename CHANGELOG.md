@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Formatting shortcuts now work in both Code and Formatted panes, with shortcut hints shown on toolbar buttons.
 - `scripts/update-contract-fixtures.cmd` regenerates all four contract fixture files
   (`webview/tests/contract/{wire-kinds,native-payloads,lifecycle-states,diff-kinds}.json`) in one
   whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract

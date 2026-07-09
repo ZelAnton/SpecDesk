@@ -45,11 +45,11 @@ export type FormatKind =
   | { readonly type: "fence" };
 
 /** One formatting command's declaration. `label` is the button's `title` + `aria-label` (the two are
- *  identical); `hotkey` is reserved for the keyboard-shortcut wiring (T-095) and unused for now. */
+ *  identical); `hotkey` is the CodeMirror/ProseMirror keymap spelling for the keyboard shortcut. */
 export interface FormatCommandDef {
   readonly id: string;
   readonly label: string;
-  readonly hotkey?: string;
+  readonly hotkey: string;
   readonly kind: FormatKind;
 }
 
@@ -62,25 +62,53 @@ export interface FormatCommandDef {
 export const FORMAT_REGISTRY = [
   {
     id: "bold",
-    label: "Bold",
+    label: "Bold (Ctrl+B)",
+    hotkey: "Mod-b",
     kind: { type: "inline", marker: "**", node: "StrongEmphasis", mark: "strong" },
   },
   {
     id: "italic",
-    label: "Italic",
+    label: "Italic (Ctrl+I)",
+    hotkey: "Mod-i",
     kind: { type: "inline", marker: "*", node: "Emphasis", mark: "em" },
   },
   {
     id: "strike",
-    label: "Strikethrough",
+    label: "Strikethrough (Ctrl+Shift+X)",
+    hotkey: "Mod-Shift-x",
     kind: { type: "inline", marker: "~~", node: "Strikethrough", mark: "strikethrough" },
   },
-  { id: "h1", label: "Heading 1", kind: { type: "heading", level: 1 } },
-  { id: "h2", label: "Heading 2", kind: { type: "heading", level: 2 } },
-  { id: "bullet", label: "Bullet list", kind: { type: "list", ordered: false } },
-  { id: "ordered", label: "Numbered list", kind: { type: "list", ordered: true } },
-  { id: "quote", label: "Quote", kind: { type: "quote" } },
-  { id: "code", label: "Code block", kind: { type: "fence" } },
+  {
+    id: "h1",
+    label: "Heading 1 (Ctrl+Alt+1)",
+    hotkey: "Mod-Alt-1",
+    kind: { type: "heading", level: 1 },
+  },
+  {
+    id: "h2",
+    label: "Heading 2 (Ctrl+Alt+2)",
+    hotkey: "Mod-Alt-2",
+    kind: { type: "heading", level: 2 },
+  },
+  {
+    id: "bullet",
+    label: "Bullet list (Ctrl+Shift+8)",
+    hotkey: "Mod-Shift-8",
+    kind: { type: "list", ordered: false },
+  },
+  {
+    id: "ordered",
+    label: "Numbered list (Ctrl+Shift+7)",
+    hotkey: "Mod-Shift-7",
+    kind: { type: "list", ordered: true },
+  },
+  { id: "quote", label: "Quote (Ctrl+Shift+>)", hotkey: "Mod-Shift-.", kind: { type: "quote" } },
+  {
+    id: "code",
+    label: "Code block (Ctrl+Shift+E)",
+    hotkey: "Mod-Shift-e",
+    kind: { type: "fence" },
+  },
 ] as const satisfies readonly FormatCommandDef[];
 
 /** The formatting commands the toolbar issues (shared by both editor surfaces), derived from the

@@ -103,17 +103,17 @@
     <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
          ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->
     <div id="format-bar" hidden>
-      <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold" aria-label="Bold">B</button>
-      <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic" aria-label="Italic">I</button>
-      <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough" aria-label="Strikethrough">S</button>
+      <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold (Ctrl+B)">B</button>
+      <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic (Ctrl+I)">I</button>
+      <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough (Ctrl+Shift+X)">S</button>
       <span class="fmt-sep" aria-hidden="true"></span>
-      <button id="fmt-h1" type="button" data-format="h1" aria-pressed="false" title="Heading 1" aria-label="Heading 1">H1</button>
-      <button id="fmt-h2" type="button" data-format="h2" aria-pressed="false" title="Heading 2" aria-label="Heading 2">H2</button>
+      <button id="fmt-h1" type="button" data-format="h1" aria-pressed="false" title="Heading 1 (Ctrl+Alt+1)" aria-label="Heading 1 (Ctrl+Alt+1)">H1</button>
+      <button id="fmt-h2" type="button" data-format="h2" aria-pressed="false" title="Heading 2 (Ctrl+Alt+2)" aria-label="Heading 2 (Ctrl+Alt+2)">H2</button>
       <span class="fmt-sep" aria-hidden="true"></span>
-      <button id="fmt-bullet" type="button" data-format="bullet" aria-pressed="false" title="Bullet list" aria-label="Bullet list">• List</button>
-      <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list" aria-label="Numbered list">1. List</button>
-      <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote" aria-label="Quote">«»</button>
-      <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block" aria-label="Code block">&lt;/&gt;</button>
+      <button id="fmt-bullet" type="button" data-format="bullet" aria-pressed="false" title="Bullet list (Ctrl+Shift+8)" aria-label="Bullet list (Ctrl+Shift+8)">• List</button>
+      <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list (Ctrl+Shift+7)" aria-label="Numbered list (Ctrl+Shift+7)">1. List</button>
+      <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote (Ctrl+Shift+&gt;)" aria-label="Quote (Ctrl+Shift+&gt;)">«»</button>
+      <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block (Ctrl+Shift+E)" aria-label="Code block (Ctrl+Shift+E)">&lt;/&gt;</button>
     </div>
     <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
          the author isn't left wondering why nothing is highlighted. -->
