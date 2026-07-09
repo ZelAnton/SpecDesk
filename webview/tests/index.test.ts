@@ -10,6 +10,7 @@ import type { Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FormattedEditor } from "../src/editors/formatted.js";
+import type { Pane } from "../src/sync/sync-coordinator.js";
 import type { IpcMessage } from "../src/wire/ipc.js";
 import { Kinds } from "../src/wire/protocol.js";
 
@@ -287,6 +288,280 @@ describe("index.ts: startup view mode has a single source of truth (jsdom)", () 
     expect(panesEl?.dataset.mode).toBe("split");
     expect(splitBtn?.getAttribute("aria-checked")).toBe("true");
     expect(codeBtn?.getAttribute("aria-checked")).toBe("false");
+  });
+});
+
+describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsdom)", () => {
+  type EditorCallbacks = {
+    onChange: (text: string) => void;
+    onScroll: () => void;
+    onScrollSettle: () => void;
+    onCursor: (line: number | null, navigated: boolean) => void;
+    onHover: (line: number | null) => void;
+    onGeometryChange: () => void;
+    onEditAttempt: () => void;
+    onFocus: () => void;
+    onOpenLink: (url: string) => void;
+  };
+
+  type FormattedCallbacks = {
+    onChange: (text: string) => void;
+    onEditAttempt: () => void;
+    onScroll: () => void;
+    onCursor: (line: number | null, navigated: boolean) => void;
+    onHover: (line: number | null) => void;
+    onContentResize: () => void;
+    onFocus: () => void;
+    onActiveChange: () => void;
+    onOpenLink: (url: string) => void;
+  };
+
+  class MockPane {
+    readonly contentDOM = document.createElement("div");
+    text = "";
+    scroll = 0;
+
+    getText(): string {
+      return this.text;
+    }
+
+    hasPendingChange(): boolean {
+      return false;
+    }
+
+    setText(text: string): void {
+      this.text = text;
+    }
+
+    mirror(text: string): void {
+      this.text = text;
+    }
+
+    setEditable(): void {
+      return;
+    }
+
+    setActiveLine(): void {
+      return;
+    }
+
+    setHoverLine(): void {
+      return;
+    }
+
+    setDiff(): void {
+      return;
+    }
+
+    clearDiff(): void {
+      return;
+    }
+
+    applyFormat(): void {
+      return;
+    }
+
+    format(): void {
+      return;
+    }
+
+    setLineWrapping(): void {
+      return;
+    }
+
+    setDocDir(): void {
+      return;
+    }
+
+    insertAtMarker(): void {
+      return;
+    }
+
+    discardMarker(): void {
+      return;
+    }
+
+    trackPosition(): number {
+      return 0;
+    }
+
+    selectionHead(): number {
+      return 0;
+    }
+
+    posAtCoords(): number | null {
+      return null;
+    }
+
+    refresh(): void {
+      return;
+    }
+
+    focus(): void {
+      return;
+    }
+
+    activeFormats(): Set<never> {
+      return new Set();
+    }
+
+    disabledFormats(): Set<never> {
+      return new Set();
+    }
+
+    blockGeometry(): [] {
+      return [];
+    }
+
+    contentWidth(): number {
+      return 0;
+    }
+
+    topLine(): number {
+      return 0;
+    }
+
+    topsForLines(lines: readonly number[]): number[] {
+      return lines.map(() => 0);
+    }
+
+    blockAnchors(): [] {
+      return [];
+    }
+
+    scrollTop(): number {
+      return this.scroll;
+    }
+
+    setScrollTop(px: number): void {
+      this.scroll = px;
+    }
+
+    reveal(): void {
+      return;
+    }
+
+    scrollToLine(): void {
+      return;
+    }
+  }
+
+  class MockSplitSync {
+    readonly syncFromCalls: Pane[] = [];
+    readonly scrollCalls: Pane[] = [];
+
+    constructor() {
+      splitSyncInstances.push(this);
+    }
+
+    invalidate(): void {
+      return;
+    }
+
+    absorb(): void {
+      return;
+    }
+
+    reset(): void {
+      return;
+    }
+
+    reveal(): void {
+      return;
+    }
+
+    restore(): void {
+      return;
+    }
+
+    syncFrom(pane: Pane): void {
+      this.syncFromCalls.push(pane);
+    }
+
+    onEditorScroll(): void {
+      this.scrollCalls.push("editor");
+    }
+
+    onFormattedScroll(): void {
+      this.scrollCalls.push("formatted");
+    }
+  }
+
+  let editorCallbacks: EditorCallbacks | undefined;
+  let formattedCallbacks: FormattedCallbacks | undefined;
+  let splitSyncInstances: MockSplitSync[];
+
+  async function flushFrame(): Promise<void> {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  beforeEach(() => {
+    splitSyncInstances = [];
+    editorCallbacks = undefined;
+    formattedCallbacks = undefined;
+
+    vi.doMock("../src/editors/editor.js", () => ({
+      MarkdownEditor: class extends MockPane {
+        constructor(_host: HTMLElement, callbacks: EditorCallbacks) {
+          super();
+          editorCallbacks = callbacks;
+        }
+      },
+    }));
+    vi.doMock("../src/editors/formatted.js", () => ({
+      FormattedEditor: class extends MockPane {
+        constructor(_host: HTMLElement, callbacks: FormattedCallbacks) {
+          super();
+          formattedCallbacks = callbacks;
+        }
+      },
+    }));
+    vi.doMock("../src/sync/height-sync.js", () => ({
+      HeightSync: class {
+        reconcile(): void {
+          return;
+        }
+      },
+    }));
+    vi.doMock("../src/sync/sync-coordinator.js", () => ({
+      SplitSync: MockSplitSync,
+    }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../src/editors/editor.js");
+    vi.doUnmock("../src/editors/formatted.js");
+    vi.doUnmock("../src/sync/height-sync.js");
+    vi.doUnmock("../src/sync/sync-coordinator.js");
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  it("uses the last manually scrolled pane as the resize re-align source", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    editorCallbacks?.onScroll();
+    window.dispatchEvent(new Event("resize"));
+    await flushFrame();
+
+    expect(splitSyncInstances[0]?.scrollCalls).toEqual(["editor"]);
+    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
+  });
+
+  it("lets focused pane override the last scrolled pane for resize re-align", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(formattedCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    editorCallbacks?.onScroll();
+    formattedCallbacks?.onFocus();
+    window.dispatchEvent(new Event("resize"));
+    await flushFrame();
+
+    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["formatted"]);
   });
 });
 

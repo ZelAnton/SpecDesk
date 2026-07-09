@@ -205,6 +205,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split panes now stay aligned after window resize, wrap changes, and formatted content resizes by re-aligning from the focused or last-scrolled pane.
 - The formatting toolbar's buttons now honestly reflect what a click will do in both panels. Previously:
   a command PM's schema can't apply in the current context (`setBlockType(heading/code_block)` inside a
   table cell, `wrapIn(blockquote)` there too — a table cell's content is inline-only, no block children)
