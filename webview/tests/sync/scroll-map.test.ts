@@ -113,6 +113,29 @@ describe("ScrollMap degenerate segments", () => {
   });
 });
 
+describe("ScrollMap interpolates smoothly through a tall editor spacer (T-065)", () => {
+  it("maps a smoothly rising line to a smoothly rising, jump-free pixel across the spacer gap", () => {
+    // Editor anchors: block 0 at line 0 → px 0, block 1 at line 3 → px 500 because a ~400px height-sync
+    // spacer pads the source between them (the render places block 1 far below the source's own 3-line
+    // height). Following the WYSIWYG pane, the source line climbs smoothly from 0 toward 3, so the editor
+    // scrollTop must climb with it: no plateau (a freeze) and no discontinuity (a jump) at the spacer.
+    const editorMap = new ScrollMap([
+      { line: 0, px: 0 },
+      { line: 3, px: 500 },
+      { line: 8, px: 640 },
+    ]);
+    let prevPx = Number.NEGATIVE_INFINITY;
+    for (let step = 0; step <= 12; step++) {
+      const px = editorMap.pxForLine(step * 0.25); // lines 0, 0.25, … 3.0
+      expect(px).toBeGreaterThan(prevPx); // strictly increasing → neither frozen nor stepped
+      prevPx = px;
+    }
+    // The gap is spanned linearly, so a fractional line halfway through block 0's span sits halfway into
+    // the padded pixel gap — interpolation "through" the tall spacer, not a snap to either end.
+    expect(editorMap.pxForLine(1.5)).toBe(250);
+  });
+});
+
 describe("ScrollMap expresses a negative gap without drift (T-073 criterion)", () => {
   it("maps a source-taller-than-render span monotonically, unlike an additive-spacer scheme", () => {
     // The editor (source) is INTRINSICALLY taller than the render across block 0: its own top for line 5

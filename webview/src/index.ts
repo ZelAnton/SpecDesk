@@ -758,7 +758,9 @@ function wire(): void {
           splitSync.invalidate();
           // Restore the reading position on each newly-visible pane through the coordinator (self-contained
           // per-pane scroll-to-line, so it works while the sibling is hidden; the write is recorded so it
-          // can't echo into a false sync).
+          // can't echo into a false sync). The line is kept FRACTIONAL (T-065): both panes' scroll-to-line
+          // interpolate the sub-line part across the block, so a mode switch lands the reading position
+          // exactly where it was instead of snapping to the nearest whole line.
           const restorePanes: Pane[] = [];
           if (nextVis.editor) {
             restorePanes.push("editor");
@@ -766,7 +768,7 @@ function wire(): void {
           if (nextVis.preview) {
             restorePanes.push("formatted");
           }
-          splitSync.restore(Math.floor(line), restorePanes);
+          splitSync.restore(line, restorePanes);
         });
       });
     }

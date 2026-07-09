@@ -6,7 +6,14 @@ import type { BlockBox } from "../../src/sync/scroll-geometry.js";
 // unit-tested here with hand-built boxes (no GUI). The FormattedEditor jsdom suite covers the wiring
 // (measure → cache → invalidate) against a real ProseMirror view.
 function box(lineStart: number, top: number, height: number): BlockBox {
-  return { lineStart, lineEnd: lineStart, contentLineEnd: lineStart + 1, top, height };
+  return {
+    lineStart,
+    contentLineStart: undefined,
+    lineEnd: lineStart,
+    contentLineEnd: lineStart + 1,
+    top,
+    height,
+  };
 }
 
 // Tops ascending 0, 100, 150, 350; line starts ascending 0, 2, 4, 8.

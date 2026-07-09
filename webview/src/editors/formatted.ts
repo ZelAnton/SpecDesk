@@ -928,14 +928,19 @@ export class FormattedEditor {
    * is called on a geometry change, not per scroll frame.
    */
   blockAnchors(): ScrollAnchor[] {
-    const geometry = this.blockGeometry();
-    const last = geometry[geometry.length - 1];
+    // Measure the boxes directly (not through blockGeometry, which drops contentLineStart): the first
+    // block's anchor LINE must be where its rendered content actually starts, so the map doesn't attribute
+    // the block's pixels to leading blank lines / ref-definitions that render nothing (T-065). Store the
+    // fresh boxes so the next scroll frame reads them cache-hit, exactly as blockGeometry does.
+    const boxes = this.measureBlocks();
+    this.geometryCache.set(boxes);
+    const last = boxes[boxes.length - 1];
     if (last === undefined) {
       return [];
     }
-    const anchors: ScrollAnchor[] = geometry.map((block) => ({
-      line: block.lineStart,
-      px: block.top,
+    const anchors: ScrollAnchor[] = boxes.map((box) => ({
+      line: box.contentLineStart ?? box.lineStart,
+      px: box.top,
     }));
     anchors.push({ line: last.lineEnd + 1, px: last.top + last.height });
     return anchors;
@@ -982,6 +987,11 @@ export class FormattedEditor {
         const rect = dom.getBoundingClientRect();
         boxes.push({
           lineStart: entry.block.lineStart,
+          // Only the first block ever carries this (its leading blank lines / ref-definitions); it makes
+          // the scroll interpolation span the block's RENDERED content (scroll-geometry.ts), not the
+          // earlier source line those leading lines sit on — so the block's pixels aren't attributed to
+          // lines that produce no render.
+          contentLineStart: entry.block.contentLineStart,
           lineEnd: entry.block.lineEnd,
           contentLineEnd: entry.block.contentLineEnd,
           // Content-relative (px from the content top), hence invariant to scrollTop — see

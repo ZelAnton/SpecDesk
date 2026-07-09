@@ -1178,13 +1178,15 @@ export class MarkdownEditor {
     });
   }
 
-  /** Clamp a 0-based line to the nearest valid 1-based CM line — appropriate for a user/programmatic
-   *  scroll TARGET (`scrollToLine`, `reveal`), where landing on the nearest line is the
-   *  right degraded behaviour for an out-of-range request. NOT used on the height-sync reconcile path
+  /** Clamp a (possibly FRACTIONAL) 0-based line to the nearest valid 1-based CM line — appropriate for a
+   *  user/programmatic scroll TARGET (`reveal`), where landing on the nearest line is the right degraded
+   *  behaviour for an out-of-range request. The input is floored first: the shared scroll-sync contract is
+   *  a fractional 0-based line (T-065), and `doc.line()` demands an integer, so a fractional line reveals
+   *  the block it falls in rather than throwing a RangeError. NOT used on the height-sync reconcile path
    *  (`naturalLineTops`, `setSpacers`, T-084): there, an out-of-range line means the anchor was minted
    *  against a since-diverged sibling document, and clamping would silently measure/pad the wrong line
    *  instead of refusing it — see {@link isValidLine}. */
   private clampLine(line: number): number {
-    return Math.min(Math.max(line + 1, 1), this.view.state.doc.lines);
+    return Math.min(Math.max(Math.floor(line) + 1, 1), this.view.state.doc.lines);
   }
 }

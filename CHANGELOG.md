@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   viewports track each other. The old `ScrollSync` is removed; the one timing fallback that remains is a
   short guard that stands a caret reveal down while a scroll just coupled the panes (anti-judder), and the
   mode-switch relayout wait is kept solely as an explicit fallback for CodeMirror's asynchronous re-measure.
+- Split scroll synchronization is now pixel-accurate and symmetric in both directions. Following the
+  formatted (WYSIWYG) pane's smooth scroll no longer moves the source editor in whole-line steps: the
+  formatted pane now reports a FRACTIONAL viewport-top line (`lineAtScrollTop` no longer floors), the same
+  sub-line precision the source pane already reported, so the coordinator's line↔px map couples the two
+  panes sub-line in either direction — including smoothly interpolating through a tall height-sync spacer,
+  with no freeze and no jump. A view-mode switch now keeps the exact fractional reading position instead of
+  snapping to the nearest whole line, and a first block carrying leading blank lines or link reference
+  definitions (which render no pixels) maps its rendered height from where its content actually begins, so
+  those non-rendered lines no longer skew the alignment. The two panes' scroll-to-line methods now share one
+  contract — a fractional 0-based source line — so a fractional line reveals the block it falls in rather
+  than being rejected.
 - The `diff.result` wire contract is now discriminated by `kind` instead of one flat record padded with
   sentinels (`anchorLine: -1`, `removedText: ""`, empty `children`, `""` bases for the cases that don't use
   them). Each kind carries only its own fields on the wire — a removed block/child has an anchor and text

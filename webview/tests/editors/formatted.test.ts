@@ -825,19 +825,22 @@ describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
   // content-relative tops are 0, 100, 200, 300.
   const FOUR = "a\n\nb\n\nc\n\nd\n";
 
-  it("topVisibleSourceLine binary-searches the cached geometry for the viewport-top line", () => {
+  it("binary-searches the cached geometry for the FRACTIONAL viewport-top line (T-065)", () => {
     const { ed, host } = mountWithHost();
     ed.setText(FOUR);
     stubGeometry(ed, host, [100, 100, 100, 100]);
 
+    // Each single-line block spans one source line over 100px, so a viewport parked at a block top
+    // reports the whole line and one parked halfway into it reports the half-line — no whole-line
+    // snapping (the residual stepping T-065 removes from the WYSIWYG→source direction).
     host.scrollTop = 0;
     expect(ed.topVisibleSourceLine()).toBe(0);
     host.scrollTop = 150;
-    expect(ed.topVisibleSourceLine()).toBe(2);
+    expect(ed.topVisibleSourceLine()).toBe(2.5);
     host.scrollTop = 250;
-    expect(ed.topVisibleSourceLine()).toBe(4);
+    expect(ed.topVisibleSourceLine()).toBe(4.5);
     host.scrollTop = 350;
-    expect(ed.topVisibleSourceLine()).toBe(6);
+    expect(ed.topVisibleSourceLine()).toBe(6.5);
   });
 
   it("reuses one measurement across scroll frames and re-measures only after an invalidation", () => {
@@ -846,13 +849,13 @@ describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
     const measured = stubGeometry(ed, host, [100, 100, 100, 100]);
 
     host.scrollTop = 250;
-    expect(ed.topVisibleSourceLine()).toBe(4);
+    expect(ed.topVisibleSourceLine()).toBe(4.5);
     expect(measured).toHaveBeenCalledTimes(1); // measured once, building the cache
 
     // A second scroll frame reuses the cached geometry — NO forced per-block layout measure (the T-072
     // hot-path guarantee). The cached tops are scroll-invariant, so they resolve the new scrollTop too.
     host.scrollTop = 50;
-    expect(ed.topVisibleSourceLine()).toBe(0);
+    expect(ed.topVisibleSourceLine()).toBe(0.5);
     expect(measured).toHaveBeenCalledTimes(1);
 
     // An edit relays the blocks out → the cache is invalidated → the next read re-measures.
@@ -876,7 +879,30 @@ describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
     expect(host.scrollTop).toBe(100);
     expect(measured).toHaveBeenCalledTimes(1);
 
+    // A fractional line interpolates across the block's height (T-065): line 4.5 sits halfway into the
+    // one-line block rendered at px 200 (100px tall) → 250, no snap back to the block top.
+    ed.scrollToSourceLine(4.5);
+    expect(host.scrollTop).toBe(250);
+
     ed.scrollToSourceLine(0);
+    expect(host.scrollTop).toBe(0);
+  });
+
+  it("attributes a first block's leading blanks/ref-defs to no render pixels (contentLineStart, T-065)", () => {
+    const { ed, host } = mountWithHost();
+    // Two leading blank lines ride with the first block (the heading at source line 2); they render
+    // nothing, so the block's pixels must not be attributed to lines 0/1.
+    ed.setText("\n\n# Heading\n\nbody\n");
+    stubGeometry(ed, host, [100, 100]);
+
+    // Parked at the heading block's top, the viewport reports line 2 (where the render begins), NOT line 0.
+    host.scrollTop = 0;
+    expect(ed.topVisibleSourceLine()).toBe(2);
+    // Halfway into the one-line heading block → 2.5 (fractional, no snap).
+    host.scrollTop = 50;
+    expect(ed.topVisibleSourceLine()).toBe(2.5);
+    // And scrolling to the content line lands at the block top (px 0), not a slice below it.
+    ed.scrollToSourceLine(2);
     expect(host.scrollTop).toBe(0);
   });
 
@@ -895,7 +921,7 @@ describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
 
     // …but it left the fresh boxes cached, so a following scroll frame is a cache hit (no re-measure).
     host.scrollTop = 150;
-    expect(ed.topVisibleSourceLine()).toBe(2);
+    expect(ed.topVisibleSourceLine()).toBe(2.5);
     expect(measured).toHaveBeenCalledTimes(2);
   });
 });
