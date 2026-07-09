@@ -206,6 +206,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split scroll synchronization timing is no longer disrupted by system clock adjustments.
 - Split panes now stay aligned after window resize, wrap changes, and formatted content resizes by re-aligning from the focused or last-scrolled pane.
 - Split reflow alignment no longer treats coordinator-written echo scrolls as the user's active pane.
 - The formatting toolbar's buttons now honestly reflect what a click will do in both panels. Previously:

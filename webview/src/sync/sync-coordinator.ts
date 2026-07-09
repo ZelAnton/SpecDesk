@@ -20,7 +20,8 @@
  * The one timing fallback that remains is the reveal-vs-couple guard: after a scroll has just coupled the
  * passive pane, a coincident caret reveal must stand down for a beat, or the two fight over the passive
  * scrollTop and it judders (holding an arrow key that also scrolls the active pane). This is the sole
- * explicit heuristic left, and it gates only the reveal — never the deterministic echo suppression.
+ * explicit heuristic left, and it gates only the reveal — never the deterministic echo suppression. Its
+ * default clock is `performance.now()`, which is monotonic and unaffected by system time adjustments.
  */
 
 import { type ScrollAnchor, ScrollMap } from "./scroll-map.js";
@@ -84,8 +85,8 @@ export class SplitSync {
   constructor(
     private readonly editor: EditorScrollTarget,
     private readonly formatted: FormattedScrollTarget,
-    // Injectable clock so the reveal guard is unit-testable with fake time.
-    private readonly now: () => number = () => Date.now(),
+    /** Monotonic clock using `performance.now()` by default; injectable for deterministic fake-time tests. */
+    private readonly now: () => number = () => performance.now(),
   ) {}
 
   /** Mark the maps stale (a geometry change: an edit, a resize, a height-sync spacer reconcile, a mode
