@@ -371,7 +371,13 @@ function wire(): void {
           splitSync.onEditorScroll();
         }
       },
-      onScrollSettle: () => {},
+      onScrollSettle: () => {
+        // The rAF-coupled frames can trail a momentum scroll's final position. Re-run the same exact
+        // coordinator path used by manual re-sync once the source pane stops moving.
+        if (isSplit(mode)) {
+          splitSync.syncFrom("editor");
+        }
+      },
       onCursor: (line, navigated) => {
         setActive(line, navigated ? "editor" : null);
         // The source pane's toolbar state depends on the caret's syntax-tree context (T-100) — refresh

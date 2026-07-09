@@ -612,6 +612,16 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
   });
 
+  it("re-snaps the formatted pane through the coordinator when editor scrolling settles", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    editorCallbacks?.onScrollSettle();
+
+    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
+  });
+
   it("keeps the same leading pane through repeated reflow echoes with no user scroll between them", async () => {
     await mountApp();
     expect(editorCallbacks).toBeDefined();
