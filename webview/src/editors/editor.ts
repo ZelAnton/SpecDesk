@@ -611,7 +611,7 @@ export class MarkdownEditor {
           // {@link activeFormats} (T-100, which reads THIS live tree via `syntaxTree()`) can recognize a
           // Strikethrough node at all.
           markdown({ base: markdownLanguage }),
-          keymap.of(formattingKeymapFor((command) => this.applyFormat(command))),
+          Prec.high(keymap.of(formattingKeymapFor((command) => this.applyFormat(command)))),
           editorTheme,
           syntaxHighlighting(editorHighlight),
           this.wrap.of(EditorView.lineWrapping),

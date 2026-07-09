@@ -44,6 +44,18 @@ function pressModB(view: EditorView): boolean {
   );
 }
 
+function pressModI(view: EditorView): boolean {
+  return view.contentDOM.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "i",
+      code: "KeyI",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 describe("MarkdownEditor diff overlay (jsdom)", () => {
   it("highlights changed source words inline in a changed paragraph, keeping the line wash", () => {
     const { ed, host } = mount();
@@ -643,22 +655,18 @@ describe("MarkdownEditor formatting keymap (jsdom, T-095)", () => {
   // must still win this one — pinning that ours isn't shadowed by basicSetup's default bindings.
   it("routes Ctrl+I through applyFormat, not basicSetup's default Mod-i binding", () => {
     const { ed } = mount();
-    ed.setText("hello\n");
     ed.setEditable(true);
     const view = viewOf(ed);
-    view.dispatch({ selection: { anchor: 0, head: 5 } });
 
-    view.contentDOM.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "i",
-        code: "KeyI",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+    ed.setText("hello world\n");
+    view.dispatch({ selection: { anchor: 6, head: 11 } });
+    pressModI(view);
+    expect(ed.getText()).toBe("hello *world*\n");
 
-    expect(ed.getText()).toBe("*hello*\n");
+    ed.setText("hello world\n");
+    view.dispatch({ selection: { anchor: 5, head: 5 } });
+    pressModI(view);
+    expect(ed.getText()).toBe("hello** world\n");
   });
 });
 
