@@ -26,19 +26,28 @@ import type { MdBlock } from "./md-blocks.js";
 /**
  * The index of the last element whose start line is at or before `line`, or `-1` when `line` is before
  * every element. The ONE block-by-line search: the top-level block for a source line, and — reused with a
- * container's child start lines — the table row / list item for a line. `lineStarts` is ascending (both
- * the block split and each container's child lines are emitted in document order), so a linear scan
- * keeping the last match is exact; callers apply their own edge policy (clamp, first-block default, or
- * clear) to the returned index.
+ * container's child start lines — the table row / list item for a line, and (over cached block tops, see
+ * block-geometry.ts) the block at a scroll offset. `lineStarts` is ascending (both the block split and
+ * each container's child lines are emitted in document order), so this is a BINARY search — the upper
+ * bound of `line` minus one — replacing the former O(n) linear scan on every caret/hover/scroll report
+ * (T-072). Duplicate values resolve to the LAST matching index (the linear scan's "keep the last match"
+ * semantics), and callers apply their own edge policy (clamp, first-block default, or clear) to the
+ * returned index.
  */
 export function lastIndexAtOrBefore(lineStarts: readonly number[], line: number): number {
-  let index = -1;
-  for (let i = 0; i < lineStarts.length; i++) {
-    if (line >= (lineStarts[i] ?? Number.POSITIVE_INFINITY)) {
-      index = i;
+  // Half-open search window [lo, hi); shrink to the first index whose value is > line — the element
+  // just before it is the last one at or before `line`.
+  let lo = 0;
+  let hi = lineStarts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((lineStarts[mid] ?? Number.POSITIVE_INFINITY) <= line) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
   }
-  return index;
+  return lo - 1;
 }
 
 /** Document position where the top-level child at `index` starts — the sum of every prior child's size.

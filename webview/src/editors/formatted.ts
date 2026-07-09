@@ -20,13 +20,14 @@ import { applyWordDiff, diffLabel } from "../review/diff-decoration.js";
 import type { DiffMark } from "../review/diff-marks.js";
 import { buildOverlayPlan, type RemovedAnchor } from "../review/overlay-plan.js";
 import type { BlockGeometry } from "../review/preview.js";
-import { lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
+import { type BlockBox, lineAtScrollTop, scrollTopForLine } from "../sync/scroll-geometry.js";
 import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
 import { log } from "../util/log.js";
 import { rafThrottle } from "../util/raf.js";
+import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
@@ -242,6 +243,14 @@ export class FormattedEditor {
   // falls back on) is logged once when it starts, not on every per-frame map build, and re-armed once
   // the split re-agrees. See {@link blockMap}.
   private divergenceLogged = false;
+  // Per-block rendered geometry (content-relative top + height), cached so the scroll hot path
+  // ({@link topVisibleSourceLine}/{@link scrollToSourceLine}) binary-searches it instead of measuring
+  // every block's DOM per frame. Scroll-invariant, so it survives across scroll frames; invalidated on
+  // every event that relays the blocks out — a document edit ({@link dispatchTransaction}), a whole-doc
+  // {@link setText}, a review-overlay marker ({@link pushDiff}), an image decode, or a {@link refresh}
+  // resize. {@link blockGeometry} (the reconcile path) always re-measures and refreshes it. See
+  // block-geometry.ts for why a content-relative top is scroll-invariant.
+  private readonly geometryCache = new BlockGeometryCache();
   // The last getText() result, keyed by the (original, doc) pair it was serialized from. The Split
   // cross-pane mirror (index.ts) calls getText() on every SOURCE-side debounce tick just to compare this
   // pane's text against the incoming edit — but this pane's document is untouched between those ticks, so
@@ -315,9 +324,16 @@ export class FormattedEditor {
           if (node.attrs.title) {
             dom.title = String(node.attrs.title);
           }
-          // An image grows from nothing to its decoded size, shifting the blocks below — re-run
-          // height-sync once it loads (same as the preview did).
-          dom.addEventListener("load", () => this.onContentResize(), { once: true });
+          // An image grows from nothing to its decoded size, shifting the blocks below — invalidate the
+          // cached geometry and re-run height-sync once it loads (same as the preview did).
+          dom.addEventListener(
+            "load",
+            () => {
+              this.geometryCache.invalidate();
+              this.onContentResize();
+            },
+            { once: true },
+          );
           return { dom };
         },
       },
@@ -327,6 +343,12 @@ export class FormattedEditor {
         const changed = !next.doc.eq(this.view.state.doc);
         const selectionMoved = tr.selectionSet || changed;
         this.view.updateState(next);
+        if (changed) {
+          // A document edit (in-pane typing, a format command, or a mirror splice) relaid the blocks
+          // out — drop the cached block geometry so the next scroll/reconcile re-measures. Before the
+          // mirroring early-return below so a cross-pane mirror dispatch invalidates too.
+          this.geometryCache.invalidate();
+        }
         // A cross-pane mirror is a programmatic sync of an edit made in the OTHER pane: apply it (the
         // history, caret and selection all mapped through the minimal change), but do not re-notify it
         // out as this pane's own edit or re-report its caret — mirror() drives the highlights itself.
@@ -437,6 +459,9 @@ export class FormattedEditor {
     const parsed = parser.parse(md);
     const doc = parsed ?? emptyDoc();
     this.view.updateState(this.freshState(doc));
+    // A whole-document replace goes through updateState (not dispatchTransaction), so invalidate the
+    // cached block geometry here explicitly — the new document's blocks are laid out afresh.
+    this.geometryCache.invalidate();
     // Prime the getText() cache for the common no-op round-trip: when the parse's top-level nodes line up
     // 1:1 with the source-block split, serializeWithSplice returns `md` verbatim (md-splice), so the Split
     // mirror's per-tick equality check hits this instead of re-serializing the just-set document — the
@@ -633,6 +658,11 @@ export class FormattedEditor {
    *  decorations. */
   private pushDiff(): void {
     const doc = this.view.state.doc;
+    // A removed-block marker is a block widget in the document flow (and inline removed-word widgets can
+    // rewrap a paragraph), so showing/clearing the review overlay shifts block tops — unlike the
+    // active/hover highlights, which only paint (background/box-shadow) and leave geometry untouched.
+    // Invalidate the cached geometry so the next scroll/reconcile re-measures the marker-shifted layout.
+    this.geometryCache.invalidate();
     if (this.diffMarks === null) {
       this.view.dispatch(this.view.state.tr.setMeta(diffKey, DecorationSet.empty));
       return;
@@ -850,6 +880,8 @@ export class FormattedEditor {
 
   /** Force a re-render after the pane returns from display:none to a new width. */
   refresh(): void {
+    // The new width reflows every block, so the cached geometry is stale — drop it before re-rendering.
+    this.geometryCache.invalidate();
     this.view.updateState(this.view.state);
   }
 
@@ -881,25 +913,58 @@ export class FormattedEditor {
    * one coordinate system, matching {@link Preview.blockGeometry}.
    */
   blockGeometry(): BlockGeometry[] {
+    // The reconcile path (height-sync.ts) runs right after the blocks relaid out and needs the freshest
+    // possible geometry, so it always RE-MEASURES rather than trusting the cache — and stores the fresh
+    // boxes so the next scroll frame reads them cache-hit. (Measuring here also keeps height-sync correct
+    // on a window resize, which relays the pane out but reaches this pane only through reconcile.)
+    const boxes = this.measureBlocks();
+    this.geometryCache.set(boxes);
+    return boxes.map((box) => ({
+      lineStart: box.lineStart,
+      lineEnd: box.lineEnd,
+      top: box.top,
+      height: box.height,
+    }));
+  }
+
+  /**
+   * Measure each top-level block's rendered geometry into a scroll-invariant {@link BlockBox} (its
+   * content-relative top + height), in document order. The single forced-layout pass the geometry cache
+   * amortizes: {@link blockGeometry} calls it every reconcile, {@link ensureGeometry} once per
+   * invalidation for the scroll path. One block↔node pairing for the whole scan (block-map.ts); a
+   * diverged split yields no entries, so height-sync/scroll see zero blocks (clearing spacers, falling
+   * back to the first line) rather than aligning against mispaired anchors.
+   */
+  private measureBlocks(): BlockBox[] {
     const map = this.blockMap();
     const containerTop = this.scrollEl.getBoundingClientRect().top;
     const scrollTop = this.scrollEl.scrollTop;
-    const result: BlockGeometry[] = [];
-    // One block↔node pairing for the whole scan (block-map.ts); a diverged split yields no entries, so
-    // height-sync sees zero blocks and clears its spacers rather than aligning against mispaired anchors.
+    const boxes: BlockBox[] = [];
     for (const entry of map.entries) {
       const dom = this.view.nodeDOM(entry.from);
       if (dom instanceof HTMLElement) {
         const rect = dom.getBoundingClientRect();
-        result.push({
+        boxes.push({
           lineStart: entry.block.lineStart,
           lineEnd: entry.block.lineEnd,
+          contentLineEnd: entry.block.contentLineEnd,
+          // Content-relative (px from the content top), hence invariant to scrollTop — see
+          // block-geometry.ts — so a box measured now stays valid across later scroll frames.
           top: rect.top - containerTop + scrollTop,
           height: rect.height,
         });
       }
     }
-    return result;
+    return boxes;
+  }
+
+  /** The geometry cache, re-measured (once) only when stale — the scroll hot path's cache-or-build gate,
+   *  so a run of scroll frames shares one measurement instead of forcing layout each frame. */
+  private ensureGeometry(): BlockGeometryCache {
+    if (this.geometryCache.isStale) {
+      this.geometryCache.set(this.measureBlocks());
+    }
+    return this.geometryCache;
   }
 
   /**
@@ -911,43 +976,20 @@ export class FormattedEditor {
    * outside the ProseMirror content and posAtCoords would return null.
    */
   topVisibleSourceLine(): number {
-    const containerTop = this.scrollEl.getBoundingClientRect().top;
     const scrollTop = this.scrollEl.scrollTop;
-    // One block↔node pairing for the scan (block-map.ts); a diverged split yields no entries, so this
-    // falls through to the first-line fallback below rather than pinning a mispaired block.
-    const map = this.blockMap();
-    let current: { top: number; height: number; block: MdBlock } | undefined;
-    for (const entry of map.entries) {
-      const dom = this.view.nodeDOM(entry.from);
-      if (dom instanceof HTMLElement) {
-        const rect = dom.getBoundingClientRect();
-        const top = rect.top - containerTop + scrollTop;
-        if (top > scrollTop) {
-          break; // first block below the viewport top — the previous one straddles it
-        }
-        current = { top, height: rect.height, block: entry.block };
-      }
-    }
-    if (current === undefined) {
+    // Binary-search the cached geometry for the block straddling the viewport top — no per-block layout
+    // measurement on the scroll frame (the cache is built once per invalidation, then reused). A
+    // diverged split / empty cache, or a viewport above every block, yields null → the first-line
+    // fallback below, exactly as the former linear scan's "no block straddles" branch did.
+    const box = this.ensureGeometry().blockAtScrollTop(scrollTop);
+    if (box === null) {
       return this.blocks[0]?.lineStart ?? 0;
     }
     // Span the CONTENT lines only (contentLineEnd = markdown-it's exclusive content end): the rendered
     // block's pixels cover its content, while the trailing blank lines ride with the block in the source
     // split but belong to the inter-block gap — mirrors preview.ts, which uses Markdig's blank-free
     // data-line-end. The lineEnd clamp still lets a viewport sitting in that gap report the blank line.
-    return Math.min(
-      lineAtScrollTop(
-        {
-          lineStart: current.block.lineStart,
-          lineEnd: current.block.lineEnd,
-          contentLineEnd: current.block.contentLineEnd,
-          top: current.top,
-          height: current.height,
-        },
-        scrollTop,
-      ),
-      current.block.lineEnd,
-    );
+    return Math.min(lineAtScrollTop(box, scrollTop), box.lineEnd);
   }
 
   /**
@@ -987,30 +1029,16 @@ export class FormattedEditor {
    * within a tall block instead of snapping to block tops.
    */
   scrollToSourceLine(line: number): void {
-    // The nearest block at or before the line (block-map.ts); null only when the map is empty or a
-    // diverged split left it unpaired, in which case there is no safe block to scroll to.
-    const entry = this.blockMap().entryForScroll(line);
-    if (entry === null) {
+    // The nearest block at or before the line, resolved by binary search over the CACHED geometry
+    // (block-geometry.ts, mirroring BlockMap.entryForScroll) instead of a block-map scan plus a fresh
+    // per-block DOM measure — so following the sibling pane's scroll forces no layout on the scroll
+    // frame. Null only when the cache is empty (an empty/diverged map): no safe block to scroll to.
+    const box = this.ensureGeometry().blockForLine(line);
+    if (box === null) {
       return;
     }
-    const block = entry.block;
-    const dom = this.view.nodeDOM(entry.from);
-    if (!(dom instanceof HTMLElement)) {
-      return;
-    }
-    const rect = dom.getBoundingClientRect();
-    const blockTop = rect.top - this.scrollEl.getBoundingClientRect().top + this.scrollEl.scrollTop;
     // Content-line span only (see topVisibleSourceLine): the rendered block's height covers its content
     // lines, not the trailing blank lines that ride with the block in the source split.
-    this.scrollEl.scrollTop = scrollTopForLine(
-      {
-        lineStart: block.lineStart,
-        lineEnd: block.lineEnd,
-        contentLineEnd: block.contentLineEnd,
-        top: blockTop,
-        height: rect.height,
-      },
-      line,
-    );
+    this.scrollEl.scrollTop = scrollTopForLine(box, line);
   }
 }

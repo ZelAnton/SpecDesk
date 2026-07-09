@@ -202,6 +202,36 @@ describe("MarkdownEditor.naturalLineTops lead-invariance (jsdom, T-061)", () => 
   });
 });
 
+describe("MarkdownEditor.naturalLineTops spacer prefix sums (jsdom, T-072)", () => {
+  // naturalLineTops subtracts the total spacer height above each anchor so the "natural" top is a fixed
+  // point — invariant to whatever spacers are applied (the T-061 property, now across the whole batch of
+  // block spacers). T-072 computes that subtraction with prefix sums in ONE pass instead of re-scanning
+  // the entire spacer set per anchor (the former O(anchors × spacers)). A prefix off by one — a wrong
+  // `from < pos` boundary, or mis-accumulated heights — would make the "after" tops drift from the
+  // "before" ones, so this equivalence pins the rewrite.
+  it("stays invariant to a lead plus several block spacers of differing heights", () => {
+    const { ed } = mount();
+    ed.setText("# H\n\npara one\n\n## Section\n\npara two\n\n### Sub\n\npara three\n");
+
+    const anchors = [0, 2, 4, 6, 8, 10];
+    const before = ed.naturalLineTops(anchors);
+
+    // A lead PLUS block spacers of different heights below several anchors — the multi-spacer prefix the
+    // per-anchor scan used to walk in full for every one of the six anchors.
+    ed.setSpacers(
+      [
+        { lineEnd: 0, height: 17 },
+        { lineEnd: 2, height: 31 },
+        { lineEnd: 6, height: 12 },
+      ],
+      23,
+    );
+    const after = ed.naturalLineTops(anchors);
+
+    expect(after).toEqual(before);
+  });
+});
+
 describe("MarkdownEditor stale-anchor refusal on the reconcile path (jsdom, T-084)", () => {
   // A line/lineEnd from the sibling (formatted) pane's blockGeometry() that no longer fits this
   // editor's document (mid-mirror, before the pane-consistency gate in HeightSync.reconcile catches

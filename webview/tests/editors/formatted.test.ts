@@ -781,6 +781,125 @@ describe("FormattedEditor block-map divergence fallback (jsdom, T-071)", () => {
   });
 });
 
+// T-072: the scroll hot path (topVisibleSourceLine / scrollToSourceLine) reads block geometry from a
+// scroll-invariant cache and binary-searches it, instead of measuring every block's DOM per frame. jsdom
+// has no layout, so each block's getBoundingClientRect is stubbed with a fixed absolute top that scrolls
+// with the pane — reproducing the content-relative-top invariance the cache relies on — and the pane's
+// own getBoundingClientRect is spied to count how many times the geometry was actually measured.
+describe("FormattedEditor block-geometry cache (jsdom, T-072)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function rect(top: number, height: number): DOMRect {
+    return {
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    } as DOMRect;
+  }
+
+  // Give each rendered block a fixed ABSOLUTE top (cumulative heights) that scrolls with the pane, so the
+  // editor's content-relative top (rect.top − containerTop + scrollTop) is scroll-INVARIANT — the property
+  // that lets a single measurement serve every scroll frame. Returns the pane's getBoundingClientRect spy,
+  // which is called exactly once per geometry measurement (measureBlocks reads containerTop from it).
+  function stubGeometry(ed: FormattedEditor, host: HTMLElement, heights: number[]) {
+    const measured = vi.spyOn(host, "getBoundingClientRect").mockReturnValue(rect(0, 0));
+    const blocks = [...viewOf(ed).dom.children] as HTMLElement[];
+    blocks.forEach((el, i) => {
+      const absTop = heights.slice(0, i).reduce((sum, h) => sum + h, 0);
+      vi.spyOn(el, "getBoundingClientRect").mockImplementation(() =>
+        rect(absTop - host.scrollTop, heights[i] ?? 0),
+      );
+    });
+    return measured;
+  }
+
+  // Four single-line paragraphs at source lines 0, 2, 4, 6; each rendered block 100px tall, so the
+  // content-relative tops are 0, 100, 200, 300.
+  const FOUR = "a\n\nb\n\nc\n\nd\n";
+
+  it("topVisibleSourceLine binary-searches the cached geometry for the viewport-top line", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText(FOUR);
+    stubGeometry(ed, host, [100, 100, 100, 100]);
+
+    host.scrollTop = 0;
+    expect(ed.topVisibleSourceLine()).toBe(0);
+    host.scrollTop = 150;
+    expect(ed.topVisibleSourceLine()).toBe(2);
+    host.scrollTop = 250;
+    expect(ed.topVisibleSourceLine()).toBe(4);
+    host.scrollTop = 350;
+    expect(ed.topVisibleSourceLine()).toBe(6);
+  });
+
+  it("reuses one measurement across scroll frames and re-measures only after an invalidation", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText(FOUR);
+    const measured = stubGeometry(ed, host, [100, 100, 100, 100]);
+
+    host.scrollTop = 250;
+    expect(ed.topVisibleSourceLine()).toBe(4);
+    expect(measured).toHaveBeenCalledTimes(1); // measured once, building the cache
+
+    // A second scroll frame reuses the cached geometry — NO forced per-block layout measure (the T-072
+    // hot-path guarantee). The cached tops are scroll-invariant, so they resolve the new scrollTop too.
+    host.scrollTop = 50;
+    expect(ed.topVisibleSourceLine()).toBe(0);
+    expect(measured).toHaveBeenCalledTimes(1);
+
+    // An edit relays the blocks out → the cache is invalidated → the next read re-measures.
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.insertText("X", 1));
+    ed.topVisibleSourceLine();
+    expect(measured).toHaveBeenCalledTimes(2);
+  });
+
+  it("scrollToSourceLine binary-searches the cached geometry and scrolls without forcing layout", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText(FOUR);
+    const measured = stubGeometry(ed, host, [100, 100, 100, 100]);
+
+    ed.scrollToSourceLine(4); // block at line 4, content-relative top 200
+    expect(host.scrollTop).toBe(200);
+    expect(measured).toHaveBeenCalledTimes(1);
+
+    ed.scrollToSourceLine(2); // cache hit — no re-measure
+    expect(host.scrollTop).toBe(100);
+    expect(measured).toHaveBeenCalledTimes(1);
+
+    ed.scrollToSourceLine(0);
+    expect(host.scrollTop).toBe(0);
+  });
+
+  it("blockGeometry always re-measures (the reconcile path) and refreshes the cache", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText(FOUR);
+    const measured = stubGeometry(ed, host, [100, 100, 100, 100]);
+
+    const geometry = ed.blockGeometry();
+    expect(geometry.map((block) => block.top)).toEqual([0, 100, 200, 300]);
+    expect(measured).toHaveBeenCalledTimes(1);
+
+    // A second reconcile re-measures unconditionally (it must read the freshest post-relayout geometry).
+    ed.blockGeometry();
+    expect(measured).toHaveBeenCalledTimes(2);
+
+    // …but it left the fresh boxes cached, so a following scroll frame is a cache hit (no re-measure).
+    host.scrollTop = 150;
+    expect(ed.topVisibleSourceLine()).toBe(2);
+    expect(measured).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("FormattedEditor.hasPendingChange (jsdom, T-042)", () => {
   beforeEach(() => {
     vi.useFakeTimers();

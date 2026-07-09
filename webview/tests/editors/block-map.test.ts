@@ -52,6 +52,23 @@ describe("lastIndexAtOrBefore", () => {
     expect(lastIndexAtOrBefore([3, 5], 0)).toBe(-1);
     expect(lastIndexAtOrBefore([], 4)).toBe(-1);
   });
+
+  // T-072: the search became binary (upper-bound − 1) over the ascending starts. These lock in the two
+  // behaviours a binary rewrite can silently get wrong — the LAST index among duplicates, and a longer
+  // run that a broken bisection would land off-by-one on.
+  it("resolves duplicate starts to the LAST matching index (keeps the linear scan's last-match rule)", () => {
+    expect(lastIndexAtOrBefore([0, 2, 2, 2, 6], 2)).toBe(3);
+    expect(lastIndexAtOrBefore([5, 5, 5], 5)).toBe(2);
+    expect(lastIndexAtOrBefore([5, 5, 5], 4)).toBe(-1);
+  });
+
+  it("bisects a longer ascending run to the exact block", () => {
+    const starts = [0, 3, 6, 9, 12, 15, 18, 21, 24, 27]; // 10 blocks
+    expect(lastIndexAtOrBefore(starts, 10)).toBe(3); // 9 <= 10 < 12
+    expect(lastIndexAtOrBefore(starts, 26)).toBe(8); // 24 <= 26 < 27
+    expect(lastIndexAtOrBefore(starts, 27)).toBe(9); // exact last start
+    expect(lastIndexAtOrBefore(starts, -1)).toBe(-1);
+  });
 });
 
 describe("startOfChild", () => {

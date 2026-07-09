@@ -110,6 +110,23 @@ const spacerField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/** The count of ascending `values` strictly less than `target` — a binary lower bound (the first index
+ *  whose value is >= target). Indexes a spacer prefix-sum by a document position, so the total height of
+ *  spacers strictly above it is one array read (see {@link MarkdownEditor.naturalLineTops}). */
+function countLessThan(values: readonly number[], target: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if ((values[mid] ?? Number.POSITIVE_INFINITY) < target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 // The faint highlight on the source line under the mouse pointer (auxiliary; see index.ts).
 const setHoverLineEffect = StateEffect.define<number | null>();
 
@@ -942,7 +959,7 @@ export class MarkdownEditor {
    * block widgets, creating a measure→apply→measure feedback loop.)
    *
    * This fixed-point property holds for the FIRST anchor too, which is what keeps the height-sync
-   * lead stable (T-061): see {@link spacerHeightAbove} for why the leading spacer is (correctly) not
+   * lead stable (T-061): see {@link spacerHeightsAbove} for why the leading spacer is (correctly) not
    * subtracted at pos 0.
    *
    * A `line` outside the CURRENT document (T-084) yields `null` at that index rather than being
@@ -954,6 +971,10 @@ export class MarkdownEditor {
    * off a partially-stale set.
    */
   naturalLineTops(lines: number[]): (number | null)[] {
+    // Build the spacer prefix sums ONCE for the whole batch, then query per anchor — O(spacers) to build
+    // + O(anchors · log spacers) to query, replacing the former per-anchor scan of the entire spacer set
+    // (O(anchors × spacers), which made a long-document reconcile quadratic on the hot path — T-072).
+    const spacerAbove = this.spacerHeightsAbove();
     return lines.map((line) => {
       if (!this.isValidLine(line)) {
         this.onDebug?.(
@@ -962,7 +983,7 @@ export class MarkdownEditor {
         return null;
       }
       const pos = this.view.state.doc.line(line + 1).from;
-      return this.view.lineBlockAt(pos).top - this.spacerHeightAbove(pos);
+      return this.view.lineBlockAt(pos).top - spacerAbove(pos);
     });
   }
 
@@ -975,32 +996,42 @@ export class MarkdownEditor {
   }
 
   /**
-   * Total height of spacer widgets above a document position. A spacer at <c>from</c> counts when
-   * <c>from &lt; pos</c>. Crucially the leading spacer (a block widget at position 0, side −1) is
-   * therefore NOT counted for the first anchor (pos 0), and that is correct: CodeMirror folds a
-   * leading block widget into the first line's own block as its `spaceAbove`, and `lineBlockAt(0).top`
-   * reports the TOP of that combined region (the widget's top, i.e. the document origin) — NOT the
-   * text top below the widget. So `lineBlockAt(0).top` is invariant to the lead height (confirmed by
-   * instrumenting `@codemirror/view`: `HeightMapText.spaceAbove` + `BlockInfo.join`, which keeps the
-   * joined block's `top` at the space block's top). Counting the lead here would subtract a height the
-   * measurement never included, driving `naturalLineTops[0]` negative and the computed lead to grow
-   * without bound between reconciles. Every OTHER anchor sits strictly below the lead, so `from < pos`
-   * correctly subtracts it for them.
+   * A prefix-sum view of the current spacer widgets, built in ONE pass over the spacer decoration set,
+   * returning a query for the total spacer height STRICTLY above a document position (a spacer at `from`
+   * counts when `from < pos`). {@link naturalLineTops} builds it once per batch and queries it per anchor
+   * — the replacement for the former per-anchor full-set scan (O(anchors × spacers) → O(spacers) build +
+   * O(log spacers) per query).
+   *
+   * The `from < pos` boundary is load-bearing and preserved exactly from the old scan: the leading spacer
+   * (a block widget at position 0, side −1) is therefore NOT counted for the first anchor (pos 0), and
+   * that is correct: CodeMirror folds a leading block widget into the first line's own block as its
+   * `spaceAbove`, and `lineBlockAt(0).top` reports the TOP of that combined region (the widget's top, i.e.
+   * the document origin) — NOT the text top below the widget. So `lineBlockAt(0).top` is invariant to the
+   * lead height (confirmed by instrumenting `@codemirror/view`: `HeightMapText.spaceAbove` +
+   * `BlockInfo.join`, which keeps the joined block's `top` at the space block's top). Counting the lead
+   * here would subtract a height the measurement never included, driving `naturalLineTops[0]` negative and
+   * the computed lead to grow without bound between reconciles. Every OTHER anchor sits strictly below the
+   * lead, so `from < pos` correctly subtracts it for them.
    */
-  private spacerHeightAbove(pos: number): number {
-    let total = 0;
+  private spacerHeightsAbove(): (pos: number) => number {
+    // Spacer froms ascending (RangeSet.iter yields in position order), with a running height sum:
+    // cumulative[i] is the total height of the first i spacers (froms[0..i−1]).
+    const froms: number[] = [];
+    const cumulative: number[] = [0];
     const cursor = this.view.state.field(spacerField).iter();
     while (cursor.value !== null) {
       // CodeMirror types Decoration.spec as `any`; read its widget through `unknown` (no cast) and let
       // the `instanceof` below validate it.
       const spec: unknown = cursor.value.spec;
       const widget = isRecord(spec) ? spec.widget : undefined;
-      if (widget instanceof SpacerWidget && cursor.from < pos) {
-        total += widget.height;
+      if (widget instanceof SpacerWidget) {
+        froms.push(cursor.from);
+        cumulative.push((cumulative[cumulative.length - 1] ?? 0) + widget.height);
       }
       cursor.next();
     }
-    return total;
+    // The number of spacers with `from < pos` indexes straight into the cumulative sum.
+    return (pos: number): number => cumulative[countLessThan(froms, pos)] ?? 0;
   }
 
   /**

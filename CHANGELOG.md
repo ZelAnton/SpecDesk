@@ -72,6 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokenizer config) behavior is unchanged; the divergence path is now a detected fallback instead of
   quiet corruption. This is also the shared foundation for the upcoming geometry cache and sync
   coordinator.
+- The Split scroll/reconcile hot path no longer does O(n) work with forced layout on every frame. The
+  formatted pane's per-block rendered geometry now lives in a scroll-invariant cache
+  (`webview/src/editors/block-geometry.ts`): `topVisibleSourceLine` and `scrollToSourceLine`
+  binary-search it for the viewport-top / target block instead of measuring every block's
+  `nodeDOM`+`getBoundingClientRect` up to the viewport each scroll frame, and the cache is measured once
+  per relayout (invalidated on an edit, a whole-document set, a review-overlay marker, an image decode,
+  and a width refresh; the reconcile path re-measures and refreshes it). The shared block-by-line search
+  (`lastIndexAtOrBefore` in `block-map.ts`) became a binary search, so the caret/hover/overlay/scroll
+  block lookups are no longer linear scans. On the source-editor side, `naturalLineTops` now subtracts
+  the spacer height above each anchor via prefix sums built in one pass over the spacer set, replacing
+  the former per-anchor rescan of the whole decoration set (O(anchors × spacers) per reconcile). No
+  observable editor behavior changes — the same lines/blocks are reported, just without the per-frame
+  layout thrashing on long documents.
 - The product's name and version, and the `%LOCALAPPDATA%\SpecDesk` data root, are now defined once in a
   new `SpecDesk.AppInfo` project (`ProductInfo`, `AppPaths`) instead of being hand-duplicated across the
   tree: the AppData root (previously assembled independently for the sample repo, the GitHub auth/token
