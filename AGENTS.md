@@ -72,6 +72,41 @@ npm run bundle                      # esbuild → ../src/SpecDesk.Host/wwwroot/w
 
 - A successful test run must execute the discovered tests, not only complete MSBuild targets.
 
+## Working copy currency (mandatory gate)
+
+The orchestrator keeps its mutable state under `.work/`, which is **untracked** so the repository main
+working copy can be fast-forwarded to the published `main` without a merge conflict. Every published
+task advances the local `main` bookmark, so the main working copy drifts behind it until it is
+re-synced. Planning, building, or running from a lagging main working copy silently uses the old,
+pre-merge implementation. `scripts/assert-main-current.ps1` turns "please re-sync" into an executable,
+**fail-closed** gate; it is not an optional manual step.
+
+- **The check** — `scripts/assert-main-current.ps1` is read-only (it never writes a file) and prints a
+  machine-readable result with `-Json`. It decides the **role** from explicit VCS structure, never from
+  file content: a git linked worktree, or a jj workspace nested under the shared repo (a `.jj/` at the
+  checkout root that is not git's top-level), is an **isolated task worktree**; anything else is the
+  **main working copy**. For the main working copy it compares HEAD with `main` and exits `0` = ok
+  (`current`/`ahead`/`diverged`/`no-target`), `1` = **stale** (`behind` — HEAD is a strict ancestor of
+  `main`), `2` = tooling error. An isolated task worktree is always ok: a parallel publication advancing
+  `main` must never make a valid in-progress task tree look broken.
+- **planner** runs the check (or forces `-Role main-worktree`) **before reading the working tree as the
+  current implementation.** A `stale` result means the tree is out of date — re-sync first, do not
+  analyse the old sources.
+- **processor** runs the check **after publishing/merging a batch.** Delivery is **not** complete until
+  the main working copy has been fast-forwarded with `scripts/restore-main-worktree.ps1` (the T-105
+  procedure) **and** re-verified `ok`; only then is the task archived as delivered. Record in the
+  delivery journal: the published `main` revision, the main-copy revision **before** and **after** the
+  update, and the check verdict — so a repeat incident is diagnosable without spelunking history. If the
+  safe update cannot complete, the task must not be marked fully delivered.
+- **build** — `SpecDesk.Host.csproj` runs the check (`AssertMainWorktreeCurrent` target) before
+  compiling: a stale main working copy fails the build with the recovery command, so a stale tree is
+  never compiled into a Host. Isolated task worktrees and fresh CI checkouts pass. Opt out for a
+  deliberate stale build with `-p:SkipMainCurrentGuard=true`.
+- **run** — `MainWorktreeGuard` (`src/SpecDesk.Host/Startup/`) re-checks at startup, before any WebView
+  is created, and refuses to launch a stale main working copy rather than silently serving an old UI (a
+  published app and every task worktree are exempt). Override with `SPECDESK_ALLOW_STALE_WORKTREE` to
+  run the old build deliberately. It never masks the drift by auto-rebuilding old sources.
+
 ## Cross-language contract fixtures
 
 The native↔webview wire contract is hand-mirrored in C#/F# (`SpecDesk.Contracts`, `Lifecycle`, `DiffWire`)

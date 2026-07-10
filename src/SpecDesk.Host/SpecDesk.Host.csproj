@@ -117,4 +117,35 @@
 		<Error Text="SkipWebview cannot be used on a publish build: the shipped app must include a freshly built, content-verified webview bundle. Publish without -p:SkipWebview=true." />
 	</Target>
 
+	<!--
+		Fail-closed build gate (T-106): refuse to compile SpecDesk.Host from a repository MAIN working
+		copy that has drifted behind the local published main — its sources are the old, pre-merge tree,
+		so the built app would run an old UI. scripts/assert-main-current.ps1 is read-only and detects
+		the role from VCS structure: an isolated task worktree (a coder's jj workspace) is exempt and
+		exits 0, so this never blocks legitimate in-progress work, and a fresh CI checkout with no local
+		main resolves to "no-target" and also exits 0. Exit 1 — and only 1 — is a genuine drift and fails
+		the build with the recovery command; any other non-zero (e.g. PowerShell unavailable) degrades to
+		a warning rather than false-blocking. Excluded from design-time (IDE) builds; pass
+		-p:SkipMainCurrentGuard=true to build the stale tree deliberately. This is the build-time
+		counterpart of the runtime MainWorktreeGuard, which stops an already-built stale app at startup.
+		Windows-only: the drift is a local Windows-orchestrator concern, and this avoids invoking the
+		Windows PowerShell host on the Linux/macOS CI legs (which build the solution too); the runtime
+		MainWorktreeGuard stays cross-platform. -->
+	<Target Name="AssertMainWorktreeCurrent" BeforeTargets="BeforeBuild"
+	        Condition="'$(SkipMainCurrentGuard)' != 'true' And '$(DesignTimeBuild)' != 'true' And '$(OS)' == 'Windows_NT' And Exists('$(RepoRoot)scripts\assert-main-current.ps1')">
+		<PropertyGroup>
+			<MainCurrentGuardRoot>$(RepoRoot.TrimEnd('\'))</MainCurrentGuardRoot>
+		</PropertyGroup>
+		<!-- ContinueOnError so the script's exit code is captured (a genuine stale exit is 1, a tooling
+		     failure is 2/other) instead of aborting the build with a raw MSB3073 before we can explain. -->
+		<Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(RepoRoot)scripts\assert-main-current.ps1&quot; -RepoRoot &quot;$(MainCurrentGuardRoot)&quot;"
+		      ContinueOnError="true">
+			<Output TaskParameter="ExitCode" PropertyName="MainCurrentExit" />
+		</Exec>
+		<Error Condition="'$(MainCurrentExit)' == '1'"
+		       Text="This repository main working copy is behind the local 'main': building SpecDesk.Host here would compile stale, pre-merge sources (the app would run an old UI). Re-sync it with scripts/restore-main-worktree.ps1, or pass -p:SkipMainCurrentGuard=true to build the old tree deliberately." />
+		<Warning Condition="'$(MainCurrentExit)' != '0' And '$(MainCurrentExit)' != '1'"
+		         Text="Working-copy currency check could not run (exit $(MainCurrentExit)); the stale-tree guard was skipped for this build. Ensure PowerShell is available so it can be enforced." />
+	</Target>
+
 </Project>
