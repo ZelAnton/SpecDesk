@@ -648,3 +648,102 @@ describe("HeightSync.reconcile pane-consistency gate (T-084)", () => {
     expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
   });
 });
+
+// T-104: reconcile() is the one read phase of a Split generation — it returns the immutable geometry
+// snapshot the coordinator rebuilds BOTH scroll maps from, so no second measure runs after the spacer
+// write. These pin the snapshot's shape (formatted natural tops + editor PADDED tops, both sharing one
+// line axis with a trailing anchor), the `changed` report, and the gated `null`.
+describe("HeightSync.reconcile snapshot return (T-104)", () => {
+  const geometry: BlockGeometry[] = [
+    { lineStart: 0, lineEnd: 5, top: 0, height: 200 },
+    { lineStart: 7, lineEnd: 7, top: 200, height: 40 },
+  ];
+
+  function make(overrides?: { pendingChange?: boolean; text?: string }): {
+    editor: FakeEditor;
+    sync: HeightSync;
+  } {
+    const editor = new FakeEditor();
+    const sync = new HeightSync(
+      editor as unknown as MarkdownEditor,
+      fakeSource(geometry, overrides),
+    );
+    return { editor, sync };
+  }
+
+  it("returns the formatted natural tops and the editor PADDED tops on one shared line axis", () => {
+    const { editor, sync } = make();
+    // The editor's spacer-free tops underestimate the second block (40 vs the preview's 200), so a 160px
+    // spacer is planted below line 5. The editor anchor for line 7 must therefore be its natural 40 PLUS
+    // that 160 = 200 (the padded top a re-read would report), not the bare 40.
+    editor.setTops([
+      [0, 0],
+      [7, 40],
+    ]);
+    const snapshot = sync.reconcile();
+    expect(snapshot).not.toBeNull();
+    // Formatted: each block's natural top plus a trailing anchor at the last block's bottom (200 + 40).
+    expect(snapshot?.formatted).toEqual([
+      { line: 0, px: 0 },
+      { line: 7, px: 200 },
+      { line: 8, px: 240 },
+    ]);
+    // Editor: block 0 at its natural 0, block 7 padded to 200 (40 + the 160 spacer above it), trailing
+    // extended by the last block's rendered height (200 + 40) — both maps' final segment stays monotonic.
+    expect(snapshot?.editor).toEqual([
+      { line: 0, px: 0 },
+      { line: 7, px: 200 },
+      { line: 8, px: 240 },
+    ]);
+    expect(snapshot?.changed).toBe(true);
+  });
+
+  it("carries the editor's remaining (unreachable) shortfall so its map differs from the formatted map", () => {
+    const { editor, sync } = make();
+    // The editor's second block sits at 260 — BELOW its preview target of 200. Height can't be removed, so
+    // no spacer is added and the editor top stays 260. The snapshot must report that real (padded) 260, not
+    // snap it to the formatted 200: the two maps genuinely differ where alignment is unreachable (T-073).
+    editor.setTops([
+      [0, 0],
+      [7, 260],
+    ]);
+    const snapshot = sync.reconcile();
+    expect(snapshot?.editor).toEqual([
+      { line: 0, px: 0 },
+      { line: 7, px: 260 },
+      { line: 8, px: 300 },
+    ]);
+    expect(snapshot?.formatted[1]).toEqual({ line: 7, px: 200 });
+  });
+
+  it("reports changed:false on a settled repeat (a stable reconcile makes no writes)", () => {
+    const { editor, sync } = make();
+    editor.setTops([
+      [0, 0],
+      [7, 40],
+    ]);
+    expect(sync.reconcile()?.changed).toBe(true); // first pass dispatches the 160px spacer
+    expect(sync.reconcile()?.changed).toBe(false); // settled — identical set, no dispatch
+    expect(editor.calls).toHaveLength(1);
+  });
+
+  it("returns null when the pass is gated by a pending edit (no snapshot formed)", () => {
+    const { editor, sync } = make({ pendingChange: true });
+    editor.setTops([
+      [0, 0],
+      [7, 40],
+    ]);
+    expect(sync.reconcile()).toBeNull();
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("returns an empty-anchor snapshot for a diverged split (zero blocks)", () => {
+    const editor = new FakeEditor();
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, fakeSource([]));
+    const snapshot = sync.reconcile();
+    expect(snapshot?.formatted).toEqual([]);
+    expect(snapshot?.editor).toEqual([]);
+    // A second pass on the still-empty geometry is settled — the empty spacer set was already applied.
+    expect(sync.reconcile()?.changed).toBe(false);
+  });
+});

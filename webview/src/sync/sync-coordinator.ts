@@ -44,7 +44,7 @@
  * default clock is `performance.now()`, which is monotonic and unaffected by system time adjustments.
  */
 
-import { type ScrollAnchor, ScrollMap } from "./scroll-map.js";
+import { type GeometrySnapshot, type ScrollAnchor, ScrollMap } from "./scroll-map.js";
 
 /** Which Split pane. `editor` is the CodeMirror source; `formatted` is the WYSIWYG reference. */
 export type Pane = "editor" | "formatted";
@@ -52,6 +52,13 @@ export type Pane = "editor" | "formatted";
 /** A scroll event is treated as this pane's own echo when its scrollTop is within this many pixels of the
  *  value the coordinator last wrote — enough slack for the browser rounding scrollTop to a device pixel. */
 export const ECHO_EPSILON = 0.5;
+
+/** A couple leaves the passive pane alone when its target lands within this many pixels of where it already
+ *  sits — so a settled reconcile (the geometry recomputed the same maps and the passive is already tracking)
+ *  makes ZERO scrollTop writes instead of re-writing the same value, and a target clamped at a document
+ *  boundary is not re-written every frame. Matches {@link ECHO_EPSILON}: a sub-pixel gap is below what the
+ *  browser can even represent, so writing it would only risk a spurious echo, never move anything visible. */
+export const WRITE_EPSILON = 0.5;
 
 /** After a scroll couples the passive pane, a caret reveal into it stands down for this long — the one
  *  explicit fallback that keeps a reveal from fighting an active-scroll couple over the passive scrollTop
@@ -174,15 +181,30 @@ export class SplitSync {
   }
 
   /**
-   * Re-couple after a height-sync reconcile: the spacer set changed the editor's line tops (so the maps
-   * are stale) and may have nudged its scrollTop as viewport-preserving compensation (so that programmatic
-   * move must be claimed as our write, not read as a user scroll). Then re-align the passive pane from the
-   * ACTIVE one — whichever pane the author last led with — writing only the passive.
+   * Adopt a height-sync reconcile's {@link GeometrySnapshot} and re-align the passive pane — the frame-atomic
+   * end of one reconcile generation. The snapshot IS the read phase's result: both maps are rebuilt from it
+   * directly, so no second Formatted DOM measure or CodeMirror tops read runs after the spacer write that
+   * produced it (the forced-layout read→write→read this fixes — T-104). The spacer pass may have nudged the
+   * editor's scrollTop as viewport-preserving compensation, so that programmatic move is claimed as our write
+   * ({@link absorb}) before coupling. The passive pane is then re-aligned from whichever pane the author last
+   * led with, writing ONLY the passive and ONLY when it is more than {@link WRITE_EPSILON} off target — so a
+   * settled reconcile makes zero writes and the active pane the author is reading never moves.
+   *
+   * A `null` snapshot means height-sync gated this pass (a pending / mismatched / stale-anchor pane): nothing
+   * measured, so the coordinator keeps its current maps and both panes' scroll exactly as they are until an
+   * explicit {@link invalidate}, rather than couple against geometry that never formed.
    */
-  reconciled(): void {
-    this.invalidate();
+  reconciled(snapshot: GeometrySnapshot | null): void {
+    if (snapshot === null) {
+      return;
+    }
+    // Adopt the one snapshot as both maps — pure, no re-measure — and mark them current so the next scroll
+    // frame reuses them without rebuilding (see ensureMaps).
+    this.formattedMap = new ScrollMap(snapshot.formatted);
+    this.editorMap = new ScrollMap(snapshot.editor);
+    this.dirty = false;
     this.absorb("editor");
-    this.couple(this.active);
+    this.coupleThrough(this.active);
   }
 
   /**
@@ -277,11 +299,20 @@ export class SplitSync {
     this.couple(pane);
   }
 
-  /** Couple the PASSIVE pane to `source`'s viewport-top line, reading and writing through the two panes'
-   *  maps so the round-trip of one geometry is the identity (see the class comment). Bows out when either
-   *  map is empty (a diverged/empty split), leaving both panes where they are. */
+  /** Couple the PASSIVE pane to `source`'s viewport-top line, (re)building the maps first if a geometry
+   *  change marked them stale — the scroll / focus / mirror path. The reconcile path uses
+   *  {@link coupleThrough} instead, whose maps were already adopted from the reconcile snapshot. */
   private couple(source: Pane): void {
     this.ensureMaps();
+    this.coupleThrough(source);
+  }
+
+  /** Couple the PASSIVE pane to `source`'s viewport-top line, reading and writing through the two panes'
+   *  CURRENT maps so the round-trip of one geometry is the identity (see the class comment) — no rebuild.
+   *  Bows out when either map is empty (a diverged/empty split), leaving both panes where they are, and
+   *  leaves the passive alone when it is already within {@link WRITE_EPSILON} of its target so a settled
+   *  couple makes no redundant write (and a boundary-clamped target does not re-write every frame). */
+  private coupleThrough(source: Pane): void {
     const target = this.other(source);
     const sourceMap = this.mapOf(source);
     const targetMap = this.mapOf(target);
@@ -291,7 +322,11 @@ export class SplitSync {
       return;
     }
     const line = sourceMap.lineForPx(this.scrollTopOf(source));
-    this.write(target, targetMap.pxForLine(line));
+    const targetPx = targetMap.pxForLine(line);
+    if (Math.abs(targetPx - this.scrollTopOf(target)) <= WRITE_EPSILON) {
+      return;
+    }
+    this.write(target, targetPx);
     this.lastCoupledAt = this.now();
   }
 

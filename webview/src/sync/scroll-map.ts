@@ -30,6 +30,23 @@ export interface ScrollAnchor {
 }
 
 /**
+ * The immutable geometry snapshot one Split reconcile generation produces in a single read phase and both
+ * the spacer plan and both scroll maps are derived from — height-sync measures each pane's anchors once
+ * (height-sync.ts), then the coordinator adopts these to rebuild its two maps WITHOUT a second DOM /
+ * CodeMirror measure after the spacer write. `formatted` is the reference pane's natural per-anchor tops;
+ * `editor` is the source pane's PADDED per-anchor tops (its spacer-free natural tops plus the weight of the
+ * spacer set this pass applies), so it reflects the post-write layout arithmetically rather than by
+ * re-reading it. `changed` reports whether the pass actually altered the editor's decorations / scroll
+ * geometry (a spacer dispatch happened) — a settled pass reports `false`, so a stable repeat reconcile makes
+ * no writes. Both anchor lists share one line axis (the same anchor lines) so the two maps are exact inverses.
+ */
+export interface GeometrySnapshot {
+  readonly formatted: readonly ScrollAnchor[];
+  readonly editor: readonly ScrollAnchor[];
+  readonly changed: boolean;
+}
+
+/**
  * Piecewise-linear interpolation of `ys` as a function of `xs` at `x`, clamped to the endpoints. `xs`
  * must be ascending (the axis we search); a zero-or-negative-width segment (a duplicate or out-of-order
  * key — a zero-height block, say) degrades to the segment's far endpoint rather than dividing by zero.

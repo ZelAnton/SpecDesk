@@ -16,10 +16,10 @@ import { Preview } from "./review/preview.js";
 import { ReviewController } from "./review/review.js";
 import { ReviewsPanel } from "./review/reviews-panel.js";
 import { HeightSync } from "./sync/height-sync.js";
+import { ReconcileScheduler } from "./sync/reconcile-scheduler.js";
 import { type Pane, SplitSync } from "./sync/sync-coordinator.js";
 import { attachImageCapture } from "./util/image-capture.js";
 import { log } from "./util/log.js";
-import { rafThrottle } from "./util/raf.js";
 import {
   parseBranchNameSuggested,
   parseDiffResult,
@@ -302,18 +302,21 @@ function wire(): void {
 
     // Height-sync: pad the source editor with spacers so each source block's top lines up with its
     // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
-    // Only meaningful in Split; rAF-throttled so a burst of edits/resizes reconciles once per frame.
-    // Reconciling shifts the editor's line tops (new spacers) and can nudge its scrollTop (the spacer-
-    // weight compensation), so afterwards the coordinator's `reconciled()` invalidates its maps, absorbs
-    // the editor's post-nudge scroll (so that programmatic move is not read as a user scroll), and
-    // re-aligns the passive pane from whichever pane is active — the coordinator now owns that "which pane
-    // leads" decision (formerly a `leadingPane` variable tracked here).
-    const reconcileHeights = rafThrottle(() => {
+    // Only meaningful in Split. Every source that changes either pane's layout (edit/mirror, width/wrap,
+    // image decode, font load, diff overlay, mode visibility, CodeMirror's async re-measure) funnels its
+    // signal through this ONE generation-aware scheduler, which coalesces a burst into a single reconcile
+    // per frame against the newest geometry (reconcile-scheduler.ts). Each run is frame-atomic: height-sync
+    // does the one read phase and returns an immutable geometry snapshot, and the coordinator adopts that
+    // snapshot to rebuild both maps and re-align the passive pane WITHOUT a second measure after the spacer
+    // write. Reconciling can nudge the editor's scrollTop (spacer-weight compensation); the coordinator
+    // absorbs that (so it is not read as a user scroll) and re-aligns the passive pane from whichever pane
+    // is active — the coordinator owns that "which pane leads" decision (formerly a `leadingPane` here).
+    const reconcileScheduler = new ReconcileScheduler(() => {
       if (isSplit(mode)) {
-        heightSync.reconcile();
-        splitSync.reconciled();
+        splitSync.reconciled(heightSync.reconcile());
       }
     });
+    const reconcileHeights = (): void => reconcileScheduler.invalidate();
 
     // Live content sync. An edit in one editor goes to the native pipeline (sendDoc) AND is mirrored
     // into the other — guarded by shouldMirrorInto (content equality, plus the pending-edit check below)
@@ -468,7 +471,7 @@ function wire(): void {
     });
 
     // Re-measure CodeMirror on window resize and re-pad to the formatted heights (both panes reflow at a
-    // new width); reconcileHeights also invalidates the coordinator's maps, which the next scroll rebuilds.
+    // new width); the coalesced reconcile then rebuilds the coordinator's maps from the fresh snapshot.
     window.addEventListener("resize", () => {
       editor.refresh();
       reconcileHeights();

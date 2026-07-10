@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type ScrollAnchor, ScrollMap } from "../../src/sync/scroll-map.js";
+import { type GeometrySnapshot, type ScrollAnchor, ScrollMap } from "../../src/sync/scroll-map.js";
 import {
   type EditorScrollTarget,
   type FormattedScrollTarget,
   REVEAL_GUARD_MS,
   SplitSync,
+  WRITE_EPSILON,
 } from "../../src/sync/sync-coordinator.js";
 
 /**
@@ -114,6 +115,16 @@ function make(
   const clock = fakeClock();
   const sync = new SplitSync(ed, fm, clock.now);
   return { ed, fm, sync, clock };
+}
+
+/** The immutable geometry snapshot a height-sync reconcile hands the coordinator — the coordinator rebuilds
+ *  both maps from it with no re-measure. Defaults to the identity geometry the couple math above uses. */
+function snapshot(
+  edAnchors: ScrollAnchor[] = identity,
+  fmAnchors: ScrollAnchor[] = identity,
+  changed = true,
+): GeometrySnapshot {
+  return { editor: edAnchors, formatted: fmAnchors, changed };
 }
 
 describe("SplitSync echo suppression (deterministic, no driver lock)", () => {
@@ -492,16 +503,17 @@ describe("SplitSync reversible map — intercepting active never changes the res
   });
 });
 
-describe("SplitSync.reconciled (height-sync re-align from the active pane)", () => {
+describe("SplitSync.reconciled (adopt the snapshot, re-align from the active pane)", () => {
   it("re-aligns the passive pane from the active pane and absorbs the editor's compensation nudge", () => {
     const { ed, fm, sync } = make();
     ed.userScrollTo(200);
     sync.onEditorScroll(); // editor active, formatted coupled to 200
 
     // Height-sync reconciles: it nudged the editor's scrollTop (spacer-weight compensation keeping the
-    // content in place) and changed geometry. reconciled() re-couples the passive from the active editor.
+    // content in place) and changed geometry. reconciled() adopts the snapshot and re-couples the passive
+    // from the active editor.
     ed.scroll = 220; // the compensation nudge
-    sync.reconciled();
+    sync.reconciled(snapshot());
     expect(fm.scroll).toBe(220); // formatted re-aligned to the editor's compensated line
 
     // The editor's own (nudge-induced) scroll event is now a suppressed echo — it does not drive back.
@@ -515,8 +527,74 @@ describe("SplitSync.reconciled (height-sync re-align from the active pane)", () 
     sync.onFormattedScroll(); // formatted active, editor coupled to 300
 
     ed.scroll = 315; // a stray editor nudge from the reconcile
-    sync.reconciled();
+    sync.reconciled(snapshot());
     expect(ed.scroll).toBe(300); // editor (passive) re-aligned to the active formatted pane, nudge overridden
+  });
+
+  it("adopts a snapshot mid-journey without jumping the active pane, then couples both ways off it", () => {
+    // Asymmetric mixed geometry (wrapped code, a tall block between table rows): the reconcile snapshot's two
+    // maps must be exact inverses so the pass leaves the active pane still and couples correctly afterwards.
+    const { ed, fm, sync } = make(codeGeom, fmtGeom);
+    ed.userScrollTo(175); // Code leads at line 5.5
+    sync.onEditorScroll();
+    expect(fm.scroll).toBe(260);
+    const measuresAfterCouple = ed.anchorCalls + fm.anchorCalls;
+
+    // A reconcile arrives (say an image below the viewport decoded) carrying the SAME above-viewport geometry:
+    // adopting it must leave the active Code pane exactly where it is and keep Formatted tracking (no jump, no
+    // redundant write), and it must NOT re-measure the panes — the maps come from the snapshot.
+    sync.reconciled(snapshot(codeGeom, fmtGeom, true));
+    expect(ed.scroll).toBe(175); // active pane visually unmoved
+    expect(fm.scroll).toBe(260); // passive still aligned, left alone within the write epsilon
+    expect(ed.anchorCalls + fm.anchorCalls).toBe(measuresAfterCouple); // zero re-measures on the reconcile
+
+    // The author now scrolls Formatted the other way; Code follows through the adopted maps with no re-measure.
+    fm.userScrollTo(60); // Formatted line 5
+    sync.onFormattedScroll();
+    expect(ed.scroll).toBe(100); // fmMap line 5 → edMap px 100
+    expect(ed.anchorCalls + fm.anchorCalls).toBe(measuresAfterCouple); // still cached — a scroll measures nothing
+  });
+
+  it("adopts the snapshot's maps without measuring the panes (no blockAnchors / topsForLines read)", () => {
+    const { ed, fm, sync } = make();
+    // The render pane grew since the last couple: the SNAPSHOT carries the fresh geometry, so the coordinator
+    // must couple against it directly — never re-reading the panes' own anchors on the reconcile path.
+    ed.userScrollTo(200);
+    sync.reconciled(
+      snapshot(identity, [
+        { line: 0, px: 0 },
+        { line: 100, px: 2000 },
+      ]),
+    );
+    expect(fm.scroll).toBe(400); // editor line 20 on the grown render (px 2000/line 100) = 400
+    // Zero pane-measure calls: the maps came from the snapshot, not blockAnchors()/topsForLines().
+    expect(ed.anchorCalls).toBe(0);
+    expect(fm.anchorCalls).toBe(0);
+  });
+
+  it("keeps both panes and its maps untouched when the reconcile was gated (null snapshot)", () => {
+    const { ed, fm, sync } = make();
+    ed.userScrollTo(200);
+    sync.onEditorScroll(); // fm coupled to 200, maps built once
+    const anchorCallsBefore = ed.anchorCalls + fm.anchorCalls;
+
+    fm.scroll = 123; // pretend the pane drifted; a gated reconcile must not touch it
+    sync.reconciled(null);
+    expect(fm.scroll).toBe(123); // untouched — no couple against geometry that never formed
+    expect(ed.anchorCalls + fm.anchorCalls).toBe(anchorCallsBefore); // no re-measure either
+  });
+
+  it("makes ZERO writes on a settled reconcile whose passive is already within a pixel of target", () => {
+    const { ed, fm, sync } = make();
+    ed.userScrollTo(200);
+    sync.onEditorScroll(); // fm coupled to exactly 200
+    const fmWritesBefore = fm.scroll;
+
+    // The geometry did not change (changed: false) and the passive already sits on its target: the reconcile
+    // must not re-write the same value (which would risk a spurious echo / ping-pong).
+    ed.scroll = 200 + WRITE_EPSILON / 2; // a sub-pixel nudge below the write threshold
+    sync.reconciled(snapshot(identity, identity, false));
+    expect(fm.scroll).toBe(fmWritesBefore); // no redundant write — passive left exactly where it was
   });
 });
 

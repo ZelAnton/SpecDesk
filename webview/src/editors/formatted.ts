@@ -962,11 +962,12 @@ export class FormattedEditor {
    * anchor at the last unit's bottom so lines within it interpolate too. The delimiter row / ref-defs /
    * blank lines have no anchor; the map interpolates them between neighbours. Empty when the split
    * diverged (no anchors) — the coordinator then leaves scroll untouched. Re-measures through
-   * {@link measureBlocks} (the reconcile path), so this is called on a geometry change, not per frame.
+   * {@link ensureGeometry} (the scroll hot path's cache-or-build), so a run of couples that follows one
+   * geometry change shares a single measurement — the cache is re-measured only when a layout change
+   * invalidated it, not on every couple.
    */
   blockAnchors(): ScrollAnchor[] {
-    const boxes = this.measureBlocks();
-    this.geometryCache.set(boxes);
+    const boxes = this.ensureGeometry().boxes;
     const last = boxes[boxes.length - 1];
     if (last === undefined) {
       return [];

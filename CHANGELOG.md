@@ -206,6 +206,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view scrolling is now smooth with no forced-layout stutter or redundant scroll writes: one geometry
+  reconcile per frame is frame-atomic — a single read phase (one Formatted DOM measure, one CodeMirror tops
+  read) feeds an immutable geometry snapshot from which both scroll maps and the editor spacer plan are
+  computed, then at most one passive `scrollTop` write follows, with no layout re-read after the write. The
+  former `reconcileHeights()` measured the Formatted DOM twice and re-read CodeMirror tops right after
+  writing spacers (the read→write→read that reintroduced forced layout), then unconditionally re-coupled the
+  panes even when nothing changed. Now height-sync reports whether the pass actually changed the editor's
+  decorations/scroll geometry, the coordinator adopts the one snapshot to rebuild both maps without a second
+  measure, and it leaves the passive pane alone when it is already within a pixel of its target — so a scroll
+  over an unchanged layout re-measures nothing, and a settled repeat reconcile makes zero DOM/scroll writes.
+  All the invalidation sources (edit/mirror, width/wrap, image decode, font load, diff overlay, mode
+  visibility, and CodeMirror's async re-measure) now funnel through one generation-aware coalescing scheduler
+  (`webview/src/sync/reconcile-scheduler.ts`): a burst before the next frame collapses into one reconcile
+  against the newest generation, and a spacer pass that triggers a follow-up CodeMirror measure converges to
+  a fixed point over successive frames instead of looping within one. The active pane the author is reading
+  stays visually still while the passive pane catches up within a frame, and a scroll clamped at a document
+  boundary no longer ping-pongs.
 - Split view scroll synchronization is now bidirectional with no jump when the leading pane changes.
   `SplitSync` is the single owner of both panes' scroll and of which pane is active (the last pane
   genuinely scrolled, focused, or edited); a coupling write only ever moves the passive pane, and both

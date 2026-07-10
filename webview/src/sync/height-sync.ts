@@ -10,6 +10,7 @@
 
 import type { MarkdownEditor } from "../editors/editor.js";
 import type { BlockGeometry } from "../review/preview.js";
+import type { GeometrySnapshot, ScrollAnchor } from "./scroll-map.js";
 
 /** Anything that can report per-block rendered geometry to align the editor against (the formatted
  *  WYSIWYG view in Split; formerly the read-only preview). The source is never padded — the editor is. */
@@ -190,6 +191,43 @@ export function computeScrollCompensation(
   return spacerHeightAboveLine(next, viewportLine) - spacerHeightAboveLine(previous, viewportLine);
 }
 
+/**
+ * Build the immutable {@link GeometrySnapshot} the Split coordinator rebuilds both scroll maps from, PURELY
+ * from the one read phase's inputs — the reference blocks, the editor's spacer-free natural line tops, and
+ * the spacer set this pass applies. The formatted anchors are each block's natural top plus a trailing
+ * anchor at the last block's bottom (matching {@link FormattedEditor.blockAnchors}); the editor anchors are
+ * each block's PADDED top — its natural top plus {@link spacerHeightAboveLine} of the applied set at that
+ * line, which equals what `MarkdownEditor.topsForLines` would re-read after the write (a block spacer at
+ * `lineEnd < line` and the lead for any `line > 0`, side for side — see {@link spacerHeightAboveLine} and
+ * `MarkdownEditor.spacerHeightsAbove`). The trailing editor anchor extends the last block by the same
+ * pixel span the formatted trailing anchor uses (the block's rendered height the editor is padded to
+ * match), keeping both maps' final segment monotonic without re-reading the padded layout. Pure.
+ */
+function snapshotFromGeometry(
+  geometry: BlockGeometry[],
+  naturalTops: number[],
+  applied: SpacerSet,
+  changed: boolean,
+): GeometrySnapshot {
+  const last = geometry[geometry.length - 1];
+  if (!last) {
+    return { formatted: [], editor: [], changed };
+  }
+  const formatted: ScrollAnchor[] = geometry.map((block) => ({
+    line: block.lineStart,
+    px: block.top,
+  }));
+  const editor: ScrollAnchor[] = geometry.map((block, index) => ({
+    line: block.lineStart,
+    px: (naturalTops[index] ?? 0) + spacerHeightAboveLine(applied, block.lineStart),
+  }));
+  const trailingLine = last.lineEnd + 1;
+  formatted.push({ line: trailingLine, px: last.top + last.height });
+  const editorLastPx = editor[editor.length - 1]?.px ?? 0;
+  editor.push({ line: trailingLine, px: editorLastPx + last.height });
+  return { formatted, editor, changed };
+}
+
 export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly source: GeometrySource;
@@ -266,22 +304,33 @@ export class HeightSync {
    * pending pane's own debounce fires `onEditorChange`/`onFormattedChange`, which mirrors the text and
    * then unconditionally calls `reconcileHeights()` again — see index.ts), reconcile runs again with
    * consistent panes and catches the geometry up.
+   *
+   * The one read phase of a Split reconcile generation. It measures the reference pane's block geometry
+   * ONCE and reads the editor's spacer-free line tops ONCE, then returns the {@link GeometrySnapshot} the
+   * coordinator rebuilds BOTH scroll maps from — so no second DOM / CodeMirror measure runs after the
+   * spacer write. The editor map's anchors are the post-write PADDED tops computed arithmetically here
+   * (natural top + the applied spacer weight above each line), which is exactly what a re-read would return
+   * because spacer widgets report their exact height; deriving them avoids the forced layout a read-back
+   * after the write would trigger (T-104). Returns `null` when the pass is gated (a pending / mismatched /
+   * stale-anchor pane, the T-084 conditions) — the coordinator then keeps its current maps untouched rather
+   * than couple against a snapshot that never formed.
    */
-  reconcile(): void {
+  reconcile(): GeometrySnapshot | null {
     if (this.editor.hasPendingChange() || this.source.hasPendingChange()) {
       this.onDebug?.("height-sync: deferred — a pane has a pending (unmirrored) edit");
-      return;
+      return null;
     }
     if (this.editor.getText() !== this.source.getText()) {
       this.onDebug?.("height-sync: deferred — panes' texts disagree (mirror not settled yet)");
-      return;
+      return null;
     }
 
     const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {
-      this.apply(0, []);
+      const changed = this.apply(0, []);
       this.onDebug?.("height-sync: 0 blocks");
-      return;
+      // A diverged split has no anchors — the coordinator adopts the empty maps and bows out of coupling.
+      return { formatted: [], editor: [], changed };
     }
 
     const editorTops = this.editor.naturalLineTops(geometry.map((block) => block.lineStart));
@@ -289,7 +338,7 @@ export class HeightSync {
       this.onDebug?.(
         "height-sync: deferred — stale anchor line(s) outside the editor's current document",
       );
-      return;
+      return null;
     }
     const anchors: AnchorMetrics[] = geometry.map((block, index) => ({
       lineEnd: block.lineEnd,
@@ -298,14 +347,21 @@ export class HeightSync {
     }));
 
     const { editorLead, editorSpacers } = computeGapAdjustments(anchors);
-    const dispatched = this.apply(editorLead, editorSpacers);
+    const changed = this.apply(editorLead, editorSpacers);
 
     const last = anchors[anchors.length - 1];
     const round = (value: number) => Math.round(value);
     this.onDebug?.(
       `hs: ${anchors.length} · eN=${round(last?.editorTop ?? 0)} pN=${round(last?.previewTop ?? 0)}` +
         ` · eW=${this.editor.contentWidth()} pW=${this.source.contentWidth()}` +
-        ` · lead ${editorLead} sp ${editorSpacers.length}${dispatched ? "" : " (settled)"}`,
+        ` · lead ${editorLead} sp ${editorSpacers.length}${changed ? "" : " (settled)"}`,
+    );
+
+    return snapshotFromGeometry(
+      geometry,
+      editorTops.map((top) => top ?? 0),
+      { lead: editorLead, spacers: editorSpacers },
+      changed,
     );
   }
 
