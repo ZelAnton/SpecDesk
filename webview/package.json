@@ -28,6 +28,7 @@
     "bundle:verify": "node scripts/verify-bundle.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:delivery": "vitest run tests/split-delivery",
     "lint": "biome check .",
     "format": "biome format --write ."
   },

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Formatting shortcuts now work in both Code and Formatted panes, with shortcut hints shown on toolbar buttons.
+- A Split scroll-sync delivery gate (`webview/tests/split-delivery/`) now drives the actually-built
+  `wwwroot/webview.js` — the same artifact the host serves — through the real Split wiring, so a regression
+  that removes or mis-wires the coordinator, height-sync or the editors in the shipped bundle fails CI even
+  though the isolated unit suites still pass. It runs the standard bundle process, checks the T-107 content
+  manifest (and that the loaded bundle's fingerprint matches it), then proves real non-zero source spacers
+  appear at each semantic boundary (including individual table rows and list items) with the Code and
+  Formatted tops aligned within one CSS pixel, and that a synthetic user scroll of the real CodeMirror
+  scroller couples the sibling pane in both directions. Wired into CI after `npm run bundle` and runnable as
+  `npm run test:delivery`.
 - `scripts/update-contract-fixtures.cmd` regenerates all four contract fixture files
   (`webview/tests/contract/{wire-kinds,native-payloads,lifecycle-states,diff-kinds}.json`) in one
   whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract

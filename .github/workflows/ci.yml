@@ -110,3 +110,10 @@ jobs:
 
       # Exercise the esbuild pipeline (output is not committed — wwwroot/ is git-ignored).
       - run: npm run bundle
+
+      # Delivery gate (T-108): drive the freshly-built wwwroot/webview.js through the REAL Split wiring
+      # (no coordinator/height-sync/editor doubles) to prove scroll-sync survives in the shipped bundle,
+      # not just in the isolated unit suites. Run after `npm run bundle` so it validates the artifact just
+      # produced; it re-runs the standard bundle process and checks the T-107 manifest itself, so the same
+      # command is what the processor invokes against the restored main working copy after publish.
+      - run: npm run test:delivery
