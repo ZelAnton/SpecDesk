@@ -100,6 +100,115 @@ describe("computeGapAdjustments", () => {
   });
 });
 
+// T-102: the padding above each anchor is the RUNNING MAXIMUM of its required shift, not the sum of
+// every local positive gap difference. These pin the invariant and reproduce the over-padding the old
+// per-gap algorithm produced — each test notes the (wrong) spacer the per-gap scheme would have emitted.
+describe("computeGapAdjustments running-maximum cumulative plan (T-102)", () => {
+  it("Code runs ahead then Formatted catches up: realigns with NO new spacer", () => {
+    // required = [0, −40, 0]: at anchor 1 the editor is intrinsically taller (its natural top 100 sits
+    // below the preview's 60 — unreachable, no negative spacer); at anchor 2 the preview catches back up
+    // and the two coincide naturally (120 == 120). The running maximum never rose above 0, so nothing is
+    // padded and anchor 2 lines up. The old per-gap scheme saw the +40 positive gap difference from
+    // anchor 1→2 and emitted a spurious { lineEnd: 3, height: 40 }, locking the transient lead in as drift.
+    const result = computeGapAdjustments([
+      anchor(0, 0, 0),
+      anchor(3, 100, 60),
+      anchor(6, 120, 120),
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([]);
+  });
+
+  it("does not re-pad when Formatted catches up while still under the accumulated maximum", () => {
+    // required = [0, +50, +10, +40]: anchor 1 needs 50 (padded); anchors 2 and 3 need less than the 50
+    // already applied, so no further padding — the running maximum stays 50. Per-gap would ALSO add a
+    // { lineEnd: 5, height: 30 } for the anchor 2→3 positive difference (10→40), over-padding to 80 total.
+    const result = computeGapAdjustments([
+      anchor(1, 0, 0),
+      anchor(3, 100, 150),
+      anchor(5, 200, 210),
+      anchor(7, 300, 340),
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([{ lineEnd: 1, height: 50 }]);
+  });
+
+  it("emits one spacer per increase of the running maximum across several alternating perturbations", () => {
+    // required = [0, +40, +10, +40, +70]: the maximum rises 0→40 (spacer at slot 0), stays 40 through the
+    // two dips (no spacer), then rises 40→70 (spacer at slot 3). Two spacers, totalling exactly 70 — the
+    // final anchor's need — not the sum of all positive jumps (40+30+30 = 100 the per-gap scheme adds).
+    const result = computeGapAdjustments([
+      anchor(1, 0, 0),
+      anchor(2, 100, 140),
+      anchor(3, 200, 210),
+      anchor(4, 300, 340),
+      anchor(5, 400, 470),
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([
+      { lineEnd: 1, height: 40 },
+      { lineEnd: 4, height: 30 },
+    ]);
+  });
+
+  it("keeps unreachable alignment monotonic and never negative (Code below target, height can't be removed)", () => {
+    // required = [0, −30, −30, +10]: the editor sits 30px below its target at anchors 1 and 2 (unreachable
+    // — no negative spacer), then the preview pulls 10px ahead at anchor 3. Only the reachable +10 is
+    // padded, at its placement slot; nothing negative is ever emitted and the applied padding is monotonic.
+    const result = computeGapAdjustments([
+      anchor(1, 0, 0),
+      anchor(2, 50, 20),
+      anchor(3, 100, 70),
+      anchor(4, 150, 160),
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([{ lineEnd: 3, height: 10 }]);
+    expect(result.editorSpacers.every((s) => s.height > 0)).toBe(true);
+  });
+
+  it("rounds the cumulative total, not each gap — subpixel steps do not lose padding to rounding", () => {
+    // required grows by a sub-pixel 0.4 per anchor to a fractional 2.0 total. Rounding each gap
+    // independently (the per-gap scheme) rounds every 0.4 to 0 and emits NOTHING, losing the whole 2px.
+    // Rounding only the cumulative boundaries keeps the total: round(applied[k]) crosses an integer twice,
+    // so two 1px spacers are emitted, summing to round(2.0) = 2 — no accumulated rounding error.
+    const result = computeGapAdjustments([
+      anchor(1, 0, 0),
+      anchor(2, 10, 10.4),
+      anchor(3, 20, 20.8),
+      anchor(4, 30, 31.2),
+      anchor(5, 40, 41.6),
+      anchor(6, 50, 52.0),
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([
+      { lineEnd: 2, height: 1 },
+      { lineEnd: 4, height: 1 },
+    ]);
+    const total = result.editorSpacers.reduce((sum, s) => sum + s.height, 0);
+    expect(total).toBe(2);
+  });
+
+  it("mixed wrapped-code → table rows → list items: no spurious spacer where the preview only catches up", () => {
+    // A realistic Split geometry: a heading, a fenced code block that wraps TALLER in the editor than it
+    // renders (so the following anchors' natural editor tops fall below the preview — required goes
+    // negative), two table rows the preview then catches up on, and two list items — the last of which
+    // genuinely needs padding. required = [0, 0, −50, −50, 0, +30]. The running maximum stays 0 until the
+    // final +30, so exactly one spacer is emitted, at the list-item placement slot. The old per-gap scheme
+    // would ALSO plant a { lineEnd: 9, height: 50 } at the table→list boundary (the +50 positive gap
+    // difference as the preview catches up), the exact over-padding this fix removes.
+    const result = computeGapAdjustments([
+      anchor(2, 0, 0), // heading
+      anchor(6, 40, 40), // fenced code (top of block still aligned)
+      anchor(8, 200, 150), // table row 1 — editor pushed 50px past the preview by the tall wrapped code
+      anchor(9, 230, 180), // table row 2 — still 50px past
+      anchor(11, 260, 260), // list item 1 — preview has caught back up, natural coincidence
+      anchor(13, 290, 320), // list item 2 — preview now genuinely 30px ahead
+    ]);
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([{ lineEnd: 11, height: 30 }]);
+  });
+});
+
 describe("computeScrollCompensation (T-066)", () => {
   const spacer = (lineEnd: number, height: number): EditorSpacer => ({ lineEnd, height });
 
@@ -161,6 +270,19 @@ describe("computeScrollCompensation (T-066)", () => {
       { lead: 0, spacers: [spacer(3, 160)] },
     );
     expect(delta).toBe(0);
+  });
+
+  it("compensates for a spacer between rows of one table (an intra-container slot) above the viewport", () => {
+    // T-102: with per-row/per-item anchors, a spacer can land at a placement slot INSIDE a container —
+    // between two rows of the same table (or two items of one list). When such a spacer above the viewport
+    // grows, its weight change must still shift scrollTop so the active Code content stays put, exactly as
+    // a spacer between whole blocks does. Row-1→row-2 spacer at slot line 5, viewport parked at line 12.
+    const delta = computeScrollCompensation(
+      12,
+      { lead: 0, spacers: [spacer(5, 40)] },
+      { lead: 0, spacers: [spacer(5, 90)] },
+    );
+    expect(delta).toBe(50);
   });
 });
 

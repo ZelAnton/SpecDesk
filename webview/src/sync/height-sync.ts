@@ -35,13 +35,17 @@ export interface GeometrySource {
   getText(): string;
 }
 
-/** A spacer to insert below a block's last source line, of the given pixel height. */
+/** A spacer to insert at a block's placement slot, of the given pixel height. `lineEnd` is the semantic
+ *  placement slot from the T-101 anchor projection (the source line just before the NEXT anchor), NOT a
+ *  container node's own last line — so a spacer between two rows of one table / two items of one list
+ *  lands between them rather than after the whole container. */
 export interface EditorSpacer {
   lineEnd: number;
   height: number;
 }
 
-/** One anchor's measured top in each pane (editor top is spacer-free; preview top is natural). */
+/** One anchor's measured top in each pane (editor top is spacer-free; preview top is natural). `lineEnd`
+ *  is this anchor's placement slot (see {@link EditorSpacer}) — where its spacer is planted. */
 export interface AnchorMetrics {
   lineEnd: number;
   editorTop: number;
@@ -56,49 +60,77 @@ export interface GapAdjustments {
 }
 
 /**
- * Pad only the editor so each block lines up with the (fixed) preview. This is computed **per gap**,
- * not cumulatively: each block's spacer depends only on its own two anchor tops. That keeps a
- * block's spacer stable as long as that block's anchors are measured stably (e.g. the visible
- * region) — a cumulative scheme would let one off-screen line whose height CodeMirror re-estimates
- * cascade into every spacer below it (the flicker). The trade-off is that where the editor source
- * is intrinsically taller than the render we add nothing (no negative spacer), so a little vertical
- * drift can accumulate over long distances — acceptable, and the active-line highlight covers it.
+ * Pad only the editor so each anchor lines up with the (fixed) preview, using the MINIMAL cumulative
+ * padding. For anchor `i` the shift needed to bring its natural (spacer-free) editor top down to its
+ * preview top is `required[i] = previewTop[i] − editorTop[i]`. Spacers can only ADD height (never
+ * remove it) and stack cumulatively down the document, so the padding actually applied above anchor `i`
+ * is the RUNNING MAXIMUM of `max(0, required[j])` over `j ≤ i` — the smallest non-decreasing,
+ * non-negative sequence that meets each anchor's need where it is reachable and holds the accumulated
+ * maximum where it is not (Code already sits at or below its target and height cannot be removed). Each
+ * emitted spacer is just the INCREMENT of that running maximum across one placement slot. So where Code
+ * ran ahead and Formatted only later catches back up to the already-accumulated maximum, NO new spacer
+ * is added and the anchors realign — unlike the former per-gap scheme, which re-added every local
+ * positive gap difference and locked that transient lead in as permanent over-padding (the bug). Where
+ * alignment is genuinely unreachable (the source is intrinsically taller) the result stays monotonic
+ * and never negative; the residual is bounded by the running maximum, not the sum of every local jump.
  * Pure.
  *
- * Coordinate systems (T-061). Both `previewTop` and `editorTop` are measured from their own pane's
- * scroll origin (the reference via `blockGeometry`, the editor via `naturalLineTops`); the two panes
- * are side-by-side, so those origins coincide on screen. Inter-block spacers are differences
- * (`previewGap − editorGap`), so any constant origin offset cancels — only the LEAD crosses panes as
- * an absolute subtraction, so it is the one place a coordinate mismatch would leak in. The lead is the
- * distance from the source's first line to the first rendered block, i.e. it reproduces whatever
- * leading space sits above the first rendered block: the reference pane's structural `padding-top`
- * (its scroll origin to its content box) — a small, genuine offset needed so the first source line
- * sits level with the first rendered block. It does NOT reproduce the first block's own typographic
- * top margin (a heading's `1.6em`): that is reset to 0 in the shared rendered stylesheet
- * (styles.css §5, `.sd-doc > :first-child`), so the first rendered block hugs its pane's content top
- * just as the first source line hugs the editor's — bringing both panes to one leading frame and
- * shrinking the lead from the old ~65px hatched band to the pane's structural inset. The lead stays a
- * stable fixed point because `naturalLineTops[0]` is invariant to the lead we apply (see
- * `MarkdownEditor.spacerHeightAbove`), so a settled geometry recomputes the identical lead and
+ * Subpixel stability. `required` and the running maximum are carried in fractional CSS px; only the
+ * emitted CUMULATIVE boundaries are rounded — each spacer is `round(applied[i+1]) − round(applied[i])`,
+ * the lead is `round(applied[0])` — so the total padding above any anchor `k` is exactly
+ * `round(applied[k])` and per-gap rounding error can never accumulate into drift. That single rounding
+ * step is the one epsilon (a half-pixel dead zone on each cumulative boundary), so a subpixel reflow
+ * that does not cross a boundary recomputes the identical spacer set and {@link HeightSync.apply} stops
+ * re-dispatching — no decoration flicker back and forth.
+ *
+ * Coordinate systems (T-061). `previewTop` and `editorTop` are each measured from their own pane's
+ * scroll origin (the reference via `blockGeometry`, the editor via `naturalLineTops`); the two panes are
+ * side-by-side, so those origins coincide on screen — which is what makes the per-anchor absolute
+ * subtraction `previewTop − editorTop` a valid on-screen shift. The lead is
+ * `applied[0] = max(0, previewTop[0] − editorTop[0])`, the distance from the source's first line to the
+ * first rendered block: it reproduces whatever leading space sits above the first rendered block — the
+ * reference pane's structural `padding-top` (its scroll origin to its content box), a small, genuine
+ * offset needed so the first source line sits level with the first rendered block. It does NOT reproduce
+ * the first block's own typographic top margin (a heading's `1.6em`): that is reset to 0 in the shared
+ * rendered stylesheet (styles.css §5, `.sd-doc > :first-child`), so the first rendered block hugs its
+ * pane's content top just as the first source line hugs the editor's — bringing both panes to one
+ * leading frame and shrinking the lead to the pane's structural inset. A uniform shift of the whole
+ * rendered document (resetting that first margin lifts every rendered top by the same amount) moves only
+ * the lead; the inter-anchor spacers, being increments of the running maximum, are unchanged. The lead
+ * stays a stable fixed point because `naturalLineTops[0]` is invariant to the lead we apply (see
+ * `MarkdownEditor.spacerHeightsAbove`), so a settled geometry recomputes the identical lead and
  * {@link HeightSync.apply} stops re-dispatching — no oscillation.
  */
 export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments {
-  const editorSpacers: EditorSpacer[] = [];
   const first = anchors[0];
-  const editorLead = first ? Math.max(0, Math.round(first.previewTop - first.editorTop)) : 0;
+  if (!first) {
+    return { editorLead: 0, editorSpacers: [] };
+  }
 
+  // Running maximum of max(0, required) over the anchors seen so far, in fractional px. Seeded with the
+  // first anchor's own need so the lead IS applied[0]; never drops below 0, so no anchor's required
+  // (which may be negative where Code already sits below its target) can pull it down.
+  let runningMax = Math.max(0, first.previewTop - first.editorTop);
+  const editorLead = Math.round(runningMax);
+  // Rounded cumulative padding applied above the current placement slot. Each spacer is the difference
+  // of two rounded cumulative values, so the total above anchor k is exactly round(applied[k]) — the
+  // rounding is normalized once per boundary and cannot accumulate across gaps.
+  let appliedBelow = editorLead;
+
+  const editorSpacers: EditorSpacer[] = [];
   for (let i = 0; i < anchors.length - 1; i++) {
     const current = anchors[i];
     const next = anchors[i + 1];
     if (!current || !next) {
       continue;
     }
-    const editorGap = next.editorTop - current.editorTop;
-    const previewGap = next.previewTop - current.previewTop;
-    const pad = Math.round(previewGap - editorGap);
-    if (pad > 0) {
-      editorSpacers.push({ lineEnd: current.lineEnd, height: pad });
+    runningMax = Math.max(runningMax, next.previewTop - next.editorTop);
+    const appliedAtNext = Math.round(runningMax);
+    const height = appliedAtNext - appliedBelow;
+    if (height > 0) {
+      editorSpacers.push({ lineEnd: current.lineEnd, height });
     }
+    appliedBelow = appliedAtNext;
   }
 
   return { editorLead, editorSpacers };

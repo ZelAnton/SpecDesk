@@ -206,6 +206,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view no longer accumulates vertical misalignment where the Code pane runs ahead of the Formatted
+  pane and the two later line back up. Height synchronization now pads the Code pane by the minimal
+  cumulative amount — the running maximum of each anchor's required shift — instead of re-adding every
+  local positive gap difference, so a region where the source is intrinsically taller no longer locks a
+  transient lead in as permanent drift: once the Formatted pane catches back up, the following anchors
+  realign with no leftover spacer. Where alignment is genuinely unreachable (the source is taller and
+  height cannot be removed) the residual stays monotonic and never negative, and padding is computed in
+  fractional pixels with a single rounding step so subpixel reflow no longer flickers spacers.
 - Split view now aligns tall tables and long lists row-by-row and item-by-item: the Formatted pane's
   scroll and height synchronization anchor every rendered table row and list item (nested items included)
   on its own source line, instead of treating a whole table or list as one block and guessing interior
