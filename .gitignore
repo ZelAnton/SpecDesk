@@ -147,3 +147,12 @@ run.cmd
 ## profiles, but our hand-authored release profile is a deliberate, shared build config — keep it.
 ## -------
 !/src/SpecDesk.Host/Properties/PublishProfiles/win-x64.pubxml
+
+## -------
+## Orchestrator local coordination state. Everything under .work/ is per-machine, mutable
+## agent state (task queue, journal, checkpoints, review log, worktrees) — never part of the
+## versioned tree. scripts/restore-main-worktree.ps1 detaches any historically tracked
+## .work/* files without losing their content. This rule applies to both an existing and a
+## freshly cloned working copy.
+## -------
+.work/
