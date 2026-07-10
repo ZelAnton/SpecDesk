@@ -33,6 +33,13 @@ internal static class Program
 		ILogger startup = loggerFactory.CreateLogger("SpecDesk.Host");
 		startup.LogInformation("SpecDesk starting; logs at {LogDirectory}", Logging.LogDirectory);
 
+		// Refuse to start from a repository main working copy that has drifted behind the local
+		// published main: its on-disk sources predate the merged code, so the app would run an OLD UI.
+		// A published app (no source tree) and every isolated task worktree are exempt — only the
+		// genuine main-copy drift stops here, before any WebView is created, with a path to re-sync
+		// (scripts/restore-main-worktree.ps1) instead of silently masking it by rebuilding old sources.
+		MainWorktreeGuard.EnsureCurrent(AppContext.BaseDirectory, startup);
+
 		// Prove, by content, that the webview bundle about to be loaded is the one built from the
 		// current inputs (dev) or a complete, uncorrupted shipped artifact (published) — never an old
 		// bundle trusted only because of its file timestamps. Fails fast with a clear, path-free error

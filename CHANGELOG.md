@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Formatted tops aligned within one CSS pixel, and that a synthetic user scroll of the real CodeMirror
   scroller couples the sibling pane in both directions. Wired into CI after `npm run bundle` and runnable as
   `npm run test:delivery`.
+- A fail-closed working-copy currency gate stops planning, building, or running SpecDesk from a
+  repository main working copy that has drifted behind the local published `main` (which would silently
+  use the old, pre-merge UI). The read-only `scripts/assert-main-current.ps1` reports the role (main
+  working copy vs isolated task worktree, decided from VCS structure) and whether the checkout still
+  includes `main`; the `SpecDesk.Host` build refuses to compile a stale main copy and `MainWorktreeGuard`
+  refuses to launch one before the WebView loads, while isolated task worktrees and published apps are
+  exempt. Escape hatches: `-p:SkipMainCurrentGuard=true` (build) and `SPECDESK_ALLOW_STALE_WORKTREE` (run).
 - `scripts/update-contract-fixtures.cmd` regenerates all four contract fixture files
   (`webview/tests/contract/{wire-kinds,native-payloads,lifecycle-states,diff-kinds}.json`) in one
   whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract
