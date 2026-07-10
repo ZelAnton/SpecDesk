@@ -94,10 +94,20 @@ internal static class Program
 			publishing: versioning,
 			review: new GitHubReviewClient(gitHubHttp));
 
+		// Devtools + right-click context menu, opt-in via SPECDESK_DEVTOOLS for interactive human+agent
+		// debugging. Accepts 1/true/yes/on (case-insensitive); off by default and for 0/false/empty. A
+		// presence check (like the stale-guard opt-outs) would wrongly enable it on SPECDESK_DEVTOOLS=0,
+		// so this is a value check. Both flags set explicitly so the behaviour is pinned regardless of
+		// Photino's version default; a shipped app exposes neither.
+		string? devToolsEnv = Environment.GetEnvironmentVariable("SPECDESK_DEVTOOLS")?.Trim().ToLowerInvariant();
+		bool devTools = devToolsEnv is "1" or "true" or "yes" or "on";
+
 		window = new PhotinoWindow()
 			.SetTitle(ProductInfo.Name)
 			.SetUseOsDefaultSize(false)
 			.SetSize(1280, 800)
+			.SetDevToolsEnabled(devTools)
+			.SetContextMenuEnabled(devTools)
 			.Center()
 			// Fires synchronously on the UI thread as soon as WM_CLOSE is dispatched, ahead of the
 			// native window (and its message queue) being torn down — see DialogClosingGrace above.

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The log directory and file verbosity are now environment-overridable: `SPECDESK_LOG_DIR` redirects the
+  rolling log file, and `SPECDESK_LOG_LEVEL` (verbose/debug/info/warning/error/fatal) sets the file
+  sink's minimum level — so a dev run or a test harness can point logs at a known location and dial
+  verbosity without a rebuild. Unset, the defaults are unchanged (`%LOCALAPPDATA%\SpecDesk\logs` at Debug).
+- Setting `SPECDESK_DEVTOOLS=1` enables the WebView2 devtools and right-click context menu for
+  interactive debugging; a shipped app exposes neither by default.
 - The webview now keeps an always-on in-page diagnostic trace of the editor's hot paths and captures
   previously-unhandled `window.onerror` / unhandled promise rejections into the log, so a rendering,
   formatting or scroll-sync misbehaviour leaves a record of *why* it happened. The trace is readable via
