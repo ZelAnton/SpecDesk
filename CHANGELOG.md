@@ -206,6 +206,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view scroll synchronization is now bidirectional with no jump when the leading pane changes.
+  `SplitSync` is the single owner of both panes' scroll and of which pane is active (the last pane
+  genuinely scrolled, focused, or edited); a coupling write only ever moves the passive pane, and both
+  the read and the write now go through the two panes' shared line↔px map so they are exact inverses of
+  one geometry. Because the round-trip of one unchanging layout is the identity, grabbing the pane that
+  was following (intercepting the active pane) couples the sibling straight back to where it already
+  sits — the source editor and the formatted pane no longer drift apart or jump when the author switches
+  which pane leads. The momentum/trackpad settle re-snap is now symmetric for both panes, a scroll
+  clamped at a document boundary writes one stable best-effort position without ping-pong, and a view
+  mode switch keeps the fractional reading position of the pane the author was actually reading rather
+  than unconditionally the source editor's.
 - Split view no longer accumulates vertical misalignment where the Code pane runs ahead of the Formatted
   pane and the two later line back up. Height synchronization now pads the Code pane by the minimal
   cumulative amount — the running maximum of each anchor's required shift — instead of re-adding every

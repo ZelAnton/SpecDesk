@@ -44,6 +44,9 @@ import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
 import { buildLeafAnchors } from "./sync-anchors.js";
 
 const DEBOUNCE_MS = 120;
+/** Idle gap after the last scroll event before scrolling is treated as finished and the sibling is
+ *  re-snapped — the formatted pane's counterpart of the source editor's own settle (editor.ts). */
+const SCROLL_SETTLE_MS = 120;
 const emptyDoc = (): PmNode => schema.node("doc", null, [schema.node("paragraph")]);
 
 function formattingKeymapFor(
@@ -216,6 +219,10 @@ export interface FormattedEditorCallbacks {
   onEditAttempt: () => void;
   /** Fired (rAF-throttled) as the pane scrolls — drives block-level scroll-sync with the source editor. */
   onScroll: () => void;
+  /** Fired ~120 ms after scrolling stops — re-snaps the sibling to this pane's final momentum/trackpad
+   *  position, symmetric with the source editor's own settle. Optional: only wired where useful (index.ts
+   *  provides it; pure-ProseMirror unit tests that never scroll omit it). */
+  onScrollSettle?: () => void;
   /** Fired (rAF-throttled) with the caret block's 0-based source line, for cross-pane highlight sync,
    *  and whether this was a pure navigation (caret move without a text edit) — used to gate the
    *  cross-pane reveal scroll, which must fire on selecting a line but not on every keystroke. */
@@ -240,6 +247,7 @@ export class FormattedEditor {
   private readonly onChange: (text: string) => void;
   private readonly onEditAttempt: () => void;
   private readonly onScroll: () => void;
+  private readonly onScrollSettle: (() => void) | undefined;
   private readonly onCursor: (line: number | null, navigated: boolean) => void;
   private readonly onHover: (line: number | null) => void;
   private readonly onContentResize: () => void;
@@ -316,6 +324,7 @@ export class FormattedEditor {
     this.onChange = callbacks.onChange;
     this.onEditAttempt = callbacks.onEditAttempt;
     this.onScroll = callbacks.onScroll;
+    this.onScrollSettle = callbacks.onScrollSettle;
     this.onCursor = callbacks.onCursor;
     this.onHover = callbacks.onHover;
     this.onContentResize = callbacks.onContentResize;
@@ -406,9 +415,17 @@ export class FormattedEditor {
     // Report focus so the formatting toolbar can route to this pane when it is the active one in Split.
     this.view.dom.addEventListener("focus", () => this.onFocus());
 
-    // The pane is the scroll container; report scrolls (throttled) for block-level scroll-sync.
+    // The pane is the scroll container; report scrolls (throttled) for block-level scroll-sync, and — when
+    // a settle callback is wired — a debounced settle so the sibling re-snaps to the final resting position
+    // once a momentum/trackpad scroll stops (the live rAF frames can trail it), matching the source editor.
     const reportScroll = rafThrottle(() => this.onScroll());
-    this.scrollEl.addEventListener("scroll", reportScroll);
+    const reportScrollSettle = this.onScrollSettle
+      ? debounce(() => this.onScrollSettle?.(), SCROLL_SETTLE_MS)
+      : undefined;
+    this.scrollEl.addEventListener("scroll", () => {
+      reportScroll();
+      reportScrollSettle?.();
+    });
 
     // Report the caret's block as a source line for cross-pane highlight sync (index.ts pushes the
     // decoration back via setActiveLine). Deferred (rAF) so the resulting dispatch runs outside the

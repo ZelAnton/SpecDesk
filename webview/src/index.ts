@@ -304,18 +304,14 @@ function wire(): void {
     // rendered block in the formatted pane (the formatted view is the fixed reference, never padded).
     // Only meaningful in Split; rAF-throttled so a burst of edits/resizes reconciles once per frame.
     // Reconciling shifts the editor's line tops (new spacers) and can nudge its scrollTop (the spacer-
-    // weight compensation), so afterwards: invalidate the coordinator's maps (rebuilt from the new tops
-    // on the next couple) and absorb the editor's post-nudge scroll, so that programmatic move is not
-    // read as a user scroll and does not drive the formatted pane into a false sync.
-    let leadingPane: Pane | null = null;
+    // weight compensation), so afterwards the coordinator's `reconciled()` invalidates its maps, absorbs
+    // the editor's post-nudge scroll (so that programmatic move is not read as a user scroll), and
+    // re-aligns the passive pane from whichever pane is active — the coordinator now owns that "which pane
+    // leads" decision (formerly a `leadingPane` variable tracked here).
     const reconcileHeights = rafThrottle(() => {
       if (isSplit(mode)) {
         heightSync.reconcile();
-        splitSync.invalidate();
-        splitSync.absorb("editor");
-        if (leadingPane !== null) {
-          splitSync.syncFrom(leadingPane);
-        }
+        splitSync.reconciled();
       }
     });
 
@@ -362,20 +358,18 @@ function wire(): void {
     editor = new MarkdownEditor(editorRoot, {
       onChange: onEditorChange,
       onScroll: () => {
-        // The coordinator decides: a genuine editor scroll couples the formatted pane; its own echo (the
-        // scrollTop it just wrote) is ignored deterministically — no driver lock.
+        // The coordinator decides everything: a genuine editor scroll becomes active and couples the
+        // formatted pane; its own echo (the scrollTop it just wrote) is ignored deterministically — no
+        // driver lock, and the "which pane leads" bookkeeping now lives in the coordinator, not here.
         if (isSplit(mode)) {
-          if (!splitSync.isEcho("editor")) {
-            leadingPane = "editor";
-          }
           splitSync.onEditorScroll();
         }
       },
       onScrollSettle: () => {
         // The rAF-coupled frames can trail a momentum scroll's final position. Re-run the same exact
-        // coordinator path used by manual re-sync once the source pane stops moving.
-        if (isSplit(mode) && !splitSync.isEcho("editor")) {
-          splitSync.syncFrom("editor");
+        // coordinator path once the source pane stops moving; the coordinator suppresses an echo settle.
+        if (isSplit(mode)) {
+          splitSync.settle("editor");
         }
       },
       onCursor: (line, navigated) => {
@@ -388,7 +382,11 @@ function wire(): void {
       onGeometryChange: () => reconcileHeights(),
       onEditAttempt: offerDraft,
       onFocus: () => {
-        leadingPane = "editor";
+        // Focus declares the editor active and best-effort syncs the formatted pane from it (the
+        // coordinator owns that); the reversible map keeps a focus change from jumping the sibling.
+        if (isSplit(mode)) {
+          splitSync.onFocus("editor");
+        }
         formatToolbar.setFocused("editor");
       },
       // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
@@ -402,17 +400,23 @@ function wire(): void {
       onEditAttempt: offerDraft,
       onScroll: () => {
         if (isSplit(mode)) {
-          if (!splitSync.isEcho("formatted")) {
-            leadingPane = "formatted";
-          }
           splitSync.onFormattedScroll();
+        }
+      },
+      // Symmetric with the source editor: re-snap once the formatted pane's momentum/trackpad scroll
+      // settles, through the same coordinator path (an echo settle is suppressed).
+      onScrollSettle: () => {
+        if (isSplit(mode)) {
+          splitSync.settle("formatted");
         }
       },
       onCursor: (line, navigated) => setActive(line, navigated ? "formatted" : null),
       onHover: (line) => setHover(line),
       onContentResize: () => reconcileHeights(),
       onFocus: () => {
-        leadingPane = "formatted";
+        if (isSplit(mode)) {
+          splitSync.onFocus("formatted");
+        }
         formatToolbar.setFocused("formatted");
       },
       onActiveChange: () => formatToolbar.refresh(),
@@ -737,7 +741,10 @@ function wire(): void {
       const prev = mode;
       const prevVis = paneVisibility(prev);
       const nextVis = paneVisibility(next);
-      const line = prevVis.editor ? editor.topVisibleLineExact() : formatted.topVisibleSourceLine();
+      // The reading position comes from the pane that owns it: in Split (both visible) the ACTIVE pane —
+      // whichever the author was last reading — not unconditionally the source editor; in a single-pane
+      // mode the sole visible pane. The coordinator holds the active-pane state, so it resolves this.
+      const line = splitSync.readingLine(prevVis.editor, prevVis.preview);
       const text = prevVis.editor ? editor.getText() : formatted.getText();
 
       if (nextVis.editor && !prevVis.editor) {

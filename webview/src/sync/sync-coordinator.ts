@@ -1,22 +1,41 @@
 /**
- * The single owner of both Split panes' scroll position. It replaces the former trio of mutually-
- * suppressing mechanisms — the per-frame line-based scroll-sync with its former driver lock, the
- * caret-reveal, and the mode-switch restore — and their glue heuristics (suppress/drive/
- * syncedRecently, the double rAF in applyMode) with ONE coordinator that alone writes each pane's
- * scrollTop.
+ * The single owner of both Split panes' scroll position AND of which pane is active. It replaces the
+ * former trio of mutually-suppressing mechanisms — the per-frame line-based scroll-sync with its former
+ * driver lock, the caret-reveal, and the mode-switch restore — and their glue heuristics (suppress/drive/
+ * syncedRecently, the double rAF in applyMode, plus a `leadingPane` bookkeeping variable that used to live
+ * in index.ts) with ONE coordinator that alone writes each pane's scrollTop and alone decides which pane
+ * leads.
+ *
+ * Active/passive as an explicit state machine. The ACTIVE pane is the one the author last genuinely
+ * scrolled ({@link onEditorScroll}/{@link onFormattedScroll}, echoes excluded) or focused ({@link onFocus})
+ * or edited ({@link syncFrom}); the PASSIVE pane is the other. Every reactive coupling write targets ONLY
+ * the passive pane — coupling never drives the active pane back, so the pane the author is reading never
+ * jumps under them. (The two non-reactive exceptions are the fresh-load {@link reset} and the mode-switch
+ * {@link restore}, which establish a baseline on named panes rather than couple; and height-sync's own
+ * spacer compensation, which may nudge the editor's scrollTop but only as a viewport-preserving move that
+ * keeps the content at the viewport top exactly where it is — no visible motion of active content.)
  *
  * Echo is excluded by construction. Every write the coordinator makes records the resulting scrollTop
  * ({@link lastWritten}); a scroll event whose scrollTop still equals that value is the pane settling where
- * WE put it — its own echo — not a user scroll, so it never drives the sibling back. That is a
- * deterministic value check, so there is no timing window to tune and no driver lock: the two panes cannot
- * ping-pong. A genuine user scroll moves scrollTop off the recorded value and drives the sibling once.
+ * WE put it — its own echo — not a user scroll, so it never drives the sibling back and never re-declares
+ * active. That is a deterministic value check, so there is no timing window to tune and no driver lock: the
+ * two panes cannot ping-pong. A genuine user scroll moves scrollTop off the recorded value, becomes the new
+ * active, and drives the passive once.
  *
- * The couple itself goes through the line↔px {@link ScrollMap} of each pane, built from the SAME semantic
- * sync anchors height-sync measures — one per rendered leaf unit, so a tall table couples row-by-row
- * (scroll-map.ts, sync-anchors.ts). Coupling by LINE — read the source pane's viewport-top
- * line, map it to the sibling's pixels — is why height-sync's non-negative-spacer drift never leaks into
- * where the viewports track each other (T-073): the map reads the two panes' actual tops, so a "negative"
- * gap is expressed, not accumulated.
+ * ONE reversible map, both directions. The couple goes through the line↔px {@link ScrollMap} of each pane,
+ * both built from the SAME semantic sync anchors height-sync measures — one per rendered leaf unit, so a
+ * tall table couples row-by-row (scroll-map.ts, sync-anchors.ts). Crucially, BOTH the read and the write go
+ * through those maps: the active pane's viewport-top line is read as `activeMap.lineForPx(active.scrollTop)`
+ * and written as `passiveMap.pxForLine(line)`. Because a pane's own `lineForPx`/`pxForLine` are exact
+ * inverses of one piecewise-linear map, and both panes' maps share one line axis (the same anchor lines),
+ * the round-trip of one unchanging geometry is the identity — so INTERCEPTING the active pane (the author
+ * grabs the pane that was following) couples the sibling straight back to where it already is, with no jump.
+ * Reading through the map (not each pane's own height-map read) is what makes that inverse exact: the two
+ * were not mutually inverse before (Code read CodeMirror's real per-line heights while its map smeared the
+ * spacer between sparse anchors; Formatted read `BlockBox.height` while its map interpolated between block
+ * tops), so intercepting active reinterpreted the same vertical point and the viewports drifted. Coupling by
+ * LINE is also why height-sync's non-negative-spacer drift never leaks into where the viewports track each
+ * other (T-073): the map reads the two panes' actual tops, so a "negative" gap is expressed, not accumulated.
  *
  * The one timing fallback that remains is the reveal-vs-couple guard: after a scroll has just coupled the
  * passive pane, a coincident caret reveal must stand down for a beat, or the two fight over the passive
@@ -43,7 +62,8 @@ export const REVEAL_GUARD_MS = 120;
  *  scroll write is a direct, SYNCHRONOUS scrollTop set so the resulting value can be read straight back
  *  for echo detection (the async `scrollIntoView` the old path used could not be). */
 export interface EditorScrollTarget {
-  /** The (fractional) 0-based source line at the viewport top. */
+  /** The (fractional) 0-based source line at the viewport top — used ONLY for the mode-switch reading
+   *  position (its inverse is {@link scrollToLine}); coupling reads the line through the pane's map. */
   topLine(): number;
   /** The actual pixel top of each given 0-based source line (with height-sync spacers), for the map. */
   topsForLines(lines: readonly number[]): number[];
@@ -83,6 +103,10 @@ export class SplitSync {
   };
   // When a scroll last coupled the panes — the reveal-vs-couple guard reads it (see reveal()).
   private lastCoupledAt = Number.NEGATIVE_INFINITY;
+  // Which pane leads: the one the author last genuinely scrolled, focused, or edited. The other is the
+  // passive pane every coupling write targets. Defaults to the source editor (the first pane shown on a
+  // fresh load); every subsequent user interaction re-seats it (see onScroll/onFocus/syncFrom/reset).
+  private active: Pane = "editor";
 
   constructor(
     private readonly editor: EditorScrollTarget,
@@ -91,46 +115,89 @@ export class SplitSync {
     private readonly now: () => number = () => performance.now(),
   ) {}
 
+  /** The pane that currently leads (last genuine scroll / focus / edit). The passive pane is its sibling. */
+  activePane(): Pane {
+    return this.active;
+  }
+
   /** Mark the maps stale (a geometry change: an edit, a resize, a height-sync spacer reconcile, a mode
    *  switch, a load). The next couple/restore rebuilds them from fresh anchors. */
   invalidate(): void {
     this.dirty = true;
   }
 
-  /** The editor scrolled — drive the formatted pane to match, unless this scroll is our own echo. */
+  /** The editor scrolled — if this is a genuine (non-echo) scroll it becomes active and drives the
+   *  formatted pane; its own echo is ignored deterministically. */
   onEditorScroll(): void {
-    this.onScroll("editor");
+    this.drive("editor");
   }
 
-  /** The formatted pane scrolled — drive the editor to match, unless this scroll is our own echo. */
+  /** The formatted pane scrolled — same as {@link onEditorScroll} for the other side. */
   onFormattedScroll(): void {
-    this.onScroll("formatted");
+    this.drive("formatted");
   }
 
   /**
-   * Drive the sibling to the source pane's viewport-top line. Used for a settled programmatic sync (the
-   * cross-pane edit mirror re-aligns the sibling that was just mirrored into) — same path as a user
-   * scroll, minus the echo check (the caller knows it just changed the source). The mirror just changed a
-   * pane's content, so the maps are rebuilt from the fresh geometry before coupling (matching the old
-   * path, which scrolled through the pane's freshly-invalidated geometry cache).
+   * A pane's scroll has SETTLED (the debounced final position after rAF-coalesced frames trailed a
+   * momentum/trackpad scroll). Re-run the exact same couple as a live scroll frame from the pane's final
+   * scrollTop, so both directions catch up identically to where the scroll actually stopped — an echo
+   * (the passive pane settling on our write) is suppressed, so neither pane makes a return write to the
+   * active one and there is no oscillation around {@link ECHO_EPSILON}. Symmetric: index.ts wires it for
+   * BOTH panes through this one path (the editor had it before; the formatted pane now does too).
+   */
+  settle(pane: Pane): void {
+    this.drive(pane);
+  }
+
+  /**
+   * A pane gained focus — it becomes active immediately and the passive pane is best-effort synced from
+   * its first visible semantic line. Since the maps are exact inverses, coupling the newly-passive pane
+   * lands it right back where it already sits when the panes were already tracking (no jump on a focus
+   * change); it only corrects genuine residual drift. Bows out of the couple when the maps are empty (a
+   * diverged split), still re-seating active so the next reconcile/mode-switch leads from the focused pane.
+   */
+  onFocus(pane: Pane): void {
+    this.active = pane;
+    this.couple(pane);
+  }
+
+  /**
+   * Drive the passive pane from `source`'s viewport-top line and MAKE `source` active — the settled
+   * programmatic sync after a cross-pane edit mirror re-aligns the sibling that was just mirrored into.
+   * Same path as a user scroll, minus the echo check (the caller knows it just changed the source). The
+   * mirror just changed a pane's content, so the maps are rebuilt from the fresh geometry before coupling.
    */
   syncFrom(source: Pane): void {
+    this.active = source;
     this.invalidate();
     this.couple(source);
   }
 
   /**
-   * Reveal the synced line in the PASSIVE pane after a deliberate caret move in `active` (a click/arrow),
+   * Re-couple after a height-sync reconcile: the spacer set changed the editor's line tops (so the maps
+   * are stale) and may have nudged its scrollTop as viewport-preserving compensation (so that programmatic
+   * move must be claimed as our write, not read as a user scroll). Then re-align the passive pane from the
+   * ACTIVE one — whichever pane the author last led with — writing only the passive.
+   */
+  reconciled(): void {
+    this.invalidate();
+    this.absorb("editor");
+    this.couple(this.active);
+  }
+
+  /**
+   * Reveal the synced line in the PASSIVE pane after a deliberate caret move in `caretPane` (a click/arrow),
    * scrolling it the minimum amount if accumulated drift pushed the line out of view. Skipped while a
    * scroll just coupled the panes — the one explicit timing fallback (see the class comment). The pane's
    * own reveal is precise (row/line level) and synchronous, so its resulting scroll is recorded as our
-   * write and suppressed as an echo.
+   * write and suppressed as an echo. Does not re-seat active: a deliberate caret move already focused the
+   * pane (a click) or happened inside the already-active one (an arrow), so active is set via {@link onFocus}.
    */
-  reveal(line: number, active: Pane): void {
+  reveal(line: number, caretPane: Pane): void {
     if (this.now() - this.lastCoupledAt < REVEAL_GUARD_MS) {
       return;
     }
-    const passive = this.other(active);
+    const passive = this.other(caretPane);
     const before = this.scrollTopOf(passive);
     if (passive === "editor") {
       this.editor.reveal(line);
@@ -141,6 +208,20 @@ export class SplitSync {
     if (Math.abs(after - before) > ECHO_EPSILON) {
       this.lastWritten[passive] = after;
     }
+  }
+
+  /**
+   * The fractional reading line to carry across a mode switch, read from the pane that owns the reading
+   * position: in Split (both panes visible) the ACTIVE pane, else the sole visible pane — so exiting Split
+   * keeps the reading coordinate of the pane the author was actually reading, not unconditionally the
+   * source editor's. Re-seats active on that pane so the mode just entered leads from there. Called with
+   * the PREVIOUS mode's pane visibilities (before the DOM changes) so it reads live geometry.
+   */
+  readingLine(visibleEditor: boolean, visibleFormatted: boolean): number {
+    const from: Pane =
+      visibleEditor && visibleFormatted ? this.active : visibleEditor ? "editor" : "formatted";
+    this.active = from;
+    return from === "editor" ? this.editor.topLine() : this.formatted.topLine();
   }
 
   /**
@@ -161,17 +242,19 @@ export class SplitSync {
 
   /**
    * Reset both panes to the document top (a fresh load) and claim the result as our write, so the
-   * programmatic reset never drives a cross-pane sync.
+   * programmatic reset never drives a cross-pane sync. Re-seats active on the source editor — the first
+   * pane a freshly loaded document presents.
    */
   reset(): void {
+    this.active = "editor";
     this.write("editor", 0);
     this.write("formatted", 0);
   }
 
   /**
    * Claim a pane's CURRENT scrollTop as our own write, so its next scroll event is suppressed as an echo.
-   * Used after height-sync nudges the editor's scrollTop (its spacer-weight compensation) — that
-   * programmatic move must not be read as a user scroll and drive the formatted pane.
+   * Used (via {@link reconciled}) after height-sync nudges the editor's scrollTop (its spacer-weight
+   * compensation) — that programmatic move must not be read as a user scroll and drive the formatted pane.
    */
   absorb(pane: Pane): void {
     this.lastWritten[pane] = this.scrollTopOf(pane);
@@ -183,23 +266,31 @@ export class SplitSync {
     return Number.isFinite(written) && Math.abs(this.scrollTopOf(pane) - written) <= ECHO_EPSILON;
   }
 
-  private onScroll(source: Pane): void {
-    if (this.isEcho(source)) {
+  /** A genuine (non-echo) scroll of `pane`: it becomes active and drives the passive once. An echo is
+   *  ignored, so it neither re-declares active nor drives back — the shared path for a live scroll frame
+   *  and a settle. */
+  private drive(pane: Pane): void {
+    if (this.isEcho(pane)) {
       return;
     }
-    this.couple(source);
+    this.active = pane;
+    this.couple(pane);
   }
 
+  /** Couple the PASSIVE pane to `source`'s viewport-top line, reading and writing through the two panes'
+   *  maps so the round-trip of one geometry is the identity (see the class comment). Bows out when either
+   *  map is empty (a diverged/empty split), leaving both panes where they are. */
   private couple(source: Pane): void {
     this.ensureMaps();
     const target = this.other(source);
-    const targetMap = target === "editor" ? this.editorMap : this.formattedMap;
+    const sourceMap = this.mapOf(source);
+    const targetMap = this.mapOf(target);
     // A diverged/empty split yields no anchors — leave both panes where they are rather than snapping the
     // target to 0 (matches the pane methods' own zero-block fallbacks).
-    if (targetMap.isEmpty) {
+    if (sourceMap.isEmpty || targetMap.isEmpty) {
       return;
     }
-    const line = source === "editor" ? this.editor.topLine() : this.formatted.topLine();
+    const line = sourceMap.lineForPx(this.scrollTopOf(source));
     this.write(target, targetMap.pxForLine(line));
     this.lastCoupledAt = this.now();
   }
@@ -223,8 +314,13 @@ export class SplitSync {
       this.formatted.setScrollTop(px);
     }
     // Record the READ-BACK value (not `px`): if the browser clamped or rounded the write, the echo event
-    // will read the same clamped value, so the comparison stays exact.
+    // will read the same clamped value, so the comparison stays exact — a target at the document boundary
+    // clamps to one stable best-effort position and its echo is still suppressed (no ping-pong).
     this.lastWritten[pane] = this.scrollTopOf(pane);
+  }
+
+  private mapOf(pane: Pane): ScrollMap {
+    return pane === "editor" ? this.editorMap : this.formattedMap;
   }
 
   private scrollTopOf(pane: Pane): number {

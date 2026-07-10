@@ -102,9 +102,9 @@ function setupDom(panesMarkup = ""): void {
 // previously inert, but the Split-echo mocks below simulate a coordinator-written scroll by calling
 // straight back into the shared editorCallbacks/formattedCallbacks (which by then point at the
 // CURRENT test's callbacks) — so a stale listener firing on a later test's
-// window.dispatchEvent(resize) invokes the CURRENT test's real onScroll handler carrying the PRIOR
-// test's stale leadingPane, corrupting it. Strip the previous mountApp()'s listeners before wiring a
-// fresh one.
+// window.dispatchEvent(resize) would invoke the CURRENT test's real onScroll handler through a prior
+// module's coordinator mock, cross-firing the two tests' state. Strip the previous mountApp()'s
+// listeners before wiring a fresh one.
 let wiredWindowListeners: Array<[string, EventListenerOrEventListenerObject]> = [];
 
 /** Boot the real index.ts wiring against a mocked host bridge. The ipc.ts singleton reads
@@ -338,6 +338,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     onChange: (text: string) => void;
     onEditAttempt: () => void;
     onScroll: () => void;
+    onScrollSettle: () => void;
     onCursor: (line: number | null, navigated: boolean) => void;
     onHover: (line: number | null) => void;
     onContentResize: () => void;
@@ -480,10 +481,23 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     }
   }
 
+  // A stand-in for the real coordinator that only RECORDS the calls index.ts makes (the "which pane leads"
+  // policy now lives inside the real SplitSync and is unit-tested in sync-coordinator.test.ts; here we
+  // verify index.ts delegates to the coordinator at the right moments). It still emits an echo — a
+  // coordinator write fires the passive pane's scroll event, which index.ts routes back to onScroll — so
+  // the re-entrancy of that wiring stays covered (index.ts must not loop or re-fire on the coordinator's
+  // own echo).
   class MockSplitSync {
     readonly syncFromCalls: Pane[] = [];
     readonly scrollCalls: Pane[] = [];
-    private lastWrittenPane: Pane | null = null;
+    readonly settleCalls: Pane[] = [];
+    readonly focusCalls: Pane[] = [];
+    reconciledCount = 0;
+    private active: Pane = "editor";
+    // Panes we have "written" whose echo scroll event hasn't fired yet — a faithful one-shot model of the
+    // real coordinator's value-based echo suppression: a coordinator write makes the passive pane's NEXT
+    // scroll event its echo (consumed here), while a later genuine scroll of that pane is not.
+    private readonly pendingEcho = new Set<Pane>();
 
     constructor() {
       splitSyncInstances.push(this);
@@ -509,31 +523,65 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
       return;
     }
 
+    readingLine(): number {
+      return 0;
+    }
+
+    activePane(): Pane {
+      return this.active;
+    }
+
     syncFrom(pane: Pane): void {
       this.syncFromCalls.push(pane);
-      this.emitEcho(pane === "editor" ? "formatted" : "editor");
+      this.active = pane;
+      this.emitEcho(this.other(pane));
+    }
+
+    reconciled(): void {
+      this.reconciledCount += 1;
+      // Re-aligns the passive pane from the active one — its write is the passive pane's echo.
+      this.emitEcho(this.other(this.active));
+    }
+
+    settle(pane: Pane): void {
+      this.settleCalls.push(pane);
+      this.drive(pane);
+    }
+
+    onFocus(pane: Pane): void {
+      this.focusCalls.push(pane);
+      this.active = pane;
+      this.emitEcho(this.other(pane));
     }
 
     onEditorScroll(): void {
       this.scrollCalls.push("editor");
-      if (!this.isEcho("editor")) {
-        this.emitEcho("formatted");
-      }
+      this.drive("editor");
     }
 
     onFormattedScroll(): void {
       this.scrollCalls.push("formatted");
-      if (!this.isEcho("formatted")) {
-        this.emitEcho("editor");
-      }
+      this.drive("formatted");
     }
 
     isEcho(pane: Pane): boolean {
-      return this.lastWrittenPane === pane;
+      return this.pendingEcho.has(pane);
+    }
+
+    private drive(pane: Pane): void {
+      if (this.pendingEcho.delete(pane)) {
+        return; // this pane's own echo — consumed, no drive-back
+      }
+      this.active = pane;
+      this.emitEcho(this.other(pane));
+    }
+
+    private other(pane: Pane): Pane {
+      return pane === "editor" ? "formatted" : "editor";
     }
 
     private emitEcho(pane: Pane): void {
-      this.lastWrittenPane = pane;
+      this.pendingEcho.add(pane);
       if (pane === "editor") {
         editorCallbacks?.onScroll();
       } else {
@@ -592,71 +640,73 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     document.body.innerHTML = "";
   });
 
-  it("uses the last manually scrolled pane as the resize re-align source", async () => {
+  it("delegates the resize re-align to the coordinator (reconciled), not a pane choice of its own", async () => {
     await mountApp();
     expect(editorCallbacks).toBeDefined();
     expect(splitSyncInstances).toHaveLength(1);
 
+    // A user editor scroll (declares the editor active in the coordinator), then a window resize reflows
+    // the panes: index.ts runs height-sync and hands the re-align to the coordinator's reconciled(), which
+    // couples the passive pane from whichever pane is active — index.ts no longer picks the pane itself.
     editorCallbacks?.onScroll();
     window.dispatchEvent(new Event("resize"));
     await flushFrame();
 
-    // Two "formatted" scroll events: the user's editor scroll couples formatted once, and the
-    // resize reflow's syncFrom("editor") couples it again — both are the coordinator's own echoes
-    // (isEcho("formatted") is true both times), so neither reassigns leadingPane.
+    // "editor" (user scroll) → "formatted" (its coupling echo) → "formatted" (reconciled()'s re-align echo).
     expect(splitSyncInstances[0]?.scrollCalls).toEqual(["editor", "formatted", "formatted"]);
-    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
-  });
-
-  it("re-snaps the formatted pane through the coordinator when editor scrolling settles", async () => {
-    await mountApp();
-    expect(editorCallbacks).toBeDefined();
-    expect(splitSyncInstances).toHaveLength(1);
-
-    editorCallbacks?.onScrollSettle();
-
-    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor"]);
-  });
-
-  it("does not re-couple from an editor echo when its scroll callback settles", async () => {
-    await mountApp();
-    expect(editorCallbacks).toBeDefined();
-    expect(formattedCallbacks).toBeDefined();
-    expect(splitSyncInstances).toHaveLength(1);
-
-    formattedCallbacks?.onScroll();
-    editorCallbacks?.onScrollSettle();
-
-    expect(splitSyncInstances[0]?.scrollCalls).toEqual(["formatted", "editor"]);
+    expect(splitSyncInstances[0]?.reconciledCount).toBe(1);
+    // index.ts no longer chooses a re-align source; that is the coordinator's active-pane state now.
     expect(splitSyncInstances[0]?.syncFromCalls).toEqual([]);
   });
 
-  it("keeps the same leading pane through repeated reflow echoes with no user scroll between them", async () => {
-    await mountApp();
-    expect(editorCallbacks).toBeDefined();
-    expect(splitSyncInstances).toHaveLength(1);
-
-    editorCallbacks?.onScroll();
-    window.dispatchEvent(new Event("resize"));
-    await flushFrame();
-    window.dispatchEvent(new Event("resize"));
-    await flushFrame();
-
-    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["editor", "editor"]);
-  });
-
-  it("lets focused pane override the last scrolled pane for resize re-align", async () => {
+  it("delegates a settling scroll to the coordinator symmetrically for both panes", async () => {
     await mountApp();
     expect(editorCallbacks).toBeDefined();
     expect(formattedCallbacks).toBeDefined();
     expect(splitSyncInstances).toHaveLength(1);
 
-    editorCallbacks?.onScroll();
-    formattedCallbacks?.onFocus();
-    window.dispatchEvent(new Event("resize"));
-    await flushFrame();
+    // Both panes now re-snap through the SAME coordinator settle path (the editor had it before; the
+    // formatted pane now does too) — index.ts just forwards which pane settled and lets the coordinator
+    // suppress an echo settle.
+    editorCallbacks?.onScrollSettle();
+    formattedCallbacks?.onScrollSettle();
 
-    expect(splitSyncInstances[0]?.syncFromCalls).toEqual(["formatted"]);
+    expect(splitSyncInstances[0]?.settleCalls).toEqual(["editor", "formatted"]);
+  });
+
+  it("declares a scrolled pane active through the coordinator, not a local leadingPane", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(formattedCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    // index.ts forwards every genuine scroll to the coordinator, which owns the active/echo decision. The
+    // coordinator's own echo (the passive pane's scroll event) is routed straight back here as an onScroll
+    // too, proving index.ts doesn't loop or special-case it — that is all the coordinator's job now.
+    editorCallbacks?.onScroll();
+    formattedCallbacks?.onScroll();
+
+    expect(splitSyncInstances[0]?.scrollCalls).toEqual([
+      "editor",
+      "formatted", // the editor scroll's coupling echo, forwarded back
+      "formatted",
+      "editor", // the formatted scroll's coupling echo, forwarded back
+    ]);
+  });
+
+  it("declares a focused pane active through the coordinator", async () => {
+    await mountApp();
+    expect(editorCallbacks).toBeDefined();
+    expect(formattedCallbacks).toBeDefined();
+    expect(splitSyncInstances).toHaveLength(1);
+
+    // Focus now goes to the coordinator (onFocus), which declares the pane active and best-effort couples
+    // the sibling — index.ts no longer tracks a leadingPane of its own.
+    editorCallbacks?.onFocus();
+    formattedCallbacks?.onFocus();
+
+    expect(splitSyncInstances[0]?.focusCalls).toEqual(["editor", "formatted"]);
+    expect(splitSyncInstances[0]?.activePane()).toBe("formatted");
   });
 });
 

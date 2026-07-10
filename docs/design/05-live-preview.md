@@ -155,22 +155,62 @@ them is the source line range (the `lineMap`):
 
 Switching modes must preserve the active comments/diff overlay and the caret/scroll position.
 
-## Scroll-sync algorithm (sketch)
+## Scroll-sync algorithm (the live Split coordinator)
 
-1. webview reports `scroll.sync {side, sourceLine}` (throttled) as either pane scrolls.
-2. For source→preview: native (or a small webview index) finds the rendered node whose
-   `[LineStart, LineEnd]` contains `sourceLine`, computes a fractional offset within the
-   block, and the webview scrolls the preview so that node aligns at the same fraction.
-3. Preview→source is the inverse, using the same `lineMap`.
-4. A "scroll lock" flag prevents feedback loops (a programmatic scroll must not re-trigger a
-   sync the other way).
+In the live Split editor scroll-sync is owned end to end by one coordinator, `SplitSync`
+(`webview/src/sync/sync-coordinator.ts`) — the **single writer** of each pane's `scrollTop` and the
+single owner of **which pane is active**. It replaces the older per-frame line-based sync + a "scroll
+lock" feedback flag; there is no lock and no timing window in the hot path.
 
-In the live Split editor the anchor granularity is the rendered **leaf unit**, not the top-level
-block: each table row, each list item (nested items included), and each heading/paragraph/quote/code
-block is anchored on its own source line (`webview/src/editors/sync-anchors.ts`), so a tall table or a
-long list aligns row-by-row / item-by-item instead of interpolating one container rectangle. The
-table's delimiter row, reference definitions, and blank lines render no node, so they carry no anchor
-and are interpolated monotonically between their neighbours.
+**Active / passive as an explicit state machine.** The **active** pane is the one the author last
+genuinely scrolled, focused, or edited; the **passive** pane is the other. Every reactive coupling
+write targets **only the passive pane** — coupling never drives the active pane back, so the pane the
+author is reading never jumps under them. (The two non-reactive exceptions are the fresh-load reset
+and the mode-switch restore, which set a baseline on named panes rather than couple; and height-sync's
+own spacer compensation, which may nudge the source editor's `scrollTop` but only as a
+viewport-preserving move that keeps the content at the viewport top exactly where it is — no visible
+motion of active content.)
+
+**Echo suppression, by construction (no lock).** Every write the coordinator makes records the
+resulting `scrollTop`; a scroll event whose value still equals that recorded value is the pane settling
+where the coordinator put it — its own echo — so it never drives the sibling back and never re-declares
+active. This is a deterministic value check, so there is no timing window to tune and the two panes
+cannot ping-pong. A genuine user scroll moves `scrollTop` off the recorded value, becomes the new
+active, and drives the passive once. A momentum/trackpad scroll's final resting position is caught by a
+debounced **settle** wired symmetrically for both panes through the same coupling path.
+
+**One reversible map, read AND written through.** The couple goes through a per-pane piecewise-linear
+line↔px map (`webview/src/sync/scroll-map.ts`), both built from the **same** semantic sync anchors
+height-sync measures. Crucially both the read and the write go through those maps: the active pane's
+viewport-top line is read as `activeMap.lineForPx(active.scrollTop)` and written as
+`passiveMap.pxForLine(line)`. Because a pane's own `lineForPx`/`pxForLine` are exact inverses of one
+map, and both panes' maps share one line axis, the round-trip of one unchanging geometry is the
+**identity** — so intercepting the active pane (the author grabs the pane that was following) couples
+the sibling straight back to where it already is, with **no jump when the leading pane changes**.
+Reading through the map (rather than each pane's own viewport-top height read) is what makes that
+inverse exact: the two were not mutually inverse before, so intercepting active reinterpreted the same
+vertical point and the viewports drifted.
+
+The anchor granularity is the rendered **leaf unit**, not the top-level block: each table row, each
+list item (nested items included), and each heading/paragraph/quote/code block is anchored on its own
+source line (`webview/src/editors/sync-anchors.ts`), so a tall table or a long list aligns row-by-row /
+item-by-item instead of interpolating one container rectangle. The table's delimiter row, reference
+definitions, and blank lines render no node, so they carry no anchor and are interpolated monotonically
+between their neighbours.
+
+**Document boundaries.** Exact top alignment is performed while the target pane still has scroll range;
+where the mapped target is past the pane's start/end the write clamps to one stable best-effort position
+(and, since the coordinator records the clamped read-back, that clamp is still recognised as an echo) —
+no ping-pong and no attempt to move the active pane.
+
+**Mode switch.** Switching Code ↔ Split ↔ Formatted carries the **fractional** reading coordinate of the
+pane that owns it — in Split the active pane, otherwise the sole visible pane — so the reading position
+is preserved instead of snapping to a whole line or unconditionally following the source editor. A
+`caret reveal` into the passive pane is kept minimal (the least scroll that brings the synced line into
+view) and stands down briefly right after a scroll couples the panes, so it never fights the couple.
+
+For the read-only (non-editable) preview path the same `lineMap`-based source↔preview correspondence
+applies; the coordinator above is specific to the two editable Split panes.
 
 ## Rendering details
 
