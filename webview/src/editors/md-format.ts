@@ -20,6 +20,7 @@
 
 import { markdownLanguage } from "@codemirror/lang-markdown";
 import { assertNever } from "../util/assert.js";
+import { trace } from "../util/trace.js";
 import { type FormatCommand, type FormatKind, formatDef } from "./format-registry.js";
 
 export type { FormatCommand } from "./format-registry.js";
@@ -95,9 +96,11 @@ function toggleInline(
     const node = enclosingWrap(doc, from, to, nodeName);
     const unwrapped = node !== null ? unwrapNode(doc, from, to, node) : null;
     if (unwrapped !== null) {
+      trace("format", "format.inline", { kind: nodeName, decision: "unwrap-node", from, to });
       return unwrapped;
     }
   }
+  trace("format", "format.inline", { kind: nodeName, decision: "wrap", from, to });
   return wrapSelection(doc, from, to, marker);
 }
 
@@ -239,6 +242,7 @@ function blockEdit(blockStart: number, blockEnd: number, insert: string): Format
 function toggleFence(doc: string, from: number, to: number): FormatEdit {
   const unwrapped = unwrapFence(doc, from, to);
   if (unwrapped !== null) {
+    trace("format", "format.fence", { decision: "unwrap" });
     return unwrapped;
   }
   const [blockStart, blockEnd] = blockLineRange(doc, from, to);
@@ -246,6 +250,7 @@ function toggleFence(doc: string, from: number, to: number): FormatEdit {
     .slice(blockStart, blockEnd)
     .split("\n")
     .map((line) => line.replace(HEADING_RE, ""));
+  trace("format", "format.fence", { decision: "wrap" });
   return blockEdit(blockStart, blockEnd, wrapFence(lines));
 }
 
@@ -277,9 +282,16 @@ function toggleBlockPrefix(
       .map((line) => line.trim())
       .filter((line) => line.length > 0)
       .join(" ");
+    trace("format", "format.blockPrefix", { kind: kind.type, joinedHeading: true, lineCount: 1 });
     return blockEdit(blockStart, blockEnd, toggleLinePrefix([joined], kind));
   }
-  return blockEdit(blockStart, blockEnd, toggleLinePrefix(raw.split("\n"), kind));
+  const blockLines = raw.split("\n");
+  trace("format", "format.blockPrefix", {
+    kind: kind.type,
+    joinedHeading: false,
+    lineCount: blockLines.length,
+  });
+  return blockEdit(blockStart, blockEnd, toggleLinePrefix(blockLines, kind));
 }
 
 /** Whether [start, end) sits entirely inside a single (necessarily multi-line, since a one-line span
@@ -355,6 +367,17 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
     case "list": {
       if (kind.ordered) {
         const numbered = has(ORDERED_RE);
+        let orderedDecision: "add" | "remove" | "convert";
+        if (numbered) {
+          orderedDecision = "remove";
+        } else {
+          orderedDecision = has(BULLET_RE) ? "convert" : "add";
+        }
+        trace("format", "format.linePrefix", {
+          kind: "list",
+          decision: orderedDecision,
+          lineCount: nonBlank.length,
+        });
         let n = 0;
         return lines
           .map((line) => {
@@ -367,6 +390,17 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
           .join("\n");
       }
       const allBulleted = has(BULLET_RE);
+      let bulletDecision: "add" | "remove" | "convert";
+      if (allBulleted) {
+        bulletDecision = "remove";
+      } else {
+        bulletDecision = has(ORDERED_RE) ? "convert" : "add";
+      }
+      trace("format", "format.linePrefix", {
+        kind: "list",
+        decision: bulletDecision,
+        lineCount: nonBlank.length,
+      });
       return lines
         .map((line) => {
           if (line.trim() === "") {

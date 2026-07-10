@@ -7,8 +7,13 @@
  * only ships intents and dispatches results.
  */
 
+import { trace } from "../util/trace.js";
 import { isNumber, isRecord, isString } from "./decoders.js";
 import { Kinds } from "./protocol.js";
+
+// The diagnostics channels are excluded from `ipc.send` tracing so they don't trace themselves: `log`
+// frames (the trace's own error-forward path ships these) and the future `trace.dump` frame (B3).
+const TRACE_DUMP_KIND = "trace.dump";
 
 export interface IpcMessage {
   kind: string;
@@ -102,6 +107,13 @@ export class IpcClient {
     if (message === null) {
       return;
     }
+    // Byte count only — never the payload (an `editor.changed` frame carries the whole document).
+    trace("ipc", "ipc.recv", {
+      kind: message.kind,
+      id: message.id,
+      version: message.version,
+      bytes: raw.length,
+    });
     if (message.id !== undefined) {
       // id-bearing frames are correlated replies, routed to whoever is waiting on that id (or
       // dropped if unawaited). `pending` entries are NOT removed here: request() below is a
@@ -128,6 +140,9 @@ export class IpcClient {
     if (opts?.version !== undefined) {
       message.version = opts.version;
     }
+    if (kind !== Kinds.log && kind !== TRACE_DUMP_KIND) {
+      trace("ipc", "ipc.send", { kind, version: message.version });
+    }
     this.external.sendMessage(JSON.stringify(message));
     return true;
   }
@@ -145,6 +160,9 @@ export class IpcClient {
     }
     const id = nextId();
     const message: IpcMessage = { kind, id, payload };
+    if (kind !== Kinds.log && kind !== TRACE_DUMP_KIND) {
+      trace("ipc", "ipc.send", { kind, id });
+    }
     return new Promise<IpcMessage>((resolve, reject) => {
       const timer =
         timeoutMs > 0

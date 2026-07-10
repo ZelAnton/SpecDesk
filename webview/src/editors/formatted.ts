@@ -28,6 +28,7 @@ import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
 import { log } from "../util/log.js";
 import { rafThrottle } from "../util/raf.js";
+import { trace } from "../util/trace.js";
 import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
 import { FORMAT_REGISTRY } from "./format-registry.js";
@@ -369,6 +370,21 @@ export class FormattedEditor {
         // Use the post-filter doc: a transaction blocked while read-only leaves the doc unchanged.
         const changed = !next.doc.eq(this.view.state.doc);
         const selectionMoved = tr.selectionSet || changed;
+        if (changed || tr.selectionSet) {
+          const dispatch = {
+            changed,
+            selectionSet: tr.selectionSet,
+            mirroring: this.mirroring,
+            steps: tr.steps.length,
+          };
+          // A doc change is always recorded; a selection-only move (no doc change) is frequent and
+          // low-signal, so it is verbose-gated to keep the ring from filling with caret moves.
+          if (changed) {
+            trace("render", "render.dispatch", dispatch);
+          } else {
+            trace.v("render", "render.dispatch", dispatch);
+          }
+        }
         this.view.updateState(next);
         if (changed) {
           // A document edit (in-pane typing, a format command, or a mirror splice) relaid the blocks
@@ -490,6 +506,7 @@ export class FormattedEditor {
 
   /** Replace the document from Markdown (on load and on switching into formatted mode). */
   setText(md: string): void {
+    trace("render", "render.setText", { len: md.length });
     this.original = md;
     this.blocks = splitTopLevelBlocks(md);
     const parsed = parser.parse(md);
@@ -537,6 +554,9 @@ export class FormattedEditor {
     // blocks (the same invariant serializeWithSplice guards). A reference definition anywhere means an
     // isolated slice parse could misresolve a link — rebuild in context instead.
     if (doc.childCount !== oldBlocks.length || REFERENCE_DEFINITION_RE.test(text)) {
+      trace("mirror", "mirror.formatted", {
+        mode: doc.childCount !== oldBlocks.length ? "setText-count" : "setText-refdef",
+      });
       this.setText(text);
       return;
     }
@@ -559,6 +579,7 @@ export class FormattedEditor {
       // node↔block 1:1 invariant would break — rebuild wholesale instead. (Also catches an empty-source
       // middle, which a top-level parse can't turn into the paragraph the splitter still counts.)
       if (parsedMiddle === null || parsedMiddle.childCount !== middleCount) {
+        trace("mirror", "mirror.formatted", { mode: "setText-divergence" });
         this.setText(text);
         return;
       }
@@ -568,6 +589,7 @@ export class FormattedEditor {
     }
     const from = startOfChild(doc, prefix);
     const to = startOfChild(doc, oldEnd);
+    trace("mirror", "mirror.formatted", { mode: "splice" });
     if (from === to && middleNodes.length === 0) {
       // No structural change reached the document (the diff was inside a block already kept verbatim,
       // or nothing changed at all) — still re-base below so the splice baseline tracks `text`.
@@ -611,6 +633,11 @@ export class FormattedEditor {
     const map = BlockMap.build(this.view.state.doc, this.blocks);
     if (map.divergence !== null) {
       if (!this.divergenceLogged) {
+        // BlockDivergence is structural ({blockCount, nodeCount}) — no text to clip.
+        trace("render", "render.divergence", {
+          blockCount: map.divergence.blockCount,
+          nodeCount: map.divergence.nodeCount,
+        });
         log.warn(
           "formatted block-map: markdown-it/ProseMirror split diverged — falling back to no-op",
           map.divergence,
@@ -899,7 +926,10 @@ export class FormattedEditor {
       this.onEditAttempt();
       return;
     }
-    commandFor(command)(this.view.state, this.view.dispatch.bind(this.view));
+    // `applied` is the ProseMirror command's own verdict — false when it declined (e.g. the toolbar was
+    // clicked but the selection doesn't permit the toggle), which is otherwise invisible.
+    const applied = commandFor(command)(this.view.state, this.view.dispatch.bind(this.view));
+    trace("format", "format.formatted", { command, applied });
     this.view.focus();
   }
 

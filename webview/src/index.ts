@@ -316,7 +316,8 @@ function wire(): void {
     // write. Reconciling can nudge the editor's scrollTop (spacer-weight compensation); the coordinator
     // absorbs that (so it is not read as a user scroll) and re-aligns the passive pane from whichever pane
     // is active — the coordinator owns that "which pane leads" decision (formerly a `leadingPane` here).
-    const reconcileScheduler = new ReconcileScheduler(() => {
+    const reconcileScheduler = new ReconcileScheduler((generation) => {
+      trace("reconcile", "reconcile.run", { generation, split: isSplit(mode) });
       if (isSplit(mode)) {
         splitSync.reconciled(heightSync.reconcile());
       }
@@ -335,7 +336,15 @@ function wire(): void {
       // and re-applies nothing once cleared).
       review.clear();
       sendDoc(text);
-      if (shouldMirrorInto(text, formatted)) {
+      const mirrored = shouldMirrorInto(text, formatted);
+      trace("mirror", "mirror.change", {
+        source: "editor",
+        len: text.length,
+        mirrored,
+        destPending: formatted.hasPendingChange(),
+        docVersion,
+      });
+      if (mirrored) {
         formatted.mirror(text);
         // Re-align the just-mirrored pane to the editor's top line through the coordinator (which records
         // the write, so the re-align can't echo back), so the mirrored content doesn't jump.
@@ -348,7 +357,15 @@ function wire(): void {
     const onFormattedChange = (text: string): void => {
       review.clear();
       sendDoc(text);
-      if (shouldMirrorInto(text, editor)) {
+      const mirrored = shouldMirrorInto(text, editor);
+      trace("mirror", "mirror.change", {
+        source: "formatted",
+        len: text.length,
+        mirrored,
+        destPending: editor.hasPendingChange(),
+        docVersion,
+      });
+      if (mirrored) {
         editor.mirror(text);
         if (isSplit(mode)) {
           splitSync.syncFrom("formatted");
@@ -390,7 +407,7 @@ function wire(): void {
       onGeometryChange: () => reconcileHeights(),
       // The editor refuses a stale scroll anchor (T-084) via onDebug — route it into the trace. This
       // fires only on the rare refusal path, so build the (thunked) summary unconditionally.
-      onDebug: (summary) => trace("height", "editor", { summary: summary() }),
+      onDebug: (summary) => trace("height", "height.editor", { summary: summary() }),
       onEditAttempt: offerDraft,
       onFocus: () => {
         // Focus declares the editor active and best-effort syncs the formatted pane from it (the
@@ -443,7 +460,7 @@ function wire(): void {
       if (perFrame && !trace.verbose) {
         return;
       }
-      trace("height", "hs", { summary: summary() });
+      trace("height", "height.hs", { summary: summary() });
     });
 
     // The single scroll coordinator, now that both panes exist. It owns each pane's scrollTop for Split

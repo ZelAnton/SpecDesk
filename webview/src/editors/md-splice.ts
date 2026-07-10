@@ -7,8 +7,23 @@
  */
 
 import type { Node as PmNode } from "prosemirror-model";
+import { log } from "../util/log.js";
+import { trace } from "../util/trace.js";
 import { type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import { parser, schema, serializer } from "./pm-markdown.js";
+
+// A document that persistently falls back to whole-document serialize would emit one warning per
+// debounced getText() (roughly one per keystroke). Dedup the live Serilog line to one per distinct
+// fallback signature — the trace ring still records every occurrence; only the log line is bounded.
+let lastFallbackSignature = "";
+
+function warnFallback(message: string, data: Record<string, unknown>): void {
+  const signature = `${data.reason}:${data.blocks}:${data.originalNodes}:${data.editedNodes}`;
+  if (signature !== lastFallbackSignature) {
+    lastFallbackSignature = signature;
+    log.warn(message, data);
+  }
+}
 
 /**
  * The two derivations of an `original` document the splice needs: its ProseMirror doc (for the node↔block
@@ -147,14 +162,41 @@ export function serializeWithSplice(original: string, edited: PmNode): string {
   // per-getText() double-parse of the same source is gone (see parseOriginal).
   const { doc: originalDoc, blocks } = parseOriginal(original);
   if (originalDoc === null) {
+    // The original source didn't parse to a ProseMirror doc — fall back to a whole-document serialize
+    // (which reflows). High-signal: also stream it to the log so it lands in the Serilog file live.
+    const fallback: Record<string, unknown> = {
+      reason: "null-parse",
+      blocks: blocks.length,
+      originalNodes: null,
+      editedNodes: edited.childCount,
+    };
+    trace("splice", "splice.fallback", fallback);
+    warnFallback(
+      "block-splice fell back to whole-document serialize (original did not parse)",
+      fallback,
+    );
     return withPreservedNonNodeContent(original, serializer.serialize(edited), blocks);
   }
   if (originalDoc.childCount !== blocks.length || edited.childCount !== originalDoc.childCount) {
+    // Blocks and parsed nodes don't line up 1:1 (or a top-level block was added/removed) — the splice
+    // can't align them, so fall back to a whole-document serialize (reflows). Stream to the log live.
+    const fallback: Record<string, unknown> = {
+      reason: "count-mismatch",
+      blocks: blocks.length,
+      originalNodes: originalDoc.childCount,
+      editedNodes: edited.childCount,
+    };
+    trace("splice", "splice.fallback", fallback);
+    warnFallback(
+      "block-splice fell back to whole-document serialize (block/node count mismatch)",
+      fallback,
+    );
     return withPreservedNonNodeContent(original, serializer.serialize(edited), blocks);
   }
 
   const lines = original.split("\n");
   const out: string[] = [];
+  let changedBlocks = 0;
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i];
     if (block === undefined) {
@@ -164,6 +206,7 @@ export function serializeWithSplice(original: string, edited: PmNode): string {
       // Untouched block → keep its exact source (including hard wraps and list markers).
       out.push(...lines.slice(block.lineStart, block.lineEnd + 1));
     } else {
+      changedBlocks++;
       // Changed block → re-attach any original head content verbatim (leading blank lines / reference
       // definitions before the first block's own node, see headLines), re-serialize just this block,
       // then re-attach its original tail verbatim (blank-line gap + any non-node source such as link
@@ -173,5 +216,6 @@ export function serializeWithSplice(original: string, edited: PmNode): string {
       out.push(...tailLines(lines, block));
     }
   }
+  trace("splice", "splice.ok", { blocks: blocks.length, changedBlocks });
   return out.join("\n");
 }

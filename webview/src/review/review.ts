@@ -8,6 +8,7 @@
  * inline prompt bars reach the host only through callbacks (dialogs.ts).
  */
 
+import { trace } from "../util/trace.js";
 import type { DiffBaseKind, DiffEntryPayload, DiffOverflowPayload } from "../wire/protocol.js";
 import { type DiffMark, expandDiffMarks } from "./diff-marks.js";
 
@@ -77,6 +78,7 @@ export class ReviewController {
    *  {@link requestCompareOnceSettled} — until every surface reports no pending, not-yet-reported edit,
    *  so the host is never asked to diff a head that's about to change out from under the reply. */
   toggle(): void {
+    trace("review", "review.toggle", { entering: !this.reviewing });
     if (this.reviewing) {
       this.clear();
       return;
@@ -110,6 +112,7 @@ export class ReviewController {
     if (!this.reviewing) {
       return;
     }
+    trace("review", "review.clear", {});
     this.reviewing = false;
     this.settleToken += 1; // invalidate any deferred compare chain still polling for this overlay
     this.deps.setPressed(false);
@@ -137,7 +140,15 @@ export class ReviewController {
    *  is exactly the pathological case the guard exists for, so this washes nothing and raises a distinct
    *  notice instead of the ordinary "no changes" one. */
   applyResult(version: number, entries: DiffEntryPayload[], overflow?: DiffOverflowPayload): void {
-    if (!this.reviewing || version !== this.deps.docVersion()) {
+    const docVersion = this.deps.docVersion();
+    trace("review", "review.result", {
+      version,
+      docVersion,
+      stale: version !== docVersion,
+      entries: entries.length,
+      overflow: !!overflow,
+    });
+    if (!this.reviewing || version !== docVersion) {
       return;
     }
     if (overflow) {

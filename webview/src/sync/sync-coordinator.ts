@@ -44,6 +44,7 @@
  * default clock is `performance.now()`, which is monotonic and unaffected by system time adjustments.
  */
 
+import { trace } from "../util/trace.js";
 import { type GeometrySnapshot, type ScrollAnchor, ScrollMap } from "./scroll-map.js";
 
 /** Which Split pane. `editor` is the CodeMirror source; `formatted` is the WYSIWYG reference. */
@@ -110,6 +111,9 @@ export class SplitSync {
   };
   // When a scroll last coupled the panes — the reveal-vs-couple guard reads it (see reveal()).
   private lastCoupledAt = Number.NEGATIVE_INFINITY;
+  // The last drive verdict recorded per pane, so the hot scroll path traces only the TRANSITIONS
+  // (echo↔drive) rather than one entry per frame — a steady run of echoes records nothing after the first.
+  private readonly lastDriveVerdict: Record<Pane, string> = { editor: "", formatted: "" };
   // Which pane leads: the one the author last genuinely scrolled, focused, or edited. The other is the
   // passive pane every coupling write targets. Defaults to the source editor (the first pane shown on a
   // fresh load); every subsequent user interaction re-seats it (see onScroll/onFocus/syncFrom/reset).
@@ -163,8 +167,10 @@ export class SplitSync {
    */
   settle(pane: Pane): void {
     if (pane !== this.active) {
+      trace("scroll", "scroll.settle", { pane, active: this.active, verdict: "stale" });
       return;
     }
+    trace("scroll", "scroll.settle", { pane, active: this.active, verdict: "run" });
     this.drive(pane);
   }
 
@@ -187,6 +193,7 @@ export class SplitSync {
    * mirror just changed a pane's content, so the maps are rebuilt from the fresh geometry before coupling.
    */
   syncFrom(source: Pane): void {
+    trace("scroll", "scroll.syncFrom", { source });
     this.active = source;
     this.invalidate();
     this.couple(source);
@@ -208,8 +215,13 @@ export class SplitSync {
    */
   reconciled(snapshot: GeometrySnapshot | null): void {
     if (snapshot === null) {
+      trace("reconcile", "reconcile.gated", {});
       return;
     }
+    trace("reconcile", "reconcile.adopted", {
+      anchors: snapshot.formatted.length,
+      changed: snapshot.changed,
+    });
     // Adopt the one snapshot as both maps — pure, no re-measure — and mark them current so the next scroll
     // frame reuses them without rebuilding (see ensureMaps).
     this.formattedMap = new ScrollMap(snapshot.formatted);
@@ -229,6 +241,7 @@ export class SplitSync {
    */
   reveal(line: number, caretPane: Pane): void {
     if (this.now() - this.lastCoupledAt < REVEAL_GUARD_MS) {
+      trace("scroll", "scroll.reveal", { line, caretPane, verdict: "guarded", moved: 0 });
       return;
     }
     const passive = this.other(caretPane);
@@ -242,6 +255,12 @@ export class SplitSync {
     if (Math.abs(after - before) > ECHO_EPSILON) {
       this.lastWritten[passive] = after;
     }
+    trace("scroll", "scroll.reveal", {
+      line,
+      caretPane,
+      verdict: "revealed",
+      moved: Math.round(after - before),
+    });
   }
 
   /**
@@ -264,6 +283,7 @@ export class SplitSync {
    * it works while the sibling is still hidden), recording the result as our write so no echo drives back.
    */
   restore(line: number, panes: readonly Pane[]): void {
+    trace("scroll", "scroll.restore", { line, panes: panes.length });
     for (const pane of panes) {
       if (pane === "editor") {
         this.editor.scrollToLine(line);
@@ -280,6 +300,7 @@ export class SplitSync {
    * pane a freshly loaded document presents.
    */
   reset(): void {
+    trace("scroll", "scroll.reset", {});
     this.active = "editor";
     this.write("editor", 0);
     this.write("formatted", 0);
@@ -304,7 +325,19 @@ export class SplitSync {
    *  ignored, so it neither re-declares active nor drives back — the shared path for a live scroll frame
    *  and a settle. */
   private drive(pane: Pane): void {
-    if (this.isEcho(pane)) {
+    const echo = this.isEcho(pane);
+    const verdict = echo ? "echo" : "drive";
+    // Edge-triggered: only a change in verdict is recorded, so a run of echo frames adds one entry, not one
+    // per frame. (A genuine scroll's per-frame coupling writes are the always-on `scroll.write` below.)
+    if (verdict !== this.lastDriveVerdict[pane]) {
+      this.lastDriveVerdict[pane] = verdict;
+      trace("scroll", "scroll.drive", {
+        pane,
+        scrollTop: Math.round(this.scrollTopOf(pane)),
+        verdict,
+      });
+    }
+    if (echo) {
       return;
     }
     this.active = pane;
@@ -331,13 +364,27 @@ export class SplitSync {
     // A diverged/empty split yields no anchors — leave both panes where they are rather than snapping the
     // target to 0 (matches the pane methods' own zero-block fallbacks).
     if (sourceMap.isEmpty || targetMap.isEmpty) {
+      trace.v("scroll", "scroll.skip", { source, verdict: "empty-map" });
       return;
     }
     const line = sourceMap.lineForPx(this.scrollTopOf(source));
     const targetPx = targetMap.pxForLine(line);
-    if (Math.abs(targetPx - this.scrollTopOf(target)) <= WRITE_EPSILON) {
+    const hadPx = this.scrollTopOf(target);
+    if (Math.abs(targetPx - hadPx) <= WRITE_EPSILON) {
+      trace.v("scroll", "scroll.skip", {
+        source,
+        verdict: "epsilon",
+        line,
+        targetPx: Math.round(targetPx),
+      });
       return;
     }
+    trace("scroll", "scroll.write", {
+      source,
+      line,
+      targetPx: Math.round(targetPx),
+      hadPx: Math.round(hadPx),
+    });
     this.write(target, targetPx);
     this.lastCoupledAt = this.now();
   }
@@ -347,6 +394,7 @@ export class SplitSync {
       return;
     }
     const anchors = this.formatted.blockAnchors();
+    trace("scroll", "scroll.rebuild", { anchors: anchors.length });
     this.formattedMap = new ScrollMap(anchors);
     const lines = anchors.map((anchor) => anchor.line);
     const tops = this.editor.topsForLines(lines);

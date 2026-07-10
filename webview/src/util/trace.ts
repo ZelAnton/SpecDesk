@@ -61,6 +61,11 @@ export interface SpecDeskTraceApi {
 /** The callable trace singleton plus its toggles and read/dump surface. */
 export interface TraceFn {
   (cat: TraceCategory, event: string, data?: Record<string, unknown>): void;
+  /** Verbose-gated record: a no-op unless {@link verbose} is on. The single idiom for genuinely
+   *  per-frame sites (e.g. scroll couple-skip evaluations) so they cannot flood the ring by default —
+   *  edge events use {@link trace}, per-frame events use `trace.v`. Pass only cheap-to-build `data`
+   *  (no layout reads); a per-frame site with expensive data must still guard-and-thunk manually. */
+  v(cat: TraceCategory, event: string, data?: Record<string, unknown>): void;
   /** Master switch (default true). When false, {@link trace} is a no-op after one boolean check. */
   enabled: boolean;
   /** Gate for the few genuinely per-frame events (scroll couple-skip evaluations); default false. */
@@ -153,12 +158,21 @@ function setVerbose(v: boolean): void {
   verbose = v;
 }
 
+/** Verbose-gated {@link record}: skips entirely unless `verbose` is on. Its own callers still pass a
+ *  fresh literal, so when verbose is off the only cost is the boolean check and the (cheap) data build. */
+function recordVerbose(cat: TraceCategory, event: string, data?: Record<string, unknown>): void {
+  if (verbose) {
+    record(cat, event, data);
+  }
+}
+
 export const trace: TraceFn = Object.assign(record, {
   // `enabled`/`verbose` are accessor-backed (below) so both `trace.verbose` reads and the module
   // `verbose` let stay one source of truth; the placeholders here satisfy the object shape.
   enabled: true,
   verbose: false,
   t0Epoch,
+  v: recordVerbose,
   snapshot,
   get: getLast,
   clear,

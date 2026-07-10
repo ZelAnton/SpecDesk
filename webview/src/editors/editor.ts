@@ -36,6 +36,7 @@ import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
+import { clip, trace } from "../util/trace.js";
 import { isRecord } from "../wire/decoders.js";
 import { FORMAT_REGISTRY, type FormatKind } from "./format-registry.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
@@ -707,6 +708,15 @@ export class MarkdownEditor {
     }
     const { from, to } = this.view.state.selection.main;
     const edit = formatMarkdown(this.view.state.doc.toString(), from, to, command);
+    trace("format", "format.source", {
+      command,
+      selFrom: from,
+      selTo: to,
+      editFrom: edit.from,
+      editTo: edit.to,
+      insertLen: edit.insert.length,
+      insert: clip(edit.insert),
+    });
     this.view.dispatch({
       changes: { from: edit.from, to: edit.to, insert: edit.insert },
       selection: { anchor: edit.selectionStart, head: edit.selectionEnd },
@@ -805,8 +815,14 @@ export class MarkdownEditor {
   mirror(text: string): void {
     const patch = computeTextPatch(this.getText(), text);
     if (patch === null) {
+      trace("mirror", "mirror.editor", { noop: true });
       return; // already identical — nothing to mirror
     }
+    trace("mirror", "mirror.editor", {
+      from: patch.from,
+      to: patch.to,
+      insertLen: patch.insert.length,
+    });
     this.suppressChange = true;
     this.view.dispatch({
       changes: { from: patch.from, to: patch.to, insert: patch.insert },
