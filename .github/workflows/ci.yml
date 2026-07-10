@@ -145,6 +145,12 @@ jobs:
         run: npm ci
         working-directory: e2e
 
+      # Playwright transpiles TS at run time WITHOUT type-checking, so a type error in the e2e sources
+      # would otherwise ship silently — gate their types explicitly (no browser needed for this).
+      - name: Typecheck e2e
+        run: npm run typecheck
+        working-directory: e2e
+
       # Cache Playwright's browser download across runs, keyed on the e2e lockfile (which pins the
       # Playwright version and thus the exact Chromium build).
       - name: Cache Playwright browsers
