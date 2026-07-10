@@ -20,6 +20,7 @@ import { ReconcileScheduler } from "./sync/reconcile-scheduler.js";
 import { type Pane, SplitSync } from "./sync/sync-coordinator.js";
 import { attachImageCapture } from "./util/image-capture.js";
 import { log } from "./util/log.js";
+import { installDiagnostics, trace } from "./util/trace.js";
 import {
   parseBranchNameSuggested,
   parseDiffResult,
@@ -57,6 +58,10 @@ export function shouldMirrorInto(text: string, destination: MirrorTarget): boole
 }
 
 function wire(): void {
+  // Expose the trace read API and capture global errors before anything else runs, so a failure
+  // during startup wiring is still recorded.
+  installDiagnostics();
+
   const editorEl = document.querySelector<HTMLElement>("#editor");
   const previewEl = document.querySelector<HTMLElement>("#preview");
   const formattedEl = document.querySelector<HTMLElement>("#formatted");
@@ -383,6 +388,9 @@ function wire(): void {
       },
       onHover: (line) => setHover(line),
       onGeometryChange: () => reconcileHeights(),
+      // The editor refuses a stale scroll anchor (T-084) via onDebug — route it into the trace. This
+      // fires only on the rare refusal path, so build the (thunked) summary unconditionally.
+      onDebug: (summary) => trace("height", "editor", { summary: summary() }),
       onEditAttempt: offerDraft,
       onFocus: () => {
         // Focus declares the editor active and best-effort syncs the formatted pane from it (the
@@ -429,7 +437,14 @@ function wire(): void {
 
     // The source editor is padded to match the formatted view's block heights (formatted is the fixed
     // reference). Assigned now that both panes exist; reconcileHeights() drives it.
-    heightSync = new HeightSync(editor, formatted);
+    heightSync = new HeightSync(editor, formatted, (summary, perFrame) => {
+      // Edge reasons (gate/refusal) always trace; the per-reconcile "settled" summary is verbose-only,
+      // and its thunk stays uninvoked otherwise so a reconcile never pays its layout-touching build.
+      if (perFrame && !trace.verbose) {
+        return;
+      }
+      trace("height", "hs", { summary: summary() });
+    });
 
     // The single scroll coordinator, now that both panes exist. It owns each pane's scrollTop for Split
     // coupling, reveal, and mode-switch restore — the editors expose the small line↔px surface it needs.

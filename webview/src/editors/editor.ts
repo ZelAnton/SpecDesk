@@ -497,8 +497,10 @@ export interface EditorCallbacks {
   onOpenLink: (url: string) => void;
   /** Diagnostics for the height-sync reconcile path (T-084) — mirrors {@link HeightSync}'s own optional
    *  `onDebug`. Fired when {@link naturalLineTops}/{@link setSpacers} refuse a stale anchor instead of
-   *  silently clamping it to the last line (see those methods). Optional: only wired where useful. */
-  onDebug?: (summary: string) => void;
+   *  silently clamping it to the last line (see those methods). `summary` is a **thunk** so the
+   *  interpolated message is built only if a sink consumes it; `perFrame` marks a per-reconcile
+   *  summary a sink may want to drop by default. Optional: only wired where useful. */
+  onDebug?: (summary: () => string, perFrame?: boolean) => void;
 }
 
 export class MarkdownEditor {
@@ -512,7 +514,7 @@ export class MarkdownEditor {
   private readonly onEditAttempt: () => void;
   private readonly onFocus: () => void;
   private readonly onOpenLink: (url: string) => void;
-  private readonly onDebug: ((summary: string) => void) | undefined;
+  private readonly onDebug: ((summary: () => string, perFrame?: boolean) => void) | undefined;
   private readonly wrap = new Compartment();
   private readonly editable = new Compartment();
   private version = 0;
@@ -1037,7 +1039,8 @@ export class MarkdownEditor {
     return lines.map((line) => {
       if (!this.isValidLine(line)) {
         this.onDebug?.(
-          `height-sync: refused stale anchor line ${line} (doc has ${this.view.state.doc.lines} lines)`,
+          () =>
+            `height-sync: refused stale anchor line ${line} (doc has ${this.view.state.doc.lines} lines)`,
         );
         return null;
       }
@@ -1109,7 +1112,8 @@ export class MarkdownEditor {
     for (const spacer of spacers) {
       if (!this.isValidLine(spacer.lineEnd)) {
         this.onDebug?.(
-          `height-sync: refused stale spacer at line ${spacer.lineEnd} (doc has ${this.view.state.doc.lines} lines)`,
+          () =>
+            `height-sync: refused stale spacer at line ${spacer.lineEnd} (doc has ${this.view.state.doc.lines} lines)`,
         );
         continue;
       }

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The webview now keeps an always-on in-page diagnostic trace of the editor's hot paths and captures
+  previously-unhandled `window.onerror` / unhandled promise rejections into the log, so a rendering,
+  formatting or scroll-sync misbehaviour leaves a record of *why* it happened. The trace is readable via
+  `window.__specdeskTrace` (for the E2E harness and interactive debugging) and never leaves the page except
+  on demand; unhandled errors are additionally forwarded to the log channel (rate-limited so a render-loop
+  error can't flood it).
 - Formatting shortcuts now work in both Code and Formatted panes, with shortcut hints shown on toolbar buttons.
 - A Split scroll-sync delivery gate (`webview/tests/split-delivery/`) now drives the actually-built
   `wwwroot/webview.js` — the same artifact the host serves — through the real Split wiring, so a regression

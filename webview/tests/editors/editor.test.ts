@@ -12,7 +12,7 @@ function viewOf(ed: MarkdownEditor): EditorView {
 // Runtime check of the Code-pane diff overlay (CodeMirror): the inline source word-diff decorations.
 
 function mount(
-  onDebug?: (summary: string) => void,
+  onDebug?: (summary: () => string, perFrame?: boolean) => void,
   onEditAttempt?: () => void,
 ): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
@@ -266,7 +266,7 @@ describe("MarkdownEditor stale-anchor refusal on the reconcile path (jsdom, T-08
   // line instead of surfacing the staleness.
   it("naturalLineTops returns null (not the clamped last line's top) for an out-of-range line", () => {
     const debug: string[] = [];
-    const { ed } = mount((summary) => debug.push(summary));
+    const { ed } = mount((summary) => debug.push(summary()));
     ed.setText("one\ntwo\nthree\n"); // 3 lines: 0, 1, 2
 
     const tops = ed.naturalLineTops([0, 5]);
@@ -278,7 +278,7 @@ describe("MarkdownEditor stale-anchor refusal on the reconcile path (jsdom, T-08
 
   it("setSpacers drops a spacer at an out-of-range lineEnd instead of planting it on the last line", () => {
     const debug: string[] = [];
-    const { ed, host } = mount((summary) => debug.push(summary));
+    const { ed, host } = mount((summary) => debug.push(summary()));
     ed.setText("one\ntwo\nthree\n"); // 3 lines: 0, 1, 2
 
     expect(() =>

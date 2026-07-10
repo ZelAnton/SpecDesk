@@ -231,14 +231,18 @@ function snapshotFromGeometry(
 export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly source: GeometrySource;
-  private readonly onDebug: ((summary: string) => void) | undefined;
+  private readonly onDebug: ((summary: () => string, perFrame?: boolean) => void) | undefined;
   // The last spacer set actually pushed to the editor. reconcile() skips re-dispatching an identical
   // set — that is what makes repeated reconciles converge instead of flickering (see apply()).
   private appliedLead = 0;
   private appliedSpacers: EditorSpacer[] = [];
   private hasApplied = false;
 
-  constructor(editor: MarkdownEditor, source: GeometrySource, onDebug?: (summary: string) => void) {
+  constructor(
+    editor: MarkdownEditor,
+    source: GeometrySource,
+    onDebug?: (summary: () => string, perFrame?: boolean) => void,
+  ) {
     this.editor = editor;
     this.source = source;
     this.onDebug = onDebug;
@@ -317,18 +321,20 @@ export class HeightSync {
    */
   reconcile(): GeometrySnapshot | null {
     if (this.editor.hasPendingChange() || this.source.hasPendingChange()) {
-      this.onDebug?.("height-sync: deferred — a pane has a pending (unmirrored) edit");
+      this.onDebug?.(() => "height-sync: deferred — a pane has a pending (unmirrored) edit");
       return null;
     }
     if (this.editor.getText() !== this.source.getText()) {
-      this.onDebug?.("height-sync: deferred — panes' texts disagree (mirror not settled yet)");
+      this.onDebug?.(
+        () => "height-sync: deferred — panes' texts disagree (mirror not settled yet)",
+      );
       return null;
     }
 
     const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {
       const changed = this.apply(0, []);
-      this.onDebug?.("height-sync: 0 blocks");
+      this.onDebug?.(() => "height-sync: 0 blocks");
       // A diverged split has no anchors — the coordinator adopts the empty maps and bows out of coupling.
       return { formatted: [], editor: [], changed };
     }
@@ -336,7 +342,7 @@ export class HeightSync {
     const editorTops = this.editor.naturalLineTops(geometry.map((block) => block.lineStart));
     if (editorTops.some((top) => top === null)) {
       this.onDebug?.(
-        "height-sync: deferred — stale anchor line(s) outside the editor's current document",
+        () => "height-sync: deferred — stale anchor line(s) outside the editor's current document",
       );
       return null;
     }
@@ -349,12 +355,17 @@ export class HeightSync {
     const { editorLead, editorSpacers } = computeGapAdjustments(anchors);
     const changed = this.apply(editorLead, editorSpacers);
 
+    // A per-reconcile summary (built lazily via the thunk, and marked perFrame so a sink can drop it
+    // by default): building it interpolates and reads both panes' content widths — a layout touch we
+    // must not pay every reconcile unless a diagnostic sink actually wants it.
     const last = anchors[anchors.length - 1];
     const round = (value: number) => Math.round(value);
     this.onDebug?.(
-      `hs: ${anchors.length} · eN=${round(last?.editorTop ?? 0)} pN=${round(last?.previewTop ?? 0)}` +
+      () =>
+        `hs: ${anchors.length} · eN=${round(last?.editorTop ?? 0)} pN=${round(last?.previewTop ?? 0)}` +
         ` · eW=${this.editor.contentWidth()} pW=${this.source.contentWidth()}` +
         ` · lead ${editorLead} sp ${editorSpacers.length}${changed ? "" : " (settled)"}`,
+      true,
     );
 
     return snapshotFromGeometry(
