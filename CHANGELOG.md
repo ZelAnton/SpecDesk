@@ -196,6 +196,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unused scroll/highlight/geometry scaffold on `Preview` (`scrollToSourceLine`, `topVisibleSourceLine`,
   `setScrollTop`, `scrollTopValue`, `highlightSourceLine`, `highlightHoverLine`, `blockGeometry`,
   `contentWidth`) — which duplicated what the live editors already do for the visible panes — was removed.
+- The webview bundle's origin is now verified by content, not by file timestamps. `npm run bundle`
+  writes a deterministic content manifest (`wwwroot/webview.manifest.json`, schema-versioned, no
+  absolute paths) that fingerprints every input (`webview/src/**`, `index.html`, `styles.css`,
+  `package.json`, `package-lock.json`, the TypeScript configs, and the esbuild parameters) and each
+  served output (`webview.js`, `index.html`, `styles.css`), written atomically only after esbuild and
+  the html/css copy both succeed. The `BundleWebview` MSBuild target now decides up-to-date with a
+  cheap content check (`scripts/verify-bundle.mjs`, Node built-ins only) instead of an
+  `Inputs`/`Outputs` timestamp comparison, so a working-copy switch, a timestamp-preserving restore, or
+  a copy that kept a source's mtime can no longer pass a stale bundle off as fresh — while a genuinely
+  unchanged bundle still skips the rebuild. At startup the host re-verifies the manifest and refuses to
+  load a missing, partial, corrupt, or older-schema bundle (and, on a dev run with the source tree
+  present, a bundle that no longer matches the current inputs — overridable only via the explicit
+  `SPECDESK_WEBVIEW_ALLOW_STALE` opt-in); the startup log records the input and output fingerprints so
+  it is unambiguous which UI actually ran. `SkipWebview` (used by the node-less CI .NET jobs) is now
+  blocked on publish builds, so a shipped app can never carry an unverified leftover bundle.
 
 ### Removed
 - Dead release scaffolding: `.gitignore`'s `release-notes.md` entry and `cliff.toml`'s header comment

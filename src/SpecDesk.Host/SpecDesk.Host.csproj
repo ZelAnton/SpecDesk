@@ -43,16 +43,6 @@
 	</ItemGroup>
 
 	<!--
-		Webview inputs tracked as an item (rather than inlined directly in the target's Inputs
-		attribute below): MSBuild only expands "**" wildcards for a target's incremental
-		up-to-date check when they come from an @(Item) reference — an inline wildcard string in
-		Inputs is compared as a literal, non-existent path and forces a full rebuild every time.
-	-->
-	<ItemGroup>
-		<WebviewSource Include="$(RepoRoot)webview\src\**\*.*;$(RepoRoot)webview\index.html;$(RepoRoot)webview\styles.css;$(RepoRoot)webview\package.json;$(RepoRoot)webview\package-lock.json;$(RepoRoot)webview\tsconfig.json" />
-	</ItemGroup>
-
-	<!--
 		Whatever wwwroot/ already holds from an earlier successful bundle (this build or a previous
 		one) is staged unconditionally: this ItemGroup is evaluated up front, before any target runs,
 		so it also covers the case where BundleWebview below is skipped as up to date (e.g. after
@@ -70,35 +60,61 @@
 		generated wwwroot/ files. The Content items are added INSIDE the target, after the bundle
 		is written, so the fresh files are copied in the same build even though the static ItemGroup
 		above evaluated before they existed. Pass -p:SkipWebview=true to skip this (the node-less CI
-		.NET jobs do); `npm ci` runs only when node_modules is absent.
+		.NET jobs do); the separate `webview` CI job builds and tests the bundle instead.
 
-		Inputs/Outputs make the target incremental: MSBuild skips it when every output is newer than
-		every input, so a plain `dotnet build`/`dotnet test` with no webview changes no longer pays
-		the ~second-plus cost of spawning npm/esbuild. The Condition also excludes design-time builds
-		(IDE IntelliSense passes/-p:DesignTimeBuild=true), which don't need the bundle at all.
-
-		The trailing Touch is required for correctness, not cosmetic: `npm run bundle` copies
-		index.html/styles.css via Node's fs.copyFileSync, which on Windows preserves the *source*
-		file's timestamp (CopyFileW semantics) instead of stamping "now". Left alone, those two
-		outputs would forever carry webview/index.html's and webview/styles.css's original
-		timestamps, which can be older than sibling *.ts sources checked out at the same time —
-		making the Inputs/Outputs comparison see a "newer input" and rebuild on every single
-		invocation, defeating the whole point of this section.
+		Up-to-date is decided by CONTENT, not timestamps: `verify-bundle.mjs` (Node built-ins only, so
+		it runs before node_modules exists) recomputes the input fingerprint of webview/src/**, the
+		configs, and the lock file, re-hashes the staged outputs, and compares them to the manifest at
+		wwwroot/webview.manifest.json. Exit 0 means the staged bundle provably matches the current
+		inputs and esbuild is skipped; any other code — missing/partial/corrupt/stale bundle, or one
+		written by an older schema — forces a rebuild regardless of how new or old the files look. This
+		replaces the previous Inputs/Outputs timestamp comparison, which a working-copy switch, a file
+		restore with old timestamps, or a copy that preserved a source timestamp could all fool.
+		The Condition also excludes design-time builds (IDE IntelliSense/-p:DesignTimeBuild=true), which
+		don't need the bundle at all. The host re-verifies the manifest at startup, so even a bundle
+		staged some other way is never served unproven.
 	-->
 	<Target Name="BundleWebview" BeforeTargets="AssignTargetPaths"
-	        Condition="'$(SkipWebview)' != 'true' And '$(DesignTimeBuild)' != 'true' And Exists('$(RepoRoot)webview\package.json')"
-	        Inputs="@(WebviewSource)"
-	        Outputs="wwwroot\webview.js;wwwroot\index.html;wwwroot\styles.css">
-		<!-- Reinstall when node_modules is absent (first dev build) OR on any publish/release build, so
-		     the shipped bundle is always built against the committed lockfile rather than a stale
-		     node_modules left over after a dependency bump. Dev incremental builds stay fast. -->
+	        Condition="'$(SkipWebview)' != 'true' And '$(DesignTimeBuild)' != 'true' And Exists('$(RepoRoot)webview\package.json')">
+		<!-- Cheap content check: exit 0 = bundle matches current inputs (skip esbuild); non-zero =
+		     rebuild. ContinueOnError so the non-zero "please rebuild" code is captured, not fatal. -->
+		<Exec Command="node scripts/verify-bundle.mjs" WorkingDirectory="$(RepoRoot)webview"
+		      ContinueOnError="true">
+			<Output TaskParameter="ExitCode" PropertyName="WebviewVerifyExit" />
+		</Exec>
+
+		<!-- A publish/release build always rebuilds from the committed lockfile, so the shipped bundle
+		     can never be a stale incremental leftover (SkipWebview on publish is blocked outright by
+		     ForbidSkipWebviewOnPublish below). -->
+		<PropertyGroup>
+			<WebviewRebuild Condition="'$(WebviewVerifyExit)' != '0' Or '$(PublishProfile)' != ''">true</WebviewRebuild>
+		</PropertyGroup>
+
+		<!-- Reinstall only when we are about to rebuild AND node_modules is absent (first dev build), or
+		     on any publish (build against the committed lockfile, not a stale node_modules after a
+		     dependency bump). A fresh incremental dev build installs nothing and stays fast. -->
 		<Exec Command="npm ci" WorkingDirectory="$(RepoRoot)webview"
-		      Condition="!Exists('$(RepoRoot)webview\node_modules') Or '$(PublishProfile)' != ''" />
-		<Exec Command="npm run bundle" WorkingDirectory="$(RepoRoot)webview" />
-		<Touch Files="wwwroot\webview.js;wwwroot\index.html;wwwroot\styles.css" AlwaysCreate="true" />
+		      Condition="'$(WebviewRebuild)' == 'true' And (!Exists('$(RepoRoot)webview\node_modules') Or '$(PublishProfile)' != '')" />
+
+		<!-- Rebuild the bundle and (re)write its content manifest atomically (bundle.mjs). -->
+		<Exec Command="npm run bundle" WorkingDirectory="$(RepoRoot)webview"
+		      Condition="'$(WebviewRebuild)' == 'true'" />
+
 		<ItemGroup>
 			<Content Include="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
 		</ItemGroup>
+	</Target>
+
+	<!--
+		Narrow the webview-skip escape hatch: SkipWebview exists so the node-less CI .NET jobs (and a
+		quick local iteration on C# only) can build without Node. It must never reach a PUBLISH, or the
+		shipped app would carry whatever stale bundle happened to be in wwwroot/ — exactly the "unknown
+		artifact" this feature exists to prevent. ComputeFilesToPublish runs only during publish, so
+		this fires on every publish (profile or not) and nowhere else.
+	-->
+	<Target Name="ForbidSkipWebviewOnPublish" BeforeTargets="ComputeFilesToPublish"
+	        Condition="'$(SkipWebview)' == 'true' And Exists('$(RepoRoot)webview\package.json')">
+		<Error Text="SkipWebview cannot be used on a publish build: the shipped app must include a freshly built, content-verified webview bundle. Publish without -p:SkipWebview=true." />
 	</Target>
 
 </Project>

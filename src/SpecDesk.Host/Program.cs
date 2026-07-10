@@ -33,6 +33,12 @@ internal static class Program
 		ILogger startup = loggerFactory.CreateLogger("SpecDesk.Host");
 		startup.LogInformation("SpecDesk starting; logs at {LogDirectory}", Logging.LogDirectory);
 
+		// Prove, by content, that the webview bundle about to be loaded is the one built from the
+		// current inputs (dev) or a complete, uncorrupted shipped artifact (published) — never an old
+		// bundle trusted only because of its file timestamps. Fails fast with a clear, path-free error
+		// (logged above the throw) rather than loading an unknown or partial UI.
+		WebviewBundleGuard.EnsureServable(AppContext.BaseDirectory, startup);
+
 		// Captured by the closures below; assigned before any message can arrive (Load is last).
 		PhotinoWindow? window = null;
 
