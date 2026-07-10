@@ -19,6 +19,11 @@ project.lock.json
 project.fragment.lock.json
 artifacts/
 
+# E2E (Playwright) — the failure-artifact bundle lives under artifacts/e2e (above); these are
+# Playwright defaults in case a run is invoked without our config's outputDir override.
+e2e/test-results/
+e2e/playwright-report/
+
 # Build results
 [Dd]ebug/
 [Rr]elease/

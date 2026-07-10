@@ -1,0 +1,21 @@
+{
+  "name": "specdesk-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end verification harness for SpecDesk: real-Chromium Playwright layers over the built webview bundle (Layer 1) and, later, the full app over CDP (Layer 2).",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "e2e": "playwright test --project=webview-mock",
+    "e2e:headed": "playwright test --project=webview-mock --headed",
+    "e2e:install": "playwright install chromium",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.3"
+  }
+}
