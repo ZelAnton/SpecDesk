@@ -11,10 +11,6 @@ import { trace } from "../util/trace.js";
 import { isNumber, isRecord, isString } from "./decoders.js";
 import { Kinds } from "./protocol.js";
 
-// The diagnostics channels are excluded from `ipc.send` tracing so they don't trace themselves: `log`
-// frames (the trace's own error-forward path ships these) and the future `trace.dump` frame (B3).
-const TRACE_DUMP_KIND = "trace.dump";
-
 export interface IpcMessage {
   kind: string;
   id?: string;
@@ -140,7 +136,7 @@ export class IpcClient {
     if (opts?.version !== undefined) {
       message.version = opts.version;
     }
-    if (kind !== Kinds.log && kind !== TRACE_DUMP_KIND) {
+    if (kind !== Kinds.log && kind !== Kinds.traceDump) {
       trace("ipc", "ipc.send", { kind, version: message.version });
     }
     this.external.sendMessage(JSON.stringify(message));
@@ -160,7 +156,7 @@ export class IpcClient {
     }
     const id = nextId();
     const message: IpcMessage = { kind, id, payload };
-    if (kind !== Kinds.log && kind !== TRACE_DUMP_KIND) {
+    if (kind !== Kinds.log && kind !== Kinds.traceDump) {
       trace("ipc", "ipc.send", { kind, id });
     }
     return new Promise<IpcMessage>((resolve, reject) => {

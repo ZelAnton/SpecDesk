@@ -23,6 +23,7 @@ export const Kinds = {
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
+  traceDump: "trace.dump",
   linkOpen: "link.open",
   diffRequest: "diff.request",
   githubSignIn: "github.signIn",
@@ -230,6 +231,27 @@ export interface ImagePastePayload {
   base64: string;
   originalName: string;
   mime: string;
+}
+
+/** One entry of a `trace.dump` (webview→native): a flattened {@link TraceEntry} where `data` is
+ *  PRE-STRINGIFIED (JSON, capped at 500 chars) rather than an object, so the whole dump is a flat
+ *  wire shape. Mirror of the C# `TraceEntryPayload`. */
+export interface TraceDumpEntry {
+  seq: number;
+  t: number;
+  cat: string;
+  event: string;
+  data?: string;
+}
+
+/** Payload of `trace.dump` (webview→native): a snapshot of the in-page trace ring, sent when the
+ *  author exports the log so the host can persist it beside the Serilog file and append its tail to
+ *  the export. `t0Epoch` (`Date.now() - performance.now()` at ring init) lets the host reconstruct
+ *  each entry's wall-clock time as `t0Epoch + t`. Mirror of the C# `TraceDumpPayload`. */
+export interface TraceDumpPayload {
+  t0Epoch: number;
+  firstSeq: number;
+  entries: TraceDumpEntry[];
 }
 
 /** Payload of `image.inserted` (native→webview): the Markdown link to insert (empty on failure). */

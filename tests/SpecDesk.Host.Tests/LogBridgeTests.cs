@@ -49,10 +49,10 @@ public sealed class LogBridgeTests
     }
 
     private LogBridge Bridge(IFileDialogs dialogs, Action<string> notify) =>
-        new(NullLogger.Instance, dialogs, notify, _dir);
+        new(NullLogger.Instance, dialogs, notify, _dir, () => null);
 
     private LogBridge Bridge(ILogger logger) =>
-        new(logger, new StubDialogs(), _ => { }, _dir);
+        new(logger, new StubDialogs(), _ => { }, _dir, () => null);
 
     [Test]
     public void Receive_messageAndDataWithEmbeddedNewlines_producesSingleLogLine()
@@ -126,6 +126,28 @@ public sealed class LogBridgeTests
         {
             Assert.That(File.ReadAllText(destination), Is.EqualTo("log-contents"));
             Assert.That(notified, Does.Contain("Log exported to"));
+        });
+    }
+
+    [Test]
+    public void Export_withTraceTail_appendsTheTraceUnderAHeader()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "specdesk-001.log"), "log-contents");
+        string destination = Path.Combine(_dir, "exported.txt");
+        LogBridge bridge = new(
+            NullLogger.Instance,
+            new StubDialogs { SaveTarget = destination },
+            _ => { },
+            _dir,
+            () => "2026-01-01 12:00:00.000 [scroll] scroll.write\n");
+        bridge.Export();
+        string exported = File.ReadAllText(destination);
+        Assert.Multiple(() =>
+        {
+            Assert.That(exported, Does.StartWith("log-contents"));
+            Assert.That(exported, Does.Contain("--- webview trace"));
+            Assert.That(exported, Does.Contain("[scroll] scroll.write"));
         });
     }
 

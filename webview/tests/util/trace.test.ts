@@ -96,6 +96,32 @@ describe("clip", () => {
   });
 });
 
+describe("snapshotPayload (trace.dump wire shape)", () => {
+  it("stringifies entry data, omits it when absent, and carries t0Epoch/firstSeq", () => {
+    trace("format", "format.source", { command: "bold", from: 0, to: 4 });
+    trace("scroll", "scroll.reset");
+    const payload = trace.snapshotPayload();
+
+    expect(payload.t0Epoch).toBe(trace.t0Epoch);
+    expect(payload.firstSeq).toBe(0);
+    expect(payload.entries).toHaveLength(2);
+    const [withData, noData] = payload.entries;
+    expect(withData?.data).toContain('"command":"bold"');
+    expect(noData?.data).toBeUndefined();
+  });
+
+  it("caps huge data at 500 chars and survives circular data", () => {
+    trace("render", "render.setText", { big: "x".repeat(2000) });
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    trace("render", "render.divergence", circular);
+    const [big, circ] = trace.snapshotPayload().entries;
+
+    expect((big?.data ?? "").length).toBeLessThanOrEqual(500);
+    expect(circ?.data).toBe("[unserializable trace data]");
+  });
+});
+
 describe("installDiagnostics", () => {
   it("exposes the read API on window and captures global errors, rate-limiting the log channel", () => {
     installDiagnostics();

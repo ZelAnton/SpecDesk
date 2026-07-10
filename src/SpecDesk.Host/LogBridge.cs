@@ -17,19 +17,29 @@ public sealed class LogBridge
 	private readonly IFileDialogs _dialogs;
 	private readonly Action<string> _notify;
 	private readonly string _logDirectory;
+	private readonly Func<string?> _traceTail;
 
 	/// <param name="notify">Surface a plain status/notice line to the author (the host wires this to its
 	/// error/status channel; the export outcome is reported through it).</param>
-	public LogBridge(ILogger logger, IFileDialogs dialogs, Action<string> notify, string logDirectory)
+	/// <param name="traceTail">Renders the tail of the most recent webview trace dump (or null/empty when
+	/// none) — appended to the exported log so the two timelines sit in one file (see TraceBridge).</param>
+	public LogBridge(
+		ILogger logger,
+		IFileDialogs dialogs,
+		Action<string> notify,
+		string logDirectory,
+		Func<string?> traceTail)
 	{
 		ArgumentNullException.ThrowIfNull(logger);
 		ArgumentNullException.ThrowIfNull(dialogs);
 		ArgumentNullException.ThrowIfNull(notify);
 		ArgumentNullException.ThrowIfNull(logDirectory);
+		ArgumentNullException.ThrowIfNull(traceTail);
 		_logger = logger;
 		_dialogs = dialogs;
 		_notify = notify;
 		_logDirectory = logDirectory;
+		_traceTail = traceTail;
 	}
 
 	/// <summary>Forward a webview log line to the host logger at the mapped level.</summary>
@@ -55,9 +65,25 @@ public sealed class LogBridge
 		}
 	}
 
+	/// <summary>The current log file plus the tail of the latest webview trace dump (when present), so the
+	/// exported file carries both timelines. The trace tail is already wall-clock-stamped and sanitized by
+	/// TraceBridge.</summary>
+	private string ComposeExport()
+	{
+		string log = ReadCurrentLog();
+		string? tail = _traceTail();
+		if (string.IsNullOrEmpty(tail))
+		{
+			return log;
+		}
+
+		return $"{log}\n\n--- webview trace (latest dump, tail) ---\n{tail}\n";
+	}
+
 	/// <summary>Strip line breaks from an untrusted webview-supplied field before it reaches the log
-	/// template, so a payload cannot forge extra log entries by embedding CR/LF sequences.</summary>
-	private static string SanitizeForLog(string value) =>
+	/// template, so a payload cannot forge extra log entries by embedding CR/LF sequences. Shared with
+	/// TraceBridge, which sanitizes each dumped entry's fields the same way.</summary>
+	internal static string SanitizeForLog(string value) =>
 		value.Replace("\r\n", " ", StringComparison.Ordinal)
 			.Replace('\r', ' ')
 			.Replace('\n', ' ');
@@ -77,7 +103,7 @@ public sealed class LogBridge
 
 		try
 		{
-			File.WriteAllText(destination, ReadCurrentLog());
+			File.WriteAllText(destination, ComposeExport());
 			_logger.LogInformation("Exported log to {Path}", destination);
 			_notify($"Log exported to {destination}");
 		}

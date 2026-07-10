@@ -91,6 +91,7 @@ public sealed partial class HostController : IDisposable
 	private readonly TimeSpan _autosaveIdle;
 	private readonly PreviewCoordinator _coordinator = new();
 	private readonly LogBridge _logBridge;
+	private readonly TraceBridge _traceBridge;
 
 	// Guards the lifecycle / autosave fields below, which the message thread and the autosave timer
 	// callback both touch. _text/_currentPath/_repoRoot are also published and snapshotted under this
@@ -212,7 +213,9 @@ public sealed partial class HostController : IDisposable
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
-		_logBridge = new LogBridge(_logger, _dialogs, SendError, Logging.LogDirectory);
+		_traceBridge = new TraceBridge(_logger, Logging.LogDirectory);
+		_logBridge = new LogBridge(
+			_logger, _dialogs, SendError, Logging.LogDirectory, () => _traceBridge.RenderTail(200));
 	}
 
 	/// <summary>The repo working-tree root of the open document — the <c>app://</c> asset root.</summary>
@@ -325,6 +328,9 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.Log:
 				OnLog(message);
 				break;
+			case MessageKinds.TraceDump:
+				OnTraceDump(message);
+				break;
 			case MessageKinds.LogExport:
 				OnExportLog();
 				break;
@@ -407,6 +413,18 @@ public sealed partial class HostController : IDisposable
 		if (payload is not null)
 		{
 			_logBridge.Receive(payload);
+		}
+	}
+
+	// Persist a webview trace-ring dump beside the log. The webview sends this just before log.export, so
+	// the retained dump is available when Export appends its tail. A malformed payload decodes to null and
+	// is dropped, so a bad frame can't disrupt the pump.
+	private void OnTraceDump(IpcMessage message)
+	{
+		TraceDumpPayload? payload = SafeGetPayload<TraceDumpPayload>(message);
+		if (payload is not null)
+		{
+			_traceBridge.Receive(payload);
 		}
 	}
 

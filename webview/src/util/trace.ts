@@ -15,6 +15,7 @@
  *   genuinely diagnostic text fragments go through {@link clip}. Never put document content here.
  */
 
+import type { TraceDumpEntry, TraceDumpPayload } from "../wire/protocol.js";
 import { log } from "./log.js";
 
 export type TraceCategory =
@@ -73,6 +74,8 @@ export interface TraceFn {
   /** `Date.now() - performance.now()` captured once at module init. */
   t0Epoch: number;
   snapshot(): TraceSnapshot;
+  /** The ring as the flat `trace.dump` wire payload (data objects stringified + capped). */
+  snapshotPayload(): TraceDumpPayload;
   get(n: number): TraceEntry[];
   clear(): void;
   mark(label: string): void;
@@ -135,6 +138,43 @@ function snapshot(): TraceSnapshot {
   return { t0Epoch, firstSeq, entries: collect(firstSeq) };
 }
 
+/** Max chars of a single entry's stringified `data` on the wire — a hostile/huge data object can't
+ *  bloat a dump frame. */
+const DUMP_DATA_CAP = 500;
+
+function stringifyData(data: Record<string, unknown>): string {
+  let text: string;
+  try {
+    text = JSON.stringify(data, (_key, value) => (typeof value === "bigint" ? `${value}n` : value));
+  } catch {
+    // Circular refs / values JSON.stringify rejects — keep a shape marker rather than dropping the entry.
+    text = "[unserializable trace data]";
+  }
+  return text.length <= DUMP_DATA_CAP ? text : text.slice(0, DUMP_DATA_CAP);
+}
+
+/** The ring as the flat `trace.dump` wire payload: each entry's `data` object is JSON-stringified
+ *  (capped) so the whole dump is flat primitives the host can persist without re-serializing objects. */
+function snapshotPayload(): TraceDumpPayload {
+  const snap = snapshot();
+  return {
+    t0Epoch: snap.t0Epoch,
+    firstSeq: snap.firstSeq,
+    entries: snap.entries.map((entry) => {
+      const wire: TraceDumpEntry = {
+        seq: entry.seq,
+        t: entry.t,
+        cat: entry.cat,
+        event: entry.event,
+      };
+      if (entry.data !== undefined) {
+        wire.data = stringifyData(entry.data);
+      }
+      return wire;
+    }),
+  };
+}
+
 /** The last `n` entries (or all retained, if fewer), oldest first. */
 function getLast(n: number): TraceEntry[] {
   const want = Math.max(0, Math.floor(n));
@@ -174,6 +214,7 @@ export const trace: TraceFn = Object.assign(record, {
   t0Epoch,
   v: recordVerbose,
   snapshot,
+  snapshotPayload,
   get: getLast,
   clear,
   mark,

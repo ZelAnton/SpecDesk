@@ -52,6 +52,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `chat.send` | `{ text }` | message to the agent |
 | `tree.request` | `{ path? }` | request the spec file tree |
 | `doc.open` | `{ path }` | open a spec for editing |
+| `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
+| `trace.dump` | `{ t0Epoch, firstSeq, entries: [{ seq, t, cat, event, data? }] }` | dump the always-on diagnostic trace ring; the host persists it as a JSON file beside the log and appends its tail (wall-clock-stamped) to the `log.export` that follows. Sent just before `log.export` when the author exports the log |
 
 ## native → webview (events)
 

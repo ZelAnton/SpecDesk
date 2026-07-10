@@ -28,6 +28,7 @@ public static class MessageKinds
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
+	public const string TraceDump = "trace.dump";
 	public const string LinkOpen = "link.open";
 	public const string DiffRequest = "diff.request";
 	public const string GitHubSignIn = "github.signIn";
@@ -134,6 +135,18 @@ public sealed record PrListPayload(IReadOnlyList<PrListItemPayload> Items, strin
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>
 public sealed record LogPayload(string Level, string Message, string? Data);
+
+/// <summary>One entry of a <c>trace.dump</c> (webview→native): a flattened webview trace-ring entry.
+/// <paramref name="T"/> is <c>performance.now()</c> ms; wall-clock time is <c>T0Epoch + T</c> (see
+/// <see cref="TraceDumpPayload"/>). <paramref name="Data"/> is the entry's structural data, already
+/// JSON-stringified and capped webview-side.</summary>
+public sealed record TraceEntryPayload(long Seq, double T, string Cat, string Event, string? Data);
+
+/// <summary>Payload of <c>trace.dump</c> (webview→native): a snapshot of the in-page trace ring, sent
+/// when the author exports the log so the host can persist it beside the Serilog file and append its
+/// tail to the export. <paramref name="T0Epoch"/> (<c>Date.now() - performance.now()</c> at ring init)
+/// reconstructs each entry's wall-clock time as <c>T0Epoch + Entry.T</c>.</summary>
+public sealed record TraceDumpPayload(double T0Epoch, long FirstSeq, IReadOnlyList<TraceEntryPayload> Entries);
 
 /// <summary>Payload of <c>link.open</c> (webview→native): a link the author clicked in the
 /// rendered/formatted view. The host re-validates the scheme and only ever opens absolute http/https

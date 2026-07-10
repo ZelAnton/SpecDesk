@@ -31,6 +31,7 @@
   "ready",
   "review.refresh",
   "status",
+  "trace.dump",
   "version.note.request",
   "version.note.suggested"
 ]

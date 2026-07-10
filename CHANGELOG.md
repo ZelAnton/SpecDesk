@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Exporting the log now also captures the webview's diagnostic trace: it writes the in-page trace ring to
+  a timestamped JSON file beside the log and appends the trace's tail (wall-clock-stamped, so it lines up
+  with the native log entries) to the exported file — so a single exported log shows what the UI did and
+  why, native and webview together.
 - The log directory and file verbosity are now environment-overridable: `SPECDESK_LOG_DIR` redirects the
   rolling log file, and `SPECDESK_LOG_LEVEL` (verbose/debug/info/warning/error/fatal) sets the file
   sink's minimum level — so a dev run or a test harness can point logs at a known location and dial

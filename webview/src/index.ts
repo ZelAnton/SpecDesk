@@ -846,6 +846,9 @@ function wire(): void {
     });
 
     exportLogBtn?.addEventListener("click", () => {
+      // Dump the diagnostic trace ring FIRST (the host persists it and appends its tail to the export),
+      // then export the log — OnMessage processes the two frames in order, so the export sees this dump.
+      ipc.send(Kinds.traceDump, trace.snapshotPayload());
       ipc.send(Kinds.logExport);
     });
 
