@@ -206,6 +206,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The app now runs the reviewed-and-published code instead of drifting behind it on an older local build.
+  The orchestrator's local coordination state under `.work/` (task queue, journal, checkpoints, review log)
+  is no longer part of the versioned tree, so the main working copy can be brought up to the published `main`
+  without its stale tracked queue and checkpoints either blocking the update or overwriting the live ones. A
+  new `scripts/restore-main-worktree.ps1` performs this safely and repeatably: it backs up `.work/`, refuses
+  to proceed when there are un-committed changes outside `.work/`, fast-forwards the working copy to `main`,
+  detaches any previously tracked `.work/*` without losing their content, and verifies every restored file
+  against a checksum manifest — so a published Split-sync fix (or any later change) is what actually executes
+  rather than an older predecessor.
 - Split view scrolling is now smooth with no forced-layout stutter or redundant scroll writes: one geometry
   reconcile per frame is frame-atomic — a single read phase (one Formatted DOM measure, one CodeMirror tops
   read) feeds an immutable geometry snapshot from which both scroll maps and the editor spacer plan are
