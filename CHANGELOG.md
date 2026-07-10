@@ -230,6 +230,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split scroll sync no longer judders when the author switches panes mid-scroll. Each scroll arms a 120 ms
+  scroll-settle debounce that re-snaps the sibling to the pane's final momentum position; a trackpad/momentum
+  scroll of one pane could still have that settle pending when the author grabbed the OTHER pane, and the
+  late settle then re-declared its own pane active and yanked the pane being scrolled back to the previous
+  pane's line (so "scroll Formatted" did not reliably keep Formatted's first visible line matching Code's). A
+  scroll-settle now stands down when its pane is no longer the active one — the pane the author actually
+  finished scrolling is the active one, so its own settle still runs (`webview/src/sync/sync-coordinator.ts`).
+- The Split scroll-sync delivery gate is now deterministic. Its scroll helper drove the real editors but did
+  not drain the 120 ms scroll-settle debounce between simulated scrolls, so a pending settle leaked into the
+  next step and raced its coupling — the gate passed or failed by wall-clock luck, which made a green run
+  meaningless. Each simulated scroll now fully settles (as a human scrolling one pane and pausing does)
+  before the next, and the harness documents that its rigged jsdom geometry (tall synthetic Formatted vs a
+  uniform 14 px Code line) proves WIRING, not real-engine spacer count / sub-pixel alignment — those still
+  need a manual GUI pass (`webview/tests/split-delivery/`).
 - The app now runs the reviewed-and-published code instead of drifting behind it on an older local build.
   The orchestrator's local coordination state under `.work/` (task queue, journal, checkpoints, review log)
   is no longer part of the versioned tree, so the main working copy can be brought up to the published `main`

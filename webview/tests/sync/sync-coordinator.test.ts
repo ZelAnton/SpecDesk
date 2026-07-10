@@ -650,6 +650,33 @@ describe("SplitSync.settle (symmetric final-position re-sync)", () => {
     sync.settle("formatted");
     expect(ed.scroll).toBe(400); // the passive pane's settle did not drive the active editor back
   });
+
+  it("stands a STALE settle down once the author has taken over the other pane (no yank-back)", () => {
+    // The scroll-settle debounce is armed on every scroll and fires ~120ms after a pane's last one, so a
+    // trackpad/momentum scroll of the editor can still have its settle PENDING when the author grabs the
+    // formatted pane. If that late editor settle re-declared the editor active and re-coupled, it would yank
+    // the formatted pane the author is now scrolling back to the editor's line — the "scrolling Formatted
+    // does not reliably correspond to Code" judder. A settle for a pane that is no longer active must stand
+    // down; the pane the author actually finished scrolling IS the active one, so its own settle still runs.
+    const { ed, fm, sync } = make();
+
+    ed.userScrollTo(200);
+    sync.onEditorScroll(); // editor active; its scroll-settle is (conceptually) now pending
+    expect(fm.scroll).toBe(200);
+
+    // Before that settle fires, the author scrolls the FORMATTED pane — it becomes active and drives Code.
+    fm.userScrollTo(500);
+    sync.onFormattedScroll();
+    expect(ed.scroll).toBe(500);
+    expect(sync.activePane()).toBe("formatted");
+
+    // The editor still physically sits where the author's momentum left it, at a DIFFERENT line than the
+    // formatted pane now shows. Its now-STALE settle fires: it must NOT hijack active nor drag Formatted back.
+    ed.userScrollTo(200);
+    sync.settle("editor");
+    expect(sync.activePane()).toBe("formatted"); // active not hijacked by the stale settle
+    expect(fm.scroll).toBe(500); // the pane the author is scrolling was not yanked back to the editor's line
+  });
 });
 
 describe("SplitSync deterministic echo edge cases (no timing window)", () => {

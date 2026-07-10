@@ -151,8 +151,20 @@ export class SplitSync {
    * (the passive pane settling on our write) is suppressed, so neither pane makes a return write to the
    * active one and there is no oscillation around {@link ECHO_EPSILON}. Symmetric: index.ts wires it for
    * BOTH panes through this one path (the editor had it before; the formatted pane now does too).
+   *
+   * A settle is STALE once the author has taken over the OTHER pane. The settle debounce is armed on
+   * every scroll event and fires ~120 ms after the pane's last one, but a trackpad/momentum scroll of pane
+   * A can still have that timer pending when the author grabs pane B: B's own (rAF-throttled) scroll makes
+   * B the active pane, and then A's late settle would — through {@link drive} — re-declare A active and
+   * couple B straight back to A's line, yanking the pane the author is now scrolling. So a settle only
+   * re-couples while its pane is STILL the active one; once the sibling has taken over it stands down (the
+   * sibling's own live scroll and settle already own the coupling). This does not weaken the intended
+   * re-snap: the pane the author actually finished scrolling IS the active pane, so its settle still runs.
    */
   settle(pane: Pane): void {
+    if (pane !== this.active) {
+      return;
+    }
     this.drive(pane);
   }
 

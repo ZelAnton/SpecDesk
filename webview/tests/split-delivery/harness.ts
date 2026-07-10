@@ -11,8 +11,20 @@
  * no rendering engine. So the one permitted seam is a deterministic layout adapter ({@link installLayoutAdapter})
  * that gives every rendered formatted leaf a fixed, content-derived height and lays them out top-to-bottom.
  * The CodeMirror side needs no adapter: under jsdom its height map falls back to a uniform estimated line
- * height, which is deterministic, and the spacer widgets report their exact pixel height into it — so the
- * padded source geometry the gate asserts on is the real one the shipped build produces.
+ * height (14 px per line), which is deterministic, and the spacer widgets report their exact pixel height
+ * into it — so the padded source geometry the gate drives is exercised through the SHIPPED build's real
+ * reconcile / coupling / scheduler code, not a re-implementation of it.
+ *
+ * KNOWN LIMITATION — this gate proves WIRING, not real-engine GEOMETRY. Because the formatted leaves get
+ * synthetic heights (40–120 px) while CodeMirror keeps its uniform 14 px estimated line, the formatted pane
+ * always outgrows the source here, so height-sync's pad-only plan can reach EXACT alignment and spacers
+ * always appear. A real WebView2 renders both panes for real, where a source region can be as tall as (or
+ * taller than) its rendered counterpart — so the spacer COUNT and the sub-pixel alignment are engine
+ * geometry the jsdom numbers cannot stand in for. What this gate does prove is that the real modules are
+ * present in the shipped tree, wired by the real `index.ts`, and that a genuine user scroll couples the
+ * sibling through the real maps/scheduler with the real 120 ms scroll-settle (see {@link scrollPane} in the
+ * spec). Treat "spacers appear / align within 1 px" as a WIRING assertion on rigged geometry, not a promise
+ * about a real engine's pixels; a real-engine spacer/alignment regression still needs a manual GUI pass.
  *
  * Loading the artifact: the bundle is an ES module whose only export is `shouldMirrorInto` and whose body
  * runs `wire()` on load. We strip that trailing `export { … }` and execute the identical body via
