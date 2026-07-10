@@ -117,3 +117,62 @@ jobs:
       # produced; it re-runs the standard bundle process and checks the T-107 manifest itself, so the same
       # command is what the processor invokes against the restored main working copy after publish.
       - run: npm run test:delivery
+
+  e2e-webview:
+    name: e2e (Layer 1 - webview-mock, real Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # One Node (pinned by webview/.nvmrc) for both packages; cache the npm store keyed on BOTH
+      # lockfiles since this job installs webview AND e2e dependencies.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: webview/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            webview/package-lock.json
+            e2e/package-lock.json
+
+      # The Layer 1 global-setup builds the bundle via webview/scripts/bundle.mjs, which imports
+      # esbuild from webview/node_modules — so the webview deps must be installed here too, not just
+      # e2e's, or every scenario fails at setup with ERR_MODULE_NOT_FOUND.
+      - name: Install webview dependencies
+        run: npm ci
+        working-directory: webview
+
+      - name: Install e2e dependencies
+        run: npm ci
+        working-directory: e2e
+
+      # Cache Playwright's browser download across runs, keyed on the e2e lockfile (which pins the
+      # Playwright version and thus the exact Chromium build).
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      # `npm ci` does not fetch the browser binary; --with-deps also installs the OS libraries
+      # Chromium needs on ubuntu (libnss3/libnspr4/...). A browser cache hit still runs this cheaply.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      # Real-Chromium Layer 1 (webview-mock): global-setup rebuilds and verifies the bundle, then the
+      # scenarios assert real rendered geometry (spacers, alignment, indentation, scroll coupling).
+      - name: Run Layer 1 E2E
+        run: npm run e2e
+        working-directory: e2e
+
+      # The failure-artifact bundle (failure.png + geometry.json + console.log + trace-ring.json, and
+      # a success final.png) lands under artifacts/e2e; upload it even on failure so a red run is
+      # diagnosable from the screenshot + numbers without re-running.
+      - name: Upload E2E artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-artifacts
+          path: artifacts/e2e/**
+          if-no-files-found: ignore
