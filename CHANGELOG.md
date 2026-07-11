@@ -256,6 +256,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view now keeps the LAST row of a table and the LAST item of a list level with their rendered
+  counterparts even when content above the container has accumulated more source-pane padding than any
+  of the container's own rows call for. Height-sync pads with a single document-wide running maximum, so
+  such a container used to get no spacer at all: its rows all sat below their rendered targets (where
+  additive padding cannot lift them — the accepted direction), but the container's tail then drifted
+  visibly against the Formatted pane inside one viewport, ending shorter than its rendered counterpart.
+  Each table's/list's final row now carries a container-tail floor — at least the padding at the
+  container's first row plus the container's own internal growth — so a spacer lands right above the
+  last row/item and the container ends in step in both panes; intermediate rows keep the documented
+  drift, a tail the running maximum already aligns exactly is left untouched, and the source-taller
+  direction (loose lists) still adds nothing. Covered per-plan in unit tests, through the shipped bundle
+  by a delivery gate, and on real rendered geometry by a real-Chromium E2E
+  (`webview/src/sync/height-sync.ts`, `webview/src/editors/sync-anchors.ts`,
+  `webview/src/editors/formatted.ts`, `e2e/webview-mock/split-geometry.e2e.ts`).
 - Split view's height-sync spacers now render on a fresh app start (and on any document load/switch)
   without the author having to manually switch to Code and back. Root cause: `doc.loaded` fed the raw
   on-disk text — routinely CRLF on a Windows checkout (`core.autocrlf=true`) — into the source editor and

@@ -118,6 +118,69 @@ describe("buildLeafAnchors — the ordered semantic sync anchors", () => {
   });
 });
 
+describe("buildLeafAnchors — container keys (the container-tail floor's grouping)", () => {
+  it("stamps every row/item with its container's key, and top-level leaves with none", () => {
+    const anchors = buildLeafAnchors(mapOf(MIXED), MIXED);
+    const byLine = new Map(anchors.map((a) => [a.line, a]));
+    // Top-level leaves belong to no container.
+    for (const line of [0, 2, 15, 18]) {
+      expect(byLine.get(line)?.containers, `top-level leaf at line ${line}`).toEqual([]);
+    }
+    // The three outer list items share ONE key; the table's header + body rows share ANOTHER.
+    const listKeys = [4, 5, 8].map((line) => byLine.get(line)?.containers ?? []);
+    expect(listKeys.every((keys) => keys.length === 1)).toBe(true);
+    expect(new Set(listKeys.map((keys) => keys[0])).size).toBe(1);
+    const tableKeys = [10, 12, 13].map((line) => byLine.get(line)?.containers ?? []);
+    expect(tableKeys.every((keys) => keys.length === 1)).toBe(true);
+    expect(new Set(tableKeys.map((keys) => keys[0])).size).toBe(1);
+    expect(tableKeys[0]?.[0]).not.toBe(listKeys[0]?.[0]);
+  });
+
+  it("stacks nested sub-items under BOTH the outer list's key and their own sub-list's key", () => {
+    const anchors = buildLeafAnchors(mapOf(MIXED), MIXED);
+    const byLine = new Map(anchors.map((a) => [a.line, a]));
+    const outerKey = byLine.get(4)?.containers[0];
+    const subA = byLine.get(6)?.containers ?? [];
+    const subB = byLine.get(7)?.containers ?? [];
+    expect(subA.length).toBe(2);
+    expect(subA[0]).toBe(outerKey);
+    expect(subA[1]).not.toBe(outerKey);
+    expect(subB).toEqual(subA);
+  });
+
+  it("keys a same-span nested list distinctly from its parent (`- - a`)", () => {
+    // markdown-it maps BOTH lists of `- - a\n  - b` to the same [0,2] source span, so a span-based key
+    // alone would merge the two container instances into one group and drop the inner tail's own floor —
+    // the per-pass sequence number keeps every instance distinct.
+    const md = "- - a\n  - b\n";
+    const anchors = buildLeafAnchors(mapOf(md), md);
+    const outerItem = anchors.find((a) => a.containers.length === 1);
+    const innerItem = anchors.find((a) => a.containers.length === 2);
+    expect(outerItem).toBeDefined();
+    expect(innerItem).toBeDefined();
+    expect(innerItem?.containers[0]).toBe(outerItem?.containers[0]);
+    expect(innerItem?.containers[1]).not.toBe(innerItem?.containers[0]);
+  });
+
+  it("gives a coarsened top-level container no key of its own (a group of one has no tail)", () => {
+    const pmMd = "intro\n\n| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n\nend\n";
+    const srcMd = "intro\n\n| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n\nend\n";
+    const anchors = buildLeafAnchors(mapOf(pmMd), srcMd);
+    expect(anchors[1]?.containers).toEqual([]);
+  });
+
+  it("keeps a coarsened NESTED sub-list inside its outer list's group", () => {
+    // The coarse sub-list anchor still counts as a unit OF the outer list (it can be the outer group's
+    // tail), it just adds no key of its own.
+    const pmMd = "- a\n- b\n  - b1\n  - b2\n";
+    const srcMd = "- a\n- b\n  - b1\n  - b2\n  - b3\n";
+    const anchors = buildLeafAnchors(mapOf(pmMd), srcMd);
+    const outerKey = anchors[0]?.containers[0];
+    expect(outerKey).toBeDefined();
+    expect(anchors[2]?.containers).toEqual(outerKey === undefined ? [] : [outerKey]);
+  });
+});
+
 describe("buildLeafAnchors — divergence stays local", () => {
   it("returns no anchors when the top-level split diverged (empty block-map)", () => {
     // A 3-node doc against a 2-block split — the top-level parse divergence the block-map catches. With

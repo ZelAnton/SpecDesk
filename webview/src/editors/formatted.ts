@@ -1034,6 +1034,7 @@ export class FormattedEditor {
       lineEnd: box.lineEnd,
       top: box.top,
       height: box.height,
+      containers: box.containers ?? [],
     }));
   }
 
@@ -1063,7 +1064,19 @@ export class FormattedEditor {
     // Content-relative top (px from the content top), invariant to scrollTop — see block-geometry.ts — so
     // a point measured now stays valid across later scroll frames. Drop any anchor whose node currently
     // has no DOM element (mid-render), keeping order.
-    const points: { line: number; ownEnd: number; top: number; height: number }[] = [];
+    const points: {
+      line: number;
+      ownEnd: number;
+      top: number;
+      height: number;
+      containers: readonly string[];
+    }[] = [];
+    // Container keys that lost an anchor to the mid-render drop below. A group with a missing member
+    // must not reach height-sync at all: its surviving bounds could pin the container-tail floor to the
+    // WRONG row (a dropped LAST row would silently promote the second-to-last into the tail), so the
+    // whole container conservatively falls back to plain running-maximum padding for this pass — the
+    // next full measurement restores its group.
+    const droppedContainers = new Set<string>();
     for (const anchor of anchors) {
       const dom = this.view.nodeDOM(anchor.from);
       if (dom instanceof HTMLElement) {
@@ -1073,7 +1086,17 @@ export class FormattedEditor {
           ownEnd: anchor.ownEnd,
           top: rect.top - containerTop + scrollTop,
           height: rect.height,
+          containers: anchor.containers,
         });
+      } else {
+        for (const key of anchor.containers) {
+          droppedContainers.add(key);
+        }
+      }
+    }
+    if (droppedContainers.size > 0) {
+      for (const point of points) {
+        point.containers = point.containers.filter((key) => !droppedContainers.has(key));
       }
     }
     const lastBlock = this.blocks[this.blocks.length - 1];
@@ -1099,6 +1122,7 @@ export class FormattedEditor {
         // Tile down to the next anchor's top; the final unit keeps its measured height (its bottom is the
         // content bottom the trailing scroll anchor reads).
         height: next ? Math.max(0, next.top - point.top) : point.height,
+        containers: point.containers,
       });
     }
     return boxes;

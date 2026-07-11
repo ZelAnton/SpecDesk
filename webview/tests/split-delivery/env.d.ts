@@ -17,6 +17,13 @@ declare module "node:child_process" {
 declare module "node:fs" {
   export function readFileSync(path: string, encoding: "utf8"): string;
   export function readFileSync(path: string): Uint8Array;
+  export function mkdirSync(path: string): void;
+  export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
+  export function statSync(path: string): { readonly mtimeMs: number };
+}
+
+declare module "node:os" {
+  export function tmpdir(): string;
 }
 
 declare module "node:path" {

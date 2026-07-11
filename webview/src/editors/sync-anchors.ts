@@ -57,6 +57,32 @@ export interface LeafAnchor {
   readonly from: number;
   /** `from + node.nodeSize` — the position just past the node. */
   readonly to: number;
+  /**
+   * The container instances (a table / a list) this unit is a row/item OF, outermost first — each key
+   * unique per instance (type + source span), shared by every anchor of that instance and by nothing
+   * else. Empty for a top-level leaf and for a coarsened container's own single anchor (a group of one
+   * aligns as a whole block; there is no tail to pin). Carried through the measured geometry so
+   * height-sync can recover each container's contiguous anchor run and apply the container-tail floor
+   * (height-sync.ts `computeGapAdjustments`) — the anchors themselves stay a flat ordered list.
+   */
+  readonly containers: readonly string[];
+}
+
+/** The shared empty container stack for anchors that belong to no table/list (top-level leaves). */
+const NO_CONTAINERS: readonly string[] = [];
+
+/**
+ * Mints container instance keys for one {@link buildLeafAnchors} pass. The sequence number is what makes
+ * a key unique — a type+span key alone collides where markdown-it maps a nested same-type container to
+ * its parent's exact source span (`- - a` puts the outer and the inner bullet_list both on [0,2]), which
+ * would merge the two instances into one group and silently drop the inner container's own tail floor.
+ * Keys only need to be unique WITHIN one pass (groups are re-derived from a fresh projection every
+ * reconcile, and the plan depends on the group's index bounds, not the key text), so a per-pass counter
+ * is sufficient; the type+span prefix is kept for debuggability only.
+ */
+function containerKeyMinter(): (type: string, src: SrcUnit) => string {
+  let sequence = 0;
+  return (type, src) => `${type}:${src.line}-${src.end}#${sequence++}`;
 }
 
 // GFM tables + lists recognised identically to the source split and the PM parse (one shared config).
@@ -157,9 +183,16 @@ function pmContainers(node: PmNode, from: number): { node: PmNode; from: number 
   return found;
 }
 
-/** The single coarsened anchor for a container whose source/PM child counts diverged locally. */
-function coarseAnchor(node: PmNode, from: number, src: SrcUnit): LeafAnchor {
-  return { line: src.line, ownEnd: src.end, from, to: from + node.nodeSize };
+/** The single coarsened anchor for a container whose source/PM child counts diverged locally. It keeps
+ *  the ENCLOSING containers' keys (it is still a row/item-level unit of those) but adds none of its own —
+ *  a group of one has no tail to pin. */
+function coarseAnchor(
+  node: PmNode,
+  from: number,
+  src: SrcUnit,
+  containers: readonly string[],
+): LeafAnchor {
+  return { line: src.line, ownEnd: src.end, from, to: from + node.nodeSize, containers };
 }
 
 /** The single top-level anchor for a non-container block, using the paired {@link BlockMap} entry so its
@@ -171,18 +204,29 @@ function topLevelAnchor(entry: BlockMapEntry): LeafAnchor {
     ownEnd: block.contentLineEnd ?? block.lineEnd + 1,
     from: entry.from,
     to: entry.to,
+    containers: NO_CONTAINERS,
   };
 }
 
 /** Emit anchors for one container's children (table rows / list items), recursing into items. On a child
- *  COUNT mismatch the container coarsens to one anchor rather than pairing by a clamped ordinal. */
-function emitContainer(node: PmNode, from: number, src: SrcUnit, out: LeafAnchor[]): void {
+ *  COUNT mismatch the container coarsens to one anchor rather than pairing by a clamped ordinal.
+ *  `enclosing` is the stack of container keys the container itself sits in; its children carry
+ *  `enclosing + [its own key]`. */
+function emitContainer(
+  node: PmNode,
+  from: number,
+  src: SrcUnit,
+  out: LeafAnchor[],
+  enclosing: readonly string[],
+  mintKey: (type: string, src: SrcUnit) => string,
+): void {
   const type = node.type.name;
   const children = type === "table" ? tableRows(src) : listItems(src);
   if (children.length !== node.childCount) {
-    out.push(coarseAnchor(node, from, src));
+    out.push(coarseAnchor(node, from, src, enclosing));
     return;
   }
+  const containers = [...enclosing, mintKey(type, src)];
   const isList = type === "bullet_list" || type === "ordered_list";
   let pos = from + 1; // step inside the container node
   for (let i = 0; i < node.childCount; i++) {
@@ -194,9 +238,10 @@ function emitContainer(node: PmNode, from: number, src: SrcUnit, out: LeafAnchor
         ownEnd: childSrc.end,
         from: pos,
         to: pos + childNode.nodeSize,
+        containers,
       });
       if (isList) {
-        emitItemNested(childNode, pos, childSrc, out);
+        emitItemNested(childNode, pos, childSrc, out, containers, mintKey);
       }
     }
     pos += childNode.nodeSize;
@@ -211,6 +256,8 @@ function emitItemNested(
   itemFrom: number,
   itemSrc: SrcUnit,
   out: LeafAnchor[],
+  enclosing: readonly string[],
+  mintKey: (type: string, src: SrcUnit) => string,
 ): void {
   const srcContainers = nestedContainers(itemSrc);
   const pm = pmContainers(itemNode, itemFrom);
@@ -221,7 +268,7 @@ function emitItemNested(
     const entry = pm[i];
     const srcChild = srcContainers[i];
     if (entry !== undefined && srcChild !== undefined) {
-      emitContainer(entry.node, entry.from, srcChild, out);
+      emitContainer(entry.node, entry.from, srcChild, out, enclosing, mintKey);
     }
   }
 }
@@ -244,6 +291,7 @@ export function buildLeafAnchors(map: BlockMap, md: string): LeafAnchor[] {
     return entries.map(topLevelAnchor);
   }
   const out: LeafAnchor[] = [];
+  const mintKey = containerKeyMinter();
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     const src = outline[i];
@@ -251,7 +299,7 @@ export function buildLeafAnchors(map: BlockMap, md: string): LeafAnchor[] {
       continue;
     }
     if (CONTAINER_TYPES.has(entry.node.type.name)) {
-      emitContainer(entry.node, entry.from, src, out);
+      emitContainer(entry.node, entry.from, src, out, NO_CONTAINERS, mintKey);
     } else {
       out.push(topLevelAnchor(entry));
     }

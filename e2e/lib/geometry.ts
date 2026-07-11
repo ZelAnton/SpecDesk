@@ -209,19 +209,39 @@ export function measureAlignment(
 
 /** The content-relative top (px from the code editor's scroll origin) of a source line, for scrolling
  *  the code pane to it. Null if the line is not currently rendered (CodeMirror virtualises). */
-export function codeLineTop(page: Page, srcLine: string): Promise<number | null> {
+export async function codeLineTop(page: Page, srcLine: string): Promise<number | null> {
+  const tops = await codeLineTops(page, [srcLine]);
+  return tops[srcLine] ?? null;
+}
+
+/** The content-relative tops of SEVERAL source lines in one browser round-trip (one scan of the
+ *  rendered lines instead of one per line). Null per line not currently rendered. */
+export function codeLineTops(
+  page: Page,
+  srcLines: readonly string[],
+): Promise<Record<string, number | null>> {
   return page.evaluate(
-    ({ line, codeSel, lineSel }) => {
+    ({ lines, codeSel, lineSel }) => {
       const scroller = document.querySelector(codeSel) as HTMLElement | null;
-      const el = Array.from(document.querySelectorAll(lineSel)).find(
-        (l) => (l.textContent ?? "") === line,
-      );
-      if (!scroller || !el) {
-        return null;
+      const out: Record<string, number | null> = {};
+      for (const line of lines) {
+        out[line] = null;
       }
-      return el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      if (!scroller) {
+        return out;
+      }
+      const scrollerTop = scroller.getBoundingClientRect().top;
+      const scrollTop = scroller.scrollTop;
+      const wanted = new Set(lines);
+      for (const el of Array.from(document.querySelectorAll(lineSel))) {
+        const text = el.textContent ?? "";
+        if (wanted.has(text) && out[text] === null) {
+          out[text] = el.getBoundingClientRect().top - scrollerTop + scrollTop;
+        }
+      }
+      return out;
     },
-    { line: srcLine, codeSel: CODE_SCROLLER, lineSel: CODE_LINE },
+    { lines: [...srcLines], codeSel: CODE_SCROLLER, lineSel: CODE_LINE },
   );
 }
 

@@ -36,7 +36,8 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readManifest, VerifyStatus, verifyBundle } from "../../scripts/webview-manifest.mjs";
@@ -288,6 +289,32 @@ export function delay(ms: number): Promise<void> {
   });
 }
 
+/** The editors' scroll-settle debounce (editor.ts / formatted.ts `SCROLL_SETTLE_MS`). A real scroll arms it
+ *  on every event and it fires this long after the LAST one; a faithful "the author scrolled a pane" gesture
+ *  is not over until it has fired. */
+const SCROLL_SETTLE_MS = 120;
+
+/**
+ * Model ONE complete user scroll of a real scroll container: move it, let the rAF-throttled coordinator
+ * couple the sibling, and then let the 120 ms scroll-settle debounce FULLY FIRE before returning — exactly
+ * as a human scrolls a pane and pauses before doing anything else.
+ *
+ * Draining the settle here is load-bearing, not cosmetic. The real editors arm a scroll-settle debounce on
+ * every scroll event; if a step returns while that timer is still pending, it fires LATER — during the next
+ * step — where `SplitSync.settle` re-couples from a now-stale scroll position and races that step's own
+ * throttled scroll (the settle can land first, drag the pane the author just scrolled back to the previous
+ * pane's line, and then the genuine scroll is misread as an echo and dropped). That leak is a function of
+ * wall-clock timing between steps, so it made these gates NON-DETERMINISTIC — a green run proved nothing.
+ * Settling each gesture fully removes the cross-step leak and makes every scenario reproducible.
+ */
+export async function scrollPane(el: HTMLElement, top: number): Promise<void> {
+  el.scrollTop = top;
+  el.dispatchEvent(new Event("scroll"));
+  await flushFrames(3); // the live rAF couple
+  await delay(SCROLL_SETTLE_MS + 40); // let the scroll-settle debounce fire (the gesture is now over)
+  await flushFrames(3); // drain the settle's own re-couple + its suppressed echo
+}
+
 function must<T extends Element>(selector: string): T {
   const el = document.querySelector<T>(selector);
   if (el === null) {
@@ -348,24 +375,68 @@ export interface BundleArtifact {
 }
 
 /**
+ * Serialize the bundle build + artifact read across the delivery test files. Vitest runs test FILES in
+ * parallel forks and more than one delivery gate calls {@link buildBundle} in its `beforeAll`; two
+ * concurrent `bundle.mjs` runs write the SAME `wwwroot` outputs, so an unlocked second build can tear the
+ * files out from under the first gate's read. A `mkdir`-based lock (atomic on every platform) held across
+ * build AND read keeps each gate's artifact self-consistent; a lock older than a minute is treated as a
+ * crashed holder's leftover and reclaimed. The lock lives in the OS temp dir (shared by the forks, out
+ * of wwwroot so the manifest never sees it, and invisible to git if a crash leaks it).
+ */
+function withBundleLock<T>(body: () => T): T {
+  const lock = join(tmpdir(), "specdesk-webview-bundle-build-lock");
+  const waitStart = Date.now();
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      break;
+    } catch {
+      // Lock held. Reclaim it if stale (holder crashed), give up loudly after two minutes, else wait a
+      // beat and retry.
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 60_000) {
+          rmSync(lock, { recursive: true, force: true });
+          continue;
+        }
+      } catch {
+        // The lock vanished between mkdir failing and stat — retry immediately.
+        continue;
+      }
+      if (Date.now() - waitStart > 120_000) {
+        throw new Error("timed out waiting for the webview bundle build lock");
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150);
+    }
+  }
+  try {
+    return body();
+  } finally {
+    rmSync(lock, { recursive: true, force: true });
+  }
+}
+
+/**
  * Run the standard bundle process and gather the built artifact + its manifest. Shelling out to
  * `node scripts/bundle.mjs` is deliberately the same path `npm run bundle` drives, so the gate proves the
- * whole pipeline (esbuild + manifest write), not an in-process re-implementation of it.
+ * whole pipeline (esbuild + manifest write), not an in-process re-implementation of it. Build and read
+ * happen under the cross-file lock (see {@link withBundleLock}).
  */
 export function buildBundle(): BundleArtifact {
-  execFileSync(process.execPath, [join(scriptsDir, "bundle.mjs")], {
-    cwd: webviewDir,
-    stdio: "inherit",
+  return withBundleLock(() => {
+    execFileSync(process.execPath, [join(scriptsDir, "bundle.mjs")], {
+      cwd: webviewDir,
+      stdio: "inherit",
+    });
+    const verification = verifyBundle(webviewDir, wwwrootDir);
+    const manifest = readManifest(wwwrootDir);
+    const jsBytes = readFileSync(join(wwwrootDir, "webview.js"));
+    const jsSha256 = createHash("sha256").update(jsBytes).digest("hex");
+    const rawJs = readFileSync(join(wwwrootDir, "webview.js"), "utf8");
+    const code = rawJs.replace(/\bexport\s*\{[\s\S]*?\};?\s*$/, "");
+    const html = readFileSync(join(wwwrootDir, "index.html"), "utf8");
+    const css = readFileSync(join(wwwrootDir, "styles.css"), "utf8");
+    return { code, html, css, jsSha256, verification, manifest };
   });
-  const verification = verifyBundle(webviewDir, wwwrootDir);
-  const manifest = readManifest(wwwrootDir);
-  const jsBytes = readFileSync(join(wwwrootDir, "webview.js"));
-  const jsSha256 = createHash("sha256").update(jsBytes).digest("hex");
-  const rawJs = readFileSync(join(wwwrootDir, "webview.js"), "utf8");
-  const code = rawJs.replace(/\bexport\s*\{[\s\S]*?\};?\s*$/, "");
-  const html = readFileSync(join(wwwrootDir, "index.html"), "utf8");
-  const css = readFileSync(join(wwwrootDir, "styles.css"), "utf8");
-  return { code, html, css, jsSha256, verification, manifest };
 }
 
 export { VerifyStatus };

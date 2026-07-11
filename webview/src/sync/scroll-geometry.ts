@@ -31,6 +31,11 @@ export interface BlockBox {
   contentLineEnd: number | undefined;
   top: number;
   height: number;
+  /** The container instances (table/list) this leaf is a row/item of, outermost first — the
+   *  {@link LeafAnchor.containers} keys carried through the measurement so height-sync can recover each
+   *  container's anchor run (its container-tail floor). Absent for panes that don't project per-row
+   *  anchors (the preview) and for top-level leaves. */
+  containers?: readonly string[];
 }
 
 /** The source line the block's rendered pixels START at: its content start (leading blank lines and

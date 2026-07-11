@@ -26,6 +26,11 @@ export interface BlockGeometry {
   lineEnd: number;
   top: number;
   height: number;
+  /** The container instances (table/list) this leaf belongs to, outermost first (see
+   *  {@link LeafAnchor.containers} in sync-anchors.ts) — lets height-sync group a container's rows/items
+   *  for its container-tail floor. Absent for a source with no per-row anchor projection (this preview)
+   *  and for top-level leaves. */
+  containers?: readonly string[];
 }
 
 /**

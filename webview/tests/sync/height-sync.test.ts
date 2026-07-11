@@ -5,6 +5,7 @@ import {
   type AnchorMetrics,
   computeGapAdjustments,
   computeScrollCompensation,
+  containerGroups,
   type EditorSpacer,
   type GeometrySource,
   HeightSync,
@@ -226,6 +227,207 @@ describe("computeGapAdjustments running-maximum cumulative plan (T-102)", () => 
     ]);
     expect(result.editorLead).toBe(0);
     expect(result.editorSpacers).toEqual([{ lineEnd: 11, height: 30 }]);
+  });
+});
+
+// T-112: the container-tail floor. Padding accumulated ABOVE a table/list counts toward its rows'
+// required, so a row whose own required never reaches the running maximum gets no spacer — and the
+// container's LAST row then drifts against its rendered counterpart inside one viewport (the T-110/T-111
+// finding). The author-accepted contract: intermediate rows may drift (additive padding cannot lift
+// them), but each container's last row is floored to the container's own internal growth, so the
+// container ends in step in both panes.
+describe("computeGapAdjustments container-tail floor (T-112)", () => {
+  it("floors a globally unreachable container tail to the container's internal growth", () => {
+    // required = [0, +100, +80, +70, +90]: earlier content pads 100; the table's rows (anchors 2..4)
+    // all stay under it — the plain running maximum would leave the whole table spacer-less, its last
+    // row drifting +10 against the header inside one viewport. The floor pins the tail to the
+    // container's internal growth: applied[first]=100 plus (90 − 80) = 110 → one 10px spacer at the
+    // last row's placement slot. Intermediate rows stay untouched (accepted drift).
+    const result = computeGapAdjustments(
+      [
+        anchor(0, 0, 0),
+        anchor(1, 10, 110), // tall rendered block above — running max 100
+        anchor(4, 40, 120), // header row — required 80, unreachable (group first)
+        anchor(5, 60, 130), // body row — required 70, unreachable
+        anchor(6, 80, 170), // LAST row — required 90, unreachable globally; floored to 110
+      ],
+      0,
+      [{ first: 2, last: 4 }],
+    );
+    expect(result.editorLead).toBe(0);
+    expect(result.editorSpacers).toEqual([
+      { lineEnd: 0, height: 100 },
+      { lineEnd: 5, height: 10 },
+    ]);
+  });
+
+  it("keeps a globally reachable tail EXACTLY aligned — the floor never over-pads it", () => {
+    // required = [0, −6, −14, +13]: the tail's own required exceeds the running maximum (0), so plain
+    // global alignment applies (13px, exact). The floor (applied[first] 0 + (13 − (−6)) = 19) must NOT
+    // replace it — the grouped result is byte-identical to the ungrouped one.
+    const anchors = [anchor(0, 0, 0), anchor(2, 10, 4), anchor(3, 30, 16), anchor(4, 50, 63)];
+    const grouped = computeGapAdjustments(anchors, 0, [{ first: 1, last: 3 }]);
+    const ungrouped = computeGapAdjustments(anchors);
+    expect(grouped).toEqual(ungrouped);
+    expect(grouped.editorSpacers).toEqual([{ lineEnd: 3, height: 13 }]);
+  });
+
+  it("adds nothing when the container internally shrinks (the source-taller direction stays out of scope)", () => {
+    // required = [0, +100, +90, +70]: inside the container the source outgrows the reference (a loose
+    // list) — the floor (100 + (70 − 90) = 80) sinks below the running maximum and correctly adds no
+    // spacer; additive padding cannot lift the tail and must not try.
+    const result = computeGapAdjustments(
+      [
+        anchor(0, 0, 0),
+        anchor(1, 10, 110),
+        anchor(4, 40, 130), // first item — required 90
+        anchor(6, 80, 150), // LAST item — required 70, internal growth negative
+      ],
+      0,
+      [{ first: 2, last: 3 }],
+    );
+    expect(result.editorSpacers).toEqual([{ lineEnd: 0, height: 100 }]);
+  });
+
+  it("takes the highest floor when nested containers close on the same anchor", () => {
+    // An outer list whose last item holds a sub-list: both groups end on the final anchor. The outer
+    // floor (200 + (175 − 180) = 195) loses to the inner one (200 + (175 − 160) = 215) — the sub-list's
+    // own growth is the binding constraint. One 15px spacer at the tail's placement slot.
+    const result = computeGapAdjustments(
+      [
+        anchor(0, 0, 0),
+        anchor(1, 10, 210), // running max 200
+        anchor(4, 40, 220), // outer item — required 180 (outer group first)
+        anchor(5, 60, 220), // sub-item — required 160 (inner group first)
+        anchor(6, 80, 255), // LAST sub-item — required 175, closes both groups
+      ],
+      0,
+      [
+        { first: 2, last: 4 },
+        { first: 3, last: 4 },
+      ],
+    );
+    expect(result.editorSpacers).toEqual([
+      { lineEnd: 0, height: 200 },
+      { lineEnd: 5, height: 15 },
+    ]);
+  });
+
+  it("phases the floor in over a ramp at the reachability boundary — no plan discontinuity", () => {
+    // A tail a hair below the running maximum must NOT jump straight to the full parity floor (the two
+    // regimes differ by the first row's whole residual, so a hard gate would swing the tail's padding by
+    // that residual on subpixel measurement noise). required = [0, +100, +40, +99]: the tail's shortfall
+    // is 1px while the full floor is 100 + (99 − 40) = 159; the ramp caps the floor at
+    // runningMax + 3×shortfall = 103, so the plan moves 3px past the plain maximum, not 59.
+    const nearBoundary = computeGapAdjustments(
+      [anchor(0, 0, 0), anchor(1, 10, 110), anchor(4, 40, 80), anchor(6, 80, 179)],
+      0,
+      [{ first: 2, last: 3 }],
+    );
+    expect(nearBoundary.editorSpacers).toEqual([
+      { lineEnd: 0, height: 100 },
+      { lineEnd: 4, height: 3 },
+    ]);
+    // A clearly unreachable tail (shortfall beyond the ramp zone) still gets the FULL parity floor —
+    // the ramp only smooths the boundary, it does not dilute the reported-scenario fix.
+    const clearlyUnreachable = computeGapAdjustments(
+      [anchor(0, 0, 0), anchor(1, 10, 110), anchor(4, 40, 120), anchor(6, 80, 170)],
+      0,
+      [{ first: 2, last: 3 }],
+    );
+    expect(clearlyUnreachable.editorSpacers).toEqual([
+      { lineEnd: 0, height: 100 },
+      { lineEnd: 4, height: 10 },
+    ]);
+  });
+
+  it("is a fixed point THROUGH HeightSync — a second reconcile of settled geometry does not re-dispatch", () => {
+    // The floor must stay a function of spacer-INVARIANT inputs (natural tops, measured reference
+    // geometry): HeightSync.apply skips identical sets, so a settled Split must recompute the identical
+    // floored plan on the next reconcile — this drives the REAL reconcile twice rather than calling the
+    // pure function twice (which would hold for any deterministic function).
+    const editor = new FakeEditor();
+    // required = [0, +100, +80, +90]: a tall top-level block sets the maximum at 100; the two-row
+    // container (anchors 2..3) sits under it, its tail floored to 100 + (90 − 80) = 110.
+    const geometry: BlockGeometry[] = [
+      { lineStart: 0, lineEnd: 0, top: 0, height: 110 },
+      { lineStart: 1, lineEnd: 3, top: 110, height: 10 },
+      { lineStart: 4, lineEnd: 4, top: 120, height: 50, containers: ["t:4-6#0"] },
+      { lineStart: 5, lineEnd: 6, top: 170, height: 30, containers: ["t:4-6#0"] },
+    ];
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, fakeSource(geometry));
+    editor.setTops([
+      [0, 0],
+      [1, 10],
+      [4, 40],
+      [5, 80],
+    ]);
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(1);
+    // The floor genuinely fired: the tail spacer sits at the container's final placement slot.
+    expect(editor.calls[0]?.spacers).toEqual([
+      { lineEnd: 0, height: 100 },
+      { lineEnd: 4, height: 10 },
+    ]);
+    sync.reconcile();
+    expect(editor.calls).toHaveLength(1);
+  });
+
+  it("ignores degenerate or out-of-range groups", () => {
+    const anchors = [anchor(0, 0, 0), anchor(1, 10, 110), anchor(2, 40, 120)];
+    const result = computeGapAdjustments(anchors, 0, [
+      { first: 2, last: 2 }, // single-anchor group
+      { first: 1, last: 5 }, // out of range
+      { first: -1, last: 2 }, // out of range
+    ]);
+    expect(result).toEqual(computeGapAdjustments(anchors));
+  });
+});
+
+describe("containerGroups", () => {
+  const leaf = (
+    lineStart: number,
+    containers?: readonly string[],
+  ): BlockGeometry & { containers?: readonly string[] } => ({
+    lineStart,
+    lineEnd: lineStart,
+    top: lineStart * 10,
+    height: 10,
+    ...(containers === undefined ? {} : { containers }),
+  });
+
+  it("recovers each container's first/last anchor run from the stamped keys", () => {
+    const groups = containerGroups([
+      leaf(0),
+      leaf(2, ["t:2-5"]),
+      leaf(3, ["t:2-5"]),
+      leaf(4, ["t:2-5"]),
+      leaf(6),
+      leaf(8, ["l:8-10"]),
+      leaf(9, ["l:8-10"]),
+    ]);
+    expect(groups).toEqual([
+      { first: 1, last: 3 },
+      { first: 5, last: 6 },
+    ]);
+  });
+
+  it("keeps nested containers as separate overlapping groups", () => {
+    const groups = containerGroups([
+      leaf(0, ["outer"]),
+      leaf(1, ["outer", "inner"]),
+      leaf(2, ["outer", "inner"]),
+      leaf(3, ["outer"]),
+    ]);
+    expect(groups).toEqual([
+      { first: 0, last: 3 },
+      { first: 1, last: 2 },
+    ]);
+  });
+
+  it("drops single-anchor groups and geometry without keys", () => {
+    expect(containerGroups([leaf(0), leaf(1, ["solo"]), leaf(2)])).toEqual([]);
+    expect(containerGroups([leaf(0), leaf(1)])).toEqual([]);
   });
 });
 

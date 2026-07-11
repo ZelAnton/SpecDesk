@@ -32,6 +32,7 @@ import {
   formattedTopOf,
   installLayoutAdapter,
   loadDocument,
+  scrollPane,
   setLeafHeight,
   spacerElements,
   VerifyStatus,
@@ -75,32 +76,6 @@ const isRow = (needle: string) => (el: Element) =>
   el.tagName === "TR" && (el.textContent ?? "").includes(needle);
 const isItem = (needle: string) => (el: Element) =>
   el.tagName === "LI" && (el.textContent ?? "").includes(needle);
-
-/** The editors' scroll-settle debounce (editor.ts / formatted.ts `SCROLL_SETTLE_MS`). A real scroll arms it
- *  on every event and it fires this long after the LAST one; a faithful "the author scrolled a pane" gesture
- *  is not over until it has fired. */
-const SCROLL_SETTLE_MS = 120;
-
-/**
- * Model ONE complete user scroll of a real scroll container: move it, let the rAF-throttled coordinator
- * couple the sibling, and then let the 120 ms scroll-settle debounce FULLY FIRE before returning — exactly
- * as a human scrolls a pane and pauses before doing anything else.
- *
- * Draining the settle here is load-bearing, not cosmetic. The real editors arm a scroll-settle debounce on
- * every scroll event; if a step returns while that timer is still pending, it fires LATER — during the next
- * step — where `SplitSync.settle` re-couples from a now-stale scroll position and races that step's own
- * throttled scroll (the settle can land first, drag the pane the author just scrolled back to the previous
- * pane's line, and then the genuine scroll is misread as an echo and dropped). That leak is a function of
- * wall-clock timing between steps, so it made this gate NON-DETERMINISTIC — a green run proved nothing.
- * Settling each gesture fully removes the cross-step leak and makes every scenario below reproducible.
- */
-async function scrollPane(el: HTMLElement, top: number): Promise<void> {
-  el.scrollTop = top;
-  el.dispatchEvent(new Event("scroll"));
-  await flushFrames(3); // the live rAF couple
-  await delay(SCROLL_SETTLE_MS + 40); // let the scroll-settle debounce fire (the gesture is now over)
-  await flushFrames(3); // drain the settle's own re-couple + its suppressed echo
-}
 
 /** Fail unless height-sync applied at least one real, non-zero source spacer. Shared with the sensitivity
  *  control below, so the control proves THIS check (not a throwaway) catches a missing-spacer regression. */

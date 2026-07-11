@@ -21,7 +21,8 @@ export interface GeometrySource {
    *  formatted pane resolves these through the shared semantic-anchor projection (sync-anchors.ts) built
    *  on the block-map (block-map.ts); a markdown-it/ProseMirror split divergence yields NO blocks (rather
    *  than mispaired anchors), so {@link HeightSync.reconcile}'s zero-block path simply clears the spacers
-   *  until the split re-agrees. */
+   *  until the split re-agrees. Row/item units carry their container's `containers` keys, from which
+   *  {@link containerGroups} recovers each table's/list's anchor run for the container-tail floor. */
   blockGeometry(): BlockGeometry[];
   contentWidth(): number;
   /** Whether this pane has an edit typed that hasn't been reported via its own debounce yet — mirrors
@@ -59,6 +60,43 @@ export interface GapAdjustments {
   /** Per-block spacers below each block's last line so the next block reaches its preview top. */
   editorSpacers: EditorSpacer[];
 }
+
+/** One container's contiguous anchor run, as INDEX bounds into the anchor list passed to
+ *  {@link computeGapAdjustments} — `first` is the container's first row/item anchor (a table's header
+ *  row, a list's first item), `last` its final one. Derived from the `containers` keys the anchor
+ *  projection stamps on each row/item (see {@link containerGroups}). */
+export interface AnchorGroup {
+  first: number;
+  last: number;
+}
+
+/**
+ * The container groups of a measured geometry: each distinct `containers` key's first and last anchor
+ * index. A container's anchors are contiguous in document order, so first/last bound its whole run even
+ * if a mid-container anchor was dropped (an unmeasurable node mid-render). Single-anchor groups are
+ * discarded — a container that coarsened (or holds one row) aligns as a whole block and has no separate
+ * tail to pin. Pure — exported for unit tests.
+ */
+export function containerGroups(geometry: readonly BlockGeometry[]): AnchorGroup[] {
+  const ranges = new Map<string, AnchorGroup>();
+  geometry.forEach((block, index) => {
+    for (const key of block.containers ?? []) {
+      const range = ranges.get(key);
+      if (range === undefined) {
+        ranges.set(key, { first: index, last: index });
+      } else {
+        range.last = index;
+      }
+    }
+  });
+  return [...ranges.values()].filter((range) => range.last > range.first);
+}
+
+/** Slope of the container-tail floor's phase-in (see {@link computeGapAdjustments}' header note): the
+ *  floor may exceed the running maximum by at most this multiple of the tail's reachability shortfall,
+ *  so the plan stays continuous at the reachable/unreachable boundary instead of jumping by the first
+ *  row's whole residual. */
+const TAIL_FLOOR_RAMP = 3;
 
 /**
  * Pad only the editor so each anchor lines up with the (fixed) preview, using the MINIMAL cumulative
@@ -106,43 +144,120 @@ export interface GapAdjustments {
  * `naturalLineTops[0]` are both invariant to the spacers we apply (see `MarkdownEditor.spacerHeightsAbove`),
  * so a settled geometry recomputes the identical set and {@link HeightSync.apply} stops re-dispatching — no
  * oscillation.
+ *
+ * Container-tail floor (T-112). The running maximum is GLOBAL, so padding accumulated by earlier content
+ * counts toward every later anchor's need — including a table's/list's rows, whose own `required` may then
+ * never reach it (each non-rendered source region above — a blank line, a table's delimiter row — raises
+ * the accumulated maximum's lead over them). Rows the author reads TOGETHER then drift apart inside one
+ * viewport: the scroll coupling can align only the one anchor at the viewport top, and every other row's
+ * on-screen offset is the difference of the two anchors' residuals. The author-accepted contract (the
+ * T-110/T-111 design decision) is: rows the source renders DENSER than the reference may drift — additive
+ * padding cannot lift them — but a container's LAST row must line up, so the container as a whole ends in
+ * step in both panes. So each container group's final anchor gets a FLOOR: at least the applied level at
+ * the container's FIRST anchor plus the container's own internal growth (`required[last] − required[first]`,
+ * how much more the reference's rows outgrew the source's inside the container). Where the tail's own
+ * `required` already reaches the running maximum, exact global alignment wins and the floor is moot (it
+ * never over-pads a tail the plain running maximum aligns exactly); where the internal growth is negative
+ * (the source outgrew the reference inside the container — a loose list), the floor sinks below the
+ * running maximum and correctly adds nothing. The floor only ever RAISES the running maximum, so
+ * monotonicity, the rounding scheme and the fixed-point property are untouched — the extra padding is
+ * absorbed downstream exactly like any other increment (later anchors realign once the reference catches
+ * back up), at the cost of content below the container sitting up to the floor's increment lower than the
+ * old minimal plan — the accepted trade.
+ *
+ * The floor phases in over a RAMP rather than switching at the reachability boundary. The two regimes
+ * differ by the first row's whole residual (`base − required[first]`): a tail a hair below the running
+ * maximum wants the full parity floor, a hair above wants none — a hard `own < runningMax` gate would
+ * make the plan DISCONTINUOUS there, so measurement noise around the boundary (a subpixel reflow, a font
+ * swap) would swing the tail's padding — and everything below the container — by that whole residual at
+ * once. Instead the floor's excess over the running maximum is capped at {@link TAIL_FLOOR_RAMP} × the
+ * tail's reachability shortfall (`runningMax − own`): at the boundary the cap is 0 (exactly the plain
+ * running maximum — continuous), and by the time the shortfall exceeds a quarter of the first row's
+ * residual the cap clears the full floor, so every clearly-unreachable tail (the reported scenario) still
+ * gets exact container parity. In the narrow ramp zone the plan responds to input noise proportionally
+ * (slope ≤ 1 + ramp) instead of jumping.
+ *
+ * Nested containers: groups closing on the SAME anchor each contribute a floor and the highest wins. One
+ * ordering is inherently best-effort: a sub-list that closes EARLIER inside its parent (nested in a
+ * middle item) may raise the running maximum above the parent tail's own floor — additive padding cannot
+ * then bring the parent's tail back down to parity, so it simply stays as close as the monotone plan
+ * allows. Aligning both tails at once is impossible add-only; the inner container's parity (already
+ * applied when its tail passed) is kept.
  */
 export function computeGapAdjustments(
   anchors: AnchorMetrics[],
   referenceInset = 0,
+  groups: readonly AnchorGroup[] = [],
 ): GapAdjustments {
-  const first = anchors[0];
-  if (!first) {
+  if (anchors.length === 0) {
     return { editorLead: 0, editorSpacers: [] };
   }
 
-  // Running maximum of max(0, required) over the anchors seen so far, in fractional px. `required` is
-  // measured against the reference CONTENT box (referenceInset subtracted — see the header note), so the
-  // reference pane's structural scroll inset is not re-added here on top of the coupling that already
-  // consumes it. Seeded with the first anchor's own need so the lead IS applied[0]; never drops below 0,
-  // so no anchor's required (which may be negative where Code already sits below its target) can pull it
-  // down.
-  let runningMax = Math.max(0, first.previewTop - referenceInset - first.editorTop);
-  const editorLead = Math.round(runningMax);
+  // Each anchor's need, measured against the reference CONTENT box (referenceInset subtracted — see the
+  // header note), so the reference pane's structural scroll inset is not re-added here on top of the
+  // coupling that already consumes it. Fractional px.
+  const required = anchors.map((a) => a.previewTop - referenceInset - a.editorTop);
+
+  // The valid container groups (in-bounds, more than one anchor), with one slot each for the
+  // (fractional) applied level captured when the sweep passes the group's first anchor. Real documents
+  // hold a handful of groups, so the sweep just scans them per anchor.
+  const validGroups = groups.filter(
+    (group) => group.first >= 0 && group.last > group.first && group.last < anchors.length,
+  );
+  const baseAtFirst: number[] = validGroups.map(() => 0);
+
+  // Running maximum of max(0, required) over the anchors seen so far, in fractional px — never drops
+  // below 0, so no anchor's required (which may be negative where Code already sits below its target)
+  // can pull it down. The lead IS the rounded level at anchor 0.
+  let runningMax = 0;
+  let editorLead = 0;
   // Rounded cumulative padding applied above the current placement slot. Each spacer is the difference
   // of two rounded cumulative values, so the total above anchor k is exactly round(applied[k]) — the
   // rounding is normalized once per boundary and cannot accumulate across gaps.
-  let appliedBelow = editorLead;
-
+  let appliedBelow = 0;
   const editorSpacers: EditorSpacer[] = [];
-  for (let i = 0; i < anchors.length - 1; i++) {
-    const current = anchors[i];
-    const next = anchors[i + 1];
-    if (!current || !next) {
-      continue;
+
+  for (let i = 0; i < anchors.length; i++) {
+    const own = required[i] ?? 0;
+    let need = own;
+    // Container-tail floor (see the header note): only where this anchor closes a container whose tail
+    // the running maximum leaves unreachable — a tail the maximum aligns exactly keeps that exact
+    // alignment. The floor's excess over the running maximum phases in over the ramp (continuity at the
+    // reachability boundary); nested containers closing on the same anchor each contribute a floor
+    // (computed from the anchor's OWN required, independent of the other floors) and the highest wins.
+    if (own < runningMax) {
+      const rampCap = runningMax + TAIL_FLOOR_RAMP * (runningMax - own);
+      for (let g = 0; g < validGroups.length; g++) {
+        const group = validGroups[g];
+        if (group === undefined || group.last !== i) {
+          continue;
+        }
+        const floor = Math.min((baseAtFirst[g] ?? 0) + own - (required[group.first] ?? 0), rampCap);
+        if (floor > need) {
+          need = floor;
+        }
+      }
     }
-    runningMax = Math.max(runningMax, next.previewTop - referenceInset - next.editorTop);
-    const appliedAtNext = Math.round(runningMax);
-    const height = appliedAtNext - appliedBelow;
-    if (height > 0) {
-      editorSpacers.push({ lineEnd: current.lineEnd, height });
+    runningMax = Math.max(runningMax, need);
+    if (i === 0) {
+      editorLead = Math.round(runningMax);
+      appliedBelow = editorLead;
+    } else {
+      const appliedHere = Math.round(runningMax);
+      const height = appliedHere - appliedBelow;
+      const previous = anchors[i - 1];
+      if (height > 0 && previous !== undefined) {
+        editorSpacers.push({ lineEnd: previous.lineEnd, height });
+      }
+      appliedBelow = appliedHere;
     }
-    appliedBelow = appliedAtNext;
+    // Capture the level at a group's first anchor AFTER its own need is folded in — the container's
+    // rows are floored against where the container itself actually starts.
+    for (let g = 0; g < validGroups.length; g++) {
+      if (validGroups[g]?.first === i) {
+        baseAtFirst[g] = runningMax;
+      }
+    }
   }
 
   return { editorLead, editorSpacers };
@@ -415,7 +530,11 @@ export class HeightSync {
     // scroll coupling already consumes this inset, so the lead is measured against the content box, not
     // re-added as editor padding — otherwise the inset is counted twice (T-061, the top-of-document misalign).
     const referenceInset = anchors[0]?.previewTop ?? 0;
-    const { editorLead, editorSpacers } = computeGapAdjustments(anchors, referenceInset);
+    // The container groups (each table's rows, each list's items) for the container-tail floor — see
+    // computeGapAdjustments' header note. Derived from the `containers` keys the anchor projection
+    // stamps on the measured geometry; a source that stamps none (the preview) yields no groups.
+    const groups = containerGroups(geometry);
+    const { editorLead, editorSpacers } = computeGapAdjustments(anchors, referenceInset, groups);
     const changed = this.apply(editorLead, editorSpacers);
 
     // A per-reconcile summary (built lazily via the thunk, and marked perFrame so a sink can drop it
