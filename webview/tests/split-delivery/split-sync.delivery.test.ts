@@ -175,6 +175,26 @@ describe("Split scroll-sync delivery smoke (built webview.js)", () => {
     expect(spacerElements().length).toBeGreaterThanOrEqual(4);
   });
 
+  it("T-109: applies spacers after a CRLF doc.loaded with no manual mode switch and no spurious editor.changed", async () => {
+    // Root cause regression. On a Windows checkout (`core.autocrlf=true`, the installer default) a real
+    // repo's .md files are routinely CRLF on disk — the RAW `doc.loaded` payload.text the host sends (see
+    // HostControllerLineEndingTests.cs). CodeMirror's document model always normalizes internally to
+    // LF-only; feeding that raw CRLF text into `editor.setText`/`formatted.setText` independently used to
+    // leave `editor.getText()` silently LF-only while `formatted.getText()` kept the CRLF — a PERSISTENT
+    // mismatch (not a transient timing race) height-sync's pane-consistency gate (T-084) correctly
+    // detected and refused to pad against, with no further retry since a silent load fires neither pane's
+    // onChange. The `beforeEach` FIXTURE above is plain LF, so it does NOT reproduce this — this scenario
+    // needs its own CRLF-flavoured load, through the real bundle end to end, asserting the actual bug
+    // report: spacers must render without the author ever switching modes, and the fix must not
+    // round-trip the silent load back out as an edit.
+    const crlfApp = wire(artifact.code, artifact.html, artifact.css);
+    await loadDocument(crlfApp, FIXTURE.replace(/\n/g, "\r\n"));
+
+    assertSpacersApplied();
+    expect(spacerElements().length).toBeGreaterThanOrEqual(4);
+    expect(crlfApp.sent.map((frame) => frame.kind)).not.toContain("editor.changed");
+  });
+
   it("aligns Code with the given formatted geometry within 1px at every anchor, incl. each row and item", async () => {
     // Every laid-out leaf is its OWN anchor: driving the formatted pane to a leaf's top must land the
     // padded source editor at the same pixel top (height-sync's whole purpose). A table row / list item

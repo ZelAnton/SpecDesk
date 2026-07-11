@@ -674,6 +674,99 @@ describe("HeightSync.reconcile pane-consistency gate (T-084)", () => {
   });
 });
 
+// T-109: a SILENT setText (a doc load) never fires onEditorChange/onFormattedChange, so the T-084 gate's
+// ordinary recovery path above (the pending pane's own debounce re-driving reconcileHeights()) never runs
+// for it — these pin the second, one-shot recovery HeightSync itself requests via the injected
+// onSettleRetry hook (index.ts wires this back through reconcileHeights()/the generation-aware scheduler).
+describe("HeightSync.reconcile settle retry (T-109: recovery for a silent-setText load with no onChange)", () => {
+  const geometry: BlockGeometry[] = [
+    { lineStart: 0, lineEnd: 5, top: 0, height: 200 },
+    { lineStart: 7, lineEnd: 7, top: 200, height: 40 },
+  ];
+
+  /** Wires onSettleRetry to `retryBehavior` (run once, right before the hook's own re-`reconcile()` call)
+   *  plus a counter of how many times the hook fired — the harness a caller like index.ts provides, with
+   *  `retryBehavior` standing in for "whatever the real world did between the gate and the next frame". */
+  function make(
+    overrides?: { pendingChange?: boolean; text?: string },
+    retryBehavior?: (editor: FakeEditor) => void,
+  ): { editor: FakeEditor; sync: HeightSync; retryCalls: { count: number } } {
+    const editor = new FakeEditor();
+    const source = fakeSource(geometry, overrides);
+    const retryCalls = { count: 0 };
+    let sync: HeightSync;
+    sync = new HeightSync(editor as unknown as MarkdownEditor, source, undefined, () => {
+      retryCalls.count += 1;
+      retryBehavior?.(editor);
+      sync.reconcile();
+    });
+    editor.setTops([
+      [0, 0],
+      [7, 90],
+    ]);
+    return { editor, sync, retryCalls };
+  }
+
+  it("requests exactly one settle retry when gated by a pane text mismatch, and applies once it resolves", () => {
+    // Models the doc-load scenario: a gated reconcile() (panes momentarily/apparently disagreeing) with
+    // no onChange ever coming to retry it — HeightSync's own settle-retry hook is the only way back, and
+    // by the time it runs the mismatch that caused the gate has resolved (matching the always-synchronous
+    // reality of setText/getText — see index.ts normalizeLineEndings' doc comment).
+    const { editor, sync, retryCalls } = make({ text: "same text" }, (fakeEditor) => {
+      fakeEditor.setText("same text");
+    });
+    editor.setText("editor's (different) text — mid-settle");
+
+    sync.reconcile();
+
+    expect(retryCalls.count).toBe(1);
+    // The retry's OWN reconcile() call — not a second manual call from the test — is what applied these.
+    expect(editor.calls).toHaveLength(1);
+    expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
+  });
+
+  it("requests at most one settle retry per gated streak — a still-mismatched retry does not request a second one", () => {
+    // No retryBehavior: the mismatch never resolves — models a genuinely (not just transiently) diverged
+    // pair, which must stay gated rather than poll forever.
+    const { editor, sync, retryCalls } = make({ text: "same text" });
+    editor.setText("editor's (different) text — never settles");
+
+    sync.reconcile();
+
+    expect(retryCalls.count).toBe(1);
+    expect(editor.calls).toHaveLength(0);
+  });
+
+  it("a later, independent gate requests its own fresh settle retry (the one-shot guard is per streak)", () => {
+    const { editor, sync, retryCalls } = make({ text: "same text" }, (fakeEditor) => {
+      fakeEditor.setText("same text");
+    });
+    editor.setText("mismatch 1");
+    sync.reconcile();
+    expect(retryCalls.count).toBe(1);
+    expect(editor.calls).toHaveLength(1);
+
+    // A later, unrelated mismatch (e.g. a fresh edit mid-mirror) gates again — it must get its own retry,
+    // proving the one-shot guard reset once the first streak actually settled.
+    editor.setText("mismatch 2");
+    sync.reconcile();
+    expect(retryCalls.count).toBe(2);
+    expect(editor.calls).toHaveLength(1); // unchanged geometry/tops — the settled repeat dispatches nothing new
+  });
+
+  it("also requests a settle retry when gated by a pending (unmirrored) edit", () => {
+    const { editor, sync, retryCalls } = make(undefined, (fakeEditor) => {
+      fakeEditor.setPendingChange(false);
+    });
+    editor.setPendingChange(true);
+
+    sync.reconcile();
+
+    expect(retryCalls.count).toBe(1);
+    expect(editor.calls).toHaveLength(1);
+  });
+});
+
 // T-104: reconcile() is the one read phase of a Split generation — it returns the immutable geometry
 // snapshot the coordinator rebuilds BOTH scroll maps from, so no second measure runs after the spacer
 // write. These pin the snapshot's shape (formatted natural tops + editor PADDED tops, both sharing one

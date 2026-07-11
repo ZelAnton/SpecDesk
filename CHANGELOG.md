@@ -256,6 +256,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view's height-sync spacers now render on a fresh app start (and on any document load/switch)
+  without the author having to manually switch to Code and back. Root cause: `doc.loaded` fed the raw
+  on-disk text — routinely CRLF on a Windows checkout (`core.autocrlf=true`) — into the source editor and
+  the formatted pane independently; CodeMirror always normalizes its own document to LF-only, so the two
+  panes' texts permanently disagreed from the moment of load, and height-sync's pane-consistency gate
+  correctly (if unhelpfully) refused to pad against that mismatch with no way back, since a silent load
+  never fires either pane's `onChange` (the gate's only other recovery trigger). The load path now
+  normalizes line endings once before handing the SAME text to both panes; `HeightSync` also gained a
+  bounded, condition-driven one-shot settle retry as defense in depth for any future silent-setText path
+  that leaves the panes transiently gated with no `onChange` to recover from
+  (`webview/src/index.ts`, `webview/src/sync/height-sync.ts`).
 - The startup working-copy currency guard now recognises the repository main working copy correctly when
   the checkout sits under a symlinked path (for example a symlinked temp or home directory): it resolves
   symlinks on both sides of the path comparison instead of trusting the raw spelling, so it no longer

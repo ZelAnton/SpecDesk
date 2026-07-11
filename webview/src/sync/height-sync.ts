@@ -243,20 +243,58 @@ export class HeightSync {
   private readonly editor: MarkdownEditor;
   private readonly source: GeometrySource;
   private readonly onDebug: ((summary: () => string, perFrame?: boolean) => void) | undefined;
+  private readonly onSettleRetry: (() => void) | undefined;
   // The last spacer set actually pushed to the editor. reconcile() skips re-dispatching an identical
   // set — that is what makes repeated reconciles converge instead of flickering (see apply()).
   private appliedLead = 0;
   private appliedSpacers: EditorSpacer[] = [];
   private hasApplied = false;
+  // Guards the T-109 settle retry (see scheduleSettleRetry) to ONE outstanding request per gated streak:
+  // set the moment a retry is requested, cleared the moment reconcile() next gets PAST the pane-consistency
+  // gate (settled, whether or not it then dispatches). So a burst of reconcile() calls while still gated
+  // (onGeometryChange firing repeatedly, applyMode's own direct call, …) requests at most one retry, but a
+  // FRESH gate later (a genuinely new edit) is free to request its own.
+  private settleRetryScheduled = false;
 
   constructor(
     editor: MarkdownEditor,
     source: GeometrySource,
     onDebug?: (summary: () => string, perFrame?: boolean) => void,
+    // T-109: the caller's hook for scheduling ONE more reconcile attempt after the pane-consistency gate
+    // below refuses this one — see scheduleSettleRetry for why this exists (a silent setText, e.g. a doc
+    // load, has no onChange to drive the gate's ordinary recovery path) and index.ts for how it's wired
+    // (reconcileHeights(), i.e. back through the SAME generation-aware scheduler, not a bespoke timer).
+    onSettleRetry?: () => void,
   ) {
     this.editor = editor;
     this.source = source;
     this.onDebug = onDebug;
+    this.onSettleRetry = onSettleRetry;
+  }
+
+  /**
+   * One-shot recovery for the pane-consistency gate below (T-084 → T-109). Every ORDINARY caller that can
+   * leave a pane pending/mismatched (onEditorChange/onFormattedChange) already re-drives reconcileHeights()
+   * unconditionally once its own debounced mirror lands — the gate's documented recovery path. But a
+   * SILENT setText (docLoaded's dual `editor.setText`/`formatted.setText`, both deliberately silent so a
+   * load doesn't round-trip as a spurious edit — see index.ts) never fires either onChange, so without this
+   * the gate had NO way back at all once its one synchronous reconcileHeights() call happened to read the
+   * panes disagreeing: the trace evidence for the original bug (T-109) shows exactly that — the SAME gated
+   * outcome repeating across several later generations, with nothing ever retrying it again.
+   *
+   * Requests (via the injected onSettleRetry hook) exactly one follow-up reconcile — not a magic delay or
+   * an unbounded loop: the follow-up re-reads the SAME real condition this gate just read (hasPendingChange
+   * / getText equality), so it either converges (the panes settled — the common case, since both setText
+   * calls are synchronous and the scheduler's own rAF hop already gives a full frame of margin) or gates
+   * again, in which case it does NOT request a further retry (settleRetryScheduled stays set until this
+   * streak ungates) — a genuinely diverged pair of panes stays gated rather than polling forever.
+   */
+  private scheduleSettleRetry(): void {
+    if (this.settleRetryScheduled || this.onSettleRetry === undefined) {
+      return;
+    }
+    this.settleRetryScheduled = true;
+    this.onSettleRetry();
   }
 
   /**
@@ -315,10 +353,12 @@ export class HeightSync {
    * `naturalLineTops` is about to measure against, producing spacers on the wrong lines (duplicated
    * anchors, negative gaps). When either pane has a pending (not-yet-mirrored) edit, or their texts
    * simply disagree, this returns WITHOUT applying anything — the stale spacer set (if any) is left in
-   * place rather than replaced with a wrong one. This is not a dead end: once the mirror lands (the
-   * pending pane's own debounce fires `onEditorChange`/`onFormattedChange`, which mirrors the text and
-   * then unconditionally calls `reconcileHeights()` again — see index.ts), reconcile runs again with
-   * consistent panes and catches the geometry up.
+   * place rather than replaced with a wrong one. Two recovery paths exist: the ORDINARY one is that once
+   * the mirror lands, the pending pane's own debounce fires `onEditorChange`/`onFormattedChange`, which
+   * mirrors the text and then unconditionally calls `reconcileHeights()` again — see index.ts. A SILENT
+   * setText (a doc load; see index.ts `docLoaded`) never fires either onChange, so it has no pending pane
+   * in that tracked sense to drive that path — {@link scheduleSettleRetry} is the second, one-shot recovery
+   * for exactly that case (T-109).
    *
    * The one read phase of a Split reconcile generation. It measures the reference pane's block geometry
    * ONCE and reads the editor's spacer-free line tops ONCE, then returns the {@link GeometrySnapshot} the
@@ -333,14 +373,19 @@ export class HeightSync {
   reconcile(): GeometrySnapshot | null {
     if (this.editor.hasPendingChange() || this.source.hasPendingChange()) {
       this.onDebug?.(() => "height-sync: deferred — a pane has a pending (unmirrored) edit");
+      this.scheduleSettleRetry();
       return null;
     }
     if (this.editor.getText() !== this.source.getText()) {
       this.onDebug?.(
         () => "height-sync: deferred — panes' texts disagree (mirror not settled yet)",
       );
+      this.scheduleSettleRetry();
       return null;
     }
+    // Past the pane-consistency gate — this streak (if any) is over; a LATER gate may request its own
+    // fresh settle retry (see scheduleSettleRetry).
+    this.settleRetryScheduled = false;
 
     const geometry = this.source.blockGeometry();
     if (geometry.length === 0) {

@@ -57,6 +57,32 @@ export function shouldMirrorInto(text: string, destination: MirrorTarget): boole
   return destination.getText() !== text && !destination.hasPendingChange();
 }
 
+/**
+ * Normalize every line break to a bare "\n" — root cause of T-109 (spacers never render in Split on a
+ * fresh load until a manual mode switch). CodeMirror's document model ALWAYS normalizes to "\n"
+ * internally (`@codemirror/state`'s `Text.of` splits on `/\r\n?|\n/` and re-joins with "\n" — see
+ * HostControllerLineEndingTests.cs's S-11 comment, which documents the very same normalization on the
+ * host's read side of `editor.changed`); `doc.loaded`'s `payload.text` is instead the RAW on-disk content,
+ * which on a Windows checkout is routinely CRLF (`core.autocrlf=true`, the installer default). Feeding
+ * that raw text into `editor.setText` and `formatted.setText` independently below therefore left
+ * `editor.getText()` silently LF-only while `formatted.getText()` — primed straight from the loaded
+ * string when its parse round-trips 1:1 (FormattedEditor.setText's `cachedText`) — kept the CRLF: a
+ * PERSISTENT mismatch, not a transient one, since neither pane's `getText()` ever changes on its own
+ * afterward. That is exactly the gate `HeightSync.reconcile()`'s pane-consistency check (T-084) is
+ * DESIGNED to catch (a real divergence must not be padded against), so it correctly refused every
+ * generation — the CodeMirror/ProseMirror ASYNC-TIMING hypothesis floated for this bug is REFUTED (both
+ * setText calls and both getText() reads are synchronous state reads, no DOM/layout measurement
+ * involved); the divergence was a deterministic byte-level mismatch with no timing component at all.
+ * Normalizing once here, before either setText call, keeps both panes byte-identical from the start —
+ * matching what CodeMirror would reduce the source pane to anyway, and with no effect on what reaches the
+ * host: `editor.changed` already always reports LF-only text (same CodeMirror normalization on every
+ * edit), and the host's own `_lineEnding` tracks the disk style independently, re-applied at every
+ * disk-write site — see HostControllerLineEndingTests.cs.
+ */
+function normalizeLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 function wire(): void {
   // Expose the trace read API and capture global errors before anything else runs, so a failure
   // during startup wiring is still recorded.
@@ -454,14 +480,23 @@ function wire(): void {
 
     // The source editor is padded to match the formatted view's block heights (formatted is the fixed
     // reference). Assigned now that both panes exist; reconcileHeights() drives it.
-    heightSync = new HeightSync(editor, formatted, (summary, perFrame) => {
-      // Edge reasons (gate/refusal) always trace; the per-reconcile "settled" summary is verbose-only,
-      // and its thunk stays uninvoked otherwise so a reconcile never pays its layout-touching build.
-      if (perFrame && !trace.verbose) {
-        return;
-      }
-      trace("height", "height.hs", { summary: summary() });
-    });
+    heightSync = new HeightSync(
+      editor,
+      formatted,
+      (summary, perFrame) => {
+        // Edge reasons (gate/refusal) always trace; the per-reconcile "settled" summary is verbose-only,
+        // and its thunk stays uninvoked otherwise so a reconcile never pays its layout-touching build.
+        if (perFrame && !trace.verbose) {
+          return;
+        }
+        trace("height", "height.hs", { summary: summary() });
+      },
+      // T-109: the settle-retry hook, wired straight back through the SAME generation-aware scheduler
+      // every other height-sync trigger uses (reconcileHeights) — not a bespoke timer. See
+      // HeightSync.scheduleSettleRetry for why this exists (a silent doc-load setText has no onChange to
+      // drive the gate's ordinary recovery path).
+      () => reconcileHeights(),
+    );
 
     // The single scroll coordinator, now that both panes exist. It owns each pane's scrollTop for Split
     // coupling, reveal, and mode-switch restore — the editors expose the small line↔px surface it needs.
@@ -558,6 +593,11 @@ function wire(): void {
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
+        // T-109: feed BOTH panes the SAME already-normalized text — see normalizeLineEndings, the root
+        // cause of the spacers-never-render-until-a-mode-switch bug (a raw CRLF payload.text left the
+        // source editor's own getText() silently LF-only while the formatted pane's kept the CRLF, a
+        // persistent mismatch height-sync's pane-consistency gate correctly refused to pad against).
+        const text = normalizeLineEndings(payload.text);
         // Silent: the host already has this text (it just sent it) — a non-silent setText would fire
         // the source editor's onChange after its 120ms debounce, round-tripping it back to the host as
         // a spurious editor.changed (bumping docVersion and triggering a redundant re-render) even
@@ -565,7 +605,7 @@ function wire(): void {
         // defaults to silent, i.e. true) — unlike the Split mirror / mode-switch hydration silent calls,
         // this IS a genuinely different document, so any pending image-insert marker from the previous
         // one is dropped, not restored.
-        editor.setText(payload.text, true, false);
+        editor.setText(text, true, false);
         // Resolve relative image links in the formatted view against the document's folder. Set before
         // setText so the image node views render with the correct app://repo/… src.
         formatted.setDocDir(payload.docDir);
@@ -574,7 +614,7 @@ function wire(): void {
         // would stay blank (or show the previous document) after a load. formatted.setText is itself
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
-        formatted.setText(payload.text);
+        formatted.setText(text);
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
