@@ -256,6 +256,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- Split view no longer misaligns the very top of the document. The first rendered block (e.g. the title
+  heading) sat about 24 px above its source line — while every mid-document block lined up — because
+  height-sync reproduced the formatted pane's structural top padding as a leading spacer in the source
+  editor, even though the scroll coupling already scrolls that same padding off to bring the block flush.
+  The lead is now measured against the formatted pane's content box rather than its scroll origin, so the
+  pane inset is counted once and the top-of-document block sits level with its source line like every other
+  anchor (`webview/src/sync/height-sync.ts`).
 - Split scroll sync no longer judders when the author switches panes mid-scroll. Each scroll arms a 120 ms
   scroll-settle debounce that re-snaps the sibling to the pane's final momentum position; a trackpad/momentum
   scroll of one pane could still have that settle pending when the author grabbed the OTHER pane, and the

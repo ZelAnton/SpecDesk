@@ -850,12 +850,14 @@ button {
 /* The first rendered block hugs the top of the pane's content area — its own collapsible top margin
    (a heading's `1.6em`, an `hr`'s `1.4em`, …) is leading whitespace with nothing above it to separate
    from, and the pane already reserves its structural `padding-top`. Dropping it matters most in Split
-   (T-061): height-sync pads the source editor so each source block lines up with its rendered block,
-   and the FIRST block's lead is `renderedTop − sourceTop`. With the first block's typographic margin in
-   place, that lead reproduced the whole ~65px gap as a large hatched service band above the first source
-   line; resetting it lifts the rendered document uniformly (inter-block gaps are unchanged — they are
-   measured as differences), so the lead shrinks to just the pane's structural inset and the first source
-   line sits level with the rendered heading. See webview/src/sync/height-sync.ts. */
+   (T-061): height-sync pads the source editor so each source block lines up with its rendered block, and
+   it measures that alignment against the pane's CONTENT box, reading the first rendered block's own top
+   as the pane's structural inset (webview/src/sync/height-sync.ts, `computeGapAdjustments`). Keeping this
+   block flush with the content top is what makes that reading exact — its measured top is the pane's
+   `padding-top` and nothing more, so no first-block margin leaks into the geometry. The scroll coupling
+   already consumes that inset (it scrolls the reference pane past its padding to bring a line flush), so
+   the lead reproduces neither the margin nor the inset, and the first source line sits level with the
+   rendered heading rather than a heading's height below it. */
 .sd-doc > :first-child {
   margin-top: 0;
 }

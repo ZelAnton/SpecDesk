@@ -21,10 +21,11 @@ const ALIGN_EPSILON = 6;
 
 // Anchors deep enough to scroll to the pane top (the fixture's filler tail guarantees a viewport of
 // content below each), where per-anchor top alignment is asserted within ALIGN_EPSILON. The heading
-// (top of document) is NOT here because it carries a real, known ~24px misalignment — but it is not
-// dropped: the "known-issue" test below PINS that offset in a band, so the top-of-document geometry
-// stays covered (a regression that widens it, or a fix that closes it, both turn red).
+// (top of document) is a plain anchor here too: once height-sync stopped double-counting the reference
+// pane's `padding-top` in its lead (T-061), the top-of-document block aligns within the same few real px
+// as every mid-document anchor, so it no longer needs a pinned known-issue band.
 const SCROLLABLE: AlignSpec[] = [
+  { label: "heading", tag: "h1", needle: "Heading One", srcLine: "# Heading One" },
   {
     label: "tall-para",
     tag: "p",
@@ -47,9 +48,13 @@ test("applies real, non-zero source spacers whose rendered height matches their 
   page,
 }) => {
   const spacers = await spacerReport(page);
-  // The formatted blocks outgrow the source lines at several boundaries (rows, items), so more than a
-  // couple of spacers are needed — matching the jsdom gate's ≥4.
-  expect(spacers.length).toBeGreaterThanOrEqual(4);
+  // The formatted blocks outgrow the source lines at several boundaries (rows, items), so multiple
+  // spacers are needed. Real Chromium yields 3 here — one fewer than the jsdom gate's ≥4, because that
+  // gate models NO pane padding (its `referenceInset` is 0) whereas a real render has the formatted
+  // pane's `padding-top`: since T-061 that inset is measured out of the alignment baseline instead of
+  // being reproduced as a spurious top-of-document lead-compensation spacer, so the real count is one
+  // lower than the rigged jsdom geometry's. All 3 are genuine row/item-boundary spacers.
+  expect(spacers.length).toBeGreaterThanOrEqual(3);
   for (const spacer of spacers) {
     expect(spacer.styleHeight).toBeGreaterThan(0);
     // The REAL rendered height matches what height-sync declared — the check jsdom cannot make.
@@ -80,45 +85,17 @@ test("aligns each scrolled block with its source line within a few real px", asy
   }
 });
 
-// KNOWN ISSUE — top-of-document lead double-count. At the top of a split document the code pane's lead
-// spacer represents the formatted pane's 20px `padding-top`, WHILE the formatted pane rests with that
-// padding scrolled off (h1 flush at its top) — so the rendered h1 sits ~24px above its source line,
-// vs ~4px for mid-document anchors. This is a real, visible misalignment the harness caught. We PIN it
-// in a band rather than drop the anchor, so top-of-document geometry stays covered: a regression that
-// widens the offset (band exceeded) OR a fix that closes it to ~4px (band undershot → this test goes
-// red, prompting its removal) both fail. Follow-up: fix the resting formatted scrollTop=20 double-count
-// in height-sync's lead computation, then tighten this to the ≤ALIGN_EPSILON the other anchors meet.
-const H1_KNOWN_OFFSET_MIN = 20;
-const H1_KNOWN_OFFSET_MAX = 28;
-
-test("top-of-document heading carries the known ~24px lead misalignment (pinned known-issue)", async ({
-  page,
-}) => {
-  const align = await measureAlignment(page, {
-    label: "heading",
-    tag: "h1",
-    needle: "Heading One",
-    srcLine: "# Heading One",
-  });
-  expect(align, "heading rendered in both panes").not.toBeNull();
-  if (align) {
-    const delta = Math.abs(align.formattedRel - align.codeRel);
-    expect(
-      delta,
-      "top-of-doc offset dropped below the known band — likely a FIX of the lead double-count; retire this pin",
-    ).toBeGreaterThanOrEqual(H1_KNOWN_OFFSET_MIN);
-    expect(
-      delta,
-      "top-of-doc offset grew beyond the known band — a REGRESSION widened the lead misalignment",
-    ).toBeLessThanOrEqual(H1_KNOWN_OFFSET_MAX);
-  }
-});
+// T-061 regression: the top-of-document heading now aligns within ALIGN_EPSILON like every other anchor
+// (it is a plain member of SCROLLABLE above). The former "known ~24px lead misalignment" pin is retired —
+// height-sync no longer reproduces the reference pane's `padding-top` as a code-pane lead, so the rendered
+// h1 sits level with its source line once the code pane couples, not a pane-padding below it.
 
 test("the spacer-height check is sensitive — collapsing the spacers breaks it (control)", async ({
   page,
 }) => {
   const before = await spacerReport(page);
-  expect(before.length).toBeGreaterThanOrEqual(4);
+  // 3 real spacers after T-061 (see the count note above) — all non-zero before the sabotage below.
+  expect(before.length).toBeGreaterThanOrEqual(3);
   expect(before.every((spacer) => spacer.renderedHeight > 0)).toBe(true);
 
   // Sabotage: collapse the applied spacers to zero rendered height, as a build that never wired
