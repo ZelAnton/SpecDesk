@@ -256,6 +256,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+- The startup working-copy currency guard now recognises the repository main working copy correctly when
+  the checkout sits under a symlinked path (for example a symlinked temp or home directory): it resolves
+  symlinks on both sides of the path comparison instead of trusting the raw spelling, so it no longer
+  mistakes the main copy for an exempt isolated worktree and skips the stale-build refusal.
 - Split scroll sync no longer judders when the author switches panes mid-scroll. Each scroll arms a 120 ms
   scroll-settle debounce that re-snaps the sibling to the pane's final momentum position; a trackpad/momentum
   scroll of one pane could still have that settle pending when the author grabbed the OTHER pane, and the

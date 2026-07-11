@@ -215,12 +215,83 @@ internal static class MainWorktreeGuard
         return null;
     }
 
-    private static bool SamePath(string a, string b)
-    {
-        static string Normalize(string path) =>
-            Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    private static bool SamePath(string a, string b) =>
+        string.Equals(CanonicalPath(a), CanonicalPath(b), StringComparison.OrdinalIgnoreCase);
 
-        return string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// The physical path with every symbolic-link component resolved and any trailing separator trimmed,
+    /// so two spellings of the same directory compare equal. libgit2 reports
+    /// <see cref="RepositoryInformation.WorkingDirectory"/> with links already resolved, whereas walking
+    /// up from the app's base directory (<see cref="LocateDevRepoRoot"/>) keeps the un-resolved spelling;
+    /// on the macOS runner the system temp dir lives under <c>/var</c> (a symlink to <c>/private/var</c>),
+    /// so the two forms differed and the actual main working copy was mis-read as an isolated worktree —
+    /// wrongly exempting it from the currency check. Both operands of <see cref="SamePath"/> go through
+    /// this, so resolution is symmetric and never introduces a one-sided mismatch; on a tree with no
+    /// symlinked component (the ordinary Windows and Linux case) it yields exactly
+    /// <see cref="Path.GetFullPath(string)"/>, leaving the gate's behaviour byte-for-byte unchanged.
+    /// </summary>
+    private static string CanonicalPath(string path) =>
+        Path.TrimEndingDirectorySeparator(StripExtendedLengthPrefix(ResolveLinks(Path.GetFullPath(path))));
+
+    /// <summary>
+    /// Resolve symbolic links component by component, left to right, rebuilding from the already-resolved
+    /// prefix: <see cref="FileSystemInfo.ResolveLinkTarget(bool)"/> only follows the leaf's own chain, so
+    /// an intermediate directory link (macOS's <c>/var</c>) is caught only by walking every component. Any
+    /// resolution failure (a broken or cyclic link, a path that has vanished) degrades to the un-resolved
+    /// remainder rather than throwing, so the comparison can never become more brittle than the pre-fix
+    /// lexical one.
+    /// </summary>
+    private static string ResolveLinks(string fullPath)
+    {
+        string root = Path.GetPathRoot(fullPath) ?? string.Empty;
+        if (root.Length == 0)
+        {
+            return fullPath;
+        }
+
+        string resolved = root;
+        foreach (string segment in fullPath[root.Length..].Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            string candidate = Path.Combine(resolved, segment);
+            try
+            {
+                FileSystemInfo entry =
+                    Directory.Exists(candidate) ? new DirectoryInfo(candidate) : new FileInfo(candidate);
+                string? target = entry.ResolveLinkTarget(returnFinalTarget: true)?.FullName;
+                resolved = target is null
+                    ? candidate
+                    : Path.IsPathRooted(target) ? target : Path.Combine(resolved, target);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A broken/cyclic link, or a component that no longer exists: keep the un-resolved
+                // candidate and let path comparison fall back to lexical equality — exactly the pre-fix
+                // behaviour, so a filesystem oddity can never make the guard throw at startup.
+                resolved = candidate;
+            }
+        }
+
+        return resolved;
+    }
+
+    /// <summary>
+    /// Drop a Windows extended-length prefix (<c>\\?\</c> or <c>\\?\UNC\</c>) that
+    /// <see cref="FileSystemInfo.ResolveLinkTarget(bool)"/> can prepend when it resolves a junction, so a
+    /// resolved and an un-resolved spelling of the same directory still compare equal. A no-op on any path
+    /// without such a prefix — every non-Windows path, and every Windows path with no junction component.
+    /// </summary>
+    private static string StripExtendedLengthPrefix(string path)
+    {
+        const string uncPrefix = @"\\?\UNC\";
+        const string dosPrefix = @"\\?\";
+        if (path.StartsWith(uncPrefix, StringComparison.Ordinal))
+        {
+            return @"\\" + path[uncPrefix.Length..];
+        }
+
+        return path.StartsWith(dosPrefix, StringComparison.Ordinal) ? path[dosPrefix.Length..] : path;
     }
 
     private static string Short(string? sha) =>
