@@ -72,6 +72,16 @@ npm run bundle                      # esbuild → ../src/SpecDesk.Host/wwwroot/w
 
 - A successful test run must execute the discovered tests, not only complete MSBuild targets.
 
+### Verification ladder (mandatory before "it works")
+
+The commands above are the lower rungs. SpecDesk verifies the editor at five rungs of increasing fidelity —
+unit → contract fixtures → jsdom delivery gate → **Layer 1 (Playwright + real Chromium)** → **Layer 2
+(the real app over CDP)** — plus an always-on webview diagnostic trace. [`docs/testing.md`](docs/testing.md)
+is the authoritative guide: which rung proves what, when to run it, and how to read the screenshots + the
+trace it produces. **The rule: before claiming a UI/layout/scroll change works, run the rung that renders
+it (Layer 1, or Layer 2 for native-spanning changes) and READ the screenshot** — "the tests pass" is not
+"I saw it render correctly".
+
 ## Working copy currency (mandatory gate)
 
 The orchestrator keeps its mutable state under `.work/`, which is **untracked** so the repository main

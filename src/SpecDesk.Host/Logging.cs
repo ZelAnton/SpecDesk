@@ -73,7 +73,7 @@ public static class Logging
 			"error" => LogEventLevel.Error,
 			"fatal" or "critical" => LogEventLevel.Fatal,
 			// There is no level below the file sink; "off"/"none"/"silent" quiet it to fatal-only, the
-			// closest to disabling it. Unrecognised falls through to the verbose default (fail-to-more-logs).
+			// closest to disabling it. Unset/unrecognised falls through to the Debug default (fail-to-more-logs).
 			"off" or "none" or "silent" => LogEventLevel.Fatal,
 			_ => LogEventLevel.Debug,
 		};

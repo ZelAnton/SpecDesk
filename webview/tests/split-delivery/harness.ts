@@ -24,7 +24,9 @@
  * present in the shipped tree, wired by the real `index.ts`, and that a genuine user scroll couples the
  * sibling through the real maps/scheduler with the real 120 ms scroll-settle (see {@link scrollPane} in the
  * spec). Treat "spacers appear / align within 1 px" as a WIRING assertion on rigged geometry, not a promise
- * about a real engine's pixels; a real-engine spacer/alignment regression still needs a manual GUI pass.
+ * about a real engine's pixels; real-engine spacer/alignment geometry is covered one rung up by the Layer 1
+ * Playwright suite (`e2e/`, real Chromium) — see docs/testing.md. This gate stays as the fast browserless
+ * wiring check.
  *
  * Loading the artifact: the bundle is an ES module whose only export is `shouldMirrorInto` and whose body
  * runs `wire()` on load. We strip that trailing `export { … }` and execute the identical body via
