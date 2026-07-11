@@ -1,6 +1,5 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
-import { buildHost, launchApp, type RunningApp, stopApp } from "../lib/app-process";
-import { attachToApp } from "../lib/cdp";
+import { expect, test } from "@playwright/test";
+import { type FullApp, launchAndAttach, stopAndDump } from "../lib/full-app";
 import { collectGeometry, waitForGeometrySettle } from "../lib/geometry";
 
 // Layer 2: the REAL SpecDesk.Host.exe (Photino + WebView2), driven over CDP against a disposable git
@@ -9,26 +8,18 @@ import { collectGeometry, waitForGeometrySettle } from "../lib/geometry";
 // the file (serial), built fresh (unless E2E_SKIP_BUILD=1) so a stale host can't pass.
 test.describe.configure({ mode: "serial" });
 
-let app: RunningApp;
-let browser: Browser;
-let page: Page;
+let ctx: FullApp;
 
 test.beforeAll(async () => {
-  buildHost();
-  app = launchApp();
-  ({ browser, page } = await attachToApp(app.port));
+  ctx = await launchAndAttach();
 });
 
-test.afterAll(async () => {
-  await browser?.close().catch(() => {
-    // Already disconnected (the app was killed) — nothing to close.
-  });
-  if (app) {
-    await stopApp(app);
-  }
+test.afterAll(async ({}, testInfo) => {
+  await stopAndDump(ctx, testInfo);
 });
 
 test("the real host boots, auto-loads welcome.md from the fixture repo, and renders both panes", async ({}, testInfo) => {
+  const { page } = ctx;
   // The real Photino shell loaded.
   await expect(page).toHaveTitle("SpecDesk");
 

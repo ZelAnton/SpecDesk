@@ -1,20 +1,36 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createFixtureRepo } from "./fixture-repo";
 
 const RUN_DIR_PREFIX = "specdesk-e2e-";
+// Only reap run dirs older than this. A concurrently-running spec's dir is brand-new, so an age guard
+// spares it while still reaping a genuinely-leaked dir from a crashed prior run — making the sweep safe
+// even if two `full-app` files ever run in parallel workers (Playwright has no per-project `workers`, so
+// the `e2e:app` script's `--workers=1` is the primary guard and this is the structural backstop).
+const SWEEP_MIN_AGE_MS = 5 * 60_000;
 
 /** Reap temp dirs a prior run couldn't delete. WebView2 can hold a UDF handle for a beat past taskkill,
- *  so a teardown rmSync occasionally loses the race; by the next launch the handle is long released, so
- *  sweeping here bounds leakage to at most the current run's dir (workers:1, so none is ever in use). */
+ *  so a teardown rmSync occasionally loses the race; by the next launch the handle is long released. Only
+ *  dirs older than {@link SWEEP_MIN_AGE_MS} are removed, so a live concurrent run's fresh dir is never hit. */
 function sweepStaleRunDirs(): void {
   try {
+    const cutoff = Date.now() - SWEEP_MIN_AGE_MS;
     for (const name of readdirSync(tmpdir())) {
-      if (name.startsWith(RUN_DIR_PREFIX)) {
-        rmSync(resolve(tmpdir(), name), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      if (!name.startsWith(RUN_DIR_PREFIX)) {
+        continue;
       }
+      const dir = resolve(tmpdir(), name);
+      try {
+        if (statSync(dir).mtimeMs >= cutoff) {
+          continue;
+        }
+      } catch {
+        // Vanished between readdir and stat — nothing to reap.
+        continue;
+      }
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   } catch {
     // Best-effort housekeeping; a temp dir we can't read/remove is harmless and the OS reaps it.
