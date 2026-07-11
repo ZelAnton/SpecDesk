@@ -46,4 +46,34 @@ public sealed class AppPathsTests
     {
         Assert.That(AppPaths.LogFilePrefix, Is.EqualTo("specdesk-"));
     }
+
+    // SPECDESK_DATA_ROOT overrides the root (moving sample repo / auth / logs together); unset or
+    // malformed must keep the byte-identical default that the pins above depend on.
+    [Test]
+    public void ResolveRoot_Unset_IsByteIdenticalToTheDefault()
+    {
+        Assert.That(AppPaths.ResolveRoot(_ => null), Is.EqualTo(Path.Combine(LocalAppData, "SpecDesk")));
+    }
+
+    [TestCase("")]
+    [TestCase("   ")]
+    public void ResolveRoot_EmptyOrWhitespace_FallsBackToTheDefault(string raw)
+    {
+        Assert.That(AppPaths.ResolveRoot(_ => raw), Is.EqualTo(Path.Combine(LocalAppData, "SpecDesk")));
+    }
+
+    [Test]
+    public void ResolveRoot_Set_ReturnsTheOverrideAsAnAbsolutePath()
+    {
+        string resolved = AppPaths.ResolveRoot(key => key == "SPECDESK_DATA_ROOT" ? "data/here" : null);
+
+        Assert.That(resolved, Is.EqualTo(Path.GetFullPath("data/here")));
+        Assert.That(Path.IsPathRooted(resolved), Is.True);
+    }
+
+    [Test]
+    public void ResolveRoot_Malformed_FallsBackToTheDefaultWithoutThrowing()
+    {
+        Assert.That(AppPaths.ResolveRoot(_ => "bad\0path"), Is.EqualTo(Path.Combine(LocalAppData, "SpecDesk")));
+    }
 }

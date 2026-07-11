@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `SPECDESK_DATA_ROOT` redirects the app's entire local data root — the sample repo, the GitHub auth
+  token directory, and the logs — to a chosen directory (for a dev run, or an isolated full-app test
+  against a disposable copy). Unset, the default `%LOCALAPPDATA%\SpecDesk` is unchanged.
 - Exporting the log now also captures the webview's diagnostic trace: it writes the in-page trace ring to
   a timestamped JSON file beside the log and appends the trace's tail (wall-clock-stamped, so it lines up
   with the native log entries) to the exported file — so a single exported log shows what the UI did and

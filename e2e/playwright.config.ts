@@ -26,10 +26,16 @@ export default defineConfig({
   },
   projects: [
     // Layer 1: the real built bundle in Playwright's own Chromium against a mock host.
-    // Layer 2 (full-app over CDP, win32-only) is added in a later stage.
     {
       name: "webview-mock",
+      testMatch: "webview-mock/**/*.e2e.ts",
       use: { browserName: "chromium" },
     },
+    // Layer 2: the REAL SpecDesk.Host.exe over CDP against a disposable fixture repo — Windows-only
+    // (Photino + WebView2), and run only via `npm run e2e:app` (never the default `npm run e2e`). It
+    // does not use a Playwright-launched browser; app-process/cdp own the process + CDP attach.
+    ...(process.platform === "win32"
+      ? [{ name: "full-app", testMatch: "full-app/**/*.e2e.ts" }]
+      : []),
   ],
 });
