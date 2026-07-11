@@ -87,31 +87,42 @@ export interface GapAdjustments {
  * Coordinate systems (T-061). `previewTop` and `editorTop` are each measured from their own pane's
  * scroll origin (the reference via `blockGeometry`, the editor via `naturalLineTops`); the two panes are
  * side-by-side, so those origins coincide on screen — which is what makes the per-anchor absolute
- * subtraction `previewTop − editorTop` a valid on-screen shift. The lead is
- * `applied[0] = max(0, previewTop[0] − editorTop[0])`, the distance from the source's first line to the
- * first rendered block: it reproduces whatever leading space sits above the first rendered block — the
- * reference pane's structural `padding-top` (its scroll origin to its content box), a small, genuine
- * offset needed so the first source line sits level with the first rendered block. It does NOT reproduce
- * the first block's own typographic top margin (a heading's `1.6em`): that is reset to 0 in the shared
- * rendered stylesheet (styles.css §5, `.sd-doc > :first-child`), so the first rendered block hugs its
- * pane's content top just as the first source line hugs the editor's — bringing both panes to one
- * leading frame and shrinking the lead to the pane's structural inset. A uniform shift of the whole
- * rendered document (resetting that first margin lifts every rendered top by the same amount) moves only
- * the lead; the inter-anchor spacers, being increments of the running maximum, are unchanged. The lead
- * stays a stable fixed point because `naturalLineTops[0]` is invariant to the lead we apply (see
- * `MarkdownEditor.spacerHeightsAbove`), so a settled geometry recomputes the identical lead and
- * {@link HeightSync.apply} stops re-dispatching — no oscillation.
+ * subtraction `previewTop − editorTop` a valid on-screen shift. But the reference pane's scroll origin
+ * sits a structural `padding-top` ABOVE its content box (styles.css "Panes", `#formatted`), so every
+ * `previewTop` carries that inset, and — crucially — the scroll coupling ALREADY consumes it: bringing a
+ * line flush to the reference viewport scrolls the pane PAST its padding (scroll-map.ts couples through
+ * `previewTop`, which includes the inset). Reproducing that same inset a SECOND time as an editor lead
+ * would double-count it — the source's first line would sit the pane's `padding-top` below the rendered
+ * block that the coupling has meanwhile pulled flush (the ~24 px top-of-document misalignment this fixes).
+ * So the alignment is measured against the reference CONTENT box: `referenceInset` (the first rendered
+ * block's own top — it hugs the content box, its first-child margin reset in styles.css §5, so its
+ * scroll-relative top IS the pane's inset, read in the very same frame as every other anchor) is
+ * subtracted from every `previewTop`. `required[i] = previewTop[i] − referenceInset − editorTop[i]`; the
+ * lead is `applied[0] = max(0, required[0])`, which reduces to `max(0, −editorTop[0]) = 0` once the first
+ * block defines the origin — no leading space is reproduced, since the reference's own padding is a scroll
+ * inset, not document content. Subtracting one constant from every `previewTop` leaves the inter-anchor
+ * spacers (differences of the running maximum) intact, so mid-document alignment is untouched; only the
+ * spurious lead is removed. The result stays a stable fixed point because `referenceInset` and
+ * `naturalLineTops[0]` are both invariant to the spacers we apply (see `MarkdownEditor.spacerHeightsAbove`),
+ * so a settled geometry recomputes the identical set and {@link HeightSync.apply} stops re-dispatching — no
+ * oscillation.
  */
-export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments {
+export function computeGapAdjustments(
+  anchors: AnchorMetrics[],
+  referenceInset = 0,
+): GapAdjustments {
   const first = anchors[0];
   if (!first) {
     return { editorLead: 0, editorSpacers: [] };
   }
 
-  // Running maximum of max(0, required) over the anchors seen so far, in fractional px. Seeded with the
-  // first anchor's own need so the lead IS applied[0]; never drops below 0, so no anchor's required
-  // (which may be negative where Code already sits below its target) can pull it down.
-  let runningMax = Math.max(0, first.previewTop - first.editorTop);
+  // Running maximum of max(0, required) over the anchors seen so far, in fractional px. `required` is
+  // measured against the reference CONTENT box (referenceInset subtracted — see the header note), so the
+  // reference pane's structural scroll inset is not re-added here on top of the coupling that already
+  // consumes it. Seeded with the first anchor's own need so the lead IS applied[0]; never drops below 0,
+  // so no anchor's required (which may be negative where Code already sits below its target) can pull it
+  // down.
+  let runningMax = Math.max(0, first.previewTop - referenceInset - first.editorTop);
   const editorLead = Math.round(runningMax);
   // Rounded cumulative padding applied above the current placement slot. Each spacer is the difference
   // of two rounded cumulative values, so the total above anchor k is exactly round(applied[k]) — the
@@ -125,7 +136,7 @@ export function computeGapAdjustments(anchors: AnchorMetrics[]): GapAdjustments 
     if (!current || !next) {
       continue;
     }
-    runningMax = Math.max(runningMax, next.previewTop - next.editorTop);
+    runningMax = Math.max(runningMax, next.previewTop - referenceInset - next.editorTop);
     const appliedAtNext = Math.round(runningMax);
     const height = appliedAtNext - appliedBelow;
     if (height > 0) {
@@ -352,7 +363,14 @@ export class HeightSync {
       previewTop: block.top,
     }));
 
-    const { editorLead, editorSpacers } = computeGapAdjustments(anchors);
+    // The reference pane's structural top inset (scroll origin → content box), read as the first rendered
+    // block's own top: that block hugs the content box (its first-child top margin is reset — styles.css
+    // §5), so its scroll-relative top IS the pane's `padding-top`, measured in the SAME frame as every
+    // other anchor (0 wherever an environment models no pane padding, e.g. the jsdom delivery gate). The
+    // scroll coupling already consumes this inset, so the lead is measured against the content box, not
+    // re-added as editor padding — otherwise the inset is counted twice (T-061, the top-of-document misalign).
+    const referenceInset = anchors[0]?.previewTop ?? 0;
+    const { editorLead, editorSpacers } = computeGapAdjustments(anchors, referenceInset);
     const changed = this.apply(editorLead, editorSpacers);
 
     // A per-reconcile summary (built lazily via the thunk, and marked perFrame so a sink can drop it

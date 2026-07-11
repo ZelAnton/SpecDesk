@@ -59,13 +59,33 @@ describe("computeGapAdjustments", () => {
     expect(result.editorSpacers).toEqual([{ lineEnd: 1, height: 50 }]);
   });
 
-  // T-061 first-block lead edge cases. The lead reproduces the small structural offset from the
-  // rendered pane's scroll origin to its first block (its `padding-top`), NOT the first block's own
-  // typographic top margin — that margin is reset to 0 in the shared rendered stylesheet, so the first
-  // rendered block hugs its pane's content top and the lead stays a small structural inset.
+  // T-061 first-block lead. The reference pane's scroll origin sits its structural `padding-top` above
+  // its content box, and the scroll coupling ALREADY consumes that inset (it scrolls the pane past its
+  // padding to bring a line flush). So the plan measures alignment against the CONTENT box: the
+  // `referenceInset` (the first rendered block's own top — it hugs the content box, its margin reset in
+  // styles.css §5) is subtracted from every previewTop, so the lead does NOT reproduce it. Reproducing it
+  // too would leave the first source line a `padding-top` below the flush rendered block — the ~24px
+  // top-of-document misalignment this fixes.
   describe("first-block lead (T-061)", () => {
-    it("reproduces only the pane's structural top inset, not a first-block margin", () => {
-      // First rendered block sits at the pane's padding-top (20); the source's first line is at 0.
+    it("does not reproduce the reference pane's structural inset as a lead (the double-count)", () => {
+      // First rendered block at the pane's padding-top (20); the source editor's first line at the code
+      // pane's own content padding (4). Told 20 is the reference inset, the plan applies NO lead.
+      const result = computeGapAdjustments([anchor(0, 4, 20), anchor(3, 24, 60)], 20);
+      expect(result.editorLead).toBe(0);
+      // The inter-block spacer is still a difference against that content-box baseline: (60−20) − 24 = 16.
+      expect(result.editorSpacers).toEqual([{ lineEnd: 0, height: 16 }]);
+    });
+
+    it("reproduced the inset before the fix — with no reference inset the double-count returns", () => {
+      // The SAME geometry with no inset subtracted: the old plan reproduced the pane padding as a lead
+      // (16 = previewTop 20 − editorTop 4), the bug the reference inset removes.
+      const result = computeGapAdjustments([anchor(0, 4, 20), anchor(3, 24, 60)]);
+      expect(result.editorLead).toBe(16);
+    });
+
+    it("still leads for genuine leading content above the first block (no inset to subtract)", () => {
+      // With referenceInset 0 the first rendered block genuinely sits 20px below the first source line, so
+      // a lead of 20 IS correct — the general behaviour computeGapAdjustments keeps for a non-pane caller.
       const result = computeGapAdjustments([anchor(0, 0, 20), anchor(3, 40, 60)]);
       expect(result.editorLead).toBe(20);
     });
@@ -76,26 +96,26 @@ describe("computeGapAdjustments", () => {
     });
 
     it("never emits a negative lead when the first source line starts below the rendered block", () => {
-      const result = computeGapAdjustments([anchor(0, 30, 5), anchor(3, 50, 25)]);
+      const result = computeGapAdjustments([anchor(0, 30, 5), anchor(3, 50, 25)], 5);
       expect(result.editorLead).toBe(0);
     });
 
-    it("leaves inter-block gaps unchanged when the whole rendered document shifts up uniformly", () => {
-      // Resetting the first block's top margin lifts every rendered top by the same amount (here 44):
-      // only the lead changes; the per-gap spacers, being differences, are identical.
-      const withMargin = computeGapAdjustments([
-        anchor(0, 0, 64),
-        anchor(2, 20, 120),
-        anchor(5, 40, 150),
-      ]);
-      const flush = computeGapAdjustments([
+    it("subtracting the inset leaves inter-block spacers (differences) intact — only the lead drops", () => {
+      // Subtracting one constant (the 20px reference inset) from every previewTop shifts the plan's
+      // baseline down uniformly: the lead falls from 20 to 0 while the inter-block spacers — increments of
+      // the running maximum, i.e. differences — are byte-for-byte identical to the no-inset run.
+      const withInset = computeGapAdjustments(
+        [anchor(0, 0, 20), anchor(2, 20, 76), anchor(5, 40, 106)],
+        20,
+      );
+      const baseline = computeGapAdjustments([
         anchor(0, 0, 20),
         anchor(2, 20, 76),
         anchor(5, 40, 106),
       ]);
-      expect(withMargin.editorLead).toBe(64);
-      expect(flush.editorLead).toBe(20);
-      expect(flush.editorSpacers).toEqual(withMargin.editorSpacers);
+      expect(baseline.editorLead).toBe(20);
+      expect(withInset.editorLead).toBe(0);
+      expect(withInset.editorSpacers).toEqual(baseline.editorSpacers);
     });
   });
 });
@@ -429,31 +449,36 @@ describe("HeightSync.reconcile (T-062: self-heal after re-measure, no flicker lo
     expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 5, height: 110 }]);
   });
 
-  // T-061: a lead (first rendered block below the first source line) must settle to a fixed point and
-  // NOT oscillate. `naturalLineTops` is invariant to the lead we apply (CodeMirror folds the leading
-  // block widget into line 0's block, so `lineBlockAt(0).top` doesn't move — see editor.ts
-  // spacerHeightAbove), which the FakeEditor models by returning line-keyed tops that don't change when
-  // a lead is applied. So repeated reconciles recompute the identical lead and stop re-dispatching.
-  it("applies a lead once and settles — no lead flicker between reconciles", () => {
-    const leadGeometry: BlockGeometry[] = [
-      { lineStart: 0, lineEnd: 0, top: 20, height: 40 }, // first rendered block 20px down (pane inset)
-      { lineStart: 2, lineEnd: 2, top: 60, height: 40 },
+  // T-061: the reference pane's structural top inset (its first rendered block sits `padding-top` below
+  // the scroll origin) must NOT be reproduced as an editor lead — the scroll coupling already consumes
+  // it, so re-adding it double-counts the pane padding (the ~24px top-of-document misalignment).
+  // reconcile() reads that inset as the first block's own top and subtracts it, so the lead settles at 0
+  // while the genuine inter-block spacer is unaffected. `naturalLineTops` is invariant to the spacers
+  // applied (CodeMirror folds a leading block widget into line 0's block — see editor.ts
+  // spacerHeightsAbove), which the FakeEditor models by line-keyed tops that don't move when spacers are
+  // applied, so repeated reconciles recompute the identical set and stop re-dispatching.
+  it("does not reproduce the pane's top inset as a lead, and settles (T-061)", () => {
+    const insetGeometry: BlockGeometry[] = [
+      { lineStart: 0, lineEnd: 0, top: 20, height: 40 }, // first rendered block at the pane inset (20)
+      { lineStart: 2, lineEnd: 2, top: 80, height: 40 },
     ];
     const editor = new FakeEditor();
-    const source = fakeSource(leadGeometry);
+    const source = fakeSource(insetGeometry);
     const sync = new HeightSync(editor as unknown as MarkdownEditor, source);
     editor.setTops([
-      [0, 0],
-      [2, 40],
+      [0, 4], // code line 0 at the source editor's own content padding
+      [2, 24],
     ]);
 
     sync.reconcile();
     sync.reconcile();
     sync.reconcile();
 
-    // The lead is dispatched exactly once; the settled reconciles recompute the same lead and skip it.
+    // The pane inset (20) is absorbed as the content-box origin, so NO lead is applied; the mid-document
+    // gap ((80−20) − 24 = 36) still gets its spacer. Dispatched once — settled repeats recompute the same set.
     expect(editor.calls).toHaveLength(1);
-    expect(editor.calls[0]?.lead).toBe(20);
+    expect(editor.calls[0]?.lead).toBe(0);
+    expect(editor.calls[0]?.spacers).toEqual([{ lineEnd: 0, height: 36 }]);
   });
 
   it("clear() drops the spacers and a later reconcile re-applies them (leaving/returning to Split)", () => {
@@ -714,6 +739,36 @@ describe("HeightSync.reconcile snapshot return (T-104)", () => {
       { line: 8, px: 300 },
     ]);
     expect(snapshot?.formatted[1]).toEqual({ line: 7, px: 200 });
+  });
+
+  it("subtracts the reference inset from the editor map but not the formatted map (T-061)", () => {
+    // The first rendered block sits at the pane's structural inset (20); the code line 0 sits at the
+    // source editor's own content padding (4). The formatted map keeps its padding-inclusive tops (the
+    // coupling scrolls the pane past its padding to bring a line flush), while the editor map carries NO
+    // lead for that inset — line 0 stays at its natural 4, and only the genuine mid-doc spacer (36) lifts
+    // line 2. The two maps therefore differ by the inset the coupling consumes (T-061 double-count fix).
+    const editor = new FakeEditor();
+    const insetGeometry: BlockGeometry[] = [
+      { lineStart: 0, lineEnd: 0, top: 20, height: 40 },
+      { lineStart: 2, lineEnd: 2, top: 80, height: 40 },
+    ];
+    const sync = new HeightSync(editor as unknown as MarkdownEditor, fakeSource(insetGeometry));
+    editor.setTops([
+      [0, 4],
+      [2, 24],
+    ]);
+    const snapshot = sync.reconcile();
+    expect(snapshot?.formatted).toEqual([
+      { line: 0, px: 20 },
+      { line: 2, px: 80 },
+      { line: 3, px: 120 },
+    ]);
+    expect(snapshot?.editor).toEqual([
+      { line: 0, px: 4 },
+      { line: 2, px: 60 },
+      { line: 3, px: 100 },
+    ]);
+    expect(editor.calls[0]?.lead).toBe(0);
   });
 
   it("reports changed:false on a settled repeat (a stable reconcile makes no writes)", () => {
