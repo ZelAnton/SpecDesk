@@ -51,8 +51,9 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
 | `chat.send` | `{ text }` | message to the agent |
 | `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
-| `tree.request` | `{ path? }` | request the spec file tree |
-| `doc.open` | `{ path }` | open a spec for editing |
+| `tree.request` | `{ path? }` | request the Markdown file tree (`path` scopes it; absent → the current workspace folder, else the open document's folder). Host replies with `tree` |
+| `folder.open` | `{ path? }` | open a folder as the file-navigator root (`path`), or `null`/absent → the native folder picker. A `tree` event follows |
+| `doc.open` | `{ path? }` | open a spec for editing (`path`), or `null`/absent → the native open dialog |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
 | `trace.dump` | `{ t0Epoch, firstSeq, entries: [{ seq, t, cat, event, data? }] }` | dump the always-on diagnostic trace ring; the host persists it as a JSON file beside the log and appends its tail (wall-clock-stamped) to the `log.export` that follows. Sent just before `log.export` when the author exports the log |
 
@@ -75,7 +76,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `chat.delta` | `{ text }` | streaming agent output chunk |
 | `chat.done` | `{ id }` | agent turn complete |
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
-| `tree` | `{ nodes }` | spec file tree |
+| `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |

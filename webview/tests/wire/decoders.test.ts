@@ -7,6 +7,7 @@ import {
   parseImageInserted,
   parsePreview,
   parseStatus,
+  parseTree,
   parseVersionNoteSuggested,
 } from "../../src/wire/decoders.js";
 
@@ -78,6 +79,37 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
     expect(parseStatus({ state: "bogus", label: "x" })).toBeNull(); // not a StatusState
     expect(parseStatus({ state: "draft", label: "x", branch: 1 })).toBeNull(); // bad branch type
     expect(parseStatus({ state: "draft" })).toBeNull(); // missing label
+  });
+
+  it("parseTree accepts a nested tree and rejects malformed nodes", () => {
+    const tree = parseTree({
+      root: "/w",
+      nodes: [
+        {
+          name: "docs",
+          path: "/w/docs",
+          isDirectory: true,
+          children: [{ name: "a.md", path: "/w/docs/a.md", isDirectory: false, children: [] }],
+        },
+        { name: "b.md", path: "/w/b.md", isDirectory: false, children: [] },
+      ],
+    });
+    expect(tree?.root).toBe("/w");
+    expect(tree?.nodes[0]?.children[0]?.name).toBe("a.md");
+    expect(tree?.nodes[1]?.isDirectory).toBe(false);
+
+    expect(parseTree({ root: "/w" })).toBeNull(); // missing nodes
+    expect(parseTree({ root: 1, nodes: [] })).toBeNull(); // bad root type
+    // A node missing `children` (or with a bad child) is drift — the whole payload rejects.
+    expect(
+      parseTree({ root: "/w", nodes: [{ name: "x", path: "/w/x", isDirectory: true }] }),
+    ).toBeNull();
+    expect(
+      parseTree({
+        root: "/w",
+        nodes: [{ name: "x", path: "/w/x", isDirectory: "yes", children: [] }],
+      }),
+    ).toBeNull(); // isDirectory not a boolean
   });
 
   it("the single-string payload decoders reject the wrong shape", () => {

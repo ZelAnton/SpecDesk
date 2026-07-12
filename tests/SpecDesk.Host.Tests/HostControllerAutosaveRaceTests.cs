@@ -17,6 +17,7 @@ public sealed class HostControllerAutosaveRaceTests
     private sealed class NoDialogs : IFileDialogs
     {
         public string? PickOpenFile() => null;
+        public string? PickOpenFolder() => null;
 
         public string? PickSaveFile(string? suggestedPath) => null;
     }

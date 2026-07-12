@@ -30,6 +30,8 @@ import {
   type StatusPayload,
   type StatusState,
   type TemplatesPayload,
+  type TreeNode,
+  type TreePayload,
   type VersionNoteSuggestedPayload,
 } from "./protocol.js";
 
@@ -356,4 +358,32 @@ export function parseTemplates(value: unknown): TemplatesPayload | null {
     return null;
   }
   return { personal, remote };
+}
+
+function parseTreeNode(value: unknown): TreeNode | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.name) ||
+    !isString(value.path) ||
+    !isBoolean(value.isDirectory)
+  ) {
+    return null;
+  }
+  // A well-formed node always carries `children` (an empty array for a file); a missing/bad array is drift.
+  const children = parseArray(value.children, parseTreeNode);
+  if (children === null) {
+    return null;
+  }
+  return { name: value.name, path: value.path, isDirectory: value.isDirectory, children };
+}
+
+export function parseTree(value: unknown): TreePayload | null {
+  if (!isRecord(value) || !isString(value.root)) {
+    return null;
+  }
+  const nodes = parseArray(value.nodes, parseTreeNode);
+  if (nodes === null) {
+    return null;
+  }
+  return { root: value.root, nodes };
 }

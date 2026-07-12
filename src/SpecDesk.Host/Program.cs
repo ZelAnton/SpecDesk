@@ -209,6 +209,15 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger log
 				return selection.Length > 0 ? selection[0] : null;
 			});
 
+	public string? PickOpenFolder() =>
+		OnUiThread(
+			"ShowOpenFolder",
+			static w =>
+			{
+				string[] selection = w.ShowOpenFolder("Open folder", string.Empty, false);
+				return selection.Length > 0 ? selection[0] : null;
+			});
+
 	public string? PickSaveFile(string? suggestedPath) =>
 		OnUiThread(
 			"ShowSaveFile",

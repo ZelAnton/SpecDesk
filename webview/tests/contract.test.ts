@@ -23,6 +23,7 @@ import {
   parsePrSuggested,
   parseStatus,
   parseTemplates,
+  parseTree,
   parseVersionNoteSuggested,
 } from "../src/wire/decoders.js";
 import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/wire/protocol.js";
@@ -171,6 +172,19 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     });
     expect(payload?.remote).toHaveLength(1);
     expect(payload?.remote[0]?.id).toBe("team-style");
+  });
+
+  it("tree (nested folder + files)", () => {
+    const payload = parseTree(fixture.tree);
+    expect(payload).not.toBeNull();
+    expect(payload?.root).toBe("C:\\specs\\billing-repo");
+    expect(payload?.nodes.map((n) => n.name)).toEqual(["specs", "README.md"]);
+    const specs = payload?.nodes[0];
+    expect(specs?.isDirectory).toBe(true);
+    expect(specs?.children.map((n) => n.name)).toEqual(["billing.md"]);
+    expect(specs?.children[0]?.isDirectory).toBe(false);
+    expect(payload?.nodes[1]?.isDirectory).toBe(false);
+    expect(payload?.nodes[1]?.children).toEqual([]);
   });
 });
 

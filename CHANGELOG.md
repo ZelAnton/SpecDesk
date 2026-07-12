@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a calm open-a-spec screen. It's the first navigation tool that replaces the centre's content; the
   navigator highlights wherever the centre currently is, and the view-mode switch (Code / Split / Formatted)
   is disabled while a non-document view is shown.
+- Groundwork for opening specs from anywhere: the app can now open a specific file by path, open a whole
+  folder as a workspace, and read that folder's Markdown file tree (nested folders and `.md`/`.markdown`
+  files, skipping `.git`/`node_modules` and folders with no Markdown inside). This is the plumbing the Start
+  screen and the folder navigator build on; the picker UI arrives with them.
 - The right panel now has an **Outline** tool that lists the open document's headings as a nested tree and
   keeps up as you edit. Clicking a heading scrolls the editor to it (bringing the document view back first
   if the Start screen was showing). A long heading truncates with its full text on hover, and the nesting

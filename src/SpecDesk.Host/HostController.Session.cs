@@ -123,13 +123,98 @@ public sealed partial class HostController
 			version));
 	}
 
-	private void OnOpen()
+	private void OnOpen(IpcMessage message)
 	{
-		string? path = _dialogs.PickOpenFile();
+		// An explicit path (the Start screen's "open a file", or a click in the folder tree) opens directly;
+		// no path falls back to the native open dialog (the toolbar "Open…").
+		DocOpenPayload? payload = SafeGetPayload<DocOpenPayload>(message);
+		string? path = !string.IsNullOrWhiteSpace(payload?.Path)
+			? payload.Path
+			: _dialogs.PickOpenFile();
 		if (path is not null)
 		{
 			LoadFile(path);
 		}
+	}
+
+	// Open a folder as the left-rail file navigator's root: an explicit path (a registered repo, or a folder
+	// the Start screen offered) or the native folder-picker. Sets the workspace root and emits its tree. Does
+	// NOT change the open document — the author can browse one folder while editing a document elsewhere.
+	private void OnOpenFolder(IpcMessage message)
+	{
+		FolderOpenPayload? payload = SafeGetPayload<FolderOpenPayload>(message);
+		string? path = !string.IsNullOrWhiteSpace(payload?.Path)
+			? payload.Path
+			: _dialogs.PickOpenFolder();
+		if (path is null)
+		{
+			return;
+		}
+
+		if (!Directory.Exists(path))
+		{
+			SendError("That folder could not be opened.");
+			return;
+		}
+
+		string root = Path.GetFullPath(path);
+		lock (_sync)
+		{
+			_workspaceRoot = root;
+		}
+
+		_logger.LogInformation("Opened workspace folder {Root}", root);
+		EmitTree(root);
+	}
+
+	// Serve the Markdown file tree for the navigator. An explicit path scopes it; otherwise the current
+	// workspace folder, else the open document's folder — so requesting the tree without a prior "open
+	// folder" still shows something useful (the folder the open document lives in).
+	private void OnTreeRequest(IpcMessage message)
+	{
+		TreeRequestPayload? payload = SafeGetPayload<TreeRequestPayload>(message);
+		string? root;
+		if (!string.IsNullOrWhiteSpace(payload?.Path))
+		{
+			root = payload.Path;
+		}
+		else
+		{
+			lock (_sync)
+			{
+				root = _workspaceRoot ?? (_currentPath is not null ? Path.GetDirectoryName(_currentPath) : null);
+			}
+		}
+
+		if (string.IsNullOrEmpty(root))
+		{
+			// Nothing to show yet (no folder opened, no document loaded) — an empty tree, not an error.
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, new TreePayload(string.Empty, [])));
+			return;
+		}
+
+		EmitTree(root);
+	}
+
+	private void EmitTree(string root)
+	{
+		TreePayload tree;
+		try
+		{
+			tree = FileTreeBuilder.Build(root);
+		}
+		catch (Exception ex) when (
+			ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+		{
+			// ArgumentException/NotSupportedException come from Path.GetFullPath on a malformed root (an
+			// embedded null, invalid syntax) — which tree.request's explicit-path branch does not pre-check
+			// with Directory.Exists. Turn any of these into a plain error rather than a silent dead request.
+			_logger.LogError(ex, "Could not read the folder tree at {Root}", root);
+			SendError("That folder could not be read.");
+			return;
+		}
+
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, tree));
 	}
 
 	// "Save" writes the working copy to disk — it never commits. Committing a version is the explicit
@@ -627,8 +712,13 @@ public sealed partial class HostController
 		{
 			text = File.ReadAllText(path);
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		catch (Exception ex) when (
+			ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
 		{
+			// ArgumentException/NotSupportedException cover a malformed path (an embedded null, invalid
+			// syntax): `doc.open {path}` now carries a webview-supplied path (a tree click / Start "open a
+			// file"), not only an OS-dialog result, so a bad string reaches here — surface the same plain
+			// "Could not open the file." rather than letting it escape to the last-resort handler unshown.
 			_logger.LogError(ex, "Could not open {Path}", path);
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,

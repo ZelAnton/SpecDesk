@@ -16,6 +16,7 @@
   "doc.updateReview",
   "editor.changed",
   "error",
+  "folder.open",
   "github.account",
   "github.code",
   "github.signIn",
@@ -37,6 +38,8 @@
   "templates",
   "templates.request",
   "trace.dump",
+  "tree",
+  "tree.request",
   "version.note.request",
   "version.note.suggested"
 ]

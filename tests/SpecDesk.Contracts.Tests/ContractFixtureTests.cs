@@ -79,6 +79,16 @@ public sealed class ContractFixtureTests
 		[
 			new PromptTemplate("team-style", "Apply the team style", "Rewrite the selection to follow our style guide."),
 		])),
+		// The workspace file tree: a folder with a Markdown child plus a top-level file — exercises the
+		// recursive node shape (a directory with children, and a leaf file with an empty children list).
+		(MessageKinds.Tree, new TreePayload(@"C:\specs\billing-repo",
+		[
+			new TreeNode("specs", @"C:\specs\billing-repo\specs", IsDirectory: true,
+			[
+				new TreeNode("billing.md", @"C:\specs\billing-repo\specs\billing.md", IsDirectory: false, []),
+			]),
+			new TreeNode("README.md", @"C:\specs\billing-repo\README.md", IsDirectory: false, []),
+		])),
 	];
 
 	private static string FixturePath(string fileName)

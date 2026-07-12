@@ -36,6 +36,8 @@ public static class MessageKinds
 	public const string GitHubSignOut = "github.signOut";
 	public const string ChatSend = "chat.send";
 	public const string TemplatesRequest = "templates.request";
+	public const string FolderOpen = "folder.open";
+	public const string TreeRequest = "tree.request";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -53,6 +55,7 @@ public static class MessageKinds
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
 	public const string Templates = "templates";
+	public const string Tree = "tree";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -71,6 +74,38 @@ public sealed record PreviewPayload(string Html, IReadOnlyList<LineSpan> LineMap
 /// same rewrite the native preview renderer applies.
 /// </summary>
 public sealed record DocLoadedPayload(string Path, string Text, string DocDir);
+
+/// <summary>
+/// Payload of <c>doc.open</c> (webview→native). <c>Path</c> opens that specific file directly (the Start
+/// screen's "open a file", or a click in the folder tree); <c>null</c> falls back to the native open dialog.
+/// </summary>
+public sealed record DocOpenPayload(string? Path);
+
+/// <summary>
+/// Payload of <c>folder.open</c> (webview→native). <c>Path</c> opens that folder as the workspace directly;
+/// <c>null</c> falls back to the native folder-picker dialog. Opening a folder makes its Markdown tree the
+/// left rail's file navigator (a <c>tree</c> event follows).
+/// </summary>
+public sealed record FolderOpenPayload(string? Path);
+
+/// <summary>
+/// Payload of <c>tree.request</c> (webview→native): request the Markdown file tree. <c>Path</c> scopes it to
+/// a folder; <c>null</c> uses the current workspace folder (else the open document's folder).
+/// </summary>
+public sealed record TreeRequestPayload(string? Path);
+
+/// <summary>
+/// One node of the file tree (native→webview). A directory has <c>IsDirectory=true</c> and its
+/// <c>Children</c>; a file has no children (an empty list). <c>Path</c> is the absolute path (opened via
+/// <c>doc.open</c> when a file is clicked); <c>Name</c> is the display label (the file/folder name).
+/// </summary>
+public sealed record TreeNode(string Name, string Path, bool IsDirectory, IReadOnlyList<TreeNode> Children);
+
+/// <summary>
+/// Payload of <c>tree</c> (native→webview): the workspace folder's Markdown file tree. <c>Root</c> is the
+/// folder's absolute path (its display name is the last segment); <c>Nodes</c> are its top-level entries.
+/// </summary>
+public sealed record TreePayload(string Root, IReadOnlyList<TreeNode> Nodes);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);

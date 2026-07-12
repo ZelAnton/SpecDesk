@@ -31,6 +31,8 @@ export const Kinds = {
   githubSignOut: "github.signOut",
   chatSend: "chat.send",
   templatesRequest: "templates.request",
+  folderOpen: "folder.open",
+  treeRequest: "tree.request",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -47,6 +49,7 @@ export const Kinds = {
   chatDelta: "chat.delta",
   chatDone: "chat.done",
   templates: "templates",
+  tree: "tree",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -382,4 +385,39 @@ export interface PromptTemplate {
 export interface TemplatesPayload {
   personal: PromptTemplate[];
   remote: PromptTemplate[];
+}
+
+/** Payload of `doc.open` (webview→native): open a specific file (`path`), or `null`/absent to fall back to
+ *  the native open dialog. */
+export interface DocOpenPayload {
+  path?: string;
+}
+
+/** Payload of `folder.open` (webview→native): open a folder as the file navigator's root (`path`), or
+ *  `null`/absent to fall back to the native folder picker. */
+export interface FolderOpenPayload {
+  path?: string;
+}
+
+/** Payload of `tree.request` (webview→native): request the Markdown file tree, optionally scoped to `path`
+ *  (absent → the current workspace folder, else the open document's folder). */
+export interface TreeRequestPayload {
+  path?: string;
+}
+
+/** One node of the file tree (native→webview, inside {@link TreePayload}). A directory has
+ *  `isDirectory: true` and its `children`; a file has an empty `children`. `path` is the absolute path (a
+ *  file node opens via `doc.open` on click); `name` is the display label. */
+export interface TreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children: TreeNode[];
+}
+
+/** Payload of `tree` (native→webview): the workspace folder's Markdown file tree. `root` is the folder's
+ *  absolute path (its display name is the last segment); `nodes` are its top-level entries. */
+export interface TreePayload {
+  root: string;
+  nodes: TreeNode[];
 }

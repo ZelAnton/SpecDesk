@@ -12,6 +12,7 @@ public sealed class LogBridgeTests
         public string? SaveTarget { get; init; }
 
         public string? PickOpenFile() => null;
+        public string? PickOpenFolder() => null;
 
         public string? PickSaveFile(string? suggestedPath) => SaveTarget;
     }

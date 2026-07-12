@@ -17,6 +17,9 @@ public interface IFileDialogs
 	/// <summary>Prompt for a file to open; <c>null</c> if the user cancelled.</summary>
 	string? PickOpenFile();
 
+	/// <summary>Prompt for a folder to open as the workspace; <c>null</c> if the user cancelled.</summary>
+	string? PickOpenFolder();
+
 	/// <summary>Prompt for a save location; <c>null</c> if the user cancelled.</summary>
 	string? PickSaveFile(string? suggestedPath);
 }
@@ -179,6 +182,10 @@ public sealed partial class HostController : IDisposable
 	private string _text = string.Empty;
 	private string? _currentPath;
 	private string? _repoRoot;
+	// The folder opened as the left-rail file navigator's root (a plain disk folder, or a repo the author
+	// opened). Independent of _repoRoot (the versioning root of the OPEN document): the author can browse one
+	// folder's tree while editing a document elsewhere. Guarded by _sync like the other document fields.
+	private string? _workspaceRoot;
 	// The open document's dominant line ending, detected from the RAW file content at load/discard time.
 	// `_text` itself is NOT guaranteed LF-only: it starts as that same raw content (LoadFile/Discard) and
 	// only becomes LF-only once the webview reports an edit (its editor model normalizes every line break
@@ -300,7 +307,13 @@ public sealed partial class HostController : IDisposable
 				OnEditorChanged(message);
 				break;
 			case MessageKinds.DocOpen:
-				OnOpen();
+				OnOpen(message);
+				break;
+			case MessageKinds.FolderOpen:
+				OnOpenFolder(message);
+				break;
+			case MessageKinds.TreeRequest:
+				OnTreeRequest(message);
 				break;
 			case MessageKinds.DocSave:
 				OnSave();

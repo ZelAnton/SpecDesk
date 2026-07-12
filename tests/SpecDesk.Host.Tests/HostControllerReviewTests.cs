@@ -19,6 +19,7 @@ public sealed class HostControllerReviewTests
     private sealed class NoDialogs : IFileDialogs
     {
         public string? PickOpenFile() => null;
+        public string? PickOpenFolder() => null;
 
         public string? PickSaveFile(string? suggestedPath) => null;
     }
@@ -28,6 +29,7 @@ public sealed class HostControllerReviewTests
     private sealed class ReopenSamePathDialogs(string path) : IFileDialogs
     {
         public string? PickOpenFile() => path;
+        public string? PickOpenFolder() => null;
 
         public string? PickSaveFile(string? suggestedPath) => null;
     }
