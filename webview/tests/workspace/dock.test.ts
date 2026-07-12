@@ -8,6 +8,7 @@ function tool(id: string, label: string): PanelTool {
   return {
     id,
     label,
+    icon: `<svg data-icon="${id}"></svg>`,
     mount(body: HTMLElement): void {
       const content = document.createElement("div");
       content.className = `content-${id}`;
@@ -56,11 +57,19 @@ function key(el: HTMLElement, k: string): void {
 }
 
 describe("Dock chrome", () => {
-  it("builds a header with a mode switcher and a body with one container per tool", () => {
+  it("builds an icon rail per tool, a header title, and a body container per tool", () => {
     const { dockEl } = harness();
-    const modes = dockEl.querySelectorAll(".dock-mode");
-    expect(modes).toHaveLength(2);
-    expect(Array.from(modes).map((m) => m.textContent)).toEqual(["Alpha", "Bravo"]);
+    expect(dockEl.querySelector(".dock-rail")?.getAttribute("aria-orientation")).toBe("vertical");
+    const buttons = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn");
+    expect(buttons).toHaveLength(2);
+    // Icon-only buttons: the label is the accessible name (aria-label), and each renders its icon svg.
+    expect(Array.from(buttons).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Alpha",
+      "Bravo",
+    ]);
+    expect(buttons[0]?.querySelector("svg")).not.toBeNull();
+    // The header title shows the ACTIVE mode's label.
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Alpha");
     expect(dockEl.querySelector(".dock-collapse")).not.toBeNull();
     expect(dockEl.querySelectorAll(".dock-tool")).toHaveLength(2);
     expect(dockEl.querySelector(".content-a")).not.toBeNull();
@@ -81,12 +90,12 @@ describe("Dock chrome", () => {
     expect(bottom.splitter.getAttribute("aria-orientation")).toBe("horizontal");
   });
 
-  it("renders a single-tool dock with a static title and no switcher", () => {
+  it("renders a single-tool dock with a header title and no rail", () => {
     const { dockEl } = harness({
       tools: [tool("only", "Solo")],
       initial: { open: true, size: 260, mode: "only" },
     });
-    expect(dockEl.querySelector(".dock-modes")).toBeNull();
+    expect(dockEl.querySelector(".dock-rail")).toBeNull();
     expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Solo");
     expect(dockEl.hidden).toBe(false);
   });
@@ -147,28 +156,30 @@ describe("Dock open/collapse", () => {
 });
 
 describe("Dock mode switching", () => {
-  it("clicking a mode shows that tool, hides the others, and persists", () => {
+  it("clicking a mode shows that tool, updates the header title, and persists", () => {
     const { dockEl, onChange } = harness();
     const [aBody, bBody] = Array.from(dockEl.querySelectorAll<HTMLElement>(".dock-tool"));
     expect(aBody?.hidden).toBe(false);
     expect(bBody?.hidden).toBe(true);
 
-    const bButton = dockEl.querySelectorAll<HTMLButtonElement>(".dock-mode")[1];
+    const bButton = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn")[1];
     bButton?.click();
 
     expect(aBody?.hidden).toBe(true);
     expect(bBody?.hidden).toBe(false);
     expect(bButton?.getAttribute("aria-checked")).toBe("true");
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Bravo");
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it("setMode ignores an unknown id without persisting and keeps the switcher in sync", () => {
+  it("setMode ignores an unknown id without persisting and keeps the rail in sync", () => {
     const { dockEl, onChange, dock } = harness();
     dock.setMode("nope");
     const [aBody] = Array.from(dockEl.querySelectorAll<HTMLElement>(".dock-tool"));
     expect(aBody?.hidden).toBe(false);
-    const aButton = dockEl.querySelector<HTMLButtonElement>(".dock-mode");
+    const aButton = dockEl.querySelector<HTMLButtonElement>(".dock-rail-btn");
     expect(aButton?.getAttribute("aria-checked")).toBe("true");
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Alpha");
     expect(onChange).not.toHaveBeenCalled();
   });
 });
@@ -309,7 +320,7 @@ describe("Dock accessibility", () => {
     expect(dockEl.querySelector(".dock-collapse")?.getAttribute("aria-label")).toBe(
       "Collapse left panel",
     );
-    expect(dockEl.querySelector(".dock-modes")?.getAttribute("aria-label")).toBe("left panel mode");
+    expect(dockEl.querySelector(".dock-rail")?.getAttribute("aria-label")).toBe("left panel mode");
   });
 
   it("moves focus to the toolbar toggle when collapsing from the in-dock control", () => {

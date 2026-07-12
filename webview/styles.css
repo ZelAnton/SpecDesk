@@ -638,9 +638,11 @@ button {
   line-height: 1;
 }
 
-/* ---- §8 components — formatting toolbar (under the toolbar, shown while editing) ----
-   Scoped to :not([hidden]) for the same reason as the inline bars above. A quiet second row: ghost
-   buttons that tint on hover and fill with the accent-soft wash when active (the pressed state). */
+/* ---- §8 components — formatting toolbar (at the top of the editor view, shown while editing) ----
+   Now inside #editor-view (part of the editing area, not a full-width row above the panels), so it spans
+   only the editor width and hides with the editor on the Start view. Scoped to :not([hidden]) for the same
+   reason as the inline bars. A quiet row: ghost buttons that tint on hover and fill with the accent-soft
+   wash when active (the pressed state). */
 #format-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
@@ -749,24 +751,31 @@ button {
 
 /* Only the active central view is shown; the others stay in the DOM (each keeps its own scroll/state), the
    same "hide, never destroy" policy the view-mode panes use. The child combinator matches the frame's
-   DIRECT children only (each central view is a direct child, a sibling of #panes — see central-frame.ts's
-   CentralView.el contract). This selector's specificity (#central-frame id + two classes = 1,2,0) exceeds
-   #panes' own `display: flex` id rule (1,0,0), so it can hide the editor view too — an id-level rule a
-   single class could not override. */
+   DIRECT children only (each central view — #editor-view, #home-view — is a direct child; see
+   central-frame.ts's CentralView.el contract). This selector's specificity (#central-frame id + two classes
+   = 1,2,0) exceeds an active view's own `display: flex` id rule (1,0,0), so it can hide the editor view too
+   — an id-level rule a single class could not override. */
 #central-frame > .central-view:not(.central-view--active) {
   display: none;
 }
 
+/* The editor central view: the formatting toolbar (when shown) stacked over the panes. */
+#editor-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 /* ---- Docks (design concept §9 / §7 side panels) ----
-   A collapsible left/right rail or the full-width bottom dock: surface-raised, a 1px divider toward the
-   centre, a header (mode switcher + collapse) over a body that shows the active tool. flex:none + an inline
-   width (rails) / height (bottom) set by dock.ts makes each occupy exactly its size while the centre flexes
-   into the rest. `.dock[hidden]` (0,2,0) out-specifies the base `display:flex` (0,1,0) so a collapsed dock
-   truly leaves the layout. */
+   A collapsible left/right rail or the full-width bottom dock: a vertical icon rail (the mode switcher) on
+   the dock's OUTER edge, beside a main column — a header (the active mode's title + collapse) over a body
+   that shows the active tool. flex:none + an inline width (rails) / height (bottom) set by dock.ts makes
+   each occupy exactly its size while the centre flexes into the rest. `.dock[hidden]` (0,2,0) out-specifies
+   the base `display:flex` (0,1,0) so a collapsed dock truly leaves the layout. */
 .dock {
   flex: none;
   display: flex;
-  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--surface-raised);
@@ -789,54 +798,86 @@ button {
   border-top: 1px solid var(--border);
 }
 
+/* Mode rail: a column of icon buttons on the dock's outer edge, a 1px hairline from the main column; one
+   icon per mode, the active one washed with accent-soft. Scrolls (chrome-less) if the modes overflow. */
+.dock-rail {
+  flex: none;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0.4rem 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.dock-left .dock-rail,
+.dock-bottom .dock-rail {
+  border-right: 1px solid var(--border);
+}
+
+.dock-right .dock-rail {
+  border-left: 1px solid var(--border);
+}
+
+.dock-rail-btn {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.dock-rail-btn:hover {
+  color: var(--text);
+  background: var(--surface-sunken);
+}
+
+.dock-rail-btn[aria-checked="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dock-rail-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Forced-colors drops the accent-soft wash; keep the active mode's icon distinguishable with an outline. */
+@media (forced-colors: active) {
+  .dock-rail-btn[aria-checked="true"] {
+    outline: 2px solid;
+    outline-offset: -2px;
+  }
+}
+
+/* The main column beside the rail: header over body. */
+.dock-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .dock-header {
   flex: none;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.4rem 0.55rem;
+  padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--border);
 }
 
-/* Mode switcher — the same segmented-control language as the view-mode switch (sunken track; the active
-   mode is a raised surface card). */
-.dock-modes {
-  display: inline-flex;
-  flex: 1;
-  min-width: 0;
-  gap: 2px;
-  padding: 2px;
-  background: var(--surface-sunken);
-  border-radius: var(--r-md);
-}
-
-.dock-mode {
-  flex: 1;
-  min-width: 0;
-  height: 24px;
-  padding: 0 0.5rem;
-  color: var(--text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--r-sm);
-  font: 500 12px var(--font-ui);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.dock-mode:hover {
-  color: var(--text);
-}
-
-.dock-mode[aria-checked="true"] {
-  color: var(--text-strong);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
-}
-
-/* A single-tool dock shows a static uppercase section label (§7) in place of a switcher. */
+/* The header title = the active mode's label, an uppercase section label (§7). */
 .dock-title {
   flex: 1;
   min-width: 0;
@@ -897,16 +938,6 @@ button {
 
 .dock-placeholder {
   padding: 0.85rem 0.9rem;
-}
-
-.dock-placeholder-label {
-  margin: 0 0 0.35rem;
-  font: 600 11px var(--font-ui);
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  /* --text-muted (see .dock-title): the legible muted-on-surface label colour, not the mockups'
-     --text-faint (which is well below AA on this surface). */
-  color: var(--text-muted);
 }
 
 .dock-placeholder-hint {
@@ -1140,9 +1171,10 @@ button {
 }
 
 /* ---- Panes ---- */
-/* min-width:0 lets the row shrink below its content's intrinsic width (the horizontal-overflow guard now
-   that #panes is a horizontal main-axis item of #central-frame); min-height:0 is retained from the previous
-   direct-body-child layout (harmless now that #panes sizes by cross-axis stretch, not main-axis flex). */
+/* #panes is a flex item of #editor-view (a COLUMN, below the format bar), so it grows on the vertical main
+   axis: min-height:0 is LOAD-BEARING — it lets #panes shrink below its content so CodeMirror scrolls
+   INTERNALLY instead of overflowing #editor-view (do not remove it). min-width:0 is the cross-axis guard
+   (defensive: the panes' own #editor/#preview/#formatted { min-width:0 } already lets them shrink). */
 #panes {
   display: flex;
   flex: 1;

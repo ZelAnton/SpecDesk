@@ -1,31 +1,32 @@
 /**
  * The central-frame host: the swappable content region between the collapsible rails (design concept §9).
- * The editor panes (`#panes`) are the primary view; a later stage's left-rail navigation substitutes the
- * centre with another registered view (e.g. a start screen) by calling {@link CentralFrame.show}. Only one
- * view is visible at a time; the rest stay in the DOM but hidden, so each keeps its own scroll/caret/state —
- * the same "hide, never destroy" policy the view-mode panes use.
+ * The editor view (`#editor-view` — the formatting toolbar over the panes) is the primary view; the
+ * left-rail navigation substitutes the centre with another registered view (e.g. the Start screen) by
+ * calling {@link CentralFrame.show}. Only one view is visible at a time; the rest stay in the DOM but
+ * hidden, so each keeps its own scroll/caret/state — the same "hide, never destroy" policy the view-mode
+ * panes use.
  *
  * Visibility is driven by a class, not an inline style: the active view carries `central-view--active`, and
  * the stylesheet hides every `.central-view` without it. The hide rule is written at `#central-frame` (id) +
- * two classes so its specificity (1,2,0) exceeds the editor view's own `#panes { display: flex }` id rule
- * (1,0,0) — an id-level rule a single class could not override. That hide rule uses a CHILD combinator, so
- * each view element must be a direct child of the host frame (see {@link CentralView.el}). The host element
- * also carries the active view's id as `data-view`, a stable hook for CSS and for "is the editor showing?"
- * checks elsewhere.
+ * two classes so its specificity (1,2,0) exceeds an active view's own id `display: flex` rule (e.g.
+ * `#editor-view`, 1,0,0) — an id-level rule a single class could not override. That hide rule uses a CHILD
+ * combinator, so each view element must be a direct child of the host frame (see {@link CentralView.el}).
+ * The host element also carries the active view's id as `data-view`, a stable hook for CSS and for "is the
+ * editor showing?" checks elsewhere.
  */
 
 /** The base class every central view element carries; the stylesheet hides those lacking the active flag. */
 export const CENTRAL_VIEW_CLASS = "central-view";
 /** The flag on the single visible view element (see the stylesheet's hide rule and the class comment). */
 export const CENTRAL_VIEW_ACTIVE_CLASS = "central-view--active";
-/** The id of the primary view — the editor panes. Kept here so the markup, CSS, and wiring agree. */
+/** The id of the primary view — the editor view (#editor-view). Kept here so markup, CSS, and wiring agree. */
 export const CENTRAL_VIEW_EDITOR = "editor";
 
 export interface CentralView {
   /** Stable identifier; also written to the host's `data-view` attribute while this view is shown. */
   readonly id: string;
-  /** This view's root element — a DIRECT child of the host frame (a sibling of #panes). Shown when active,
-   *  hidden otherwise; the stylesheet's child-combinator hide rule only reaches direct children. */
+  /** This view's root element — a DIRECT child of the host frame (e.g. #editor-view, #home-view). Shown when
+   *  active, hidden otherwise; the stylesheet's child-combinator hide rule only reaches direct children. */
   readonly el: HTMLElement;
   /** Ran after this view becomes the active one (its element revealed, geometry now measurable). */
   readonly onShow?: () => void;

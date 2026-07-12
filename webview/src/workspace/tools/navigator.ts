@@ -5,6 +5,7 @@
  * centre actually is — including a switch driven from elsewhere (e.g. opening a spec from the Start view).
  */
 
+import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
 export interface NavDestination {
@@ -19,6 +20,7 @@ export interface NavDestination {
 export class Navigator implements PanelTool {
   readonly id = "navigator";
   readonly label = "Navigator";
+  readonly icon = icon("navigator");
   private readonly buttons = new Map<string, HTMLButtonElement>();
   private activeId: string | null = null;
 

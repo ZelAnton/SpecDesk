@@ -105,21 +105,6 @@
       <ul id="reviews-list" aria-live="polite"></ul>
       <span id="reviews-status" aria-live="polite"></span>
     </div>
-    <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
-         ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->
-    <div id="format-bar" hidden>
-      <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold (Ctrl+B)">B</button>
-      <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic (Ctrl+I)">I</button>
-      <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough (Ctrl+Shift+X)">S</button>
-      <span class="fmt-sep" aria-hidden="true"></span>
-      <button id="fmt-h1" type="button" data-format="h1" aria-pressed="false" title="Heading 1 (Ctrl+Alt+1)" aria-label="Heading 1 (Ctrl+Alt+1)">H1</button>
-      <button id="fmt-h2" type="button" data-format="h2" aria-pressed="false" title="Heading 2 (Ctrl+Alt+2)" aria-label="Heading 2 (Ctrl+Alt+2)">H2</button>
-      <span class="fmt-sep" aria-hidden="true"></span>
-      <button id="fmt-bullet" type="button" data-format="bullet" aria-pressed="false" title="Bullet list (Ctrl+Shift+8)" aria-label="Bullet list (Ctrl+Shift+8)">• List</button>
-      <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list (Ctrl+Shift+7)" aria-label="Numbered list (Ctrl+Shift+7)">1. List</button>
-      <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote (Ctrl+Shift+&gt;)" aria-label="Quote (Ctrl+Shift+&gt;)">«»</button>
-      <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block (Ctrl+Shift+E)" aria-label="Code block (Ctrl+Shift+E)">&lt;/&gt;</button>
-    </div>
     <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
          the author isn't left wondering why nothing is highlighted. -->
     <div id="review-empty-bar" role="status" hidden>No changes since the last saved version.</div>
@@ -131,10 +116,10 @@
     </div>
     <!-- Workspace: the collapsible-panel shell (design concept §9). The toolbar and inline bars stack
          above; this region fills the rest. A main row (left rail · centre · right rail) stacks over a
-         full-width bottom dock. The centre is the CentralFrame host (workspace/central-frame.ts): #panes is
-         its primary "editor" view, and a later stage's left-rail navigation swaps in other registered
-         views. The docks start collapsed; workspace/dock.ts builds each one's chrome (mode switcher +
-         collapse) and content into these containers. -->
+         full-width bottom dock. The centre is the CentralFrame host (workspace/central-frame.ts): #editor-view
+         (the formatting toolbar over the panes) is its primary "editor" view, and the left-rail navigation
+         swaps in other registered views. The docks start collapsed; workspace/dock.ts builds each one's
+         chrome (an icon rail + a header with the active mode's title + collapse) and content. -->
     <div id="workspace">
       <div id="workspace-main">
         <!-- Dock containers (design concept §9): collapsed by default; dock.ts fills each with a header and
@@ -145,14 +130,33 @@
         <!-- The central frame is the app's main content region; data-view names the active central view,
              which central-frame.ts seeds from and keeps in sync (it starts on the editor). -->
         <main id="central-frame" data-view="editor">
-          <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads
-               it back into its `mode` variable at startup (see the comment there) instead of repeating the
-               literal, and the CSS keys pane visibility off this same attribute. The central-view classes
-               mark #panes as the active primary central view (see workspace/central-frame.ts). -->
-          <div id="panes" class="central-view central-view--active" data-mode="split">
-            <div id="editor"></div>
-            <div id="preview" class="sd-doc"></div>
-            <div id="formatted"></div>
+          <!-- The editor central view: the formatting toolbar (now part of the editor's working area, not a
+               full-width row above the panels) over the panes. central-view(-active) mark it as the active
+               primary central view (see workspace/central-frame.ts); index.ts registers it under "editor". -->
+          <div id="editor-view" class="central-view central-view--active">
+            <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
+                 ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->
+            <div id="format-bar" hidden>
+              <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold (Ctrl+B)">B</button>
+              <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic (Ctrl+I)">I</button>
+              <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough (Ctrl+Shift+X)">S</button>
+              <span class="fmt-sep" aria-hidden="true"></span>
+              <button id="fmt-h1" type="button" data-format="h1" aria-pressed="false" title="Heading 1 (Ctrl+Alt+1)" aria-label="Heading 1 (Ctrl+Alt+1)">H1</button>
+              <button id="fmt-h2" type="button" data-format="h2" aria-pressed="false" title="Heading 2 (Ctrl+Alt+2)" aria-label="Heading 2 (Ctrl+Alt+2)">H2</button>
+              <span class="fmt-sep" aria-hidden="true"></span>
+              <button id="fmt-bullet" type="button" data-format="bullet" aria-pressed="false" title="Bullet list (Ctrl+Shift+8)" aria-label="Bullet list (Ctrl+Shift+8)">• List</button>
+              <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list (Ctrl+Shift+7)" aria-label="Numbered list (Ctrl+Shift+7)">1. List</button>
+              <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote (Ctrl+Shift+&gt;)" aria-label="Quote (Ctrl+Shift+&gt;)">«»</button>
+              <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block (Ctrl+Shift+E)" aria-label="Code block (Ctrl+Shift+E)">&lt;/&gt;</button>
+            </div>
+            <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads
+                 it back into its `mode` variable at startup (see the comment there) instead of repeating the
+                 literal, and the CSS keys pane visibility off this same attribute. -->
+            <div id="panes" data-mode="split">
+              <div id="editor"></div>
+              <div id="preview" class="sd-doc"></div>
+              <div id="formatted"></div>
+            </div>
           </div>
           <!-- The Start central view (workspace/tools/home-view.ts fills it): a calm open-a-spec screen the
                left-rail navigator switches to. Starts hidden (no central-view--active) — the CSS hide rule

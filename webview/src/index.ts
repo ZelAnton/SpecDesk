@@ -110,6 +110,7 @@ function wire(): void {
   // The collapsible-panel workspace (design §9): the central-frame host and the three docks with their
   // toolbar toggles. All optional — the jsdom index.ts tests mount only the editor panes.
   const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
+  const editorViewEl = document.querySelector<HTMLElement>("#editor-view");
   const homeViewEl = document.querySelector<HTMLElement>("#home-view");
   const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
   const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
@@ -997,16 +998,16 @@ function wire(): void {
   // (collapse/expand, resize, mode switching, persisted). A later stage registers alternate central views
   // and drives left-rail navigation through the returned CentralFrame; this pass wires the framework with
   // placeholder tools. A dock resize/toggle changes the centre's width, so the workspace re-measures the
-  // editor through requestEditorRelayout. Bails without the shell (#central-frame / #panes) — the jsdom
-  // index.ts tests mount only the load-bearing editor panes, and the frame is optional chrome.
+  // editor through requestEditorRelayout. Bails without the shell (#central-frame / #editor-view) — the
+  // jsdom index.ts tests mount only the load-bearing editor panes, and the frame is optional chrome.
   function wireWorkspace(): void {
-    if (!centralFrameEl || !panesEl) {
+    if (!centralFrameEl || !editorViewEl) {
       return;
     }
     centralFrame = setupWorkspace(
       {
         centralFrame: centralFrameEl,
-        panes: panesEl,
+        editorView: editorViewEl,
         homeView: homeViewEl,
         docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
         toggles: { left: leftToggleBtn, right: rightToggleBtn, bottom: bottomToggleBtn },

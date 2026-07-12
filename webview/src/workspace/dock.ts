@@ -1,8 +1,9 @@
 /**
  * One collapsible dock (design concept §9): a left/right rail or the full-width bottom panel. The dock
- * builds its own chrome inside the container it is handed — a header with a mode switcher (when it has more
- * than one tool) and a collapse button, over a body that shows the active tool. It also creates the splitter
- * that resizes it. Every user change (open/close, mode switch, resize) is reported through {@link
+ * builds its own chrome inside the container it is handed — a vertical icon rail (the mode switcher, when it
+ * has more than one tool) on its outer edge, beside a main column: a header (the active mode's title +
+ * collapse) over a body that shows the active tool. It also creates the splitter that resizes it. Every user
+ * change (open/close, mode switch, resize) is reported through {@link
  * DockCallbacks.onChange} so the owner can persist it; the owner also observes the centre's size to
  * re-measure the editor, so the dock stays free of any editor/sync knowledge.
  *
@@ -63,6 +64,9 @@ export class Dock {
   private readonly toolBodies = new Map<string, HTMLElement>();
   private readonly modeControl: SegmentedControl<string> | null;
   private readonly splitter: HTMLElement;
+  // The header title element, showing the active mode's label — assigned in buildChrome (always present
+  // after construction) and updated on a mode switch.
+  private titleEl: HTMLElement | null = null;
   // The pointer id of an in-progress splitter drag, or null when idle — a re-entrancy guard so a second
   // pointer (a second finger) can't start an overlapping drag and leave text selection disabled.
   private dragPointerId: number | null = null;
@@ -92,6 +96,7 @@ export class Dock {
     this.applySize();
     this.showActiveTool();
     this.modeControl?.setSelected(this.modeId);
+    this.updateTitle();
 
     this.toggleButton?.addEventListener("click", () => this.toggle());
     this.splitter.addEventListener("pointerdown", (event) => this.onSplitterPointerDown(event));
@@ -139,7 +144,15 @@ export class Dock {
     this.modeId = id;
     this.showActiveTool();
     this.modeControl?.setSelected(id);
+    this.updateTitle();
     this.callbacks.onChange();
+  }
+
+  /** Reflect the active mode's label in the header title. */
+  private updateTitle(): void {
+    if (this.titleEl !== null) {
+      this.titleEl.textContent = this.tools.find((tool) => tool.id === this.modeId)?.label ?? "";
+    }
   }
 
   /** Set the dock size (clamped to the edge's bounds); a no-op when the clamped size is unchanged (e.g. an
@@ -181,10 +194,17 @@ export class Dock {
   }
 
   private buildChrome(): { modeControl: SegmentedControl<string> | null; splitter: HTMLElement } {
+    // Main column: a header (active-mode title + collapse) over the body (the active tool fills it).
+    const main = document.createElement("div");
+    main.className = "dock-main";
+
     const header = document.createElement("div");
     header.className = "dock-header";
 
-    const modeControl = this.buildModeSwitcher(header);
+    const title = document.createElement("span");
+    title.className = "dock-title";
+    this.titleEl = title;
+    header.appendChild(title);
 
     const collapse = document.createElement("button");
     collapse.type = "button";
@@ -206,44 +226,53 @@ export class Dock {
       body.appendChild(toolBody);
     }
 
-    this.el.append(header, body);
+    main.append(header, body);
 
-    return { modeControl, splitter: this.buildSplitter() };
-  }
-
-  private buildModeSwitcher(header: HTMLElement): SegmentedControl<string> | null {
-    // A single-tool dock needs no switcher — show a static section label instead. A tool-less dock shows
-    // nothing (and can't be opened).
-    if (this.tools.length < 2) {
-      const only = this.tools[0];
-      if (only !== undefined) {
-        const title = document.createElement("span");
-        title.className = "dock-title";
-        title.textContent = only.label;
-        header.appendChild(title);
+    // The icon rail (mode switcher) is added only when there is more than one tool; a single-tool dock just
+    // shows its title. The rail sits on the dock's OUTER edge (a left rail's rail on the left, a right rail's
+    // on the right, the bottom dock's on the left) so the content stays adjacent to the centre.
+    const rail = this.tools.length >= 2 ? this.buildRail() : null;
+    if (this.edge === "right") {
+      this.el.appendChild(main);
+      if (rail !== null) {
+        this.el.appendChild(rail.el);
       }
-      return null;
+    } else {
+      if (rail !== null) {
+        this.el.appendChild(rail.el);
+      }
+      this.el.appendChild(main);
     }
 
-    const modes = document.createElement("div");
-    modes.className = "dock-modes";
-    modes.setAttribute("role", "radiogroup");
-    modes.setAttribute("aria-label", `${EDGE_LABEL[this.edge]} mode`);
+    return { modeControl: rail?.control ?? null, splitter: this.buildSplitter() };
+  }
+
+  /** A vertical icon rail: one icon button per tool, in an ARIA radiogroup (reusing SegmentedControl's
+   *  roving-tabindex + arrow-key selection). Scales to many modes where a horizontal switcher can't. */
+  private buildRail(): { el: HTMLElement; control: SegmentedControl<string> } {
+    const rail = document.createElement("div");
+    rail.className = "dock-rail";
+    rail.setAttribute("role", "radiogroup");
+    rail.setAttribute("aria-orientation", "vertical");
+    rail.setAttribute("aria-label", `${EDGE_LABEL[this.edge]} mode`);
 
     const options: SegmentedOption<string>[] = this.tools.map((tool) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "dock-mode";
+      button.className = "dock-rail-btn";
       button.setAttribute("role", "radio");
       button.setAttribute("aria-checked", "false");
       button.tabIndex = -1;
-      button.textContent = tool.label;
-      modes.appendChild(button);
+      // Icon-only: the label is the accessible name AND the hover tooltip (icons carry no text). The icon
+      // markup is a trusted in-repo constant (workspace/icons.ts).
+      button.innerHTML = tool.icon;
+      button.setAttribute("aria-label", tool.label);
+      button.title = tool.label;
+      rail.appendChild(button);
       return { el: button, value: tool.id };
     });
 
-    header.appendChild(modes);
-    return new SegmentedControl(options, (id) => this.setMode(id));
+    return { el: rail, control: new SegmentedControl(options, (id) => this.setMode(id)) };
   }
 
   private buildSplitter(): HTMLElement {

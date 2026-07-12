@@ -10,10 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Collapsible side and bottom panels around the editor: a left rail, a right rail, and a full-width bottom
   dock, each opened/collapsed from a toolbar toggle (or an in-panel collapse control) and resizable by
-  dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between
-  several modes from its header. Whether each panel is open, its size, and its active mode are remembered
-  across restarts. Most tools inside are placeholders for now, and the editing area re-measures as the
-  panels open, close, or resize so the split view stays aligned.
+  dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between modes
+  from a vertical icon rail on its edge (which scales to many modes), and its header names the active one.
+  Whether each panel is open, its size, and its active mode are remembered across restarts. Most tools
+  inside are placeholders for now, and the editing area re-measures as the panels open, close, or resize so
+  the split view stays aligned.
+- The Markdown formatting toolbar is now part of the editing area — it appears directly above the editor
+  panes and spans only their width — instead of a full-width row above the panels, and it stays with the
+  editor when a panel replaces the centre with another view.
 - The left panel's navigator switches the main area between views: "Document" edits the spec, "Start" shows
   a calm open-a-spec screen. It's the first navigation tool that replaces the centre's content; the
   navigator highlights wherever the centre currently is, and the view-mode switch (Code / Split / Formatted)

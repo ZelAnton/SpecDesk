@@ -14,6 +14,7 @@ import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./central-frame.js";
 import { Dock } from "./dock.js";
 import { DOCK_EDGES, type DockEdge, type WorkspaceDocksState } from "./dock-state.js";
 import type { DockStore } from "./dock-store.js";
+import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
 import { buildHomeView } from "./tools/home-view.js";
 import { type NavDestination, Navigator } from "./tools/navigator.js";
@@ -31,7 +32,8 @@ const NAV_DESTINATIONS: readonly NavDestination[] = [
  *  DOM still boots. */
 export interface WorkspaceElements {
   readonly centralFrame: HTMLElement;
-  readonly panes: HTMLElement;
+  /** The editor central view — wraps the formatting toolbar and the panes (see index.html #editor-view). */
+  readonly editorView: HTMLElement;
   readonly homeView: HTMLElement | null;
   readonly docks: Record<DockEdge, HTMLElement | null>;
   readonly toggles: Record<DockEdge, HTMLButtonElement | null>;
@@ -65,7 +67,7 @@ export function setupWorkspace(
     navigator.setActive(id);
     callbacks.onCentralViewChange(id);
   });
-  centralFrame.register({ id: CENTRAL_VIEW_EDITOR, el: elements.panes });
+  centralFrame.register({ id: CENTRAL_VIEW_EDITOR, el: elements.editorView });
   if (elements.homeView !== null) {
     // Opening a spec from the Start screen runs the same action as the toolbar; index.ts returns the centre
     // to the editor on the resulting doc.loaded (so cancelling the file dialog leaves the author on Start,
@@ -81,25 +83,33 @@ export function setupWorkspace(
   const toolsByEdge: Record<DockEdge, readonly PanelTool[]> = {
     left: [
       navigator,
-      placeholderTool("outline", "Outline", "The document's outline will appear here."),
+      placeholderTool(
+        "outline",
+        "Outline",
+        icon("outline"),
+        "The document's outline will appear here.",
+      ),
     ],
     right: [
       placeholderTool(
         "assistant",
         "Assistant",
+        icon("assistant"),
         "Tools that act on the active document will appear here, starting with an AI assistant.",
       ),
-      placeholderTool("tools", "Tools", "More document tools will appear here."),
+      placeholderTool("tools", "Tools", icon("tools"), "More document tools will appear here."),
     ],
     bottom: [
       placeholderTool(
         "log",
         "Log",
+        icon("log"),
         "Large output will appear here — logs and other long text that doesn't fit inline in the editor.",
       ),
       placeholderTool(
         "comment",
         "Comment",
+        icon("comment"),
         "The full text of a selected comment will appear here.",
       ),
     ],
