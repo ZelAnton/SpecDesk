@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The left panel now has **Recent**, **Favorites**, and **Repositories** views. Recent and Favorites list the
+  files and folders you opened or starred — click one to open it, and use the star to add or remove a
+  favorite. Repositories lists the GitHub repositories you registered: add one by `owner/name` or URL, open
+  its page, or remove it (cloning a registered repository and opening it as a workspace arrives next). The
+  Start screen also lists your most recent items as quick shortcuts.
 - The app now remembers the files and folders you recently opened, lets you keep the ones you use most as
   favorites, and lets you register the GitHub repositories you work with often — so they're at hand next time.
   Your recents, favorites, and registered repositories are saved between runs. (The picker UI that surfaces

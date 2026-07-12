@@ -1,18 +1,34 @@
 /**
  * The Start central view (design concept §10.7 "empty / first-run"): a calm, centered open-a-spec screen.
  * It is one of the views the left-rail navigator switches the central frame to. The author can open a single
- * file or a whole folder (its Markdown tree then fills the left-rail file navigator); the recents list is a
- * placeholder until the host feeds it real data. Opening a GitHub repository joins these in a later stage.
+ * file or a whole folder (its Markdown tree then fills the left-rail file navigator), or pick one of their
+ * recent items straight from here (the left-rail Recent panel holds the full history). Opening a GitHub
+ * repository joins these in a later stage.
  */
+
+import type { WorkspaceItem } from "../../wire/protocol.js";
+import { icon } from "../icons.js";
 
 export interface HomeActions {
   /** Open a single spec file (the host shows a file picker). */
   onOpenFile(): void;
   /** Open a folder as the workspace (the host shows a folder picker); its tree fills the file navigator. */
   onOpenFolder(): void;
+  /** Open a recent item (a folder → `folder.open`, a file → `doc.open` — the owner resolves which, the
+   *  same open logic the left-rail Recent/Favorites panels use). */
+  onOpenItem(item: WorkspaceItem): void;
 }
 
-export function buildHomeView(host: HTMLElement, actions: HomeActions): void {
+/** The handle {@link buildHomeView} returns so the owner can feed the recent list as `workspace.state` arrives. */
+export interface HomeView {
+  /** Replace the Start screen's recent list with up to a few most-recent items; empty restores the hint. */
+  setRecents(items: readonly WorkspaceItem[]): void;
+}
+
+/** How many recent items the Start screen lists — a short shortcut set; the left-rail Recent panel shows all. */
+const HOME_RECENTS_LIMIT = 6;
+
+export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView {
   const screen = document.createElement("div");
   screen.className = "home-screen";
 
@@ -49,8 +65,43 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): void {
   const recentsEmpty = document.createElement("p");
   recentsEmpty.className = "home-recents-empty";
   recentsEmpty.textContent = "Your recent specs will appear here.";
-  recents.append(recentsLabel, recentsEmpty);
+  const recentsList = document.createElement("ul");
+  recentsList.className = "home-recents-list";
+  recents.append(recentsLabel, recentsEmpty, recentsList);
 
   screen.append(title, prompt, actionsRow, recents);
   host.appendChild(screen);
+
+  const render = (items: readonly WorkspaceItem[]): void => {
+    const shown = items.slice(0, HOME_RECENTS_LIMIT);
+    recentsEmpty.hidden = shown.length > 0;
+    recentsList.hidden = shown.length === 0;
+    recentsList.replaceChildren();
+    for (const item of shown) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "home-recent";
+      button.title = item.path;
+
+      const affordance = document.createElement("span");
+      affordance.className = "home-recent-icon";
+      affordance.setAttribute("aria-hidden", "true");
+      // Trusted in-repo markup (workspace/icons.ts) — never interpolated with host input.
+      affordance.innerHTML = icon(item.isFolder ? "files" : "file");
+
+      const label = document.createElement("span");
+      label.className = "home-recent-label";
+      label.textContent = item.label;
+
+      button.append(affordance, label);
+      button.addEventListener("click", () => actions.onOpenItem(item));
+      li.appendChild(button);
+      recentsList.appendChild(li);
+    }
+  };
+  // Start empty (the hint shows) until the host's first `workspace.state` feeds real recents.
+  render([]);
+
+  return { setRecents: render };
 }

@@ -1,0 +1,176 @@
+/**
+ * The left-rail Repositories panel (design concept §9): the GitHub repositories the author registered, so
+ * they're at hand. A small form at the top registers a new one from an `owner/name` or a GitHub URL — the
+ * host validates and stores it, or emits an `error` the app already surfaces; each listed repo can be
+ * opened on GitHub or removed.
+ *
+ * A5 stores and opens only — there is no cloning yet, so clicking a repo opens its GitHub page in the OS
+ * browser (via {@link RepositoriesCallbacks.onOpenRepo}); cloning a registered repository and opening it as
+ * a workspace arrives in a later stage. Like FileTree, this keeps NO IPC/Kinds knowledge — the integrator
+ * (index.ts) passes plain callbacks, so the panel is unit-testable without a host bridge. The author never
+ * sees git vocabulary: it's "Repositories", "Add", and "Remove", not clone/branch/remote.
+ */
+
+import type { RegisteredRepo, WorkspaceStatePayload } from "../../wire/protocol.js";
+import { icon } from "../icons.js";
+import type { PanelTool } from "../panel-tool.js";
+
+export interface RepositoriesCallbacks {
+  /** Register the repository named by `url` (an `owner/name` or a GitHub URL); the host validates it. */
+  onRegister(url: string): void;
+  /** Remove the registered repository whose id is `id`. */
+  onUnregister(id: string): void;
+  /** Open the repository's GitHub page in the OS browser (A5 has no cloning yet). */
+  onOpenRepo(repo: RegisteredRepo): void;
+}
+
+export class RepositoriesPanel implements PanelTool {
+  readonly id = "repositories";
+  readonly label = "Repositories";
+  readonly icon = icon("repositories");
+
+  private input: HTMLInputElement | null = null;
+  private listEl: HTMLElement | null = null;
+  private emptyEl: HTMLElement | null = null;
+  private repos: readonly RegisteredRepo[] = [];
+
+  constructor(private readonly callbacks: RepositoriesCallbacks) {}
+
+  mount(body: HTMLElement): void {
+    const root = document.createElement("div");
+    root.className = "repositories";
+
+    // The register form: a text field + Add. Submitting registers the typed repo and clears the field.
+    const form = document.createElement("form");
+    form.className = "repo-register";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "repo-register-input";
+    input.setAttribute("aria-label", "Repository owner/name or GitHub URL");
+    input.placeholder = "e.g. acme/specs or a GitHub link";
+
+    const add = document.createElement("button");
+    add.type = "submit";
+    add.className = "repo-register-add";
+    add.textContent = "Add";
+
+    form.append(input, add);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      this.submit();
+    });
+
+    const empty = document.createElement("p");
+    empty.className = "repo-empty";
+    empty.textContent = "Register a repository to keep it handy.";
+
+    const list = document.createElement("ul");
+    list.className = "repo-list";
+    list.setAttribute("aria-label", "Registered repositories");
+
+    root.append(form, empty, list);
+    body.appendChild(root);
+    this.input = input;
+    this.emptyEl = empty;
+    this.listEl = list;
+    this.render();
+  }
+
+  /** Replace the repository list with the host's latest workspace state. */
+  setState(state: WorkspaceStatePayload): void {
+    this.repos = state.repositories;
+    this.render();
+  }
+
+  private submit(): void {
+    if (this.input === null) {
+      return;
+    }
+    const url = this.input.value.trim();
+    if (url === "") {
+      return;
+    }
+    // Clear immediately: the host validates and either adds it (a `workspace.state` follows and rebuilds
+    // the list) or emits an `error` the app surfaces — either way the field is ready for the next entry.
+    this.input.value = "";
+    this.callbacks.onRegister(url);
+  }
+
+  private render(): void {
+    if (this.listEl === null || this.emptyEl === null) {
+      return;
+    }
+    // Preserve focus on a remove button across the rebuild the host's re-emitted state triggers.
+    const focusedId = this.focusedRemoveId();
+    const hasRepos = this.repos.length > 0;
+    this.emptyEl.hidden = hasRepos;
+    this.listEl.hidden = !hasRepos;
+    this.listEl.replaceChildren();
+    if (!hasRepos) {
+      return;
+    }
+    for (const repo of this.repos) {
+      this.listEl.appendChild(this.buildRow(repo));
+    }
+    this.restoreFocus(focusedId);
+  }
+
+  private buildRow(repo: RegisteredRepo): HTMLLIElement {
+    const li = document.createElement("li");
+    li.className = "repo-row";
+
+    // A5 has no cloning yet, so opening a repo just opens its GitHub page in the browser; cloning it and
+    // opening it as a workspace arrives in a later stage.
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "repo-open";
+    open.title = repo.url;
+    open.textContent = repo.name;
+    open.addEventListener("click", () => this.callbacks.onOpenRepo(repo));
+
+    // The trailing remove control (an ×, like the dock's collapse button); the aria-label carries the
+    // accessible name so a screen reader announces which repository it removes.
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "repo-remove";
+    remove.dataset.id = repo.id;
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove repository ${repo.name}`);
+    remove.title = "Remove repository";
+    remove.addEventListener("click", () => this.callbacks.onUnregister(repo.id));
+
+    li.append(open, remove);
+    return li;
+  }
+
+  /** The id of the focused remove button, or null if focus is elsewhere — captured before a rebuild. */
+  private focusedRemoveId(): string | null {
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      this.listEl?.contains(active) &&
+      active.dataset.id !== undefined
+    ) {
+      return active.dataset.id;
+    }
+    return null;
+  }
+
+  /** Re-focus the same repo's remove button after a rebuild; if that repo is gone (it was the one removed)
+   *  but rows remain, fall back to the first row's remove so focus doesn't drop to <body>. No-op if focus
+   *  wasn't in the list, or when the list emptied (render() returns before this — nothing left to focus). */
+  private restoreFocus(id: string | null): void {
+    if (id === null || this.listEl === null) {
+      return;
+    }
+    const buttons = this.listEl.querySelectorAll<HTMLElement>("button[data-id]");
+    for (const el of buttons) {
+      if (el.dataset.id === id) {
+        el.focus();
+        return;
+      }
+    }
+    buttons[0]?.focus();
+  }
+}

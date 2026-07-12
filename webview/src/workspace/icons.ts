@@ -15,6 +15,14 @@ const ICON_BODIES: Record<string, string> = {
   assistant: `<path d="M12 4 L13.5 10.5 L20 12 L13.5 13.5 L12 20 L10.5 13.5 L4 12 L10.5 10.5 Z"/>`,
   // folder — the workspace file navigator
   files: `<path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/>`,
+  // document — a file row's leading affordance (paired with `files` = folder)
+  file: `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 19 8"/>`,
+  // clock — recently opened files and folders
+  recent: `<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>`,
+  // star — favorites (fillable via CSS when a row is starred)
+  favorites: `<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>`,
+  // package/box — registered repositories (deliberately NOT a git-branch glyph; the author never sees git vocabulary)
+  repositories: `<path d="M21 8.5v7a1.8 1.8 0 0 1-.9 1.56l-7 4a1.8 1.8 0 0 1-1.8 0l-7-4A1.8 1.8 0 0 1 3 15.5v-7a1.8 1.8 0 0 1 .9-1.56l7-4a1.8 1.8 0 0 1 1.8 0l7 4A1.8 1.8 0 0 1 21 8.5z"/><polyline points="3.3 7.4 12 12.4 20.7 7.4"/><line x1="12" y1="22" x2="12" y2="12.4"/>`,
   // sliders — document tools
   tools: `<line x1="4" y1="9" x2="20" y2="9"/><circle cx="8" cy="9" r="2.5" fill="currentColor" stroke="none"/><line x1="4" y1="15" x2="20" y2="15"/><circle cx="16" cy="15" r="2.5" fill="currentColor" stroke="none"/>`,
   // terminal prompt — the log

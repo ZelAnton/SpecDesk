@@ -38,14 +38,21 @@ import {
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceState,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
-import { isReviewState, Kinds } from "./wire/protocol.js";
+import { isReviewState, Kinds, type WorkspaceItem } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
+import { RepositoriesPanel } from "./workspace/tools/repositories-panel.js";
+import {
+  favoritesPanel,
+  recentPanel,
+  type WorkspaceListCallbacks,
+} from "./workspace/tools/workspace-list.js";
 import { setupWorkspace } from "./workspace/workspace.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
@@ -1065,6 +1072,33 @@ function wire(): void {
       }
     });
 
+    // Open a workspace item — a folder as the file navigator's root (`folder.open`), a file in the editor
+    // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
+    // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
+    const openWorkspaceItem = (item: WorkspaceItem): void => {
+      if (item.isFolder) {
+        ipc.send(Kinds.folderOpen, { path: item.path });
+      } else {
+        ipc.send(Kinds.docOpen, { path: item.path });
+      }
+    };
+    // The Recent and Favorites panels share these callbacks: open an item, and toggle its favorite state
+    // (the host persists it and re-emits `workspace.state`, which rebuilds both panels).
+    const listCallbacks: WorkspaceListCallbacks = {
+      onOpen: openWorkspaceItem,
+      onToggleFavorite: (item, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, { path: item.path, favorite }),
+    };
+    const recent = recentPanel(listCallbacks);
+    const favorites = favoritesPanel(listCallbacks);
+    // The Repositories panel: register from an owner/name or URL, remove by id, and (A5 has no cloning yet)
+    // open a repo's GitHub page in the browser.
+    const repositories = new RepositoriesPanel({
+      onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
+      onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
+      onOpenRepo: (repo) => ipc.send(Kinds.linkOpen, { url: repo.url }),
+    });
+
     const workspace = setupWorkspace(
       {
         centralFrame: centralFrameEl,
@@ -1087,12 +1121,30 @@ function wire(): void {
         },
         onOpenFile: () => ipc.send(Kinds.docOpen),
         onOpenFolder: () => ipc.send(Kinds.folderOpen),
+        onOpenItem: openWorkspaceItem,
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: assistantChat, files },
+      { assistant: assistantChat, files, recent, favorites, repositories },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;
+    const home = workspace.home;
+
+    // The persisted workspace store: one unsolicited event feeds all three left-rail panels and the Start
+    // screen's recent list. Emitted on `workspace.request` (below) and after every mutation
+    // (favorite / register / unregister), so the UI always reflects the host's authoritative store.
+    ipc.on(Kinds.workspaceState, (message) => {
+      const payload = parseWorkspaceState(message.payload);
+      if (payload) {
+        recent.setState(payload);
+        favorites.setState(payload);
+        repositories.setState(payload);
+        home?.setRecents(payload.recent);
+      }
+    });
+    // Ask for the current store once now that the handler is registered, so the panels populate immediately.
+    ipc.send(Kinds.workspaceRequest);
+
     // Seed the outline from the current document (the panes may already hold a loaded doc).
     updateOutline(editor.getText());
   }

@@ -10,13 +10,14 @@
  * editor and the Start view. The other dock tools are placeholders until later stages fill them.
  */
 
+import type { WorkspaceItem } from "../wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./central-frame.js";
 import { Dock } from "./dock.js";
 import { DOCK_EDGES, type DockEdge, type WorkspaceDocksState } from "./dock-state.js";
 import type { DockStore } from "./dock-store.js";
 import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
-import { buildHomeView } from "./tools/home-view.js";
+import { buildHomeView, type HomeView } from "./tools/home-view.js";
 import { type NavDestination, Navigator } from "./tools/navigator.js";
 import { Outline } from "./tools/outline.js";
 
@@ -49,14 +50,19 @@ export interface WorkspaceCallbacks {
   onOpenFile(): void;
   /** Open a folder as the workspace from the Start screen (host folder picker); fills the file navigator. */
   onOpenFolder(): void;
+  /** Open a recent item from the Start screen (a folder → `folder.open`, a file → `doc.open`). */
+  onOpenItem(item: WorkspaceItem): void;
   /** Scroll the editor to a 0-based source line (an outline heading was clicked). */
   onOutlineNavigate(line: number): void;
 }
 
-/** What setupWorkspace hands back to index.ts: the central-frame host and the outline tool to feed. */
+/** What setupWorkspace hands back to index.ts: the central-frame host, the outline tool to feed, and the
+ *  Start view (when present) so index.ts can feed it the recent items. */
 export interface WorkspaceHandle {
   readonly centralFrame: CentralFrame;
   readonly outline: Outline;
+  /** The Start view, when its element was present — index.ts feeds it recents from `workspace.state`. */
+  readonly home?: HomeView;
 }
 
 /** The real dock tools index.ts builds (they need IPC/host wiring, which stays out of the workspace).
@@ -66,6 +72,12 @@ export interface WorkspaceTools {
   readonly assistant?: PanelTool;
   /** The left rail's workspace file navigator (the folder tree). Absent → a placeholder in a reduced DOM. */
   readonly files?: PanelTool;
+  /** The left rail's Recent panel (recently-opened files/folders). Absent → a placeholder. */
+  readonly recent?: PanelTool;
+  /** The left rail's Favorites panel (starred files/folders). Absent → a placeholder. */
+  readonly favorites?: PanelTool;
+  /** The left rail's Repositories panel (registered GitHub repos). Absent → a placeholder. */
+  readonly repositories?: PanelTool;
 }
 
 /**
@@ -92,13 +104,16 @@ export function setupWorkspace(
     callbacks.onCentralViewChange(id);
   });
   centralFrame.register({ id: CENTRAL_VIEW_EDITOR, el: elements.editorView });
+  // The Start view's handle (when its element is present), so index.ts can feed it the recent items.
+  let home: HomeView | undefined;
   if (elements.homeView !== null) {
     // Opening a spec from the Start screen runs the same action as the toolbar; index.ts returns the centre
     // to the editor on the resulting doc.loaded (so cancelling the file dialog leaves the author on Start,
-    // not a blank editor).
-    buildHomeView(elements.homeView, {
+    // not a blank editor). A recent item opens through the same path the left-rail panels use.
+    home = buildHomeView(elements.homeView, {
       onOpenFile: () => callbacks.onOpenFile(),
       onOpenFolder: () => callbacks.onOpenFolder(),
+      onOpenItem: (item) => callbacks.onOpenItem(item),
     });
     centralFrame.register({ id: CENTRAL_VIEW_HOME, el: elements.homeView });
   }
@@ -117,6 +132,29 @@ export function setupWorkspace(
           "Files",
           icon("files"),
           "The folders and specs of an opened workspace will appear here.",
+        ),
+      // Recent / Favorites / Repositories: the real tools when index.ts wired them, else placeholders whose
+      // ids/labels match, so the reduced DOM boots and a persisted active mode still resolves.
+      tools.recent ??
+        placeholderTool(
+          "recent",
+          "Recent",
+          icon("recent"),
+          "Files and folders you open will appear here.",
+        ),
+      tools.favorites ??
+        placeholderTool(
+          "favorites",
+          "Favorites",
+          icon("favorites"),
+          "Star a file or folder to keep it here.",
+        ),
+      tools.repositories ??
+        placeholderTool(
+          "repositories",
+          "Repositories",
+          icon("repositories"),
+          "Register a repository to keep it handy.",
         ),
     ],
     right: [
@@ -178,5 +216,7 @@ export function setupWorkspace(
     observer.observe(elements.centralFrame);
   }
 
-  return { centralFrame, outline };
+  // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it
+  // an explicit undefined).
+  return home !== undefined ? { centralFrame, outline, home } : { centralFrame, outline };
 }
