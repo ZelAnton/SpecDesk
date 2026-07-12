@@ -1,0 +1,43 @@
+/**
+ * A panel tool = one mode of a dock (workspace/dock.ts). A dock hosts several and switches between them
+ * from its header; the active tool's content fills the dock body. This is the seam a later stage plugs the
+ * real tools into (a file navigator, the AI assistant, a log viewer, …); for now the docks carry simple
+ * placeholder tools built by {@link placeholderTool}.
+ */
+
+export interface PanelTool {
+  /** Stable id; also the persisted "active mode" value for this dock (see dock-state.ts). */
+  readonly id: string;
+  /** Short human label for the mode switcher (and its accessible name). */
+  readonly label: string;
+  /** Build this tool's content into `body`. Called once, when the dock mounts — the tool's element is then
+   *  shown/hidden as the mode switches, never rebuilt, so it keeps its own scroll/state. */
+  mount(body: HTMLElement): void;
+}
+
+/**
+ * A minimal placeholder tool: a section label (uppercase, per design §7) over a muted hint line. Stands in
+ * until a later stage replaces it with the real tool of the same id, so the dock chrome, mode switching,
+ * and persistence can be built and reviewed now against something visible.
+ */
+export function placeholderTool(id: string, label: string, hint: string): PanelTool {
+  return {
+    id,
+    label,
+    mount(body: HTMLElement): void {
+      const wrap = document.createElement("div");
+      wrap.className = "dock-placeholder";
+
+      const heading = document.createElement("p");
+      heading.className = "dock-placeholder-label";
+      heading.textContent = label;
+
+      const message = document.createElement("p");
+      message.className = "dock-placeholder-hint";
+      message.textContent = hint;
+
+      wrap.append(heading, message);
+      body.appendChild(wrap);
+    },
+  };
+}

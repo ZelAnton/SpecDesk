@@ -12,6 +12,9 @@
          pane visible in the current mode. -->
     <a class="skip-link" href="#editor">Skip to editor</a>
     <div id="toolbar">
+      <!-- Collapsible-panel toggles (design concept §9): open/collapse the left rail, bottom dock, and
+           right rail. aria-pressed reflects the open state; the glyph shows which edge each controls. -->
+      <button id="toggle-left-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="left-dock" aria-label="Toggle left panel" title="Toggle left panel">◧</button>
       <button id="open-btn" type="button">Open…</button>
       <button id="edit-btn" type="button">Edit</button>
       <button id="save-version-btn" type="button" hidden>Save version</button>
@@ -44,6 +47,8 @@
       <button id="github-btn" type="button" hidden>Connect to GitHub</button>
       <!-- Browse your open reviews (PoC-5). Shown once a GitHub account is connected. -->
       <button id="reviews-btn" type="button" hidden>My reviews</button>
+      <button id="toggle-bottom-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="bottom-dock" aria-label="Toggle bottom panel" title="Toggle bottom panel">⬓</button>
+      <button id="toggle-right-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="right-dock" aria-label="Toggle right panel" title="Toggle right panel">◨</button>
       <span id="status" aria-live="polite">(no document)</span>
     </div>
     <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
@@ -128,13 +133,14 @@
          above; this region fills the rest. A main row (left rail · centre · right rail) stacks over a
          full-width bottom dock. The centre is the CentralFrame host (workspace/central-frame.ts): #panes is
          its primary "editor" view, and a later stage's left-rail navigation swaps in other registered
-         views. The dock containers are hidden placeholders in this pass — their chrome and interactivity
-         land in a later stage. -->
+         views. The docks start collapsed; workspace/dock.ts builds each one's chrome (mode switcher +
+         collapse) and content into these containers. -->
     <div id="workspace">
       <div id="workspace-main">
-        <!-- Dock placeholders (design concept §9): hidden and empty in this pass. Their landmark role
-             (e.g. a navigation rail) and label belong with the content, so a later stage adds those when it
-             fills them — an empty labelled landmark now would only mislead a screen reader. -->
+        <!-- Dock containers (design concept §9): collapsed by default; dock.ts fills each with a header and
+             the active tool. The tools are placeholders for now, so the landmark role (e.g. a navigation
+             rail) and an edge label stay deferred until the real tools land — a landmark advertising
+             placeholder content would only mislead a screen reader. -->
         <div id="left-dock" class="dock dock-left" hidden></div>
         <!-- The central frame is the app's main content region; data-view names the active central view,
              which central-frame.ts seeds from and keeps in sync (it starts on the editor). -->

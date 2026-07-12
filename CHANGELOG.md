@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Collapsible side and bottom panels around the editor: a left rail, a right rail, and a full-width bottom
+  dock, each opened/collapsed from a toolbar toggle (or an in-panel collapse control) and resizable by
+  dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between
+  several modes from its header. Whether each panel is open, its size, and its active mode are remembered
+  across restarts. The panels are scaffolding for now — the tools inside are placeholders — and the editing
+  area re-measures as they open, close, or resize so the split view stays aligned.
 - `SPECDESK_DATA_ROOT` redirects the app's entire local data root — the sample repo, the GitHub auth
   token directory, and the logs — to a chosen directory (for a dev run, or an isolated full-app test
   against a disposable copy). Unset, the default `%LOCALAPPDATA%\SpecDesk` is unchanged.

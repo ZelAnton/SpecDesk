@@ -1,0 +1,327 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+import { Dock } from "../../src/workspace/dock.js";
+import { DOCK_SIZE_BOUNDS, type DockEdge, type DockState } from "../../src/workspace/dock-state.js";
+import type { PanelTool } from "../../src/workspace/panel-tool.js";
+
+function tool(id: string, label: string): PanelTool {
+  return {
+    id,
+    label,
+    mount(body: HTMLElement): void {
+      const content = document.createElement("div");
+      content.className = `content-${id}`;
+      content.textContent = id;
+      body.appendChild(content);
+    },
+  };
+}
+
+interface HarnessOptions {
+  edge?: DockEdge;
+  tools?: PanelTool[];
+  initial?: DockState;
+}
+
+function harness(options: HarnessOptions = {}) {
+  document.body.innerHTML = `<div id="host"><div id="dock"></div></div>`;
+  const dockEl = document.querySelector<HTMLElement>("#dock");
+  if (dockEl === null) {
+    throw new Error("no #dock");
+  }
+  const toggle = document.createElement("button");
+  document.body.appendChild(toggle);
+  const onChange = vi.fn();
+  const tools = options.tools ?? [tool("a", "Alpha"), tool("b", "Bravo")];
+  const initial = options.initial ?? { open: false, size: 260, mode: "a" };
+  const dock = new Dock(dockEl, options.edge ?? "left", tools, initial, toggle, { onChange });
+  const splitter = document.querySelector<HTMLElement>(".dock-splitter");
+  if (splitter === null) {
+    throw new Error("no splitter");
+  }
+  return { dockEl, toggle, onChange, dock, splitter };
+}
+
+function pointer(
+  type: string,
+  props: { clientX?: number; clientY?: number; button?: number; pointerId?: number },
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { clientX: 0, clientY: 0, button: 0, pointerId: 1, ...props });
+  return event;
+}
+
+function key(el: HTMLElement, k: string): void {
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+}
+
+describe("Dock chrome", () => {
+  it("builds a header with a mode switcher and a body with one container per tool", () => {
+    const { dockEl } = harness();
+    const modes = dockEl.querySelectorAll(".dock-mode");
+    expect(modes).toHaveLength(2);
+    expect(Array.from(modes).map((m) => m.textContent)).toEqual(["Alpha", "Bravo"]);
+    expect(dockEl.querySelector(".dock-collapse")).not.toBeNull();
+    expect(dockEl.querySelectorAll(".dock-tool")).toHaveLength(2);
+    expect(dockEl.querySelector(".content-a")).not.toBeNull();
+  });
+
+  it("inserts the splitter as a sibling on the centre side of the dock", () => {
+    const left = harness({ edge: "left" });
+    // Left rail: splitter directly after the dock.
+    expect(left.dockEl.nextElementSibling).toBe(left.splitter);
+    expect(left.splitter.classList.contains("dock-splitter-left")).toBe(true);
+
+    const right = harness({ edge: "right" });
+    // Right rail: splitter directly before the dock.
+    expect(right.dockEl.previousElementSibling).toBe(right.splitter);
+    expect(right.splitter.getAttribute("aria-orientation")).toBe("vertical");
+
+    const bottom = harness({ edge: "bottom" });
+    expect(bottom.splitter.getAttribute("aria-orientation")).toBe("horizontal");
+  });
+
+  it("renders a single-tool dock with a static title and no switcher", () => {
+    const { dockEl } = harness({
+      tools: [tool("only", "Solo")],
+      initial: { open: true, size: 260, mode: "only" },
+    });
+    expect(dockEl.querySelector(".dock-modes")).toBeNull();
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Solo");
+    expect(dockEl.hidden).toBe(false);
+  });
+});
+
+describe("Dock open/collapse", () => {
+  it("applies the initial collapsed state (dock + splitter hidden, toggle not pressed)", () => {
+    const { dockEl, toggle, splitter } = harness({
+      initial: { open: false, size: 260, mode: "a" },
+    });
+    expect(dockEl.hidden).toBe(true);
+    expect(splitter.hidden).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("applies the initial open state and clamps the size", () => {
+    const { dockEl, toggle, splitter } = harness({
+      edge: "left",
+      initial: { open: true, size: 99999, mode: "a" },
+    });
+    expect(dockEl.hidden).toBe(false);
+    expect(splitter.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(dockEl.style.width).toBe(`${DOCK_SIZE_BOUNDS.left.max}px`);
+  });
+
+  it("toggle opens then collapses, persisting each change and updating aria-pressed + splitter", () => {
+    const { dockEl, toggle, onChange, splitter, dock } = harness();
+    dock.toggle();
+    expect(dock.open).toBe(true);
+    expect(dockEl.hidden).toBe(false);
+    expect(splitter.hidden).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    dock.toggle();
+    expect(dock.open).toBe(false);
+    expect(dockEl.hidden).toBe(true);
+    expect(splitter.hidden).toBe(true);
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("the toolbar toggle button and the collapse button drive open/close", () => {
+    const { dockEl, toggle, dock } = harness();
+    toggle.click();
+    expect(dock.open).toBe(true);
+    const collapse = dockEl.querySelector<HTMLButtonElement>(".dock-collapse");
+    collapse?.click();
+    expect(dock.open).toBe(false);
+    expect(dockEl.hidden).toBe(true);
+  });
+
+  it("a tool-less dock cannot be opened", () => {
+    const { dock, onChange } = harness({ tools: [], initial: { open: true, size: 260, mode: "" } });
+    expect(dock.open).toBe(false);
+    dock.setOpen(true);
+    expect(dock.open).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("Dock mode switching", () => {
+  it("clicking a mode shows that tool, hides the others, and persists", () => {
+    const { dockEl, onChange } = harness();
+    const [aBody, bBody] = Array.from(dockEl.querySelectorAll<HTMLElement>(".dock-tool"));
+    expect(aBody?.hidden).toBe(false);
+    expect(bBody?.hidden).toBe(true);
+
+    const bButton = dockEl.querySelectorAll<HTMLButtonElement>(".dock-mode")[1];
+    bButton?.click();
+
+    expect(aBody?.hidden).toBe(true);
+    expect(bBody?.hidden).toBe(false);
+    expect(bButton?.getAttribute("aria-checked")).toBe("true");
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("setMode ignores an unknown id without persisting and keeps the switcher in sync", () => {
+    const { dockEl, onChange, dock } = harness();
+    dock.setMode("nope");
+    const [aBody] = Array.from(dockEl.querySelectorAll<HTMLElement>(".dock-tool"));
+    expect(aBody?.hidden).toBe(false);
+    const aButton = dockEl.querySelector<HTMLButtonElement>(".dock-mode");
+    expect(aButton?.getAttribute("aria-checked")).toBe("true");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("Dock resize", () => {
+  it("keyboard resize grows/shrinks per edge, clamps, and persists only on a real change", () => {
+    // Left rail: ArrowRight grows, ArrowLeft shrinks.
+    const left = harness({ edge: "left", initial: { open: true, size: 260, mode: "a" } });
+    key(left.splitter, "ArrowRight");
+    expect(left.dockEl.style.width).toBe("276px");
+    key(left.splitter, "ArrowLeft");
+    expect(left.dockEl.style.width).toBe("260px");
+    expect(left.onChange).toHaveBeenCalledTimes(2);
+
+    // Right rail: the directions mirror (ArrowLeft grows).
+    const right = harness({ edge: "right", initial: { open: true, size: 300, mode: "a" } });
+    key(right.splitter, "ArrowLeft");
+    expect(right.dockEl.style.width).toBe("316px");
+
+    // At the min bound a shrink is a no-op (nothing changes, nothing persisted).
+    const clamped = harness({
+      edge: "left",
+      initial: { open: true, size: DOCK_SIZE_BOUNDS.left.min, mode: "a" },
+    });
+    key(clamped.splitter, "ArrowLeft");
+    expect(clamped.dockEl.style.width).toBe(`${DOCK_SIZE_BOUNDS.left.min}px`);
+    expect(clamped.onChange).not.toHaveBeenCalled();
+  });
+
+  it("bottom edge resizes by height with ArrowUp growing", () => {
+    const bottom = harness({ edge: "bottom", initial: { open: true, size: 200, mode: "a" } });
+    key(bottom.splitter, "ArrowUp");
+    expect(bottom.dockEl.style.height).toBe("216px");
+    key(bottom.splitter, "ArrowDown");
+    expect(bottom.dockEl.style.height).toBe("200px");
+  });
+
+  it("a pointer drag resizes live and persists once on release (per edge)", () => {
+    // The drag tracks the pointer on `window` (it moves off the 1px splitter immediately), so the move/up
+    // events are dispatched there — not on the splitter.
+    const left = harness({ edge: "left", initial: { open: true, size: 260, mode: "a" } });
+    left.splitter.dispatchEvent(pointer("pointerdown", { clientX: 300 }));
+    window.dispatchEvent(pointer("pointermove", { clientX: 340 })); // +40 → grow to 300
+    expect(left.dockEl.style.width).toBe("300px");
+    expect(left.onChange).not.toHaveBeenCalled(); // live drag doesn't persist
+    window.dispatchEvent(pointer("pointerup", { clientX: 340 }));
+    expect(left.onChange).toHaveBeenCalledTimes(1); // persisted once on release
+    expect(document.body.style.userSelect).toBe(""); // selection restored
+
+    // Right rail grows as the pointer moves LEFT (toward its edge).
+    const right = harness({ edge: "right", initial: { open: true, size: 300, mode: "a" } });
+    right.splitter.dispatchEvent(pointer("pointerdown", { clientX: 300 }));
+    window.dispatchEvent(pointer("pointermove", { clientX: 260 })); // −40 delta → grow to 340
+    window.dispatchEvent(pointer("pointerup", { clientX: 260 }));
+    expect(right.dockEl.style.width).toBe("340px");
+
+    // Bottom dock grows as the pointer moves UP.
+    const bottom = harness({ edge: "bottom", initial: { open: true, size: 200, mode: "a" } });
+    bottom.splitter.dispatchEvent(pointer("pointerdown", { clientY: 300 }));
+    window.dispatchEvent(pointer("pointermove", { clientY: 260 })); // −40 delta → grow to 240
+    window.dispatchEvent(pointer("pointerup", { clientY: 260 }));
+    expect(bottom.dockEl.style.height).toBe("240px");
+  });
+
+  it("a zero-movement splitter click doesn't persist", () => {
+    const { splitter, onChange } = harness({
+      edge: "left",
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    splitter.dispatchEvent(pointer("pointerdown", { clientX: 300 }));
+    window.dispatchEvent(pointer("pointerup", { clientX: 300 }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(document.body.style.userSelect).toBe("");
+  });
+
+  it("ignores a second (overlapping) pointer and restores text selection on the real drag's end", () => {
+    const { dockEl, splitter } = harness({
+      edge: "left",
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    splitter.dispatchEvent(pointer("pointerdown", { clientX: 300, pointerId: 1 }));
+    // A second finger: must be ignored (no re-entered drag), and its stray move must not perturb the size.
+    splitter.dispatchEvent(pointer("pointerdown", { clientX: 300, pointerId: 2 }));
+    window.dispatchEvent(pointer("pointermove", { clientX: 500, pointerId: 2 }));
+    expect(dockEl.style.width).toBe("260px"); // pointer 2's move filtered out
+    window.dispatchEvent(pointer("pointermove", { clientX: 340, pointerId: 1 }));
+    expect(dockEl.style.width).toBe("300px"); // pointer 1 (the real drag) resizes
+    // The real drag ending restores selection to the true pre-drag value, not a nested "none".
+    window.dispatchEvent(pointer("pointerup", { clientX: 340, pointerId: 1 }));
+    expect(document.body.style.userSelect).toBe("");
+  });
+
+  it("ref-counts text-selection suppression across concurrent drags on different docks", () => {
+    document.body.innerHTML = `<div id="row"><div id="leftd"></div><div id="rightd"></div></div>`;
+    const leftEl = document.querySelector<HTMLElement>("#leftd");
+    const rightEl = document.querySelector<HTMLElement>("#rightd");
+    if (leftEl === null || rightEl === null) {
+      throw new Error("no dock host");
+    }
+    const tools = [tool("a", "Alpha"), tool("b", "Bravo")];
+    const noop = { onChange: () => {} };
+    // Constructed for their side effect: each Dock wires its splitter into the DOM (the drag targets below).
+    new Dock(leftEl, "left", tools, { open: true, size: 260, mode: "a" }, null, noop);
+    new Dock(rightEl, "right", tools, { open: true, size: 300, mode: "a" }, null, noop);
+    const leftSplitter = leftEl.nextElementSibling as HTMLElement;
+    const rightSplitter = rightEl.previousElementSibling as HTMLElement;
+
+    // Two fingers grab two different splitters; the shared body userSelect is suppressed once.
+    leftSplitter.dispatchEvent(pointer("pointerdown", { clientX: 300, pointerId: 1 }));
+    rightSplitter.dispatchEvent(pointer("pointerdown", { clientX: 400, pointerId: 2 }));
+    expect(document.body.style.userSelect).toBe("none");
+    // Lifting the first finger must NOT restore yet (the second drag is still live).
+    window.dispatchEvent(pointer("pointerup", { clientX: 300, pointerId: 1 }));
+    expect(document.body.style.userSelect).toBe("none");
+    // Only the last drag to finish restores the original value — no stuck "none".
+    window.dispatchEvent(pointer("pointerup", { clientX: 400, pointerId: 2 }));
+    expect(document.body.style.userSelect).toBe("");
+  });
+});
+
+describe("Dock accessibility", () => {
+  it("exposes the separator's size and bounds via aria, updating valuenow on resize", () => {
+    const { splitter } = harness({ edge: "left", initial: { open: true, size: 260, mode: "a" } });
+    expect(splitter.getAttribute("role")).toBe("separator");
+    expect(splitter.getAttribute("aria-valuemin")).toBe(String(DOCK_SIZE_BOUNDS.left.min));
+    expect(splitter.getAttribute("aria-valuemax")).toBe(String(DOCK_SIZE_BOUNDS.left.max));
+    expect(splitter.getAttribute("aria-valuenow")).toBe("260");
+    key(splitter, "ArrowRight");
+    expect(splitter.getAttribute("aria-valuenow")).toBe("276");
+  });
+
+  it("gives the chrome edge-distinct accessible names", () => {
+    const { dockEl, splitter } = harness({
+      edge: "left",
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    expect(splitter.getAttribute("aria-label")).toBe("Resize left panel");
+    expect(dockEl.querySelector(".dock-collapse")?.getAttribute("aria-label")).toBe(
+      "Collapse left panel",
+    );
+    expect(dockEl.querySelector(".dock-modes")?.getAttribute("aria-label")).toBe("left panel mode");
+  });
+
+  it("moves focus to the toolbar toggle when collapsing from the in-dock control", () => {
+    const { dockEl, toggle } = harness({
+      edge: "left",
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    const collapse = dockEl.querySelector<HTMLButtonElement>(".dock-collapse");
+    collapse?.focus();
+    expect(document.activeElement).toBe(collapse);
+    collapse?.click();
+    // Focus landed on the toolbar toggle, not <body> (the collapse button is now inside a hidden subtree).
+    expect(document.activeElement).toBe(toggle);
+  });
+});

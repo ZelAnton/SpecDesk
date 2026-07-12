@@ -37,7 +37,8 @@ import {
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds } from "./wire/protocol.js";
-import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./workspace/central-frame.js";
+import { browserDockStore } from "./workspace/dock-store.js";
+import { setupWorkspace } from "./workspace/workspace.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
 interface MirrorTarget {
@@ -105,6 +106,15 @@ function wire(): void {
   const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
   const reviewsBtn = document.querySelector<HTMLButtonElement>("#reviews-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
+  // The collapsible-panel workspace (design §9): the central-frame host and the three docks with their
+  // toolbar toggles. All optional — the jsdom index.ts tests mount only the editor panes.
+  const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
+  const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
+  const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
+  const bottomDockEl = document.querySelector<HTMLElement>("#bottom-dock");
+  const leftToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-left-dock");
+  const rightToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-right-dock");
+  const bottomToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-bottom-dock");
   const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
@@ -191,6 +201,10 @@ function wire(): void {
   // ScrollSync driver lock with deterministic, echo-free writes (sync-coordinator.ts).
   let splitSync: SplitSync;
   let lifecycleChrome: LifecycleChrome;
+  // Re-measures the editor and re-pads Split after the editing surface's width changes (a window resize or a
+  // dock open/close/resize). Assigned in wireEditors once the editor + reconcile scheduler exist; both the
+  // window-resize handler and the workspace's centre-resize observer call it (through the live binding).
+  let requestEditorRelayout: () => void = () => {};
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -538,12 +552,14 @@ function wire(): void {
       mode: () => mode,
     });
 
-    // Re-measure CodeMirror on window resize and re-pad to the formatted heights (both panes reflow at a
-    // new width); the coalesced reconcile then rebuilds the coordinator's maps from the fresh snapshot.
-    window.addEventListener("resize", () => {
+    // Re-measure CodeMirror and re-pad to the formatted heights whenever the editing surface reflows at a
+    // new width (both panes reflow); the coalesced reconcile then rebuilds the coordinator's maps from the
+    // fresh snapshot. Shared by the window-resize handler and the workspace's dock-resize observer.
+    requestEditorRelayout = () => {
       editor.refresh();
       reconcileHeights();
-    });
+    };
+    window.addEventListener("resize", requestEditorRelayout);
 
     attachImageCapture(editor, (image) => {
       void (async () => {
@@ -942,21 +958,26 @@ function wire(): void {
     });
   }
 
-  // The collapsible-panel workspace (design concept §9). This pass wires only the central-frame host: it
-  // registers the editor panes as the primary central view so a later stage's left-rail navigation can
-  // substitute the centre with another registered view. A later stage retains the CentralFrame instance
-  // (to switch views) and registers those alternates; here it only establishes the seam, so registering
-  // the already-active editor is a confirming no-op. The dock containers are inert placeholders until then.
-  // Bails without the shell (#central-frame / #panes) — the jsdom index.ts tests mount only the load-bearing
-  // editor panes, and the frame is optional chrome, so its absence must not break wiring.
+  // The collapsible-panel workspace (design concept §9): the central-frame host plus the three docks
+  // (collapse/expand, resize, mode switching, persisted). A later stage registers alternate central views
+  // and drives left-rail navigation through the returned CentralFrame; this pass wires the framework with
+  // placeholder tools. A dock resize/toggle changes the centre's width, so the workspace re-measures the
+  // editor through requestEditorRelayout. Bails without the shell (#central-frame / #panes) — the jsdom
+  // index.ts tests mount only the load-bearing editor panes, and the frame is optional chrome.
   function wireWorkspace(): void {
-    const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
     if (!centralFrameEl || !panesEl) {
       return;
     }
-    const centralFrame = new CentralFrame(centralFrameEl);
-    centralFrame.register({ id: CENTRAL_VIEW_EDITOR, el: panesEl });
-    centralFrame.show(CENTRAL_VIEW_EDITOR);
+    setupWorkspace(
+      {
+        centralFrame: centralFrameEl,
+        panes: panesEl,
+        docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
+        toggles: { left: leftToggleBtn, right: rightToggleBtn, bottom: bottomToggleBtn },
+      },
+      browserDockStore(),
+      { onCentreResize: () => requestEditorRelayout() },
+    );
   }
 
   wireEditors();

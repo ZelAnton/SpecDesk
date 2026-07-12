@@ -697,25 +697,39 @@ button {
 /* ---- Workspace: the collapsible-panel shell (design concept §9) ----
    The toolbar and inline bars stack above; this region fills the rest. #workspace is a vertical stack of
    the main row (left rail · centre · right rail) and a full-width bottom dock. #central-frame fills the main
-   row and hosts the central views (workspace/central-frame.ts) — #panes is the primary one. The dock
-   containers are hidden placeholders in this pass; their chrome and interactivity land in a later stage. */
+   row and hosts the central views (workspace/central-frame.ts) — #panes is the primary one. The docks
+   (workspace/dock.ts) are collapsible and resizable; the Docks section below styles them. */
 #workspace {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Vertical companion to #workspace-main's clip: if a very short window can't fit the toolbar plus an
+     open bottom dock, clip rather than spill past the viewport (no page scrollbar). The proper small-window
+     behaviour is a later stage (§9). */
+  overflow: hidden;
 }
 
 #workspace-main {
   flex: 1;
   min-height: 0;
   display: flex;
+  /* Clip rather than scroll if open rails ever exceed a very narrow window (flex:none docks don't shrink).
+     The proper small-window behaviour — rails become overlay drawers below ~1200px (§9) — is a later
+     stage; this only guarantees the page body never grows a horizontal scrollbar (§12). */
+  overflow: hidden;
 }
 
 #central-frame {
   flex: 1;
   min-width: 0;
   display: flex;
+  /* Own stacking context so the editor's internal z-indexes (CodeMirror's gutter is z-index:200) stay
+     scoped inside the centre and don't paint over a dock splitter sitting just outside it — the splitter
+     lifts itself above the centre with its own low z-index (see .dock-splitter). Caveat for a later stage:
+     because this caps in-centre z-indexes AND #workspace-main clips overflow, any overlay that must escape
+     the centre (a CM/PM popover or a dropdown at the pane edge) has to portal out to a top-level layer. */
+  isolation: isolate;
 }
 
 /* Only the active central view is shown; the others stay in the DOM (each keeps its own scroll/state), the
@@ -726,6 +740,259 @@ button {
    single class could not override. */
 #central-frame > .central-view:not(.central-view--active) {
   display: none;
+}
+
+/* ---- Docks (design concept §9 / §7 side panels) ----
+   A collapsible left/right rail or the full-width bottom dock: surface-raised, a 1px divider toward the
+   centre, a header (mode switcher + collapse) over a body that shows the active tool. flex:none + an inline
+   width (rails) / height (bottom) set by dock.ts makes each occupy exactly its size while the centre flexes
+   into the rest. `.dock[hidden]` (0,2,0) out-specifies the base `display:flex` (0,1,0) so a collapsed dock
+   truly leaves the layout. */
+.dock {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.dock[hidden] {
+  display: none;
+}
+
+.dock-left {
+  border-right: 1px solid var(--border);
+}
+
+.dock-right {
+  border-left: 1px solid var(--border);
+}
+
+.dock-bottom {
+  border-top: 1px solid var(--border);
+}
+
+.dock-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Mode switcher — the same segmented-control language as the view-mode switch (sunken track; the active
+   mode is a raised surface card). */
+.dock-modes {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-sunken);
+  border-radius: var(--r-md);
+}
+
+.dock-mode {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 0.5rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 500 12px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.dock-mode:hover {
+  color: var(--text);
+}
+
+.dock-mode[aria-checked="true"] {
+  color: var(--text-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* A single-tool dock shows a static uppercase section label (§7) in place of a switcher. */
+.dock-title {
+  flex: 1;
+  min-width: 0;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  /* --text-muted, the app's legible muted-on-surface label colour (as #status): AA on --surface-raised in
+     light/dark, marginally under in warm at the token level. Not the mockups' --text-faint, which is far
+     below AA here (~2.6:1). */
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-collapse {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dock-collapse:hover {
+  color: var(--text-strong);
+  background: var(--surface-sunken);
+}
+
+/* Body: the active tool fills it; inactive tools stay in the DOM but hidden, keeping their scroll/state. */
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dock-tool {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
+.dock-tool[hidden] {
+  display: none;
+}
+
+.dock-placeholder {
+  padding: 0.85rem 0.9rem;
+}
+
+.dock-placeholder-label {
+  margin: 0 0 0.35rem;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  /* --text-muted (see .dock-title): the legible muted-on-surface label colour, not the mockups'
+     --text-faint (which is well below AA on this surface). */
+  color: var(--text-muted);
+}
+
+.dock-placeholder-hint {
+  margin: 0;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
+}
+
+/* Splitters (design §9): a 1px hairline with a wider invisible grab zone (::before) that lights up
+   accent-soft on hover/focus while the hairline itself goes accent. Hidden together with its dock. The
+   accent treatment is the visible focus indicator for the keyboard-resizable separator (§11). */
+.dock-splitter {
+  position: relative;
+  /* Above the centre (which is its own stacking context) so the wide invisible grab zone (::before, which
+     overhangs into the editor) reliably receives the pointer instead of the editor's gutter underneath. */
+  z-index: 1;
+  flex: none;
+  background: var(--border);
+  touch-action: none;
+}
+
+.dock-splitter[hidden] {
+  display: none;
+}
+
+.dock-splitter-left,
+.dock-splitter-right {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.dock-splitter-bottom {
+  height: 1px;
+  cursor: row-resize;
+}
+
+.dock-splitter::before {
+  content: "";
+  position: absolute;
+}
+
+.dock-splitter-left::before,
+.dock-splitter-right::before {
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  right: -2px;
+}
+
+.dock-splitter-bottom::before {
+  left: 0;
+  right: 0;
+  top: -2px;
+  bottom: -2px;
+}
+
+.dock-splitter:hover {
+  background: var(--accent);
+}
+
+.dock-splitter:hover::before {
+  background: var(--accent-soft);
+}
+
+/* Keyboard focus gets a genuine, distinct 2px ring (§11) — an inset ring on the grab zone, not just the
+   hover tint, so focus is visibly different from hover on this thin control. */
+.dock-splitter:focus-visible {
+  background: var(--accent);
+  outline: none;
+}
+
+.dock-splitter:focus-visible::before {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+/* Forced-colors (Windows High Contrast) drops box-shadow, so the ring above vanishes and `outline:none`
+   would leave the separator with no focus indicator. Restore a system-colored outline there. */
+@media (forced-colors: active) {
+  .dock-splitter:focus-visible {
+    outline: 2px solid;
+    outline-offset: -2px;
+  }
+}
+
+/* Toolbar panel toggles: compact square icon buttons; the accent wash marks the open (pressed) state,
+   matching the "Show changes" toggle. Scoped under #toolbar to win over the base `#toolbar button` rule. */
+#toolbar .dock-toggle {
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+}
+
+#toolbar .dock-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-border);
 }
 
 /* ---- Panes ---- */
