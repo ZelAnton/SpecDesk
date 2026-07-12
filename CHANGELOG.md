@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a calm open-a-spec screen. It's the first navigation tool that replaces the centre's content; the
   navigator highlights wherever the centre currently is, and the view-mode switch (Code / Split / Formatted)
   is disabled while a non-document view is shown.
+- The right panel now has an **Outline** tool that lists the open document's headings as a nested tree and
+  keeps up as you edit. Clicking a heading scrolls the editor to it (bringing the document view back first
+  if the Start screen was showing). A long heading truncates with its full text on hover, and the nesting
+  is real list structure so a screen reader announces the hierarchy.
 - `SPECDESK_DATA_ROOT` redirects the app's entire local data root — the sample repo, the GitHub auth
   token directory, and the logs — to a chosen directory (for a dev run, or an isolated full-app test
   against a disposable copy). Unset, the default `%LOCALAPPDATA%\SpecDesk` is unchanged.

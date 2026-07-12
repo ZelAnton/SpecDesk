@@ -39,6 +39,7 @@ import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
+import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { setupWorkspace } from "./workspace/workspace.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
@@ -219,6 +220,11 @@ function wire(): void {
   let centralFrame: CentralFrame | undefined;
   const isEditorCentral = (): boolean =>
     centralFrame === undefined || centralFrame.active() === CENTRAL_VIEW_EDITOR;
+  // The document-outline tool (right rail), assigned in wireWorkspace; fed the parsed headings whenever the
+  // document changes. Undefined before the workspace wires (or in the reduced-DOM tests).
+  let outline: Outline | undefined;
+  // Re-parse the document's headings and refresh the outline. Called on load and on every edit.
+  const updateOutline = (text: string): void => outline?.setItems(parseOutline(text));
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -393,6 +399,7 @@ function wire(): void {
       // and re-applies nothing once cleared).
       review.clear();
       sendDoc(text);
+      updateOutline(text);
       const mirrored = shouldMirrorInto(text, formatted);
       trace("mirror", "mirror.change", {
         source: "editor",
@@ -414,6 +421,7 @@ function wire(): void {
     const onFormattedChange = (text: string): void => {
       review.clear();
       sendDoc(text);
+      updateOutline(text);
       const mirrored = shouldMirrorInto(text, editor);
       trace("mirror", "mirror.change", {
         source: "formatted",
@@ -659,6 +667,8 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(text);
+        // Refresh the outline for the freshly loaded document.
+        updateOutline(text);
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
@@ -1004,7 +1014,7 @@ function wire(): void {
     if (!centralFrameEl || !editorViewEl) {
       return;
     }
-    centralFrame = setupWorkspace(
+    const workspace = setupWorkspace(
       {
         centralFrame: centralFrameEl,
         editorView: editorViewEl,
@@ -1025,8 +1035,61 @@ function wire(): void {
           }
         },
         onOpenDocument: () => ipc.send(Kinds.docOpen),
+        onOutlineNavigate: (line) => navigateToLine(line),
       },
     );
+    centralFrame = workspace.centralFrame;
+    outline = workspace.outline;
+    // Seed the outline from the current document (the panes may already hold a loaded doc).
+    updateOutline(editor.getText());
+  }
+
+  // Scroll the editor (both Split panes) to a 0-based source line and focus the visible editing pane — the
+  // outline's jump-to-heading. Reuses the coordinator's mode-switch restore (self-contained scroll-to-line).
+  function navigateToLine(line: number): void {
+    const vis = paneVisibility(mode);
+    const panes: Pane[] = [];
+    if (vis.editor) {
+      panes.push("editor");
+    }
+    if (vis.preview) {
+      panes.push("formatted");
+    }
+    // Scroll every visible pane to the source line through the coordinator's self-contained scroll-to-line
+    // (the same primitive the mode switch uses to restore the reading position), then focus the pane that
+    // owns the reading position. In Split both panes are driven, so they stay aligned.
+    const restoreAndFocus = (): void => {
+      splitSync.restore(line, panes);
+      if (vis.editor) {
+        editor.focus();
+      } else {
+        formatted.focus();
+      }
+    };
+    if (isEditorCentral()) {
+      restoreAndFocus();
+      return;
+    }
+    // A non-editor central view (the Start screen) is showing, so the panes are display:none — return to the
+    // editor first, then let the just-un-hidden CodeMirror re-measure before restoring scroll. This mirrors
+    // applyMode's post-show recipe exactly (refresh → two frames → re-pad/clear → invalidate → restore),
+    // because a display:none→shown editor measures asynchronously and a scroll write before that clamps.
+    centralFrame?.show(CENTRAL_VIEW_EDITOR);
+    editor.refresh();
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (vis.preview) {
+          formatted.invalidateGeometry();
+        }
+        if (isSplit(mode)) {
+          heightSync.reconcile();
+        } else {
+          heightSync.clear();
+        }
+        splitSync.invalidate();
+        restoreAndFocus();
+      });
+    });
   }
 
   wireEditors();

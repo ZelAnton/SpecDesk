@@ -1095,6 +1095,61 @@ button {
   color: var(--text-muted);
 }
 
+/* ---- Document outline (workspace/tools/outline.ts) ----
+   The open document's headings as nested <ul>/<li> lists (the hierarchy is programmatic, not just visual);
+   each nesting level indents further. */
+.outline-list {
+  display: block;
+  padding: 0.4rem 0.4rem 0.6rem;
+}
+
+.outline-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outline-tree .outline-tree {
+  padding-left: 0.85rem;
+}
+
+.outline-item {
+  display: block;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.outline-item[data-level="1"] {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.outline-item:hover {
+  background: var(--surface-sunken);
+}
+
+.outline-empty {
+  margin: 0;
+  padding: 0.85rem 0.9rem;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
+}
+
+.outline-empty[hidden],
+.outline-list[hidden] {
+  display: none;
+}
+
 /* ---- Start central view (design concept §10.7; workspace/tools/home-view.ts) ----
    A calm, centered open-a-spec screen the navigator switches the centre to. Shown only when active (the
    central-view hide rule keeps it out otherwise). */

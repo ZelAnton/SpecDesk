@@ -250,9 +250,10 @@ Single resizable window. Vertically: **toolbar → optional inline prompt bar �
 
 The simple core stays simple because everything heavy is a panel you open/close:
 
-- **Left rail (collapsible)** — repository **file navigator** + document **outline**, as two
-  stacked collapsible sections.
-- **Right rail (collapsible)** — the **AI assistant**.
+- **Left rail (collapsible)** — the repository **file navigator**.
+- **Right rail (collapsible)** — the open document's **outline** and the **AI assistant**, each a
+  tool on the rail. The outline sits with the document it describes (the reading side), the assistant
+  beside it.
 - **Review / PR**, **checks**, **diff**, **comments**, **navigator** open in place.
 - Either rail can drop to a **slim icon strip** so the document takes the room. Below ~1200px,
   rails become overlay drawers with a scrim. Only one heavy panel docked at a time.
@@ -260,8 +261,8 @@ The simple core stays simple because everything heavy is a panel you open/close:
 
 ![Workspace — all panels open](img/01-app.png)\
 > ▸ **Open the live mockup:** [`pages/01-app.html`](pages/01-app.html)
-*All panels open: collapsible left rail (Files + Outline), Split editor in the centre,
-AI assistant docked right, status bar below.*
+*All panels open: collapsible left rail (Files), Split editor in the centre, the document outline
+and AI assistant docked right, status bar below.*
 
 ![Focused — rails collapsed](img/02-app.png)\
 > ▸ **Open the live mockup:** [`pages/02-app.html`](pages/02-app.html)

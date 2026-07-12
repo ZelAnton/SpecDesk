@@ -18,6 +18,7 @@ import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
 import { buildHomeView } from "./tools/home-view.js";
 import { type NavDestination, Navigator } from "./tools/navigator.js";
+import { Outline } from "./tools/outline.js";
 
 /** The central view id of the Start screen — the concrete second view the navigator substitutes in. */
 export const CENTRAL_VIEW_HOME = "home";
@@ -46,22 +47,33 @@ export interface WorkspaceCallbacks {
   onCentralViewChange(viewId: string): void;
   /** Run the "Open…" action (for the Start view's button — the same action as the toolbar). */
   onOpenDocument(): void;
+  /** Scroll the editor to a 0-based source line (an outline heading was clicked). */
+  onOutlineNavigate(line: number): void;
+}
+
+/** What setupWorkspace hands back to index.ts: the central-frame host and the outline tool to feed. */
+export interface WorkspaceHandle {
+  readonly centralFrame: CentralFrame;
+  readonly outline: Outline;
 }
 
 /**
  * Build the central-frame host (editor + Start views), the navigator that switches between them, and the
- * docks; wire persistence, the centre-resize bridge, and the active-view notifications. Returns the
- * CentralFrame for any later use. Docks / the Start view whose element is absent are simply skipped.
+ * docks; wire persistence, the centre-resize bridge, and the active-view notifications. Returns a handle
+ * (the CentralFrame + the outline tool to feed). Docks / the Start view whose element is absent are skipped.
  */
 export function setupWorkspace(
   elements: WorkspaceElements,
   store: DockStore,
   callbacks: WorkspaceCallbacks,
-): CentralFrame {
+): WorkspaceHandle {
   // The navigator's onNavigate and the frame's onChange reference each other, so forward-declare the frame;
   // both closures only fire on later user interaction, by which point it is assigned.
   let centralFrame: CentralFrame;
   const navigator = new Navigator(NAV_DESTINATIONS, (id) => centralFrame.show(id));
+  // The document-outline tool (right rail): index.ts feeds it headings via the returned handle, and a click
+  // scrolls the editor through onOutlineNavigate.
+  const outline = new Outline((line) => callbacks.onOutlineNavigate(line));
 
   centralFrame = new CentralFrame(elements.centralFrame, (id) => {
     navigator.setActive(id);
@@ -81,16 +93,9 @@ export function setupWorkspace(
   navigator.setActive(CENTRAL_VIEW_EDITOR);
 
   const toolsByEdge: Record<DockEdge, readonly PanelTool[]> = {
-    left: [
-      navigator,
-      placeholderTool(
-        "outline",
-        "Outline",
-        icon("outline"),
-        "The document's outline will appear here.",
-      ),
-    ],
+    left: [navigator],
     right: [
+      outline,
       placeholderTool(
         "assistant",
         "Assistant",
@@ -146,5 +151,5 @@ export function setupWorkspace(
     observer.observe(elements.centralFrame);
   }
 
-  return centralFrame;
+  return { centralFrame, outline };
 }
