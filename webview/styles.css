@@ -13,6 +13,14 @@
   --surface: #fff;
   --surface-raised: #fafbfc;
   --surface-sunken: #eceef1;
+  --panel: #f1f3f5;
+  --panel-header: #e4e7eb;
+  --mode-rail: #343a42;
+  --mode-rail-hover: #464e58;
+  --mode-rail-active: #245488;
+  --mode-rail-border: #262b31;
+  --mode-rail-text: #dfe3e8;
+  --mode-rail-text-strong: #fff;
   --border: #e6e9ec;
   --border-strong: #dce0e4;
   --text-strong: #1c1f23;
@@ -93,6 +101,14 @@
   --surface: #fff;
   --surface-raised: #fcfbf7;
   --surface-sunken: #f3efe6;
+  --panel: #f3f0e9;
+  --panel-header: #e7e3da;
+  --mode-rail: #3c3a35;
+  --mode-rail-hover: #504d46;
+  --mode-rail-active: #245488;
+  --mode-rail-border: #2e2c28;
+  --mode-rail-text: #e8e4dc;
+  --mode-rail-text-strong: #fff;
   --border: #efece4;
   --border-strong: #e4e1d8;
   --text-strong: #23211c;
@@ -116,6 +132,14 @@
   --surface: #1c1f24;
   --surface-raised: #22262c;
   --surface-sunken: #2a2f36;
+  --panel: #20242a;
+  --panel-header: #292e35;
+  --mode-rail: #111419;
+  --mode-rail-hover: #2b3139;
+  --mode-rail-active: #315f8c;
+  --mode-rail-border: #343a43;
+  --mode-rail-text: #c9cfd7;
+  --mode-rail-text-strong: #fff;
   --border: #2c313a;
   --border-strong: #3a404a;
   --text-strong: #ecedef;
@@ -778,7 +802,7 @@ button {
   display: flex;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-raised);
+  background: var(--panel);
   overflow: hidden;
 }
 
@@ -811,15 +835,16 @@ button {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  background: var(--mode-rail);
 }
 
 .dock-left .dock-rail,
 .dock-bottom .dock-rail {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--mode-rail-border);
 }
 
 .dock-right .dock-rail {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--mode-rail-border);
 }
 
 .dock-rail-btn {
@@ -829,7 +854,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
+  color: var(--mode-rail-text);
   background: transparent;
   border: none;
   border-radius: var(--r-sm);
@@ -837,13 +862,18 @@ button {
 }
 
 .dock-rail-btn:hover {
-  color: var(--text);
-  background: var(--surface-sunken);
+  color: var(--mode-rail-text-strong);
+  background: var(--mode-rail-hover);
 }
 
 .dock-rail-btn[aria-checked="true"] {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--mode-rail-text-strong);
+  background: var(--mode-rail-active);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.dock-right .dock-rail-btn[aria-checked="true"] {
+  box-shadow: inset -3px 0 0 var(--accent);
 }
 
 .dock-rail-btn svg {
@@ -875,6 +905,7 @@ button {
   gap: 0.5rem;
   padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--border);
+  background: var(--panel-header);
 }
 
 /* The header title = the active mode's label, an uppercase section label (§7). */
@@ -884,10 +915,9 @@ button {
   font: 600 11px var(--font-ui);
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  /* --text-muted, the app's legible muted-on-surface label colour (as #status): AA on --surface-raised in
-     light/dark, marginally under in warm at the token level. Not the mockups' --text-faint, which is far
-     below AA here (~2.6:1). */
-  color: var(--text-muted);
+  /* This is 11px text, so it uses --text rather than the quieter --text-muted: every theme keeps the
+     uppercase label above WCAG AA against the deliberately stronger panel-header surface. */
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -921,6 +951,7 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--panel);
 }
 
 .dock-tool {

@@ -80,6 +80,9 @@ Copy this verbatim into the app's global stylesheet. Theme by toggling
   --font-mono: "Cascadia Code","Cascadia Mono",Consolas,ui-monospace,monospace;
 
   --canvas:#f7f8fa; --surface:#fff; --surface-raised:#fafbfc; --surface-sunken:#eceef1;
+  --panel:#f1f3f5; --panel-header:#e4e7eb;
+  --mode-rail:#343a42; --mode-rail-hover:#464e58; --mode-rail-active:#245488; --mode-rail-border:#262b31;
+  --mode-rail-text:#dfe3e8; --mode-rail-text-strong:#fff;
   --border:#e6e9ec; --border-strong:#dce0e4;
   --text-strong:#1c1f23; --text:#2b2f34; --text-muted:#6a7077; --text-faint:#9a9fa6;
 
@@ -113,6 +116,9 @@ Copy this verbatim into the app's global stylesheet. Theme by toggling
 /* ---- LIGHT · WARM (alternate · Direction A) — neutrals shift warm, hues unchanged ---- */
 :root[data-theme="warm"]{
   --canvas:#faf8f2; --surface:#fff; --surface-raised:#fcfbf7; --surface-sunken:#f3efe6;
+  --panel:#f3f0e9; --panel-header:#e7e3da;
+  --mode-rail:#3c3a35; --mode-rail-hover:#504d46; --mode-rail-active:#245488; --mode-rail-border:#2e2c28;
+  --mode-rail-text:#e8e4dc; --mode-rail-text-strong:#fff;
   --border:#efece4; --border-strong:#e4e1d8;
   --text-strong:#23211c; --text:#3a382f; --text-muted:#7a766b; --text-faint:#9a968b;
   --accent-soft:#eef3f9; --accent-soft-border:#d6e3f1;
@@ -123,6 +129,9 @@ Copy this verbatim into the app's global stylesheet. Theme by toggling
 /* ---- DARK ---- */
 :root[data-theme="dark"]{
   --canvas:#15171b; --surface:#1c1f24; --surface-raised:#22262c; --surface-sunken:#2a2f36;
+  --panel:#20242a; --panel-header:#292e35;
+  --mode-rail:#111419; --mode-rail-hover:#2b3139; --mode-rail-active:#315f8c; --mode-rail-border:#343a43;
+  --mode-rail-text:#c9cfd7; --mode-rail-text-strong:#fff;
   --border:#2c313a; --border-strong:#3a404a;
   --text-strong:#ecedef; --text:#c9cdd3; --text-muted:#8b9098; --text-faint:#5f656d;
   --accent:#5b9bd9; --accent-hover:#6fa9e0; --accent-active:#4f8cc9;
@@ -213,8 +222,10 @@ The most-reused surface (preview, formatted mode, diff, comparison). Rules:
   surfaces — always in plain words.**
 - **Status / lifecycle badges** — toolbar status uses dot + label (no border); standalone
   badges use a bordered chip. One token family per state (see §8).
-- **Side panels** — dock on `--surface-raised` with a 1px divider and uppercase section
-  labels; collapsible sub-sections.
+- **Side panels** — dock on the quiet grey `--panel` surface with a slightly stronger
+  `--panel-header`, a 1px divider, and uppercase section labels. Their vertical mode rails use the
+  dark `--mode-rail` family in every theme, with light AA-contrast icons and a non-colour active mark;
+  collapsible sub-sections.
 - **Comment thread** — card with avatar, name, relative time, reply, resolve, sync dot.
 - **Diff chrome** — see §10. **AI confirm-gate** — preview the change → Edit → Confirm.
 

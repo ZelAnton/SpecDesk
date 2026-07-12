@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- Side panels now use a clearer grey hierarchy: dark mode rails, light panel bodies, and slightly stronger
+  headers keep tools visually separate from the document in both light and dark themes.
 - Split scroll synchronization is now driven by a single coordinator over one line↔px map instead of three
   mutually-suppressing mechanisms. The former per-frame line-based scroll-sync (with its `ScrollSync` driver
   lock), the caret reveal, and the mode-switch restore shared a web of timing heuristics (`suppress`/`drive`/
