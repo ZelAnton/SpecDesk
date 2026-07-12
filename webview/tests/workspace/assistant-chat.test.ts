@@ -25,9 +25,13 @@ function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
 
 describe("AssistantChat", () => {
   it("mounts a transcript and a composer", () => {
-    const { body } = harness();
+    const { body, input, sendBtn } = harness();
     expect(body.querySelector(".chat-log")).not.toBeNull();
     expect(body.querySelector(".chat-composer")).not.toBeNull();
+    expect(input.rows).toBe(3);
+    expect(input.getAttribute("aria-describedby")).toBe("chat-input-hint");
+    expect(body.querySelector("#chat-input-hint")?.textContent).toBe("Ctrl/Cmd+Enter to send");
+    expect(sendBtn.getAttribute("aria-keyshortcuts")).toContain("Control+Enter");
   });
 
   it("sends the composed message, shows a user bubble, opens a pending reply, and disables the composer", () => {
@@ -54,15 +58,29 @@ describe("AssistantChat", () => {
     expect(messages()).toHaveLength(0);
   });
 
-  it("Enter sends; Shift+Enter does not", () => {
+  it("plain Enter remains available for new lines; Ctrl/Cmd+Enter sends", () => {
     const { input, sendMessage } = harness();
     input.value = "hi";
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
-    );
+    const plainEnter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(plainEnter);
     expect(sendMessage).not.toHaveBeenCalled();
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(plainEnter.defaultPrevented).toBe(false);
+
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
+    );
     expect(sendMessage).toHaveBeenCalledWith("hi");
+
+    const second = harness();
+    second.input.value = "hello";
+    second.input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+    );
+    expect(second.sendMessage).toHaveBeenCalledWith("hello");
   });
 
   it("appends streamed deltas to the pending assistant message and re-enables on endTurn", () => {

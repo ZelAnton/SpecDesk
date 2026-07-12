@@ -4,6 +4,9 @@ Author and review GitHub-hosted Markdown specs from the desktop — automated gi
 diffs, inline comments, and AI assist. SpecDesk lets non-technical authors edit Markdown specs
 stored in GitHub without ever touching git, branches, or pull requests directly.
 
+The assistant's right-panel composer supports multi-line prompts: press Enter for a new line and
+Ctrl+Enter (Cmd+Enter on macOS) to send.
+
 > **Working title.** `SpecDesk` is a placeholder name; rename before any registry/namespace work.
 
 ## Documentation

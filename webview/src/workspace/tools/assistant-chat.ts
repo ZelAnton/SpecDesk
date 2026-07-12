@@ -96,23 +96,36 @@ export class AssistantChat implements PanelTool {
 
     this.input = document.createElement("textarea");
     this.input.className = "chat-input";
-    this.input.rows = 1;
+    this.input.rows = 3;
     this.input.setAttribute("aria-label", "Message the assistant");
+    this.input.setAttribute("aria-describedby", "chat-input-hint");
     this.input.placeholder = "Message the assistant…";
-    // Enter sends; Shift+Enter inserts a newline (a chat convention).
+    // A multi-line composer must keep plain Enter for authoring. The explicit modifier shortcut avoids
+    // surprising keyboard and assistive-technology users while still supporting fast submission.
     this.input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         this.submit();
       }
     });
 
+    const inputStack = document.createElement("div");
+    inputStack.className = "chat-input-stack";
+    inputStack.appendChild(this.input);
+
+    const inputHint = document.createElement("span");
+    inputHint.id = "chat-input-hint";
+    inputHint.className = "chat-input-hint";
+    inputHint.textContent = "Ctrl/Cmd+Enter to send";
+    inputStack.appendChild(inputHint);
+
     this.sendButton = document.createElement("button");
     this.sendButton.type = "submit";
     this.sendButton.className = "chat-send";
+    this.sendButton.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
     this.sendButton.textContent = "Send";
 
-    composer.append(this.templatesButton, this.input, this.sendButton);
+    composer.append(this.templatesButton, inputStack, this.sendButton);
     composer.addEventListener("submit", (event) => {
       event.preventDefault();
       this.submit();
