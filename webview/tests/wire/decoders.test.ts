@@ -9,6 +9,7 @@ import {
   parseStatus,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceState,
 } from "../../src/wire/decoders.js";
 
 describe("IPC payload decoders (the native→webview JSON boundary)", () => {
@@ -110,6 +111,35 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
         nodes: [{ name: "x", path: "/w/x", isDirectory: "yes", children: [] }],
       }),
     ).toBeNull(); // isDirectory not a boolean
+  });
+
+  it("parseWorkspaceState validates items and rejects drift", () => {
+    const state = {
+      recent: [{ path: "/a.md", label: "a.md", isFolder: false }],
+      favorites: [{ path: "/specs", label: "specs", isFolder: true }],
+      repositories: [{ id: "octo/spec", name: "octo/spec", url: "https://github.com/octo/spec" }],
+    };
+    expect(parseWorkspaceState(state)).toEqual(state);
+
+    // A missing list is drift — the whole payload rejects.
+    expect(parseWorkspaceState({ recent: [], favorites: [] })).toBeNull();
+    // A recent item missing `isFolder` (or with a wrong-typed field) nulls the whole payload.
+    expect(
+      parseWorkspaceState({
+        recent: [{ path: "/a.md", label: "a.md" }],
+        favorites: [],
+        repositories: [],
+      }),
+    ).toBeNull();
+    // A registered repo with a non-string url is drift.
+    expect(
+      parseWorkspaceState({
+        recent: [],
+        favorites: [],
+        repositories: [{ id: "octo/spec", name: "octo/spec", url: 1 }],
+      }),
+    ).toBeNull();
+    expect(parseWorkspaceState(null)).toBeNull();
   });
 
   it("the single-string payload decoders reject the wrong shape", () => {

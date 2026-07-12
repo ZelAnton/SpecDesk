@@ -89,6 +89,18 @@ public sealed class ContractFixtureTests
 			]),
 			new TreeNode("README.md", @"C:\specs\billing-repo\README.md", IsDirectory: false, []),
 		])),
+		// A4 workspace store: one recent file, one favorited folder, and one registered GitHub repo -
+		// exercises both WorkspaceItem shapes (file vs folder) and the RegisteredRepo record.
+		(MessageKinds.WorkspaceState, new WorkspaceStatePayload(
+		[
+			new WorkspaceItem(@"C:\specs\billing-repo\specs\billing.md", "billing.md", IsFolder: false),
+		],
+		[
+			new WorkspaceItem(@"C:\specs\billing-repo\specs", "specs", IsFolder: true),
+		],
+		[
+			new RegisteredRepo("octo/spec-repo", "octo/spec-repo", "https://github.com/octo/spec-repo"),
+		])),
 	];
 
 	private static string FixturePath(string fileName)

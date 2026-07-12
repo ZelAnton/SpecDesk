@@ -47,6 +47,14 @@ public sealed class AppPathsTests
         Assert.That(AppPaths.LogFilePrefix, Is.EqualTo("specdesk-"));
     }
 
+    [Test]
+    public void Workspace_IsRootSlashWorkspaceJson()
+    {
+        string expected = Path.Combine(LocalAppData, "SpecDesk", "workspace.json");
+
+        Assert.That(AppPaths.Workspace, Is.EqualTo(expected));
+    }
+
     // SPECDESK_DATA_ROOT overrides the root (moving sample repo / auth / logs together); unset or
     // malformed must keep the byte-identical default that the pins above depend on.
     [Test]

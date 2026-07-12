@@ -33,6 +33,10 @@ export const Kinds = {
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
   treeRequest: "tree.request",
+  workspaceRequest: "workspace.request",
+  workspaceFavorite: "workspace.favorite",
+  repoRegister: "repo.register",
+  repoUnregister: "repo.unregister",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -50,6 +54,7 @@ export const Kinds = {
   chatDone: "chat.done",
   templates: "templates",
   tree: "tree",
+  workspaceState: "workspace.state",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -420,4 +425,50 @@ export interface TreeNode {
 export interface TreePayload {
   root: string;
   nodes: TreeNode[];
+}
+
+/** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). `path` is the absolute
+ *  file/folder path; `label` is the display name (usually the last path segment); `isFolder` distinguishes a
+ *  folder from a file. */
+export interface WorkspaceItem {
+  path: string;
+  label: string;
+  isFolder: boolean;
+}
+
+/** One registered GitHub repository (native→webview, inside {@link WorkspaceStatePayload}). A4 stores the
+ *  entry only — no cloning yet. `id` is a stable key (`owner/name`); `name` is the display (`owner/name`);
+ *  `url` is the normalized `https://github.com/owner/name` URL. */
+export interface RegisteredRepo {
+  id: string;
+  name: string;
+  url: string;
+}
+
+/** Payload of `workspace.state` (native→webview): the persisted workspace store — the author's `recent`
+ *  items (most-recent first), their `favorites`, and the `repositories` they registered. Emitted on
+ *  `workspace.request` and after every mutation (`workspace.favorite` / `repo.register` / `repo.unregister`). */
+export interface WorkspaceStatePayload {
+  recent: WorkspaceItem[];
+  favorites: WorkspaceItem[];
+  repositories: RegisteredRepo[];
+}
+
+/** Payload of `workspace.favorite` (webview→native): toggle whether the file/folder at `path` is a favorite
+ *  (`favorite` true adds it, false removes it). */
+export interface WorkspaceFavoritePayload {
+  path: string;
+  favorite: boolean;
+}
+
+/** Payload of `repo.register` (webview→native): register a GitHub repository from a URL or spec
+ *  (`https://github.com/owner/name(.git)`, `owner/name`, or `git@github.com:owner/name(.git)`). The host
+ *  parses/normalizes it before storing. */
+export interface RegisterRepoPayload {
+  url: string;
+}
+
+/** Payload of `repo.unregister` (webview→native): remove the registered repository whose id matches `id`. */
+export interface UnregisterRepoPayload {
+  id: string;
 }

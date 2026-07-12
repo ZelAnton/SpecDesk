@@ -25,6 +25,7 @@ import {
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceState,
 } from "../src/wire/decoders.js";
 import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/wire/protocol.js";
 import diffKinds from "./contract/diff-kinds.json" with { type: "json" };
@@ -185,6 +186,20 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(specs?.children[0]?.isDirectory).toBe(false);
     expect(payload?.nodes[1]?.isDirectory).toBe(false);
     expect(payload?.nodes[1]?.children).toEqual([]);
+  });
+
+  it("workspace.state (recent file + favorite folder + registered repo)", () => {
+    const payload = parseWorkspaceState(fixture["workspace.state"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.recent).toHaveLength(1);
+    expect(payload?.recent[0]).toMatchObject({ label: "billing.md", isFolder: false });
+    expect(payload?.favorites).toHaveLength(1);
+    expect(payload?.favorites[0]).toMatchObject({ label: "specs", isFolder: true });
+    expect(payload?.repositories).toHaveLength(1);
+    expect(payload?.repositories[0]).toMatchObject({
+      id: "octo/spec-repo",
+      url: "https://github.com/octo/spec-repo",
+    });
   });
 });
 

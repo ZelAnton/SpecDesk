@@ -33,6 +33,8 @@
   "pr.suggested.request",
   "preview.html",
   "ready",
+  "repo.register",
+  "repo.unregister",
   "review.refresh",
   "status",
   "templates",
@@ -41,5 +43,8 @@
   "tree",
   "tree.request",
   "version.note.request",
-  "version.note.suggested"
+  "version.note.suggested",
+  "workspace.favorite",
+  "workspace.request",
+  "workspace.state"
 ]

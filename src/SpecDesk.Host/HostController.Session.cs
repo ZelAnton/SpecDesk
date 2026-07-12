@@ -22,7 +22,8 @@ public sealed partial class HostController
 			_initialDocLoadAttempted = true;
 			if (_initialDocPath is not null && File.Exists(_initialDocPath))
 			{
-				LoadFile(_initialDocPath);
+				// The auto-opened welcome doc is not a user choice — don't put it in "recent".
+				LoadFile(_initialDocPath, recordRecent: false);
 			}
 		}
 
@@ -164,6 +165,8 @@ public sealed partial class HostController
 		}
 
 		_logger.LogInformation("Opened workspace folder {Root}", root);
+		// A4: an opened folder is now the most-recent workspace item (emits workspace.state).
+		RecordRecent(root, isFolder: true);
 		EmitTree(root);
 	}
 
@@ -705,7 +708,10 @@ public sealed partial class HostController
 		}
 	}
 
-	private void LoadFile(string path)
+	// recordRecent: whether a successful load adds this file to the workspace "recent" list. True for a user
+	// open (the toolbar/Start "Open…", a tree click); false for the initial auto-opened welcome doc, which the
+	// author never chose and which would otherwise sit permanently at the top of Recent.
+	private void LoadFile(string path, bool recordRecent = true)
 	{
 		string text;
 		try
@@ -772,6 +778,13 @@ public sealed partial class HostController
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text, DocRelativeDir())));
+
+		// A4: a user-opened file just loaded successfully is now the most-recent workspace item (emits
+		// workspace.state). The initial welcome doc is skipped (recordRecent false) — see the parameter.
+		if (recordRecent)
+		{
+			RecordRecent(path, isFolder: false);
+		}
 
 		// M-16: the webview's own "doc loaded" handler always assumes a freshly loaded document is
 		// Published (there being no prior in-flight lifecycle to speak of, before this fix) and renders

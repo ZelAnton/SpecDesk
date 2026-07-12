@@ -54,6 +54,10 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `tree.request` | `{ path? }` | request the Markdown file tree (`path` scopes it; absent → the current workspace folder, else the open document's folder). Host replies with `tree` |
 | `folder.open` | `{ path? }` | open a folder as the file-navigator root (`path`), or `null`/absent → the native folder picker. A `tree` event follows |
 | `doc.open` | `{ path? }` | open a spec for editing (`path`), or `null`/absent → the native open dialog |
+| `workspace.request` | `{}` | request the persisted workspace state (recent items, favorites, registered repos); host replies with `workspace.state` |
+| `workspace.favorite` | `{ path, favorite }` | add (`favorite` true) or remove (false) a file/folder from favorites; host re-emits `workspace.state` |
+| `repo.register` | `{ url }` | register a GitHub repo from a URL/spec (`https://github.com/owner/name(.git)`, `owner/name`, or `git@github.com:owner/name(.git)`); the host parses/normalizes it and re-emits `workspace.state`, or emits `error` if it isn't a repo. A4 stores the entry only — no clone yet |
+| `repo.unregister` | `{ id }` | remove a registered repo by its `owner/name` id; host re-emits `workspace.state` |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
 | `trace.dump` | `{ t0Epoch, firstSeq, entries: [{ seq, t, cat, event, data? }] }` | dump the always-on diagnostic trace ring; the host persists it as a JSON file beside the log and appends its tail (wall-clock-stamped) to the `log.export` that follows. Sent just before `log.export` when the author exports the log |
 
@@ -77,6 +81,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `chat.done` | `{ id }` | agent turn complete |
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
+| `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: `{ path, label, isFolder }[]` — `recent` is most-recent-first, `favorites` in the order added; `repositories`: `{ id, name, url }[]`) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |

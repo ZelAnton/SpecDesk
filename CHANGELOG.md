@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The app now remembers the files and folders you recently opened, lets you keep the ones you use most as
+  favorites, and lets you register the GitHub repositories you work with often — so they're at hand next time.
+  Your recents, favorites, and registered repositories are saved between runs. (The picker UI that surfaces
+  them, and cloning a registered repository, arrive next.)
 - An AI assistant chat in the right panel: type a question about the document and the reply streams in as
   it's written. Assistant replies are shown as quiet text; your own messages sit in a subtle bubble. A
   prompt-template picker (▤) inserts a ready-made prompt into the message box — from your personal library

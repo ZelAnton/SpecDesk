@@ -61,6 +61,10 @@ public static class AppPaths
 	/// assistant's template picker; see SpecDesk.Ai.PromptTemplateStore.</summary>
 	public static string PromptTemplates { get; } = Path.Combine(Root, "prompt-templates.json");
 
+	/// <summary>The workspace-state sidecar (a host-owned JSON file): the author's recent items, favorites,
+	/// and registered GitHub repositories. Backs the Start screen's picker; see SpecDesk.Host.WorkspaceStore.</summary>
+	public static string Workspace { get; } = Path.Combine(Root, "workspace.json");
+
 	/// <summary>The rolling log files' shared name prefix (e.g. <c>specdesk-20260101.log</c>), derived
 	/// from <see cref="ProductInfo.Name"/> rather than a second hard-coded lowercase literal.</summary>
 	public static string LogFilePrefix { get; } = ProductInfo.Name.ToLowerInvariant() + "-";

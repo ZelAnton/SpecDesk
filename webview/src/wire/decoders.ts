@@ -26,6 +26,7 @@ import {
   type PrListPayload,
   type PromptTemplate,
   type PrSuggestedPayload,
+  type RegisteredRepo,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -33,6 +34,8 @@ import {
   type TreeNode,
   type TreePayload,
   type VersionNoteSuggestedPayload,
+  type WorkspaceItem,
+  type WorkspaceStatePayload,
 } from "./protocol.js";
 
 /** `value` is a non-null object whose fields can be read as `unknown` (the JSON-object boundary). */
@@ -386,4 +389,38 @@ export function parseTree(value: unknown): TreePayload | null {
     return null;
   }
   return { root: value.root, nodes };
+}
+
+function parseWorkspaceItem(value: unknown): WorkspaceItem | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.path) ||
+    !isString(value.label) ||
+    !isBoolean(value.isFolder)
+  ) {
+    return null;
+  }
+  return { path: value.path, label: value.label, isFolder: value.isFolder };
+}
+
+function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
+  if (!isRecord(value) || !isString(value.id) || !isString(value.name) || !isString(value.url)) {
+    return null;
+  }
+  return { id: value.id, name: value.name, url: value.url };
+}
+
+export function parseWorkspaceState(value: unknown): WorkspaceStatePayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  // A single bad item nulls the whole payload (parseArray is all-or-nothing) — a drifted store shape must
+  // fail here, not surface as a half-decoded workspace deep in the UI.
+  const recent = parseArray(value.recent, parseWorkspaceItem);
+  const favorites = parseArray(value.favorites, parseWorkspaceItem);
+  const repositories = parseArray(value.repositories, parseRegisteredRepo);
+  if (recent === null || favorites === null || repositories === null) {
+    return null;
+  }
+  return { recent, favorites, repositories };
 }

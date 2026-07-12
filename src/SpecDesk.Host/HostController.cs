@@ -78,6 +78,10 @@ public sealed partial class HostController : IDisposable
 	// reply with an empty template set / do nothing), the same graceful-degradation pattern as _auth.
 	private readonly IChatAgent? _chatAgent;
 	private readonly ITemplateLibrary? _templates;
+	// A4: the persisted workspace store (recents / favorites / registered repos). Optional — null leaves the
+	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
+	// _auth / _chatAgent. See HostController.Workspace.cs.
+	private readonly WorkspaceStore? _workspace;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
@@ -209,7 +213,8 @@ public sealed partial class HostController : IDisposable
 		IGitPublishing? publishing = null,
 		IGitHubReview? review = null,
 		IChatAgent? chatAgent = null,
-		ITemplateLibrary? templates = null)
+		ITemplateLibrary? templates = null,
+		WorkspaceStore? workspace = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -227,6 +232,7 @@ public sealed partial class HostController : IDisposable
 		_review = review;
 		_chatAgent = chatAgent;
 		_templates = templates;
+		_workspace = workspace;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -380,6 +386,18 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.TemplatesRequest:
 				OnRequestTemplates(message);
+				break;
+			case MessageKinds.WorkspaceRequest:
+				OnWorkspaceRequest();
+				break;
+			case MessageKinds.WorkspaceFavorite:
+				OnWorkspaceFavorite(message);
+				break;
+			case MessageKinds.RepoRegister:
+				OnRegisterRepo(message);
+				break;
+			case MessageKinds.RepoUnregister:
+				OnUnregisterRepo(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);

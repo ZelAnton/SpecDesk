@@ -108,7 +108,10 @@ internal static class Program
 			publishing: versioning,
 			review: new GitHubReviewClient(gitHubHttp),
 			chatAgent: chatAgent,
-			templates: templateLibrary);
+			templates: templateLibrary,
+			// A4: the persisted workspace store (recents / favorites / registered repos), a host-owned JSON
+			// sidecar under the app data root. No GitHub cloning yet — registered repos are stored entries.
+			workspace: new WorkspaceStore(AppPaths.Workspace));
 
 		// Devtools + right-click context menu, opt-in via SPECDESK_DEVTOOLS for interactive human+agent
 		// debugging. Accepts 1/true/yes/on (case-insensitive); off by default and for 0/false/empty. A

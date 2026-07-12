@@ -38,6 +38,10 @@ public static class MessageKinds
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
+	public const string WorkspaceRequest = "workspace.request";
+	public const string WorkspaceFavorite = "workspace.favorite";
+	public const string RepoRegister = "repo.register";
+	public const string RepoUnregister = "repo.unregister";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -56,6 +60,7 @@ public static class MessageKinds
 	public const string ChatDone = "chat.done";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
+	public const string WorkspaceState = "workspace.state";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -343,3 +348,36 @@ public sealed record PromptTemplate(string Id, string Title, string Body);
 public sealed record TemplatesPayload(
 	IReadOnlyList<PromptTemplate> Personal,
 	IReadOnlyList<PromptTemplate> Remote);
+
+/// <summary>One recently-opened or favorited entry (native→webview, inside <see cref="WorkspaceStatePayload"/>).
+/// <paramref name="Path"/> is the absolute file/folder path (opened via <c>doc.open</c>/<c>folder.open</c> when
+/// chosen); <paramref name="Label"/> is the display name (usually the last path segment); <paramref name="IsFolder"/>
+/// distinguishes a folder from a file.</summary>
+public sealed record WorkspaceItem(string Path, string Label, bool IsFolder);
+
+/// <summary>One registered GitHub repository the author works with (native→webview, inside
+/// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
+/// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
+/// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
+public sealed record RegisteredRepo(string Id, string Name, string Url);
+
+/// <summary>Payload of <c>workspace.state</c> (native→webview): the persisted workspace store — the author's
+/// <paramref name="Recent"/> items (most-recent first), their <paramref name="Favorites"/>, and the
+/// <paramref name="Repositories"/> they registered. Emitted on request and after every mutation.</summary>
+public sealed record WorkspaceStatePayload(
+	IReadOnlyList<WorkspaceItem> Recent,
+	IReadOnlyList<WorkspaceItem> Favorites,
+	IReadOnlyList<RegisteredRepo> Repositories);
+
+/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle whether the file/folder at
+/// <paramref name="Path"/> is a favorite (<paramref name="Favorite"/> true adds it, false removes it).</summary>
+public sealed record WorkspaceFavoritePayload(string Path, bool Favorite);
+
+/// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
+/// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).
+/// The host parses/normalizes it before storing.</summary>
+public sealed record RegisterRepoPayload(string Url);
+
+/// <summary>Payload of <c>repo.unregister</c> (webview→native): remove the registered repository whose
+/// <see cref="RegisteredRepo.Id"/> matches <paramref name="Id"/>.</summary>
+public sealed record UnregisterRepoPayload(string Id);

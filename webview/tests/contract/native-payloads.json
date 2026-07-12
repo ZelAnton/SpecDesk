@@ -151,5 +151,28 @@
         "children": []
       }
     ]
+  },
+  "workspace.state": {
+    "recent": [
+      {
+        "path": "C:\\specs\\billing-repo\\specs\\billing.md",
+        "label": "billing.md",
+        "isFolder": false
+      }
+    ],
+    "favorites": [
+      {
+        "path": "C:\\specs\\billing-repo\\specs",
+        "label": "specs",
+        "isFolder": true
+      }
+    ],
+    "repositories": [
+      {
+        "id": "octo/spec-repo",
+        "name": "octo/spec-repo",
+        "url": "https://github.com/octo/spec-repo"
+      }
+    ]
   }
 }
