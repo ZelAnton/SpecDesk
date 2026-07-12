@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.Git;
@@ -69,6 +70,11 @@ public sealed partial class HostController : IDisposable
 	private readonly IGitHubAuth? _auth;
 	private readonly IGitPublishing? _publishing;
 	private readonly IGitHubReview? _review;
+	// The AI assistant (PoC-8): the chat agent that streams a reply, and the prompt-template library the
+	// composer's picker inserts from. Both optional — null leaves the chat/templates handlers inert (they
+	// reply with an empty template set / do nothing), the same graceful-degradation pattern as _auth.
+	private readonly IChatAgent? _chatAgent;
+	private readonly ITemplateLibrary? _templates;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
@@ -194,7 +200,9 @@ public sealed partial class HostController : IDisposable
 		TimeSpan? autosaveIdle = null,
 		IGitHubAuth? auth = null,
 		IGitPublishing? publishing = null,
-		IGitHubReview? review = null)
+		IGitHubReview? review = null,
+		IChatAgent? chatAgent = null,
+		ITemplateLibrary? templates = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -210,6 +218,8 @@ public sealed partial class HostController : IDisposable
 		_auth = auth;
 		_publishing = publishing;
 		_review = review;
+		_chatAgent = chatAgent;
+		_templates = templates;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -232,6 +242,9 @@ public sealed partial class HostController : IDisposable
 			// here while its token is still in flight risks ObjectDisposedException from the running task.
 			_signInCts?.Cancel();
 			_signInCts = null;
+			// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
+			_chatCts?.Cancel();
+			_chatCts = null;
 		}
 	}
 
@@ -348,6 +361,12 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.GitHubSignOut:
 				OnGitHubSignOut();
+				break;
+			case MessageKinds.ChatSend:
+				OnChatSend(message);
+				break;
+			case MessageKinds.TemplatesRequest:
+				OnRequestTemplates(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);

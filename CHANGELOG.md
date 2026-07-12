@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- An AI assistant chat in the right panel: type a question about the document and the reply streams in as
+  it's written. Assistant replies are shown as quiet text; your own messages sit in a subtle bubble. A
+  prompt-template picker (▤) inserts a ready-made prompt into the message box — from your personal library
+  (a local file) and a shared library fetched from a configured URL — which you can edit before sending.
+  Out of the box the assistant runs on a built-in offline preview that echoes your message, so it works with
+  no account or API key configured; a real AI provider can be connected later behind the same seam. Nothing
+  in the document is ever changed without your confirmation.
 - Collapsible side and bottom panels around the editor: a left rail, a right rail, and a full-width bottom
   dock, each opened/collapsed from a toolbar toggle (or an in-panel collapse control) and resizable by
   dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between modes

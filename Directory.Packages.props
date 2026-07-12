@@ -26,14 +26,22 @@
 		<PackageVersion Include="SkiaSharp" Version="4.148.0" />
 		<PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.148.0" />
 
-		<!-- Logging: the Microsoft.Extensions.Logging abstraction backed by Serilog (rolling file). -->
+		<!-- Logging: the Microsoft.Extensions.Logging abstraction backed by Serilog (rolling file).
+		     The Abstractions package is referenced directly by the library projects (e.g. SpecDesk.Ai). -->
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.9" />
+		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
 		<PackageVersion Include="Serilog" Version="4.3.1" />
 		<PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
 		<PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
 
-		<!-- TODO(PoC-8): add Microsoft Agent Framework package -->
+		<!-- AI agent chat (PoC-8): the Microsoft Agent Framework (ChatClientAgent) over a
+		     Microsoft.Extensions.AI IChatClient. The default provider is an in-repo offline stub
+		     (SpecDesk.Ai/EchoChatClient) so the app runs with zero credentials; a real provider client
+		     is swapped in behind the same IChatClient seam. Abstractions is pinned to the Agent
+		     Framework's own floor to avoid a Central-Package-Management version conflict. -->
+		<PackageVersion Include="Microsoft.Agents.AI" Version="1.13.0" />
+		<PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.6.0" />
 
 		<!-- Test stack -->
 		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />

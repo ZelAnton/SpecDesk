@@ -67,6 +67,18 @@ public sealed class ContractFixtureTests
 		// Signed in: Login present, Message absent (the optional fields are exercised by both decoders).
 		(MessageKinds.GitHubAccount,
 			new GitHubAccountPayload(Available: true, SignedIn: true, Login: "octocat", Message: null)),
+		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
+		(MessageKinds.ChatDelta, new ChatDeltaPayload("Here is a summary of the change: ")),
+		(MessageKinds.ChatDone, new ChatDonePayload("7")),
+		// One personal + one remote template (both lists exercised; the remote list may be empty at runtime).
+		(MessageKinds.Templates, new TemplatesPayload(
+		[
+			new PromptTemplate("summarize-changes", "Summarize the changes",
+				"Summarize what changed in this document since the last saved version."),
+		],
+		[
+			new PromptTemplate("team-style", "Apply the team style", "Rewrite the selection to follow our style guide."),
+		])),
 	];
 
 	private static string FixturePath(string fileName)

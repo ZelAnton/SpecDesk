@@ -2,6 +2,7 @@ using System.Net.Http;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using Photino.NET;
+using SpecDesk.Ai;
 using SpecDesk.AppInfo;
 using SpecDesk.Core;
 using SpecDesk.Git;
@@ -74,6 +75,19 @@ internal static class Program
 			? new GitHubDeviceFlowAuth(GitHubAuthOptions.ForClient(gitHubClientId), gitHubHttp, AppPaths.Auth)
 			: null;
 
+		// AI assistant (PoC-8). The chat runs on the offline stub provider by default (no credentials, no
+		// network) — CreateDefault picks it; a real provider selected by SPECDESK_AI_* would drop in behind
+		// the same IChatClient seam. The prompt library combines the author's personal templates (a
+		// host-owned JSON file) with a remote set fetched from SPECDESK_AI_TEMPLATES_URL (empty if unset or
+		// the fetch fails). Disposed after the controller so an in-flight turn is cancelled first.
+		AiOptions aiOptions = AiOptions.FromEnvironment();
+		using HttpClient aiHttp = new();
+		using AgentFrameworkChatAgent chatAgent = AgentFrameworkChatAgent.CreateDefault(aiOptions, loggerFactory);
+		TemplateLibrary templateLibrary = new(
+			new PromptTemplateStore(AppPaths.PromptTemplates),
+			new RemoteTemplateSource(
+				aiHttp, aiOptions.RemoteTemplatesUrl, loggerFactory.CreateLogger<RemoteTemplateSource>()));
+
 		using HostController controller = new(
 			render: Renderer.render,
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
@@ -92,7 +106,9 @@ internal static class Program
 			// the app-lifetime HttpClient. Both are harmless when sign-in is unconfigured — "Send for
 			// review" gates on a connected account before it touches them.
 			publishing: versioning,
-			review: new GitHubReviewClient(gitHubHttp));
+			review: new GitHubReviewClient(gitHubHttp),
+			chatAgent: chatAgent,
+			templates: templateLibrary);
 
 		// Devtools + right-click context menu, opt-in via SPECDESK_DEVTOOLS for interactive human+agent
 		// debugging. Accepts 1/true/yes/on (case-insensitive); off by default and for 0/false/empty. A

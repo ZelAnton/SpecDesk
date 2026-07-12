@@ -105,5 +105,27 @@
     "available": true,
     "signedIn": true,
     "login": "octocat"
+  },
+  "chat.delta": {
+    "text": "Here is a summary of the change: "
+  },
+  "chat.done": {
+    "id": "7"
+  },
+  "templates": {
+    "personal": [
+      {
+        "id": "summarize-changes",
+        "title": "Summarize the changes",
+        "body": "Summarize what changed in this document since the last saved version."
+      }
+    ],
+    "remote": [
+      {
+        "id": "team-style",
+        "title": "Apply the team style",
+        "body": "Rewrite the selection to follow our style guide."
+      }
+    ]
   }
 }

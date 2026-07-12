@@ -57,6 +57,13 @@ export interface WorkspaceHandle {
   readonly outline: Outline;
 }
 
+/** The real dock tools index.ts builds (they need IPC/host wiring, which stays out of the workspace).
+ *  Any tool left absent falls back to a placeholder, so a reduced test/host DOM still boots. */
+export interface WorkspaceTools {
+  /** The right rail's AI assistant chat (replaces the "assistant" placeholder). */
+  readonly assistant?: PanelTool;
+}
+
 /**
  * Build the central-frame host (editor + Start views), the navigator that switches between them, and the
  * docks; wire persistence, the centre-resize bridge, and the active-view notifications. Returns a handle
@@ -66,6 +73,7 @@ export function setupWorkspace(
   elements: WorkspaceElements,
   store: DockStore,
   callbacks: WorkspaceCallbacks,
+  tools: WorkspaceTools = {},
 ): WorkspaceHandle {
   // The navigator's onNavigate and the frame's onChange reference each other, so forward-declare the frame;
   // both closures only fire on later user interaction, by which point it is assigned.
@@ -96,12 +104,14 @@ export function setupWorkspace(
     left: [navigator],
     right: [
       outline,
-      placeholderTool(
-        "assistant",
-        "Assistant",
-        icon("assistant"),
-        "Tools that act on the active document will appear here, starting with an AI assistant.",
-      ),
+      // The real AI assistant chat when index.ts wired it; the placeholder in a reduced DOM (tests/host).
+      tools.assistant ??
+        placeholderTool(
+          "assistant",
+          "Assistant",
+          icon("assistant"),
+          "Tools that act on the active document will appear here, starting with an AI assistant.",
+        ),
       placeholderTool("tools", "Tools", icon("tools"), "More document tools will appear here."),
     ],
     bottom: [

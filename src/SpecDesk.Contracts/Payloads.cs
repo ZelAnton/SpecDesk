@@ -34,6 +34,8 @@ public static class MessageKinds
 	public const string GitHubSignIn = "github.signIn";
 	public const string GitHubSignInCancel = "github.signInCancel";
 	public const string GitHubSignOut = "github.signOut";
+	public const string ChatSend = "chat.send";
+	public const string TemplatesRequest = "templates.request";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -48,6 +50,9 @@ public static class MessageKinds
 	public const string DiffResult = "diff.result";
 	public const string GitHubCode = "github.code";
 	public const string GitHubAccount = "github.account";
+	public const string ChatDelta = "chat.delta";
+	public const string ChatDone = "chat.done";
+	public const string Templates = "templates";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -275,3 +280,31 @@ public sealed record GitHubCodePayload(string UserCode, string VerificationUri);
 /// is an author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"); never jargon.
 /// </summary>
 public sealed record GitHubAccountPayload(bool Available, bool SignedIn, string? Login, string? Message);
+
+/// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
+/// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>
+/// chunks followed by a terminal <see cref="ChatDonePayload"/>.</summary>
+public sealed record ChatSendPayload(string Text);
+
+/// <summary>Payload of <c>chat.delta</c> (native→webview): one streamed chunk of the assistant's reply.
+/// Chunks arrive in order and are appended to the in-progress assistant message until <c>chat.done</c>.
+/// Unsolicited (carries no correlation id): the webview shows a single streaming turn at a time.</summary>
+public sealed record ChatDeltaPayload(string Text);
+
+/// <summary>Payload of <c>chat.done</c> (native→webview): the assistant turn identified by <paramref
+/// name="Id"/> has finished streaming. The webview re-enables the composer and finalizes the message.
+/// The <paramref name="Id"/> is a host-assigned per-turn token so a late/duplicate done can be ignored.</summary>
+public sealed record ChatDonePayload(string Id);
+
+/// <summary>One prompt-library entry (shared by the personal store, the remote source, and the wire).
+/// <paramref name="Id"/> is a stable identifier, <paramref name="Title"/> the picker label, and
+/// <paramref name="Body"/> the prompt text inserted into the chat composer when chosen.</summary>
+public sealed record PromptTemplate(string Id, string Title, string Body);
+
+/// <summary>Payload of <c>templates</c> (native→webview, correlated to <c>templates.request</c> by id):
+/// the prompt library available to insert into the chat composer. <paramref name="Personal"/> is the
+/// author's local, host-owned library; <paramref name="Remote"/> is fetched from a configured URL and is
+/// empty when none is configured or the fetch fails (the request degrades gracefully, never errors).</summary>
+public sealed record TemplatesPayload(
+	IReadOnlyList<PromptTemplate> Personal,
+	IReadOnlyList<PromptTemplate> Remote);

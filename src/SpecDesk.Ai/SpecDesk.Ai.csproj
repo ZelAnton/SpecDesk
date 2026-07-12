@@ -2,8 +2,22 @@
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
+		<!-- Logging performance analyzers (LoggerMessage source-gen delegates, CA1848; deferred-evaluation
+		     guards, CA1873) target hot server paths; plain ILogger calls are appropriate for this desktop
+		     app's occasional diagnostics. Same rationale/suppression as SpecDesk.Host. -->
+		<NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
 	</PropertyGroup>
 
-	<!-- TODO(PoC-8): add Microsoft Agent Framework package -->
+	<ItemGroup>
+		<ProjectReference Include="..\SpecDesk.Contracts\SpecDesk.Contracts.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Microsoft Agent Framework (ChatClientAgent) + the Microsoft.Extensions.AI IChatClient
+		     abstraction the agent runs over. Versions are centrally managed (Directory.Packages.props). -->
+		<PackageReference Include="Microsoft.Agents.AI" />
+		<PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+	</ItemGroup>
 
 </Project>

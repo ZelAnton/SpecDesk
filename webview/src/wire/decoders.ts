@@ -8,6 +8,8 @@
 
 import {
   type BranchNameSuggestedPayload,
+  type ChatDeltaPayload,
+  type ChatDonePayload,
   type ChildDiffPayload,
   type DiffEntryPayload,
   type DiffOverflowPayload,
@@ -22,10 +24,12 @@ import {
   type PreviewPayload,
   type PrListItemPayload,
   type PrListPayload,
+  type PromptTemplate,
   type PrSuggestedPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
+  type TemplatesPayload,
   type VersionNoteSuggestedPayload,
 } from "./protocol.js";
 
@@ -319,4 +323,37 @@ export function parsePrList(value: unknown): PrListPayload | null {
   // `error` is optional (exactOptionalPropertyTypes forbids an explicit undefined), so add it only when it's
   // a real (non-null) string.
   return isString(value.error) ? { items, error: value.error } : { items };
+}
+
+export function parseChatDelta(value: unknown): ChatDeltaPayload | null {
+  if (!isRecord(value) || !isString(value.text)) {
+    return null;
+  }
+  return { text: value.text };
+}
+
+export function parseChatDone(value: unknown): ChatDonePayload | null {
+  if (!isRecord(value) || !isString(value.id)) {
+    return null;
+  }
+  return { id: value.id };
+}
+
+function parsePromptTemplate(value: unknown): PromptTemplate | null {
+  if (!isRecord(value) || !isString(value.id) || !isString(value.title) || !isString(value.body)) {
+    return null;
+  }
+  return { id: value.id, title: value.title, body: value.body };
+}
+
+export function parseTemplates(value: unknown): TemplatesPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const personal = parseArray(value.personal, parsePromptTemplate);
+  const remote = parseArray(value.remote, parsePromptTemplate);
+  if (personal === null || remote === null) {
+    return null;
+  }
+  return { personal, remote };
 }

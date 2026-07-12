@@ -23,6 +23,8 @@ import { log } from "./util/log.js";
 import { installDiagnostics, trace } from "./util/trace.js";
 import {
   parseBranchNameSuggested,
+  parseChatDelta,
+  parseChatDone,
   parseDiffResult,
   parseDocLoaded,
   parseError,
@@ -33,12 +35,14 @@ import {
   parsePrList,
   parsePrSuggested,
   parseStatus,
+  parseTemplates,
   parseVersionNoteSuggested,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
+import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { setupWorkspace } from "./workspace/workspace.js";
 
@@ -1014,6 +1018,28 @@ function wire(): void {
     if (!centralFrameEl || !editorViewEl) {
       return;
     }
+    // The AI assistant chat (design §10.5), the real right-rail tool. It owns its DOM and streaming state;
+    // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
+    // feeds the streamed reply back in through appendDelta / endTurn (mirroring ReviewsPanel / SignIn).
+    const assistantChat = new AssistantChat({
+      sendMessage: (text) => ipc.send(Kinds.chatSend, { text }),
+      requestTemplates: () =>
+        requestSuggestion(Kinds.templatesRequest, parseTemplates, { personal: [], remote: [] }),
+    });
+    // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
+    // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
+    ipc.on(Kinds.chatDelta, (message) => {
+      const payload = parseChatDelta(message.payload);
+      if (payload) {
+        assistantChat.appendDelta(payload.text);
+      }
+    });
+    ipc.on(Kinds.chatDone, (message) => {
+      if (parseChatDone(message.payload)) {
+        assistantChat.endTurn();
+      }
+    });
+
     const workspace = setupWorkspace(
       {
         centralFrame: centralFrameEl,
@@ -1037,6 +1063,7 @@ function wire(): void {
         onOpenDocument: () => ipc.send(Kinds.docOpen),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
+      { assistant: assistantChat },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;

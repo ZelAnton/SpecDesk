@@ -1,6 +1,9 @@
 [
   "branch.name.request",
   "branch.name.suggested",
+  "chat.delta",
+  "chat.done",
+  "chat.send",
   "diff.request",
   "diff.result",
   "doc.discard",
@@ -31,6 +34,8 @@
   "ready",
   "review.refresh",
   "status",
+  "templates",
+  "templates.request",
   "trace.dump",
   "version.note.request",
   "version.note.suggested"

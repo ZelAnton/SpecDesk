@@ -1,0 +1,123 @@
+// @vitest-environment jsdom
+import { describe, expect, it, vi } from "vitest";
+import type { TemplatesPayload } from "../../src/wire/protocol.js";
+import { AssistantChat } from "../../src/workspace/tools/assistant-chat.js";
+
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
+  const sendMessage = vi.fn<(text: string) => void>();
+  const requestTemplates = vi.fn<() => Promise<TemplatesPayload>>().mockResolvedValue(templates);
+  const chat = new AssistantChat({ sendMessage, requestTemplates });
+  const body = document.createElement("div");
+  document.body.appendChild(body);
+  chat.mount(body);
+
+  const input = body.querySelector<HTMLTextAreaElement>(".chat-input");
+  const sendBtn = body.querySelector<HTMLButtonElement>(".chat-send");
+  const templatesBtn = body.querySelector<HTMLButtonElement>(".chat-templates-toggle");
+  const messages = () => Array.from(body.querySelectorAll<HTMLElement>(".chat-msg"));
+  if (!input || !sendBtn || !templatesBtn) {
+    throw new Error("chat did not mount its composer");
+  }
+  return { chat, body, sendMessage, requestTemplates, input, sendBtn, templatesBtn, messages };
+}
+
+describe("AssistantChat", () => {
+  it("mounts a transcript and a composer", () => {
+    const { body } = harness();
+    expect(body.querySelector(".chat-log")).not.toBeNull();
+    expect(body.querySelector(".chat-composer")).not.toBeNull();
+  });
+
+  it("sends the composed message, shows a user bubble, opens a pending reply, and disables the composer", () => {
+    const { input, sendBtn, sendMessage, messages, body } = harness();
+    input.value = "Summarize the changes";
+    sendBtn.click();
+
+    expect(sendMessage).toHaveBeenCalledWith("Summarize the changes");
+    expect(input.value).toBe(""); // cleared
+    expect(sendBtn.disabled).toBe(true); // busy until chat.done
+
+    const user = body.querySelector(".chat-msg--user .chat-bubble");
+    expect(user?.textContent).toBe("Summarize the changes");
+    // A pending (empty) assistant message was opened for the stream.
+    expect(messages()).toHaveLength(2);
+    expect(body.querySelector(".chat-msg--assistant .chat-text")).not.toBeNull();
+  });
+
+  it("does not send a blank message", () => {
+    const { input, sendBtn, sendMessage, messages } = harness();
+    input.value = "   ";
+    sendBtn.click();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(messages()).toHaveLength(0);
+  });
+
+  it("Enter sends; Shift+Enter does not", () => {
+    const { input, sendMessage } = harness();
+    input.value = "hi";
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(sendMessage).toHaveBeenCalledWith("hi");
+  });
+
+  it("appends streamed deltas to the pending assistant message and re-enables on endTurn", () => {
+    const { input, sendBtn, chat, body } = harness();
+    input.value = "question";
+    sendBtn.click();
+
+    chat.appendDelta("Hello ");
+    chat.appendDelta("world");
+    expect(body.querySelector(".chat-msg--assistant .chat-text")?.textContent).toBe("Hello world");
+
+    chat.endTurn();
+    expect(sendBtn.disabled).toBe(false);
+    // The finished reply is announced once through the off-screen polite status region, not by mutating
+    // a live transcript delta-by-delta (which screen readers announce as noisy growing prefixes).
+    expect(body.querySelector<HTMLElement>(".chat-log")?.getAttribute("aria-live")).toBe("off");
+    expect(body.querySelector<HTMLElement>(".chat-sr-status")?.textContent).toBe("Hello world");
+  });
+
+  it("drops the empty assistant message when a turn ends with no output", () => {
+    const { input, sendBtn, chat, messages } = harness();
+    input.value = "question";
+    sendBtn.click();
+    expect(messages()).toHaveLength(2); // user + empty pending assistant
+
+    chat.endTurn(); // no deltas arrived
+    expect(messages()).toHaveLength(1); // the blank assistant message is removed
+  });
+
+  it("opens the template picker and inserts the chosen prompt into the composer (never auto-sends)", async () => {
+    const { templatesBtn, input, sendMessage, requestTemplates, body } = harness({
+      personal: [{ id: "p1", title: "Summarize", body: "Summarize the changes." }],
+      remote: [{ id: "r1", title: "Style", body: "Apply the style guide." }],
+    });
+
+    templatesBtn.click();
+    await flush();
+    expect(requestTemplates).toHaveBeenCalledOnce();
+
+    const items = Array.from(body.querySelectorAll<HTMLButtonElement>(".chat-template-btn"));
+    expect(items.map((i) => i.textContent)).toEqual(["Summarize", "Style"]);
+
+    // Choosing a template inserts its body into the composer and closes the picker — it does not send.
+    items[1]?.click();
+    expect(input.value).toBe("Apply the style guide.");
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(body.querySelector<HTMLElement>(".chat-templates")?.hidden).toBe(true);
+  });
+
+  it("shows an empty-state when there are no templates", async () => {
+    const { templatesBtn, body } = harness({ personal: [], remote: [] });
+    templatesBtn.click();
+    await flush();
+    expect(body.querySelector(".chat-templates-empty")?.textContent).toContain(
+      "No prompt templates",
+    );
+  });
+});

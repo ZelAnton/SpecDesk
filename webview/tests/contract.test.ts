@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBranchNameSuggested,
+  parseChatDelta,
+  parseChatDone,
   parseDiffResult,
   parseDocLoaded,
   parseError,
@@ -20,6 +22,7 @@ import {
   parsePrList,
   parsePrSuggested,
   parseStatus,
+  parseTemplates,
   parseVersionNoteSuggested,
 } from "../src/wire/decoders.js";
 import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/wire/protocol.js";
@@ -145,6 +148,29 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.signedIn).toBe(true);
     expect(payload?.login).toBe("octocat");
     expect(payload?.message).toBeUndefined();
+  });
+
+  it("chat.delta", () => {
+    const payload = parseChatDelta(fixture["chat.delta"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.text).toBe("Here is a summary of the change: ");
+  });
+
+  it("chat.done", () => {
+    const payload = parseChatDone(fixture["chat.done"]);
+    expect(payload?.id).toBe("7");
+  });
+
+  it("templates (personal + remote sets)", () => {
+    const payload = parseTemplates(fixture.templates);
+    expect(payload).not.toBeNull();
+    expect(payload?.personal).toHaveLength(1);
+    expect(payload?.personal[0]).toMatchObject({
+      id: "summarize-changes",
+      title: "Summarize the changes",
+    });
+    expect(payload?.remote).toHaveLength(1);
+    expect(payload?.remote[0]?.id).toBe("team-style");
   });
 });
 

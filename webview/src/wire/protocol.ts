@@ -29,6 +29,8 @@ export const Kinds = {
   githubSignIn: "github.signIn",
   githubSignInCancel: "github.signInCancel",
   githubSignOut: "github.signOut",
+  chatSend: "chat.send",
+  templatesRequest: "templates.request",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -42,6 +44,9 @@ export const Kinds = {
   diffResult: "diff.result",
   githubCode: "github.code",
   githubAccount: "github.account",
+  chatDelta: "chat.delta",
+  chatDone: "chat.done",
+  templates: "templates",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -345,4 +350,36 @@ export interface GitHubAccountPayload {
   login?: string;
   /** An author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"). */
   message?: string;
+}
+
+/** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */
+export interface ChatSendPayload {
+  text: string;
+}
+
+/** Payload of `chat.delta` (native→webview): one streamed chunk of the assistant's reply, appended to
+ *  the in-progress assistant message until `chat.done`. */
+export interface ChatDeltaPayload {
+  text: string;
+}
+
+/** Payload of `chat.done` (native→webview): the assistant turn identified by `id` finished streaming. */
+export interface ChatDonePayload {
+  id: string;
+}
+
+/** One prompt-library entry (native→webview, inside {@link TemplatesPayload}). `body` is inserted into
+ *  the chat composer when the author picks it; `title` is the picker label. */
+export interface PromptTemplate {
+  id: string;
+  title: string;
+  body: string;
+}
+
+/** Payload of `templates` (native→webview, correlated to `templates.request` by id): the prompt library
+ *  the composer's picker inserts from — the author's `personal` (local) set and a `remote` set fetched
+ *  from a configured URL (empty when none is configured or the fetch failed). */
+export interface TemplatesPayload {
+  personal: PromptTemplate[];
+  remote: PromptTemplate[];
 }

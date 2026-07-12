@@ -50,6 +50,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
 | `chat.send` | `{ text }` | message to the agent |
+| `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
 | `tree.request` | `{ path? }` | request the spec file tree |
 | `doc.open` | `{ path }` | open a spec for editing |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
@@ -73,6 +74,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `conflict.detected` | `{ sections }` | "someone else changed this too" data |
 | `chat.delta` | `{ text }` | streaming agent output chunk |
 | `chat.done` | `{ id }` | agent turn complete |
+| `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ nodes }` | spec file tree |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |

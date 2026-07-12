@@ -57,6 +57,10 @@ public static class AppPaths
 	/// <summary>The rolling log file directory.</summary>
 	public static string Logs { get; } = Path.Combine(Root, "logs");
 
+	/// <summary>The author's personal prompt-template library (a host-owned JSON file). Backs the AI
+	/// assistant's template picker; see SpecDesk.Ai.PromptTemplateStore.</summary>
+	public static string PromptTemplates { get; } = Path.Combine(Root, "prompt-templates.json");
+
 	/// <summary>The rolling log files' shared name prefix (e.g. <c>specdesk-20260101.log</c>), derived
 	/// from <see cref="ProductInfo.Name"/> rather than a second hard-coded lowercase literal.</summary>
 	public static string LogFilePrefix { get; } = ProductInfo.Name.ToLowerInvariant() + "-";
