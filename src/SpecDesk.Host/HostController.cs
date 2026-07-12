@@ -186,6 +186,7 @@ public sealed partial class HostController : IDisposable
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
+	private bool _disposed;
 
 	private string _text = string.Empty;
 	private string? _currentPath;
@@ -253,20 +254,25 @@ public sealed partial class HostController : IDisposable
 	/// <summary>Disposes the pending autosave timer and cancels any in-flight sign-in.</summary>
 	public void Dispose()
 	{
-		lock (_sync)
+		lock (_signInPublishSync)
 		{
-			_autosaveTimer?.Dispose();
-			_autosaveTimer = null;
-			// Cancel any in-flight sign-in, but leave disposal to that task's finally — disposing the cts
-			// here while its token is still in flight risks ObjectDisposedException from the running task.
-			_signInCts?.Cancel();
-			_signInCts = null;
-			// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
-			_chatCts?.Cancel();
-			_chatCts = null;
-			// And for an in-flight repository clone (A6) — cancel it, let its task dispose the cts.
-			_cloneCts?.Cancel();
-			_cloneCts = null;
+			lock (_sync)
+			{
+				_disposed = true;
+				_autosaveTimer?.Dispose();
+				_autosaveTimer = null;
+				// Cancel any in-flight sign-in, but leave disposal to that task's finally — disposing the cts
+				// here while its token is still in flight risks ObjectDisposedException from the running task.
+				_signInCts?.Cancel();
+				_signInCts = null;
+				TakePendingRepoActions();
+				// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
+				_chatCts?.Cancel();
+				_chatCts = null;
+				// And for an in-flight repository clone (A6) — cancel it, let its task dispose the cts.
+				_cloneCts?.Cancel();
+				_cloneCts = null;
+			}
 		}
 	}
 

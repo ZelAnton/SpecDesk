@@ -44,3 +44,11 @@ cd webview && npm install && npm run build   # build the webview bundle
 ```
 
 Requires .NET SDK 10 and Node 24.
+
+## GitHub access
+
+SpecDesk uses GitHub's device authorization flow and stores the resulting token with Windows DPAPI. Set
+`SPECDESK_GITHUB_CLIENT_ID` to the public client id of the GitHub OAuth App configured for SpecDesk before
+starting a development build. No client secret is used or stored. When a disconnected user adds or opens a
+repository, SpecDesk opens GitHub's standard authorization page in the system browser and resumes the action
+after authorization.

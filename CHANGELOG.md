@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Adding or opening a GitHub repository while disconnected now starts sign-in, opens GitHub's
+  authorization page in your normal browser, and continues the requested action after access is granted.
 - You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub
   repo") or by clicking one in the Repositories list. SpecDesk copies it into a local folder and opens it as
   your workspace. Opening a folder or a repository now also reveals the file navigator (and opens the left

@@ -86,6 +86,11 @@ export class SignInController {
     // Hide the account button while the bar is the active affordance (no restart race); the terminal
     // github.account event restores it.
     setHidden(this.accountBtn, true);
+
+    // Device-flow authorization is intentionally completed in the user's normal browser. Opening the
+    // GitHub page as soon as the host issues the code makes repository actions a single continuous flow;
+    // the visible button remains as a retry if the OS declines the first launch.
+    this.deps.openUrl(payload.verificationUri);
   }
 
   /** Update the account affordance from the host's connection state. */

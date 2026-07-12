@@ -78,7 +78,7 @@ describe("SignInController — account button", () => {
 });
 
 describe("SignInController — code bar", () => {
-  it("reveals the code and opens GitHub", () => {
+  it("reveals the code and opens GitHub immediately, with a retry button", () => {
     const { controller, openUrl } = mount();
     controller.showCode({
       userCode: "WXYZ-1234",
@@ -89,8 +89,11 @@ describe("SignInController — code bar", () => {
     expect(el("github-user-code").textContent).toBe("WXYZ-1234");
     expect(el("github-signin-status").textContent).toContain("Waiting");
 
+    expect(openUrl).toHaveBeenCalledTimes(1);
+    expect(openUrl).toHaveBeenLastCalledWith("https://github.com/login/device");
+
     el("github-open-btn").click();
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/login/device");
+    expect(openUrl).toHaveBeenCalledTimes(2);
   });
 
   it("cancels and closes the bar on cancel", () => {

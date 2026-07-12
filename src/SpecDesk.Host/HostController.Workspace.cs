@@ -17,6 +17,24 @@ namespace SpecDesk.Host;
 // cloning yet. The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	private enum PendingRepoActionKind
+	{
+		Register,
+		Open,
+	}
+
+	private sealed record PendingRepoAction(PendingRepoActionKind Kind, string Owner, string Name);
+	private sealed record PendingRepoActions(
+		PendingRepoAction[] Registrations,
+		PendingRepoAction? Open);
+
+	// Repository access is an authenticated GitHub operation. Requests made while signed out are retained
+	// until the device-flow completes, so clicking Add/Open opens GitHub in the normal browser and then
+	// continues the exact action instead of making the author repeat it.
+	private readonly Dictionary<string, PendingRepoAction> _pendingRepoRegistrations =
+		new(StringComparer.OrdinalIgnoreCase);
+	private PendingRepoAction? _pendingRepoOpen;
+
 	// Emit the current workspace state to the webview. A null store (workspace persistence unconfigured) makes
 	// this a no-op, so the mutating handlers below can call it unconditionally, like the chat guards.
 	private void EmitWorkspaceState()
@@ -64,9 +82,12 @@ public sealed partial class HostController
 			return;
 		}
 
-		string id = $"{owner}/{name}";
-		_workspace?.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}"));
-		EmitWorkspaceState();
+		if (!EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Register, owner, name)))
+		{
+			return;
+		}
+
+		RegisterRepoCore(owner, name);
 	}
 
 	// Remove a registered repository by its stable id (owner/name).
@@ -113,6 +134,21 @@ public sealed partial class HostController
 			return;
 		}
 
+		if (!EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Open, owner, name)))
+		{
+			return;
+		}
+
+		OpenRepoCore(owner, name);
+	}
+
+	private void OpenRepoCore(string owner, string name)
+	{
+		IRepositoryCloner? cloner = _cloner;
+		if (cloner is null)
+		{
+			return;
+		}
 		string cloneUrl = $"https://github.com/{owner}/{name}.git";
 		string repoId = $"{owner}/{name}";
 		// The clone's exact local folder: namespaced by BOTH owner and name, so two repos that share a name
@@ -120,7 +156,7 @@ public sealed partial class HostController
 		// and hands it to the cloner, so the "already cloned?" check and the clone target can't drift apart.
 		string localPath = Path.Combine(AppPaths.Repos, $"{owner}_{name}");
 
-		if (_cloner.IsCloned(localPath))
+		if (cloner.IsCloned(localPath))
 		{
 			// Already cloned (a valid working tree, not just any leftover folder) — open it straight away
 			// (synchronous, no network). Register it too so a repo opened from an existing clone still lands in
@@ -146,7 +182,6 @@ public sealed partial class HostController
 		}
 
 		CancellationToken token = cts.Token;
-		IRepositoryCloner cloner = _cloner;
 		IGitHubAuth? auth = _auth;
 		_ = Task.Run(async () =>
 		{
@@ -200,6 +235,103 @@ public sealed partial class HostController
 				cts.Dispose();
 			}
 		});
+	}
+
+	private bool EnsureGitHubAccess(PendingRepoAction action)
+	{
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return false;
+				}
+			}
+			if (_auth is null)
+			{
+				_logger.LogWarning(
+					"GitHub access is not configured; set {ClientIdVariable} for development builds",
+					GitHubAuthOptions.ClientIdEnvironmentVariable);
+				SendError("GitHub access isn't available in this build. Ask your administrator for help.");
+				return false;
+			}
+		}
+
+		bool startSignIn;
+		lock (_sync)
+		{
+			if (_disposed)
+			{
+				return false;
+			}
+			// Check the persisted auth state under the same lock used by ResumePendingRepoActions. Without
+			// this atomic check+enqueue, authorization could finish between them, drain an empty queue, and
+			// leave the newly enqueued action stranded behind a flow that is already complete.
+			if (_auth.IsSignedIn())
+			{
+				return true;
+			}
+
+			if (action.Kind == PendingRepoActionKind.Register)
+			{
+				// Repeated clicks for the same repository collapse to one durable registration request.
+				_pendingRepoRegistrations[$"{action.Owner}/{action.Name}"] = action;
+			}
+			else
+			{
+				// Opening a repository changes the single central workspace. A later Open supersedes an
+				// earlier one while authorization is pending, matching ordinary navigation semantics and
+				// avoiding a burst of clones after the author returns from GitHub.
+				_pendingRepoOpen = action;
+			}
+
+			startSignIn = _signInCts is null;
+		}
+
+		if (startSignIn)
+		{
+			OnGitHubSignIn();
+		}
+
+		return false;
+	}
+
+	private PendingRepoActions TakePendingRepoActions()
+	{
+		PendingRepoActions actions = new([.. _pendingRepoRegistrations.Values], _pendingRepoOpen);
+		_pendingRepoRegistrations.Clear();
+		_pendingRepoOpen = null;
+		return actions;
+	}
+
+	private void ResumePendingRepoActions(PendingRepoActions actions)
+	{
+		foreach (PendingRepoAction action in actions.Registrations)
+		{
+			RegisterRepoCore(action.Owner, action.Name);
+		}
+
+		if (actions.Open is not null)
+		{
+			OpenRepoCore(actions.Open.Owner, actions.Open.Name);
+		}
+	}
+
+	private void ClearPendingRepoActions()
+	{
+		lock (_sync)
+		{
+			_pendingRepoRegistrations.Clear();
+			_pendingRepoOpen = null;
+		}
+	}
+
+	private void RegisterRepoCore(string owner, string name)
+	{
+		string id = $"{owner}/{name}";
+		_workspace?.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}"));
+		EmitWorkspaceState();
 	}
 
 	// Register the just-opened repo (de-duplicated by id in the store) and re-emit workspace.state, so opening

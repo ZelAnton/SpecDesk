@@ -66,6 +66,7 @@ public sealed class HostControllerWorkspaceTests
 			new FakeVersioning(),
 			NullLogger<HostController>.Instance,
 			initialDocPath: null,
+			auth: new FakeGitHubAuth(true),
 			workspace: new WorkspaceStore(_wsPath));
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
 		lock (_gate)
