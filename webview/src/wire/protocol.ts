@@ -30,6 +30,7 @@ export const Kinds = {
   githubSignInCancel: "github.signInCancel",
   githubSignOut: "github.signOut",
   chatSend: "chat.send",
+  chatAttachmentPick: "chat.attachment.pick",
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
   treeRequest: "tree.request",
@@ -53,6 +54,7 @@ export const Kinds = {
   githubAccount: "github.account",
   chatDelta: "chat.delta",
   chatDone: "chat.done",
+  chatAttachmentPicked: "chat.attachment.picked",
   templates: "templates",
   tree: "tree",
   workspaceState: "workspace.state",
@@ -364,6 +366,13 @@ export interface GitHubAccountPayload {
 /** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */
 export interface ChatSendPayload {
   text: string;
+  attachments?: ChatAttachment[];
+}
+
+export interface ChatAttachment {
+  kind: "file" | "folder" | "repository";
+  label: string;
+  reference: string;
 }
 
 /** Payload of `chat.delta` (native→webview): one streamed chunk of the assistant's reply, appended to

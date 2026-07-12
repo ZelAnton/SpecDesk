@@ -112,6 +112,11 @@
   "chat.done": {
     "id": "7"
   },
+  "chat.attachment.picked": {
+    "kind": "file",
+    "label": "billing.md",
+    "reference": "C:\\specs\\billing.md"
+  },
   "templates": {
     "personal": [
       {

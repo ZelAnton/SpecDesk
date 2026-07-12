@@ -35,6 +35,7 @@ public static class MessageKinds
 	public const string GitHubSignInCancel = "github.signInCancel";
 	public const string GitHubSignOut = "github.signOut";
 	public const string ChatSend = "chat.send";
+	public const string ChatAttachmentPick = "chat.attachment.pick";
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
@@ -59,6 +60,7 @@ public static class MessageKinds
 	public const string GitHubAccount = "github.account";
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
+	public const string ChatAttachmentPicked = "chat.attachment.picked";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
@@ -325,7 +327,13 @@ public sealed record GitHubAccountPayload(bool Available, bool SignedIn, string?
 /// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
 /// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>
 /// chunks followed by a terminal <see cref="ChatDonePayload"/>.</summary>
-public sealed record ChatSendPayload(string Text);
+public sealed record ChatSendPayload(string Text, IReadOnlyList<ChatAttachmentPayload>? Attachments = null);
+
+/// <summary>A file, folder, or registered repository selected as context for one assistant turn.</summary>
+public sealed record ChatAttachmentPayload(string Kind, string Label, string Reference);
+
+/// <summary>Payload of <c>chat.attachment.pick</c>: the native picker category, file or folder.</summary>
+public sealed record ChatAttachmentPickPayload(string Kind);
 
 /// <summary>Payload of <c>chat.delta</c> (native→webview): one streamed chunk of the assistant's reply.
 /// Chunks arrive in order and are appended to the in-progress assistant message until <c>chat.done</c>.

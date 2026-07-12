@@ -11,16 +11,22 @@
  * / {@link AssistantChat.endTurn} — mirroring how ReviewsPanel / SignInController are wired.
  */
 
-import type { PromptTemplate, TemplatesPayload } from "../../wire/protocol.js";
+import type {
+  ChatAttachment,
+  PromptTemplate,
+  RegisteredRepo,
+  TemplatesPayload,
+} from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
 export interface AssistantChatOptions {
   /** Send the author's message to the host (index.ts maps this to `chat.send`). */
-  sendMessage(text: string): void;
+  sendMessage(text: string, attachments: readonly ChatAttachment[]): void;
   /** Fetch the personal + remote prompt library (index.ts maps this to the `templates.request` round-trip).
    *  Resolves with an empty set on any failure — the picker just shows "no templates" then. */
   requestTemplates(): Promise<TemplatesPayload>;
+  pickAttachment(kind: "file" | "folder"): Promise<ChatAttachment | null>;
 }
 
 export class AssistantChat implements PanelTool {
@@ -38,11 +44,17 @@ export class AssistantChat implements PanelTool {
   private sendButton!: HTMLButtonElement;
   private templatesButton!: HTMLButtonElement;
   private templatesPanel!: HTMLElement;
+  private attachButton!: HTMLButtonElement;
+  private attachMenu!: HTMLElement;
+  private attachmentsList!: HTMLElement;
 
   // The assistant message currently being streamed (its text node grows with each delta), or null between
   // turns. A single streaming turn at a time (the host single-flights; the composer is disabled meanwhile).
   private streamingText: HTMLElement | null = null;
   private templatesOpen = false;
+  private attachOpen = false;
+  private repositories: readonly RegisteredRepo[] = [];
+  private attachments: ChatAttachment[] = [];
 
   constructor(options: AssistantChatOptions) {
     this.options = options;
@@ -78,6 +90,50 @@ export class AssistantChat implements PanelTool {
     this.templatesPanel.id = "chat-templates-panel";
     this.templatesPanel.hidden = true;
 
+    this.attachMenu = document.createElement("div");
+    this.attachMenu.className = "chat-attach-menu";
+    this.attachMenu.id = "chat-attach-menu";
+    this.attachMenu.setAttribute("role", "menu");
+    this.attachMenu.hidden = true;
+    this.attachMenu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeAttachMenu();
+        this.attachButton.focus();
+        return;
+      }
+      const items = Array.from(
+        this.attachMenu.querySelectorAll<HTMLButtonElement>(".chat-attach-item:not(:disabled)"),
+      );
+      if (items.length === 0) return;
+      const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
+      const target =
+        event.key === "ArrowDown"
+          ? items[(current + 1) % items.length]
+          : event.key === "ArrowUp"
+            ? items[(current - 1 + items.length) % items.length]
+            : event.key === "Home"
+              ? items[0]
+              : event.key === "End"
+                ? items[items.length - 1]
+                : null;
+      if (target) {
+        event.preventDefault();
+        target.focus();
+      }
+    });
+    this.attachMenu.addEventListener("focusout", (event) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && !this.attachMenu.contains(next) && next !== this.attachButton) {
+        this.closeAttachMenu();
+      }
+    });
+
+    this.attachmentsList = document.createElement("div");
+    this.attachmentsList.className = "chat-attachments";
+    this.attachmentsList.setAttribute("aria-label", "Attached context");
+    this.attachmentsList.hidden = true;
+
     // The composer: a template-picker toggle, the input, and Send.
     const composer = document.createElement("form");
     composer.className = "chat-composer";
@@ -93,6 +149,15 @@ export class AssistantChat implements PanelTool {
     this.templatesButton.addEventListener("click", () => {
       void this.toggleTemplates();
     });
+
+    this.attachButton = document.createElement("button");
+    this.attachButton.type = "button";
+    this.attachButton.className = "chat-attach-toggle";
+    this.attachButton.setAttribute("aria-haspopup", "menu");
+    this.attachButton.setAttribute("aria-expanded", "false");
+    this.attachButton.setAttribute("aria-controls", "chat-attach-menu");
+    this.attachButton.textContent = "Attach";
+    this.attachButton.addEventListener("click", () => this.toggleAttachMenu());
 
     this.input = document.createElement("textarea");
     this.input.className = "chat-input";
@@ -125,14 +190,31 @@ export class AssistantChat implements PanelTool {
     this.sendButton.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
     this.sendButton.textContent = "Send";
 
-    composer.append(this.templatesButton, inputStack, this.sendButton);
+    composer.append(this.templatesButton, this.attachButton, inputStack, this.sendButton);
     composer.addEventListener("submit", (event) => {
       event.preventDefault();
       this.submit();
     });
 
-    root.append(this.log, this.srStatus, this.templatesPanel, composer);
+    root.append(
+      this.log,
+      this.srStatus,
+      this.templatesPanel,
+      this.attachMenu,
+      this.attachmentsList,
+      composer,
+    );
     body.appendChild(root);
+  }
+
+  setRepositories(repositories: readonly RegisteredRepo[]): void {
+    this.repositories = repositories;
+    const references = new Set(repositories.map((repo) => repo.url));
+    this.attachments = this.attachments.filter(
+      (item) => item.kind !== "repository" || references.has(item.reference),
+    );
+    this.renderAttachments();
+    if (this.attachOpen) this.renderAttachMenu();
   }
 
   /** Append one streamed chunk to the in-progress assistant message (creating it on the first chunk). */
@@ -173,12 +255,130 @@ export class AssistantChat implements PanelTool {
     this.addMessage("user", text);
     this.input.value = "";
     this.closeTemplates();
+    this.closeAttachMenu();
     this.setBusy(true);
     // Open the assistant's (empty) reply now so the streamed deltas have somewhere to land and the "thinking"
     // state is visible immediately.
     this.streamingText = this.addMessage("assistant", "");
     this.scrollToEnd();
-    this.options.sendMessage(text);
+    const attachments = [...this.attachments];
+    this.attachments = [];
+    this.renderAttachments();
+    this.options.sendMessage(text, attachments);
+  }
+
+  private toggleAttachMenu(): void {
+    if (this.attachOpen) {
+      this.closeAttachMenu();
+      return;
+    }
+    this.closeTemplates();
+    this.attachOpen = true;
+    this.attachButton.setAttribute("aria-expanded", "true");
+    this.attachMenu.hidden = false;
+    this.renderAttachMenu();
+    this.attachMenu.querySelector<HTMLButtonElement>(".chat-attach-item:not(:disabled)")?.focus();
+  }
+
+  private renderAttachMenu(): void {
+    this.attachMenu.replaceChildren();
+    this.attachMenu.append(
+      this.pickerMenuButton("Files", "file"),
+      this.pickerMenuButton("Folders", "folder"),
+    );
+
+    const repositories = document.createElement("div");
+    repositories.className = "chat-attach-repositories";
+    const heading = document.createElement("div");
+    heading.className = "chat-attach-heading";
+    heading.textContent = "Repositories";
+    repositories.appendChild(heading);
+    if (this.repositories.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "chat-templates-empty";
+      empty.textContent = "No registered repositories.";
+      repositories.appendChild(empty);
+    } else {
+      for (const repo of this.repositories) {
+        repositories.appendChild(
+          this.attachmentMenuButton(repo.name, {
+            kind: "repository",
+            label: repo.name,
+            reference: repo.url,
+          }),
+        );
+      }
+    }
+    this.attachMenu.appendChild(repositories);
+  }
+
+  private attachmentMenuButton(
+    label: string,
+    attachment: ChatAttachment | null,
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chat-attach-item";
+    button.setAttribute("role", "menuitem");
+    button.textContent = label;
+    button.disabled = attachment === null;
+    if (attachment) {
+      button.title = attachment.reference;
+      button.addEventListener("click", () => this.addAttachment(attachment));
+    }
+    return button;
+  }
+
+  private pickerMenuButton(label: string, kind: "file" | "folder"): HTMLButtonElement {
+    const button = this.attachmentMenuButton(label, null);
+    button.disabled = false;
+    button.addEventListener("click", async () => {
+      this.closeAttachMenu();
+      const attachment = await this.options.pickAttachment(kind);
+      if (attachment) this.addAttachment(attachment);
+      else this.input.focus();
+    });
+    return button;
+  }
+
+  private addAttachment(attachment: ChatAttachment): void {
+    if (
+      !this.attachments.some(
+        (item) => item.kind === attachment.kind && item.reference === attachment.reference,
+      )
+    ) {
+      this.attachments.push(attachment);
+      this.renderAttachments();
+    }
+    this.closeAttachMenu();
+    this.input.focus();
+  }
+
+  private renderAttachments(): void {
+    this.attachmentsList.replaceChildren();
+    this.attachmentsList.hidden = this.attachments.length === 0;
+    for (const attachment of this.attachments) {
+      const chip = document.createElement("span");
+      chip.className = "chat-attachment";
+      chip.textContent = attachment.label;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chat-attachment-remove";
+      remove.setAttribute("aria-label", `Remove ${attachment.label}`);
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        this.attachments = this.attachments.filter((item) => item !== attachment);
+        this.renderAttachments();
+      });
+      chip.appendChild(remove);
+      this.attachmentsList.appendChild(chip);
+    }
+  }
+
+  private closeAttachMenu(): void {
+    this.attachOpen = false;
+    this.attachMenu.hidden = true;
+    this.attachButton.setAttribute("aria-expanded", "false");
   }
 
   private addMessage(role: "user" | "assistant", text: string): HTMLElement {
@@ -271,6 +471,7 @@ export class AssistantChat implements PanelTool {
   private setBusy(busy: boolean): void {
     this.sendButton.disabled = busy;
     this.templatesButton.disabled = busy;
+    this.attachButton.disabled = busy;
     this.input.disabled = busy;
     this.log.setAttribute("aria-busy", String(busy));
   }

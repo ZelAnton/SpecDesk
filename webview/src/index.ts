@@ -23,6 +23,7 @@ import { log } from "./util/log.js";
 import { installDiagnostics, trace } from "./util/trace.js";
 import {
   parseBranchNameSuggested,
+  parseChatAttachment,
   parseChatDelta,
   parseChatDone,
   parseDiffResult,
@@ -241,6 +242,7 @@ function wire(): void {
   const updateOutline = (text: string): void => outline?.setItems(parseOutline(text));
   // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
   let fileTree: FileTree | undefined;
+  let assistantChat: AssistantChat | undefined;
   // The Start screen handle, assigned in wireWorkspace; index.ts drives its "Opening…" busy state on a repo
   // open and clears it on the next tree/error. Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
@@ -268,9 +270,10 @@ function wire(): void {
     kind: string,
     parse: (payload: unknown) => T | null,
     fallback: T,
+    payload?: unknown,
   ): Promise<T> {
     try {
-      const reply = await ipc.request(kind);
+      const reply = await ipc.request(kind, payload);
       return parse(reply.payload) ?? fallback;
     } catch (error) {
       log.warn(`Could not fetch a suggestion (${kind})`, String(error));
@@ -1073,22 +1076,25 @@ function wire(): void {
     // The AI assistant chat (design §10.5), the real right-rail tool. It owns its DOM and streaming state;
     // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
     // feeds the streamed reply back in through appendDelta / endTurn (mirroring ReviewsPanel / SignIn).
-    const assistantChat = new AssistantChat({
-      sendMessage: (text) => ipc.send(Kinds.chatSend, { text }),
+    const chat = new AssistantChat({
+      sendMessage: (text, attachments) => ipc.send(Kinds.chatSend, { text, attachments }),
       requestTemplates: () =>
         requestSuggestion(Kinds.templatesRequest, parseTemplates, { personal: [], remote: [] }),
+      pickAttachment: (kind) =>
+        requestSuggestion(Kinds.chatAttachmentPick, parseChatAttachment, null, { kind }),
     });
+    assistantChat = chat;
     // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
     // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
     ipc.on(Kinds.chatDelta, (message) => {
       const payload = parseChatDelta(message.payload);
       if (payload) {
-        assistantChat.appendDelta(payload.text);
+        chat.appendDelta(payload.text);
       }
     });
     ipc.on(Kinds.chatDone, (message) => {
       if (parseChatDone(message.payload)) {
-        assistantChat.endTurn();
+        chat.endTurn();
       }
     });
 
@@ -1154,7 +1160,7 @@ function wire(): void {
         onOpenRepo: (url) => openRepo(url),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: assistantChat, files, recent, favorites, repositories },
+      { assistant: chat, files, recent, favorites, repositories },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;
@@ -1189,6 +1195,7 @@ function wire(): void {
         recent.setState(payload);
         favorites.setState(payload);
         repositories.setState(payload);
+        assistantChat?.setRepositories(payload.repositories);
         home?.setRecents(payload.recent);
       }
     });

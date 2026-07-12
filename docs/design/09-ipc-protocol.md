@@ -49,7 +49,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `diff.request` | `{ base }` (`base` ∈ `"lastVersion"`, `"published"`, `"pr"`; editor `version` on the envelope) — the webview overlay picks `base`; only `"lastVersion"` (the working copy vs its last saved version, the live "show changes" overlay) is wired today, `"published"`/`"pr"` are reserved for PoC-7 | diff the working copy against the requested base — replies with structured blocks via `diff.result` |
 | `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
-| `chat.send` | `{ text }` | message to the agent |
+| `chat.send` | `{ text, attachments? }` (`attachments[]`: `{ kind, label, reference }`) | message to the agent; file/folder references are accepted only when issued by the native attachment picker, consumed once, and resolved by the host into bounded context |
+| `chat.attachment.pick` | `{ kind }` (`file` or `folder`) | show an attachment-specific native picker without opening the document/workspace; host replies with `chat.attachment.picked`, correlated by `id` |
 | `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
 | `tree.request` | `{ path? }` | request the Markdown file tree (`path` scopes it; absent → the current workspace folder, else the open document's folder). Host replies with `tree` |
 | `folder.open` | `{ path? }` | open a folder as the file-navigator root (`path`), or `null`/absent → the native folder picker. A `tree` event follows |
@@ -80,6 +81,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `conflict.detected` | `{ sections }` | "someone else changed this too" data |
 | `chat.delta` | `{ text }` | streaming agent output chunk |
 | `chat.done` | `{ id }` | agent turn complete |
+| `chat.attachment.picked` | `{ kind, label, reference }` or `null` | native-picked attachment descriptor — reply to `chat.attachment.pick`; the path stays host-owned and is usable once by `chat.send` |
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
 | `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: `{ path, label, isFolder }[]` — `recent` is most-recent-first, `favorites` in the order added; `repositories`: `{ id, name, url }[]`) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |

@@ -20,6 +20,12 @@ public interface IFileDialogs
 	/// <summary>Prompt for a folder to open as the workspace; <c>null</c> if the user cancelled.</summary>
 	string? PickOpenFolder();
 
+	/// <summary>Prompt for a file to attach without opening it in the editor.</summary>
+	string? PickAttachmentFile() => PickOpenFile();
+
+	/// <summary>Prompt for a folder to attach without changing the workspace.</summary>
+	string? PickAttachmentFolder() => PickOpenFolder();
+
 	/// <summary>Prompt for a save location; <c>null</c> if the user cancelled.</summary>
 	string? PickSaveFile(string? suggestedPath);
 }
@@ -392,6 +398,9 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.ChatSend:
 				OnChatSend(message);
+				break;
+			case MessageKinds.ChatAttachmentPick:
+				OnChatAttachmentPick(message);
 				break;
 			case MessageKinds.TemplatesRequest:
 				OnRequestTemplates(message);

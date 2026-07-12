@@ -8,6 +8,7 @@
 
 import {
   type BranchNameSuggestedPayload,
+  type ChatAttachment,
   type ChatDeltaPayload,
   type ChatDonePayload,
   type ChildDiffPayload,
@@ -342,6 +343,18 @@ export function parseChatDone(value: unknown): ChatDonePayload | null {
     return null;
   }
   return { id: value.id };
+}
+
+export function parseChatAttachment(value: unknown): ChatAttachment | null {
+  if (
+    !isRecord(value) ||
+    (value.kind !== "file" && value.kind !== "folder" && value.kind !== "repository") ||
+    !isString(value.label) ||
+    !isString(value.reference)
+  ) {
+    return null;
+  }
+  return { kind: value.kind, label: value.label, reference: value.reference };
 }
 
 function parsePromptTemplate(value: unknown): PromptTemplate | null {

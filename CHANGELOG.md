@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The assistant now has an Attach menu for the open file, current folder, and registered repositories;
+  selected context appears as removable chips and is sent with the next message.
 - The assistant message box is now visibly multi-line: Enter writes a new line, Ctrl+Enter (or Cmd+Enter)
   sends, and the box can be resized vertically for longer prompts.
 - You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub

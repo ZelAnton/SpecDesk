@@ -1,6 +1,8 @@
 [
   "branch.name.request",
   "branch.name.suggested",
+  "chat.attachment.pick",
+  "chat.attachment.picked",
   "chat.delta",
   "chat.done",
   "chat.send",

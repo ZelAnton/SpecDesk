@@ -1095,6 +1095,99 @@ button {
   cursor: pointer;
 }
 
+.chat-attach-toggle {
+  flex: none;
+  height: 30px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 500 12px / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.chat-attach-toggle:hover:not(:disabled),
+.chat-attach-item:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.chat-attach-menu {
+  flex: none;
+  margin: 0 0.6rem 0.4rem;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.chat-attach-menu[hidden],
+.chat-attachments[hidden] {
+  display: none;
+}
+
+.chat-attach-item {
+  width: 100%;
+  display: block;
+  margin: 0 0 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-attach-item:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+}
+
+.chat-attach-heading {
+  padding: 0.35rem 0.5rem 0.2rem;
+  color: var(--text-muted);
+  font: 600 11px / 1.3 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-attachments {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.25rem 0.35rem 0.25rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: 12px / 1.2 var(--font-ui);
+}
+
+.chat-attachment-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .chat-templates-toggle:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-soft-border);
@@ -1145,6 +1238,7 @@ button {
 
 .chat-send:disabled,
 .chat-templates-toggle:disabled,
+.chat-attach-toggle:disabled,
 .chat-input:disabled {
   opacity: 0.55;
   cursor: default;
