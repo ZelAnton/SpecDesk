@@ -1,4 +1,11 @@
+using Microsoft.Extensions.Logging;
+using SpecDesk.AppInfo;
 using SpecDesk.Contracts;
+using SpecDesk.Git;
+using SpecDesk.GitHub;
+// LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it defines a
+// LogLevel that collides with Microsoft.Extensions.Logging.LogLevel).
+using LibGit2SharpException = LibGit2Sharp.LibGit2SharpException;
 
 namespace SpecDesk.Host;
 
@@ -72,6 +79,135 @@ public sealed partial class HostController
 		}
 
 		_workspace?.UnregisterRepo(payload.Id);
+		EmitWorkspaceState();
+	}
+
+	// Cancels an in-flight repository clone (window teardown). Guarded by _sync; a non-null value also
+	// single-flights the clone, so only one runs at a time — a repo open can take many seconds. Cancelled and
+	// nulled on Dispose (which lets the task's own finally dispose it), mirroring _chatCts / _signInCts.
+	private CancellationTokenSource? _cloneCts;
+
+	// A6 "Open a GitHub repository": clone it into the managed repos folder (AppPaths.Repos) and open that
+	// folder as the workspace. A repo already cloned is opened straight away (no network, no background task);
+	// an un-cloned one clones on a background task — it can take many seconds — single-flighted with a CTS
+	// cancelled on teardown, mirroring the chat slice. Inert when the cloner isn't wired (graceful, like the
+	// other optional dependencies). The GitHub access token, when signed in, is taken transiently
+	// (WithAccessTokenAsync) for the clone and is never stored or logged here.
+	private void OnOpenRepo(IpcMessage message)
+	{
+		RepoOpenPayload? payload = SafeGetPayload<RepoOpenPayload>(message);
+		if (payload is null)
+		{
+			return;
+		}
+
+		if (!TryParseGitHubRepo(payload.Url, out string owner, out string name))
+		{
+			SendError("That doesn't look like a GitHub repository.");
+			return;
+		}
+
+		if (_cloner is null)
+		{
+			// No cloner configured — nothing to open (graceful degradation, like a null _workspace / _auth).
+			return;
+		}
+
+		string cloneUrl = $"https://github.com/{owner}/{name}.git";
+		string repoId = $"{owner}/{name}";
+		// The clone's exact local folder: namespaced by BOTH owner and name, so two repos that share a name
+		// across different owners (acme/specs vs globex/specs) never collide on disk. The host owns this path
+		// and hands it to the cloner, so the "already cloned?" check and the clone target can't drift apart.
+		string localPath = Path.Combine(AppPaths.Repos, $"{owner}_{name}");
+
+		if (_cloner.IsCloned(localPath))
+		{
+			// Already cloned (a valid working tree, not just any leftover folder) — open it straight away
+			// (synchronous, no network). Register it too so a repo opened from an existing clone still lands in
+			// the picker.
+			RegisterOpenedRepo(owner, name);
+			OpenWorkspaceFolder(localPath);
+			return;
+		}
+
+		// Single-flight the clone (guarded by _sync), cancelled on dispose — mirrors the chat turn. Drop a
+		// second request while one is already in flight rather than running two concurrent clones.
+		CancellationTokenSource cts;
+		lock (_sync)
+		{
+			if (_cloneCts is not null)
+			{
+				_logger.LogDebug("Ignoring a repo open while a clone is already in flight");
+				return;
+			}
+
+			cts = new CancellationTokenSource();
+			_cloneCts = cts;
+		}
+
+		CancellationToken token = cts.Token;
+		IRepositoryCloner cloner = _cloner;
+		IGitHubAuth? auth = _auth;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				// A signed-in session clones with the access token so a private repo authenticates (the token
+				// is confined to WithAccessTokenAsync's scope); otherwise clone anonymously (public repos). The
+				// clone itself is synchronous, so it runs on its own Task.Run inside the token scope.
+				string localClone;
+				if (auth is not null && auth.IsSignedIn())
+				{
+					localClone = await auth.WithAccessTokenAsync(
+						(accessToken, innerCt) =>
+							Task.Run(() => cloner.CloneOrReuse(cloneUrl, localPath, accessToken, innerCt), innerCt),
+						token);
+				}
+				else
+				{
+					localClone = await Task.Run(() => cloner.CloneOrReuse(cloneUrl, localPath, null, token), token);
+				}
+
+				// Register + surface the freshly cloned repo, then open it as the workspace. Emit is
+				// thread-safe; OpenWorkspaceFolder's _workspaceRoot mutation takes _sync itself.
+				RegisterOpenedRepo(owner, name);
+				OpenWorkspaceFolder(localClone);
+				_logger.LogInformation("Opened repository {Repo} at {Path}", repoId, localClone);
+			}
+			catch (OperationCanceledException) when (token.IsCancellationRequested)
+			{
+				// The window is tearing down (or the open was cancelled) — stay quiet; the webview is gone.
+			}
+			catch (Exception ex) when (
+				ex is LibGit2SharpException or InvalidOperationException or IOException or UnauthorizedAccessException)
+			{
+				// The clone failed (a missing/private repo, an auth refusal, a network or disk fault) — one
+				// plain line, never a token or a stack trace. InvalidOperationException also covers
+				// ResolveCredentials refusing a non-GitHub host, and WithAccessTokenAsync when signed out.
+				_logger.LogError(ex, "Could not open the repository {Repo}", repoId);
+				SendError("Could not open that repository. Check the name and your connection, then try again.");
+			}
+			finally
+			{
+				lock (_sync)
+				{
+					if (ReferenceEquals(_cloneCts, cts))
+					{
+						_cloneCts = null;
+					}
+				}
+
+				cts.Dispose();
+			}
+		});
+	}
+
+	// Register the just-opened repo (de-duplicated by id in the store) and re-emit workspace.state, so opening
+	// a GitHub repo also keeps it in the Repositories picker. Same normalized shape as OnRegisterRepo.
+	private void RegisterOpenedRepo(string owner, string name)
+	{
+		string id = $"{owner}/{name}";
+		_workspace?.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}"));
 		EmitWorkspaceState();
 	}
 

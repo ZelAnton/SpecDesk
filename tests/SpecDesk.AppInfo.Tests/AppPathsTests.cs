@@ -55,6 +55,14 @@ public sealed class AppPathsTests
         Assert.That(AppPaths.Workspace, Is.EqualTo(expected));
     }
 
+    [Test]
+    public void Repos_IsRootSlashRepos()
+    {
+        string expected = Path.Combine(LocalAppData, "SpecDesk", "repos");
+
+        Assert.That(AppPaths.Repos, Is.EqualTo(expected));
+    }
+
     // SPECDESK_DATA_ROOT overrides the root (moving sample repo / auth / logs together); unset or
     // malformed must keep the byte-identical default that the pins above depend on.
     [Test]

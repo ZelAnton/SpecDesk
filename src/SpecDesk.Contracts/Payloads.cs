@@ -42,6 +42,7 @@ public static class MessageKinds
 	public const string WorkspaceFavorite = "workspace.favorite";
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
+	public const string RepoOpen = "repo.open";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -381,3 +382,9 @@ public sealed record RegisterRepoPayload(string Url);
 /// <summary>Payload of <c>repo.unregister</c> (webview→native): remove the registered repository whose
 /// <see cref="RegisteredRepo.Id"/> matches <paramref name="Id"/>.</summary>
 public sealed record UnregisterRepoPayload(string Id);
+
+/// <summary>Payload of <c>repo.open</c> (webview→native): open a GitHub repository named by <paramref
+/// name="Url"/> (an <c>owner/name</c> or a GitHub URL). The host clones it into a managed local folder — or
+/// reuses the clone if it is already there — and opens that folder as the workspace, emitting a <c>tree</c>;
+/// an unparseable value is reported as an <c>error</c>.</summary>
+public sealed record RepoOpenPayload(string Url);

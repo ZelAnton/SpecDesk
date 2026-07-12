@@ -158,7 +158,15 @@ public sealed partial class HostController
 			return;
 		}
 
-		string root = Path.GetFullPath(path);
+		OpenWorkspaceFolder(Path.GetFullPath(path));
+	}
+
+	// Make <paramref name="root"/> the left-rail file navigator's root: publish it under _sync, record it as a
+	// recent (emits workspace.state), and emit its tree. Shared by OnOpenFolder (a picked / registered folder)
+	// and OnOpenRepo (a freshly cloned repo) so both surface a workspace identically. Does NOT change the open
+	// document — the author can browse one folder while editing a document elsewhere.
+	private void OpenWorkspaceFolder(string root)
+	{
 		lock (_sync)
 		{
 			_workspaceRoot = root;

@@ -46,6 +46,7 @@ import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-fram
 import { browserDockStore } from "./workspace/dock-store.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
+import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { RepositoriesPanel } from "./workspace/tools/repositories-panel.js";
 import {
@@ -240,6 +241,16 @@ function wire(): void {
   const updateOutline = (text: string): void => outline?.setItems(parseOutline(text));
   // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
   let fileTree: FileTree | undefined;
+  // The Start screen handle, assigned in wireWorkspace; index.ts drives its "Opening…" busy state on a repo
+  // open and clears it on the next tree/error. Undefined before the workspace wires (or in reduced-DOM tests).
+  let home: HomeView | undefined;
+  // Reveals the Files navigator (opens the left dock + switches to it). Assigned once the workspace wires;
+  // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
+  // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
+  let revealWorkspaceFiles: () => void = () => {};
+  // Armed for a repo open (a slow clone) so the "Opening…" note clears on the resulting tree/error. A folder
+  // open reveals Files immediately and needs no note; a plain file open never arms this.
+  let pendingRepoOpen = false;
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -806,6 +817,11 @@ function wire(): void {
       if (payload) {
         // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
         showPlainStatus(payload.message);
+        // A repo open (clone) that failed — end the Start screen's "Opening…" note so the author can retry.
+        if (pendingRepoOpen) {
+          pendingRepoOpen = false;
+          home?.setRepoBusy(false);
+        }
       }
     });
   }
@@ -1035,6 +1051,25 @@ function wire(): void {
     if (!centralFrameEl || !editorViewEl) {
       return;
     }
+    // Initiating a workspace open reveals the Files navigator IMMEDIATELY (not on the next `tree`, which a
+    // plain doc.loaded could produce first) so the panel surfaces right away. A repo open also arms the
+    // "Opening…" note (a clone is slow), cleared on the resulting tree/error. A plain file open does neither.
+    const openFolder = (path?: string): void => {
+      revealWorkspaceFiles();
+      if (path === undefined) {
+        ipc.send(Kinds.folderOpen);
+      } else {
+        ipc.send(Kinds.folderOpen, { path });
+      }
+    };
+    const openRepo = (url: string): void => {
+      revealWorkspaceFiles();
+      // The Start form shows its own "Opening…" note on submit; arm the flag so it clears on the tree/error
+      // (a panel-initiated open shows no note — its feedback is the Files reveal above — and clearing is a
+      // no-op there).
+      pendingRepoOpen = true;
+      ipc.send(Kinds.repoOpen, { url });
+    };
     // The AI assistant chat (design §10.5), the real right-rail tool. It owns its DOM and streaming state;
     // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
     // feeds the streamed reply back in through appendDelta / endTurn (mirroring ReviewsPanel / SignIn).
@@ -1062,22 +1097,16 @@ function wire(): void {
     // document loaded — see the tree.request below).
     const files = new FileTree({
       onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
-      onOpenFolder: () => ipc.send(Kinds.folderOpen),
+      onOpenFolder: () => openFolder(),
     });
     fileTree = files;
-    ipc.on(Kinds.tree, (message) => {
-      const payload = parseTree(message.payload);
-      if (payload) {
-        files.setTree(payload);
-      }
-    });
 
     // Open a workspace item — a folder as the file navigator's root (`folder.open`), a file in the editor
     // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
     // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
     const openWorkspaceItem = (item: WorkspaceItem): void => {
       if (item.isFolder) {
-        ipc.send(Kinds.folderOpen, { path: item.path });
+        openFolder(item.path);
       } else {
         ipc.send(Kinds.docOpen, { path: item.path });
       }
@@ -1091,12 +1120,12 @@ function wire(): void {
     };
     const recent = recentPanel(listCallbacks);
     const favorites = favoritesPanel(listCallbacks);
-    // The Repositories panel: register from an owner/name or URL, remove by id, and (A5 has no cloning yet)
-    // open a repo's GitHub page in the browser.
+    // The Repositories panel: register from an owner/name or URL, remove by id, and open a repo — the host
+    // clones it into a managed folder and opens it as the workspace (A6). The primary click clones-and-opens.
     const repositories = new RepositoriesPanel({
       onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
-      onOpenRepo: (repo) => ipc.send(Kinds.linkOpen, { url: repo.url }),
+      onOpenRepo: (repo) => openRepo(repo.url),
     });
 
     const workspace = setupWorkspace(
@@ -1120,15 +1149,36 @@ function wire(): void {
           }
         },
         onOpenFile: () => ipc.send(Kinds.docOpen),
-        onOpenFolder: () => ipc.send(Kinds.folderOpen),
+        onOpenFolder: () => openFolder(),
         onOpenItem: openWorkspaceItem,
+        onOpenRepo: (url) => openRepo(url),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
       { assistant: assistantChat, files, recent, favorites, repositories },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;
-    const home = workspace.home;
+    home = workspace.home;
+    // Now that the docks exist, opening a folder/repo can surface the Files navigator immediately.
+    revealWorkspaceFiles = () => workspace.revealTool("left", "files");
+
+    // The host feeds the file navigator the workspace tree via unsolicited `tree` events (a folder was
+    // opened, a repo cloned, or a document loaded — see the tree.request in the doc.loaded handler). When the
+    // author just initiated a folder/repo open, ALSO surface the Files panel (open the left dock + switch to
+    // it) and end the "Opening…" state — so opening a folder/repo actually shows its tree.
+    ipc.on(Kinds.tree, (message) => {
+      const payload = parseTree(message.payload);
+      if (payload) {
+        files.setTree(payload);
+        // A repo clone finished (its tree arrived) — end the Start screen's "Opening…" note. The Files panel
+        // was already revealed when the open began, so nothing to reveal here (and a plain doc.loaded tree,
+        // which never arms pendingRepoOpen, correctly leaves the note untouched).
+        if (pendingRepoOpen) {
+          pendingRepoOpen = false;
+          home?.setRepoBusy(false);
+        }
+      }
+    });
 
     // The persisted workspace store: one unsolicited event feeds all three left-rail panels and the Start
     // screen's recent list. Emitted on `workspace.request` (below) and after every mutation

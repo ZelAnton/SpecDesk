@@ -5,11 +5,15 @@ import { buildHomeView } from "../../src/workspace/tools/home-view.js";
 
 function ready() {
   const host = document.createElement("div");
+  // Connect to the document so a submit button inside the open-repo form actually fires the form's submit
+  // event (jsdom only dispatches submit for a form attached to the document).
+  document.body.appendChild(host);
   const onOpenFile = vi.fn();
   const onOpenFolder = vi.fn();
   const onOpenItem = vi.fn<(item: WorkspaceItem) => void>();
-  const home = buildHomeView(host, { onOpenFile, onOpenFolder, onOpenItem });
-  return { host, home, onOpenFile, onOpenFolder, onOpenItem };
+  const onOpenRepo = vi.fn<(url: string) => void>();
+  const home = buildHomeView(host, { onOpenFile, onOpenFolder, onOpenItem, onOpenRepo });
+  return { host, home, onOpenFile, onOpenFolder, onOpenItem, onOpenRepo };
 }
 
 describe("buildHomeView", () => {
@@ -46,6 +50,62 @@ describe("buildHomeView", () => {
 
     rows[1]?.click();
     expect(onOpenItem).toHaveBeenCalledWith(file);
+  });
+
+  it("opens a GitHub repo from the form, trimming the input, and shows an inline 'Opening…' note", () => {
+    const { host, onOpenRepo } = ready();
+    const input = host.querySelector<HTMLInputElement>(".home-open-repo-input");
+    const button = host.querySelector<HTMLButtonElement>(".home-open-repo-btn");
+    const note = host.querySelector<HTMLElement>(".home-open-repo-note");
+    if (!input || !button || !note) {
+      throw new Error("the Start screen did not render its open-repo control");
+    }
+
+    // Idle: the button is enabled and the "Opening…" note is hidden.
+    expect(button.disabled).toBe(false);
+    expect(note.hidden).toBe(true);
+
+    input.value = "  acme/specs  ";
+    button.click(); // a submit button inside the form fires its submit handler
+    expect(onOpenRepo).toHaveBeenCalledWith("acme/specs"); // trimmed
+
+    // Submitting shows the "Opening…" note for immediate feedback — WITHOUT disabling the controls (that
+    // would drop keyboard focus); the note is a polite live region.
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe("Opening…");
+    expect(note.getAttribute("role")).toBe("status");
+    expect(button.disabled).toBe(false);
+    expect(input.disabled).toBe(false);
+  });
+
+  it("ignores a blank open-repo submit", () => {
+    const { host, onOpenRepo } = ready();
+    const input = host.querySelector<HTMLInputElement>(".home-open-repo-input");
+    const button = host.querySelector<HTMLButtonElement>(".home-open-repo-btn");
+    if (!input || !button) {
+      throw new Error("the Start screen did not render its open-repo control");
+    }
+    input.value = "   ";
+    button.click();
+    expect(onOpenRepo).not.toHaveBeenCalled();
+  });
+
+  it("setRepoBusy toggles the open-repo control's busy state", () => {
+    const { host, home } = ready();
+    const button = host.querySelector<HTMLButtonElement>(".home-open-repo-btn");
+    const note = host.querySelector<HTMLElement>(".home-open-repo-note");
+    if (!button || !note) {
+      throw new Error("the Start screen did not render its open-repo control");
+    }
+
+    home.setRepoBusy(true);
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe("Opening…");
+    expect(button.disabled).toBe(false); // controls stay enabled (no focus drop)
+
+    home.setRepoBusy(false);
+    expect(note.hidden).toBe(true);
+    expect(note.textContent).toBe(""); // an empty status node announces nothing
   });
 
   it("caps the list to a few items and restores the hint when empty", () => {

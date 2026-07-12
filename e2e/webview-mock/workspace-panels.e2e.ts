@@ -43,21 +43,24 @@ test("requests the workspace store on startup and populates the Recent panel", a
   const recent = page.locator('#left-dock [data-tool="recent"]');
   await expect(recent.locator(".workspace-open")).toHaveText(["repo", "intro.md"]);
 
-  // A file row opens the document; a folder row opens the folder.
+  // A file row opens the document (a plain file open does not reveal Files, so the Recent panel stays up).
   await recent.locator(".workspace-open", { hasText: "intro.md" }).click();
   expect((await sentFrames(page)).find((f) => f.kind === "doc.open")?.payload).toMatchObject({
     path: "C:\\specs\\repo\\intro.md",
   });
-  await recent.locator(".workspace-open", { hasText: "repo" }).click();
-  expect((await sentFrames(page)).find((f) => f.kind === "folder.open")?.payload).toMatchObject({
-    path: "C:\\specs\\repo",
-  });
 
-  // The `repo` folder is not a favorite yet — its star adds it.
+  // The `repo` folder is not a favorite yet — its star adds it (done before the folder open below, which
+  // reveals the Files navigator and switches the left dock away from Recent).
   await recent.locator(".workspace-list-row", { hasText: "repo" }).locator(".workspace-star").click();
   expect((await sentFrames(page)).find((f) => f.kind === "workspace.favorite")?.payload).toMatchObject({
     path: "C:\\specs\\repo",
     favorite: true,
+  });
+
+  // A folder row opens the folder (and reveals Files).
+  await recent.locator(".workspace-open", { hasText: "repo" }).click();
+  expect((await sentFrames(page)).find((f) => f.kind === "folder.open")?.payload).toMatchObject({
+    path: "C:\\specs\\repo",
   });
 });
 
@@ -84,16 +87,17 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   const repos = page.locator('#left-dock [data-tool="repositories"]');
   await expect(repos.locator(".repo-open")).toHaveText(["acme/specs"]);
 
-  // A5 has no cloning: clicking a repo opens its GitHub page in the browser.
-  await repos.locator(".repo-open").click();
-  expect((await sentFrames(page)).find((f) => f.kind === "link.open")?.payload).toMatchObject({
-    url: "https://github.com/acme/specs",
-  });
-
-  // The register form sends `repo.register` with the typed value.
+  // The register form sends `repo.register` with the typed value (done first: opening a repo below reveals
+  // the Files navigator and switches the left dock away from Repositories).
   await repos.locator(".repo-register-input").fill("owner/name");
   await repos.locator(".repo-register-add").click();
   expect((await sentFrames(page)).find((f) => f.kind === "repo.register")?.payload).toMatchObject({
     url: "owner/name",
+  });
+
+  // A6: clicking a repo clones it into a managed folder and opens it — sends `repo.open`.
+  await repos.locator(".repo-open").click();
+  expect((await sentFrames(page)).find((f) => f.kind === "repo.open")?.payload).toMatchObject({
+    url: "https://github.com/acme/specs",
   });
 });

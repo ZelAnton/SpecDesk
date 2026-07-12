@@ -51,6 +51,10 @@ public static class AppPaths
 	/// <summary>The writable, git-versioned sample repo seeded on first run.</summary>
 	public static string SampleRepo { get; } = Path.Combine(Root, "sample-repo");
 
+	/// <summary>The directory cloned GitHub repositories are copied into: opening a repo that isn't yet
+	/// local clones it under here (one subfolder per repo) and opens that folder as the workspace.</summary>
+	public static string Repos { get; } = Path.Combine(Root, "repos");
+
 	/// <summary>The GitHub device-flow auth directory: the DPAPI-encrypted token file lives here.</summary>
 	public static string Auth { get; } = Path.Combine(Root, "auth");
 

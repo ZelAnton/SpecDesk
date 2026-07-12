@@ -37,6 +37,7 @@ export const Kinds = {
   workspaceFavorite: "workspace.favorite",
   repoRegister: "repo.register",
   repoUnregister: "repo.unregister",
+  repoOpen: "repo.open",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -471,4 +472,11 @@ export interface RegisterRepoPayload {
 /** Payload of `repo.unregister` (webview→native): remove the registered repository whose id matches `id`. */
 export interface UnregisterRepoPayload {
   id: string;
+}
+
+/** Payload of `repo.open` (webview→native): open a GitHub repository named by `url` (an `owner/name` or a
+ *  GitHub URL). The host clones it into a managed local folder (or reuses an existing clone) and opens that
+ *  folder as the workspace, sending a `tree`; an unparseable value comes back as an `error`. */
+export interface RepoOpenPayload {
+  url: string;
 }

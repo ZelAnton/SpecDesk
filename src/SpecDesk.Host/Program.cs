@@ -110,8 +110,10 @@ internal static class Program
 			chatAgent: chatAgent,
 			templates: templateLibrary,
 			// A4: the persisted workspace store (recents / favorites / registered repos), a host-owned JSON
-			// sidecar under the app data root. No GitHub cloning yet — registered repos are stored entries.
-			workspace: new WorkspaceStore(AppPaths.Workspace));
+			// sidecar under the app data root.
+			workspace: new WorkspaceStore(AppPaths.Workspace),
+			// A6: clones a GitHub repo (repo.open) into AppPaths.Repos and opens it as the workspace.
+			cloner: new LibGit2RepositoryCloner());
 
 		// Devtools + right-click context menu, opt-in via SPECDESK_DEVTOOLS for interactive human+agent
 		// debugging. Accepts 1/true/yes/on (case-insensitive); off by default and for 0/false/empty. A

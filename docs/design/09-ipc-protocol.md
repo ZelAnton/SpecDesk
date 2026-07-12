@@ -58,6 +58,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `workspace.favorite` | `{ path, favorite }` | add (`favorite` true) or remove (false) a file/folder from favorites; host re-emits `workspace.state` |
 | `repo.register` | `{ url }` | register a GitHub repo from a URL/spec (`https://github.com/owner/name(.git)`, `owner/name`, or `git@github.com:owner/name(.git)`); the host parses/normalizes it and re-emits `workspace.state`, or emits `error` if it isn't a repo. A4 stores the entry only — no clone yet |
 | `repo.unregister` | `{ id }` | remove a registered repo by its `owner/name` id; host re-emits `workspace.state` |
+| `repo.open` | `{ url }` | open a GitHub repo (`owner/name` or a GitHub URL): clone it into a managed local folder under the app data root (or reuse an existing clone) and open that folder as the workspace — a `tree` follows; an unparseable value comes back as `error`. Registers the repo too (re-emits `workspace.state`) |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
 | `trace.dump` | `{ t0Epoch, firstSeq, entries: [{ seq, t, cat, event, data? }] }` | dump the always-on diagnostic trace ring; the host persists it as a JSON file beside the log and appends its tail (wall-clock-stamped) to the `log.export` that follows. Sent just before `log.export` when the author exports the log |
 

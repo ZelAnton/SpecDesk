@@ -82,6 +82,10 @@ public sealed partial class HostController : IDisposable
 	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
 	// _auth / _chatAgent. See HostController.Workspace.cs.
 	private readonly WorkspaceStore? _workspace;
+	// A6: clones a GitHub repo into a managed local folder so it can be opened as a workspace (repo.open).
+	// Optional — null leaves OnOpenRepo inert (nothing to clone), the same graceful-degradation pattern as the
+	// other injected dependencies. See HostController.Workspace.cs.
+	private readonly IRepositoryCloner? _cloner;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
@@ -214,7 +218,8 @@ public sealed partial class HostController : IDisposable
 		IGitHubReview? review = null,
 		IChatAgent? chatAgent = null,
 		ITemplateLibrary? templates = null,
-		WorkspaceStore? workspace = null)
+		WorkspaceStore? workspace = null,
+		IRepositoryCloner? cloner = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -233,6 +238,7 @@ public sealed partial class HostController : IDisposable
 		_chatAgent = chatAgent;
 		_templates = templates;
 		_workspace = workspace;
+		_cloner = cloner;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -258,6 +264,9 @@ public sealed partial class HostController : IDisposable
 			// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
 			_chatCts?.Cancel();
 			_chatCts = null;
+			// And for an in-flight repository clone (A6) — cancel it, let its task dispose the cts.
+			_cloneCts?.Cancel();
+			_cloneCts = null;
 		}
 	}
 
@@ -398,6 +407,9 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.RepoUnregister:
 				OnUnregisterRepo(message);
+				break;
+			case MessageKinds.RepoOpen:
+				OnOpenRepo(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);

@@ -2,13 +2,13 @@
  * The left-rail Repositories panel (design concept §9): the GitHub repositories the author registered, so
  * they're at hand. A small form at the top registers a new one from an `owner/name` or a GitHub URL — the
  * host validates and stores it, or emits an `error` the app already surfaces; each listed repo can be
- * opened on GitHub or removed.
+ * opened or removed.
  *
- * A5 stores and opens only — there is no cloning yet, so clicking a repo opens its GitHub page in the OS
- * browser (via {@link RepositoriesCallbacks.onOpenRepo}); cloning a registered repository and opening it as
- * a workspace arrives in a later stage. Like FileTree, this keeps NO IPC/Kinds knowledge — the integrator
- * (index.ts) passes plain callbacks, so the panel is unit-testable without a host bridge. The author never
- * sees git vocabulary: it's "Repositories", "Add", and "Remove", not clone/branch/remote.
+ * A6: clicking a repo opens it as the workspace — the host clones it into a managed folder (if not already
+ * local) and opens that folder (via {@link RepositoriesCallbacks.onOpenRepo}). Like FileTree, this keeps NO
+ * IPC/Kinds knowledge — the integrator (index.ts) passes plain callbacks, so the panel is unit-testable
+ * without a host bridge. The author never sees git vocabulary: it's "Repositories", "Add", "Open", and
+ * "Remove", not clone/branch/remote.
  */
 
 import type { RegisteredRepo, WorkspaceStatePayload } from "../../wire/protocol.js";
@@ -20,7 +20,7 @@ export interface RepositoriesCallbacks {
   onRegister(url: string): void;
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
-  /** Open the repository's GitHub page in the OS browser (A5 has no cloning yet). */
+  /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
   onOpenRepo(repo: RegisteredRepo): void;
 }
 
@@ -120,8 +120,8 @@ export class RepositoriesPanel implements PanelTool {
     const li = document.createElement("li");
     li.className = "repo-row";
 
-    // A5 has no cloning yet, so opening a repo just opens its GitHub page in the browser; cloning it and
-    // opening it as a workspace arrives in a later stage.
+    // Clicking a repo opens it as the workspace — the host clones it into a managed folder (if it isn't
+    // already local) and opens that folder.
     const open = document.createElement("button");
     open.type = "button";
     open.className = "repo-open";

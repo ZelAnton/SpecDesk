@@ -52,6 +52,8 @@ export interface WorkspaceCallbacks {
   onOpenFolder(): void;
   /** Open a recent item from the Start screen (a folder → `folder.open`, a file → `doc.open`). */
   onOpenItem(item: WorkspaceItem): void;
+  /** Open a GitHub repository from the Start screen (`repo.open`); the host clones it and opens it. */
+  onOpenRepo(url: string): void;
   /** Scroll the editor to a 0-based source line (an outline heading was clicked). */
   onOutlineNavigate(line: number): void;
 }
@@ -63,6 +65,9 @@ export interface WorkspaceHandle {
   readonly outline: Outline;
   /** The Start view, when its element was present — index.ts feeds it recents from `workspace.state`. */
   readonly home?: HomeView;
+  /** Reveal a dock tool programmatically: open the dock on `edge` and switch it to `toolId` (a no-op if that
+   *  dock or tool is absent). Lets index.ts surface a panel — e.g. the Files navigator when a workspace opens. */
+  readonly revealTool: (edge: DockEdge, toolId: string) => void;
 }
 
 /** The real dock tools index.ts builds (they need IPC/host wiring, which stays out of the workspace).
@@ -114,6 +119,7 @@ export function setupWorkspace(
       onOpenFile: () => callbacks.onOpenFile(),
       onOpenFolder: () => callbacks.onOpenFolder(),
       onOpenItem: (item) => callbacks.onOpenItem(item),
+      onOpenRepo: (url) => callbacks.onOpenRepo(url),
     });
     centralFrame.register({ id: CENTRAL_VIEW_HOME, el: elements.homeView });
   }
@@ -216,7 +222,21 @@ export function setupWorkspace(
     observer.observe(elements.centralFrame);
   }
 
+  // Reveal a dock tool: open its dock and switch to the tool (both no-ops if absent). index.ts uses this to
+  // surface the Files navigator when a workspace (folder or repo) opens — also fixing the case where opening
+  // a folder gave no visible feedback because the left dock was collapsed.
+  const revealTool = (edge: DockEdge, toolId: string): void => {
+    const dock = docks.get(edge);
+    if (dock === undefined) {
+      return;
+    }
+    dock.setOpen(true);
+    dock.setMode(toolId);
+  };
+
   // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it
   // an explicit undefined).
-  return home !== undefined ? { centralFrame, outline, home } : { centralFrame, outline };
+  return home !== undefined
+    ? { centralFrame, outline, home, revealTool }
+    : { centralFrame, outline, revealTool };
 }

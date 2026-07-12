@@ -8,15 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub
+  repo") or by clicking one in the Repositories list. SpecDesk copies it into a local folder and opens it as
+  your workspace. Opening a folder or a repository now also reveals the file navigator (and opens the left
+  panel if it was collapsed), so you immediately see what you opened.
 - The left panel now has **Recent**, **Favorites**, and **Repositories** views. Recent and Favorites list the
   files and folders you opened or starred — click one to open it, and use the star to add or remove a
   favorite. Repositories lists the GitHub repositories you registered: add one by `owner/name` or URL, open
-  its page, or remove it (cloning a registered repository and opening it as a workspace arrives next). The
-  Start screen also lists your most recent items as quick shortcuts.
+  it, or remove it. The Start screen also lists your most recent items as quick shortcuts.
 - The app now remembers the files and folders you recently opened, lets you keep the ones you use most as
   favorites, and lets you register the GitHub repositories you work with often — so they're at hand next time.
-  Your recents, favorites, and registered repositories are saved between runs. (The picker UI that surfaces
-  them, and cloning a registered repository, arrive next.)
+  Your recents, favorites, and registered repositories are saved between runs.
 - An AI assistant chat in the right panel: type a question about the document and the reply streams in as
   it's written. Assistant replies are shown as quiet text; your own messages sit in a subtle bubble. A
   prompt-template picker (▤) inserts a ready-made prompt into the message box — from your personal library
