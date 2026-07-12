@@ -23,7 +23,7 @@ test.beforeEach(async ({ context }) => {
 
 /** Open the left dock (collapsed by default) and switch it to the tool named by its rail button. */
 async function openPanel(page: import("@playwright/test").Page, label: string): Promise<void> {
-  const dockOpen = await page.locator("#left-dock").evaluate((el) => !el.hidden);
+  const dockOpen = await page.locator("#left-dock").evaluate((el) => !(el as HTMLElement).hidden);
   if (!dockOpen) {
     await page.locator("#toggle-left-dock").click();
   }
