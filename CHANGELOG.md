@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The right panel now includes Versions, Comments, and Change history for the selected document. Versions
+  and history come from the document's saved repository history; Comments lists the selected file's inline
+  GitHub review comments when connected and shows an honest empty state otherwise.
 - The assistant now has an Attach menu for the open file, current folder, and registered repositories;
   selected context appears as removable chips and is sent with the next message.
 - The assistant message box is now visibly multi-line: Enter writes a new line, Ctrl+Enter (or Cmd+Enter)

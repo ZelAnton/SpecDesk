@@ -36,6 +36,7 @@ public static class MessageKinds
 	public const string GitHubSignOut = "github.signOut";
 	public const string ChatSend = "chat.send";
 	public const string ChatAttachmentPick = "chat.attachment.pick";
+	public const string DocumentActivityRequest = "document.activity.request";
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
@@ -61,6 +62,7 @@ public static class MessageKinds
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
 	public const string ChatAttachmentPicked = "chat.attachment.picked";
+	public const string DocumentActivity = "document.activity";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
@@ -334,6 +336,28 @@ public sealed record ChatAttachmentPayload(string Kind, string Label, string Ref
 
 /// <summary>Payload of <c>chat.attachment.pick</c>: the native picker category, file or folder.</summary>
 public sealed record ChatAttachmentPickPayload(string Kind);
+
+/// <summary>One saved version shown for the selected document.</summary>
+public sealed record DocumentVersionPayload(string Id, string Note, string Author, DateTimeOffset When);
+
+/// <summary>One comment thread summary. The list is empty until comment sync is available for the document.</summary>
+public sealed record DocumentCommentPayload(
+	string Id, string Author, string Body, DateTimeOffset When);
+
+/// <summary>One actual change-history event derived from a saved document version.</summary>
+public sealed record DocumentChangePayload(
+	string Id, string Label, string Note, string Author, DateTimeOffset When);
+
+/// <summary>Versions, comments, and change history for the currently selected document.</summary>
+public sealed record DocumentActivityPayload(
+	string? Document,
+	IReadOnlyList<DocumentVersionPayload> Versions,
+	string HistoryState,
+	string? HistoryMessage,
+	IReadOnlyList<DocumentCommentPayload> Comments,
+	string CommentsState,
+	string? CommentsMessage,
+	IReadOnlyList<DocumentChangePayload> History);
 
 /// <summary>Payload of <c>chat.delta</c> (native→webview): one streamed chunk of the assistant's reply.
 /// Chunks arrive in order and are appended to the in-progress assistant message until <c>chat.done</c>.

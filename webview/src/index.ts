@@ -28,6 +28,7 @@ import {
   parseChatDone,
   parseDiffResult,
   parseDocLoaded,
+  parseDocumentActivity,
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
@@ -42,10 +43,16 @@ import {
   parseWorkspaceState,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
-import { isReviewState, Kinds, type WorkspaceItem } from "./wire/protocol.js";
+import {
+  type DocumentActivityPayload,
+  isReviewState,
+  Kinds,
+  type WorkspaceItem,
+} from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
+import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
@@ -243,6 +250,8 @@ function wire(): void {
   // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
   let fileTree: FileTree | undefined;
   let assistantChat: AssistantChat | undefined;
+  let activityPanels: DocumentActivityPanel[] = [];
+  let invalidateActivityRequests = (): void => {};
   // The Start screen handle, assigned in wireWorkspace; index.ts drives its "Opening…" busy state on a repo
   // open and clears it on the next tree/error. Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
@@ -703,6 +712,8 @@ function wire(): void {
         // loaded document's own folder. A `tree` event comes back and feeds the navigator (its collapse state
         // is preserved across the re-render, and the highlight lands when the tree containing it arrives).
         fileTree?.setActiveFile(payload.path);
+        invalidateActivityRequests();
+        for (const panel of activityPanels) void panel.refresh();
         ipc.send(Kinds.treeRequest);
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
@@ -805,6 +816,10 @@ function wire(): void {
       lifecycleChrome.setLifecycle(payload.state);
       if (editing) {
         formatToolbar.refresh();
+      }
+      if (payload.label === "Version saved") {
+        invalidateActivityRequests();
+        for (const panel of activityPanels) void panel.refresh();
       }
       if (!editing) {
         // Leaving editing (e.g. Discard) — close the draft-only prompts (version note, send-for-review) so a
@@ -1084,6 +1099,30 @@ function wire(): void {
         requestSuggestion(Kinds.chatAttachmentPick, parseChatAttachment, null, { kind }),
     });
     assistantChat = chat;
+    let pendingActivity: Promise<DocumentActivityPayload> | null = null;
+    invalidateActivityRequests = () => {
+      pendingActivity = null;
+    };
+    const requestActivity = (): Promise<DocumentActivityPayload> => {
+      if (pendingActivity) return pendingActivity;
+      const request = requestSuggestion(Kinds.documentActivityRequest, parseDocumentActivity, {
+        versions: [],
+        historyState: "unavailable",
+        historyMessage: "Could not load saved history. Try again.",
+        comments: [],
+        commentsState: "unavailable",
+        commentsMessage: "Could not load comments. Try again.",
+        history: [],
+      }).finally(() => {
+        if (pendingActivity === request) pendingActivity = null;
+      });
+      pendingActivity = request;
+      return request;
+    };
+    const versions = new DocumentActivityPanel("versions", "Versions", requestActivity);
+    const comments = new DocumentActivityPanel("comments", "Comments", requestActivity);
+    const history = new DocumentActivityPanel("history", "Change history", requestActivity);
+    activityPanels = [versions, comments, history];
     // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
     // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
     ipc.on(Kinds.chatDelta, (message) => {
@@ -1160,7 +1199,7 @@ function wire(): void {
         onOpenRepo: (url) => openRepo(url),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: chat, files, recent, favorites, repositories },
+      { assistant: chat, versions, comments, history, files, recent, favorites, repositories },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;

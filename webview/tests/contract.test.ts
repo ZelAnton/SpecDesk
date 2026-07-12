@@ -15,6 +15,7 @@ import {
   parseChatDone,
   parseDiffResult,
   parseDocLoaded,
+  parseDocumentActivity,
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
@@ -170,6 +171,17 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       kind: "file",
       label: "billing.md",
       reference: "C:\\specs\\billing.md",
+    });
+  });
+
+  it("document.activity", () => {
+    const payload = parseDocumentActivity(fixture["document.activity"]);
+    expect(payload?.document).toBe("billing.md");
+    expect(payload?.versions[0]?.note).toBe("Clarify refunds");
+    expect(payload?.comments).toEqual([]);
+    expect(payload?.history[0]).toMatchObject({
+      label: "Document updated",
+      note: "Clarify refunds",
     });
   });
 

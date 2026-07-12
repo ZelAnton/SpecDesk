@@ -8,6 +8,7 @@ The assistant's right-panel composer supports multi-line prompts: press Enter fo
 Ctrl+Enter (Cmd+Enter on macOS) to send.
 Use **Attach** beside the composer to include the open file, current folder, or a registered repository
 as context for the next message; attachments can be removed before sending.
+The right panel also exposes the selected document's saved versions, comments, and change history.
 
 > **Working title.** `SpecDesk` is a placeholder name; rename before any registry/namespace work.
 

@@ -75,6 +75,9 @@ export interface WorkspaceHandle {
 export interface WorkspaceTools {
   /** The right rail's AI assistant chat (replaces the "assistant" placeholder). */
   readonly assistant?: PanelTool;
+  readonly versions?: PanelTool;
+  readonly comments?: PanelTool;
+  readonly history?: PanelTool;
   /** The left rail's workspace file navigator (the folder tree). Absent → a placeholder in a reduced DOM. */
   readonly files?: PanelTool;
   /** The left rail's Recent panel (recently-opened files/folders). Absent → a placeholder. */
@@ -173,7 +176,27 @@ export function setupWorkspace(
           icon("assistant"),
           "Tools that act on the active document will appear here, starting with an AI assistant.",
         ),
-      placeholderTool("tools", "Tools", icon("tools"), "More document tools will appear here."),
+      tools.versions ??
+        placeholderTool(
+          "versions",
+          "Versions",
+          icon("versions"),
+          "Saved versions will appear here.",
+        ),
+      tools.comments ??
+        placeholderTool(
+          "comments",
+          "Comments",
+          icon("comment"),
+          "Document comments will appear here.",
+        ),
+      tools.history ??
+        placeholderTool(
+          "history",
+          "Change history",
+          icon("history"),
+          "Saved changes will appear here.",
+        ),
     ],
     bottom: [
       placeholderTool(

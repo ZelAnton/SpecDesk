@@ -38,6 +38,43 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         return repo.Head.Tip.Tree[repoRelativePath]?.Target is Blob blob ? blob.GetContentText() : null;
     }
 
+    public IReadOnlyList<DocumentVersion> GetDocumentVersions(
+        string repoRoot,
+        string repoRelativePath,
+        int maxCount = 50,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(repoRelativePath);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxCount);
+        using Repository repo = new(repoRoot);
+        List<DocumentVersion> versions = [];
+        Commit? commit = repo.Head.Tip;
+        for (int inspected = 0; commit is not null && inspected < 2_000; inspected++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Blob? current = commit.Tree[repoRelativePath]?.Target as Blob;
+            Blob? previous = commit.Parents.FirstOrDefault()?.Tree[repoRelativePath]?.Target as Blob;
+            if (current is null || current.Id == previous?.Id)
+            {
+                commit = commit.Parents.FirstOrDefault();
+                continue;
+            }
+            versions.Add(new DocumentVersion(
+                commit.Sha,
+                commit.MessageShort,
+                commit.Author.Name,
+                commit.Author.When,
+                previous is null ? "Document added" : "Document updated"));
+            if (versions.Count == maxCount)
+            {
+                break;
+            }
+            commit = commit.Parents.FirstOrDefault();
+        }
+        return versions;
+    }
+
     public void Initialize(string repoRoot, string commitMessage)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);

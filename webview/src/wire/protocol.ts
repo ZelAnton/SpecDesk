@@ -31,6 +31,7 @@ export const Kinds = {
   githubSignOut: "github.signOut",
   chatSend: "chat.send",
   chatAttachmentPick: "chat.attachment.pick",
+  documentActivityRequest: "document.activity.request",
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
   treeRequest: "tree.request",
@@ -55,6 +56,7 @@ export const Kinds = {
   chatDelta: "chat.delta",
   chatDone: "chat.done",
   chatAttachmentPicked: "chat.attachment.picked",
+  documentActivity: "document.activity",
   templates: "templates",
   tree: "tree",
   workspaceState: "workspace.state",
@@ -373,6 +375,39 @@ export interface ChatAttachment {
   kind: "file" | "folder" | "repository";
   label: string;
   reference: string;
+}
+
+export interface DocumentVersion {
+  id: string;
+  note: string;
+  author: string;
+  when: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  author: string;
+  body: string;
+  when: string;
+}
+
+export interface DocumentChange {
+  id: string;
+  label: string;
+  note: string;
+  author: string;
+  when: string;
+}
+
+export interface DocumentActivityPayload {
+  document?: string;
+  versions: DocumentVersion[];
+  historyState: "loaded" | "notVersioned" | "unavailable";
+  historyMessage?: string;
+  comments: DocumentComment[];
+  commentsState: "loaded" | "notConnected" | "unavailable";
+  commentsMessage?: string;
+  history: DocumentChange[];
 }
 
 /** Payload of `chat.delta` (native→webview): one streamed chunk of the assistant's reply, appended to

@@ -6,6 +6,7 @@ namespace SpecDesk.Git.Tests;
 [TestFixture]
 public sealed class LibGit2DocumentVersioningTests
 {
+    private static readonly string[] ExpectedDocumentVersionNotes = ["Clarify spec", "Seed"];
     private string _repo = string.Empty;
     private string _doc = string.Empty;
     private LibGit2DocumentVersioning _versioning = null!;
@@ -235,6 +236,26 @@ public sealed class LibGit2DocumentVersioningTests
         _versioning.Initialize(_repo, "Seed");
 
         Assert.That(_versioning.ReadHeadContent(_repo, "spec.md"), Is.EqualTo("# Version one"));
+    }
+
+    [Test]
+    public void GetDocumentVersions_ReturnsOnlySelectedDocumentHistoryNewestFirst()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        _versioning.BeginEdit(_repo, "spec/x", "main");
+        File.WriteAllText(_doc, "# Version two");
+        _versioning.SaveVersion(_repo, "Clarify spec");
+        File.WriteAllText(Path.Combine(_repo, "other.md"), "Other");
+        _versioning.SaveVersion(_repo, "Add unrelated file");
+
+        IReadOnlyList<DocumentVersion> versions = _versioning.GetDocumentVersions(_repo, "spec.md");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(versions.Select(item => item.Note), Is.EqualTo(ExpectedDocumentVersionNotes));
+            Assert.That(versions[0].Summary, Is.EqualTo("Document updated"));
+            Assert.That(versions[1].Summary, Is.EqualTo("Document added"));
+        });
     }
 
     [Test]

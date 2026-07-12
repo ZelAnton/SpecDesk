@@ -16,6 +16,8 @@
   "doc.saveVersion",
   "doc.sendForReview",
   "doc.updateReview",
+  "document.activity",
+  "document.activity.request",
   "editor.changed",
   "error",
   "folder.open",

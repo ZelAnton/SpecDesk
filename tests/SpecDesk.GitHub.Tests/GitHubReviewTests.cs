@@ -7,6 +7,70 @@ namespace SpecDesk.GitHub.Tests;
 [TestFixture]
 public sealed class GitHubReviewTests
 {
+	private sealed class OversizedCommentsHandler : HttpMessageHandler
+	{
+		protected override Task<HttpResponseMessage> SendAsync(
+			HttpRequestMessage request, CancellationToken cancellationToken) =>
+			Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+			{
+				Content = new UnknownLengthContent(1_048_577),
+			});
+	}
+
+	private sealed class UnknownLengthContent(int bytes) : HttpContent
+	{
+		protected override bool TryComputeLength(out long length)
+		{
+			length = 0;
+			return false;
+		}
+
+		protected override async Task SerializeToStreamAsync(
+			Stream stream, TransportContext? context)
+		{
+			byte[] buffer = new byte[8_192];
+			int remaining = bytes;
+			while (remaining > 0)
+			{
+				int count = Math.Min(buffer.Length, remaining);
+				await stream.WriteAsync(buffer.AsMemory(0, count));
+				remaining -= count;
+			}
+		}
+	}
+
+	[Test]
+	public void ListReviewCommentsAsync_RejectsUnknownLengthResponseOverTheByteCap()
+	{
+		using HttpClient http = new(new OversizedCommentsHandler());
+		GitHubReviewClient client = new(http);
+		Assert.ThrowsAsync<InvalidDataException>(async () =>
+			await client.ListReviewCommentsAsync("token", "owner", "repo", 42));
+	}
+
+	[Test]
+	public async Task ListReviewCommentsAsync_RequestsNewestBoundedPageAndTruncatesBodies()
+	{
+		string body = "[{\"id\":123,\"path\":\"specs/billing.md\",\"body\":\""
+			+ new string('x', 4_100)
+			+ "\",\"created_at\":\"2026-07-13T00:00:00Z\",\"user\":{\"login\":\"octo\"}}]";
+		StubHttpMessageHandler handler = new(HttpStatusCode.OK, body);
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		IReadOnlyList<ReviewComment> comments = await client.ListReviewCommentsAsync(
+			"token", "owner", "repo", 42);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(handler.LastRequest?.RequestUri?.Query,
+				Is.EqualTo("?per_page=100&sort=created&direction=desc"));
+			Assert.That(comments, Has.Count.EqualTo(1));
+			Assert.That(comments[0].Path, Is.EqualTo("specs/billing.md"));
+			Assert.That(comments[0].Body, Has.Length.EqualTo(4_001));
+			Assert.That(comments[0].Body, Does.EndWith("…"));
+		});
+	}
     private static async Task<PullRequest> Open(StubHttpMessageHandler handler)
     {
         using HttpClient http = new(handler);

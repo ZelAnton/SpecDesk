@@ -6,6 +6,10 @@ namespace SpecDesk.Git;
 /// <param name="When">When the attempt completed.</param>
 public sealed record CommitResult(bool Committed, string? Sha, DateTimeOffset When);
 
+/// <summary>One saved version of a selected document, newest first.</summary>
+public sealed record DocumentVersion(
+    string Id, string Note, string Author, DateTimeOffset When, string Summary = "Document updated");
+
 /// <summary>The branches involved in a started edit.</summary>
 /// <param name="Branch">The checked-out working branch.</param>
 /// <param name="BaseBranch">The published branch it was forked from (and returns to on discard).</param>
@@ -42,6 +46,13 @@ public interface IDocumentVersioning
     /// is the file path relative to <paramref name="repoRoot"/> (forward slashes). Returns <c>null</c>
     /// when the repository has no commits yet, or the file is not tracked at HEAD.</summary>
     string? ReadHeadContent(string repoRoot, string repoRelativePath);
+
+    /// <summary>Return the commits that changed the selected document, newest first and bounded.</summary>
+    IReadOnlyList<DocumentVersion> GetDocumentVersions(
+        string repoRoot,
+        string repoRelativePath,
+        int maxCount = 50,
+        CancellationToken cancellationToken = default);
 
     /// <summary>Initialize a new repository at <paramref name="repoRoot"/> (default branch
     /// <c>main</c>) and make an initial commit of everything already present.</summary>

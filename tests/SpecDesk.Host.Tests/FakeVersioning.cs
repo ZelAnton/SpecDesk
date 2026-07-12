@@ -89,9 +89,36 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// checkout" refusal path.</summary>
     public string? DirtyBranchToThrow { get; set; }
 
-    public bool IsVersioned(string repoRoot) => Versioned;
+    public int IsVersionedCalls { get; private set; }
+
+    public bool IsVersioned(string repoRoot)
+    {
+        IsVersionedCalls++;
+        return Versioned;
+    }
 
     public string? ReadHeadContent(string repoRoot, string repoRelativePath) => HeadContent;
+
+    public IReadOnlyList<DocumentVersion> DocumentVersions { get; set; } = [];
+
+    public bool ThrowOnGetDocumentVersions { get; set; }
+
+    public int GetDocumentVersionsCalls { get; private set; }
+
+    public IReadOnlyList<DocumentVersion> GetDocumentVersions(
+        string repoRoot,
+        string repoRelativePath,
+        int maxCount = 50,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        GetDocumentVersionsCalls++;
+        if (ThrowOnGetDocumentVersions)
+        {
+            throw new InvalidOperationException("history read boom");
+        }
+        return DocumentVersions.Take(maxCount).ToList();
+    }
 
     public void Initialize(string repoRoot, string commitMessage)
     {
