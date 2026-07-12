@@ -45,8 +45,10 @@ export interface WorkspaceCallbacks {
   onCentreResize(): void;
   /** The active central view changed — index.ts gates editor-only chrome (the view-mode switch) on it. */
   onCentralViewChange(viewId: string): void;
-  /** Run the "Open…" action (for the Start view's button — the same action as the toolbar). */
-  onOpenDocument(): void;
+  /** Open a single spec file from the Start screen (host file picker) — same action as the toolbar "Open…". */
+  onOpenFile(): void;
+  /** Open a folder as the workspace from the Start screen (host folder picker); fills the file navigator. */
+  onOpenFolder(): void;
   /** Scroll the editor to a 0-based source line (an outline heading was clicked). */
   onOutlineNavigate(line: number): void;
 }
@@ -62,6 +64,8 @@ export interface WorkspaceHandle {
 export interface WorkspaceTools {
   /** The right rail's AI assistant chat (replaces the "assistant" placeholder). */
   readonly assistant?: PanelTool;
+  /** The left rail's workspace file navigator (the folder tree). Absent → a placeholder in a reduced DOM. */
+  readonly files?: PanelTool;
 }
 
 /**
@@ -92,7 +96,10 @@ export function setupWorkspace(
     // Opening a spec from the Start screen runs the same action as the toolbar; index.ts returns the centre
     // to the editor on the resulting doc.loaded (so cancelling the file dialog leaves the author on Start,
     // not a blank editor).
-    buildHomeView(elements.homeView, () => callbacks.onOpenDocument());
+    buildHomeView(elements.homeView, {
+      onOpenFile: () => callbacks.onOpenFile(),
+      onOpenFolder: () => callbacks.onOpenFolder(),
+    });
     centralFrame.register({ id: CENTRAL_VIEW_HOME, el: elements.homeView });
   }
   centralFrame.show(CENTRAL_VIEW_EDITOR);
@@ -101,7 +108,17 @@ export function setupWorkspace(
   navigator.setActive(CENTRAL_VIEW_EDITOR);
 
   const toolsByEdge: Record<DockEdge, readonly PanelTool[]> = {
-    left: [navigator],
+    left: [
+      navigator,
+      // The real workspace file navigator when index.ts wired it; a placeholder in a reduced DOM (tests/host).
+      tools.files ??
+        placeholderTool(
+          "files",
+          "Files",
+          icon("files"),
+          "The folders and specs of an opened workspace will appear here.",
+        ),
+    ],
     right: [
       outline,
       // The real AI assistant chat when index.ts wired it; the placeholder in a reduced DOM (tests/host).

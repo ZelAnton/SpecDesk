@@ -36,6 +36,7 @@ import {
   parsePrSuggested,
   parseStatus,
   parseTemplates,
+  parseTree,
   parseVersionNoteSuggested,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
@@ -43,6 +44,7 @@ import { isReviewState, Kinds } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
+import { FileTree } from "./workspace/tools/file-tree.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { setupWorkspace } from "./workspace/workspace.js";
 
@@ -229,6 +231,8 @@ function wire(): void {
   let outline: Outline | undefined;
   // Re-parse the document's headings and refresh the outline. Called on load and on every edit.
   const updateOutline = (text: string): void => outline?.setItems(parseOutline(text));
+  // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
+  let fileTree: FileTree | undefined;
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -673,6 +677,12 @@ function wire(): void {
         formatted.setText(text);
         // Refresh the outline for the freshly loaded document.
         updateOutline(text);
+        // Keep the left-rail file navigator relevant: highlight the freshly opened document, and ask for the
+        // tree with no path, so the host shows the current workspace folder if one is open, else the newly
+        // loaded document's own folder. A `tree` event comes back and feeds the navigator (its collapse state
+        // is preserved across the re-render, and the highlight lands when the tree containing it arrives).
+        fileTree?.setActiveFile(payload.path);
+        ipc.send(Kinds.treeRequest);
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
@@ -1040,6 +1050,21 @@ function wire(): void {
       }
     });
 
+    // The left-rail file navigator (design §9): clicking a file opens it; the empty-state button opens a
+    // folder. The host feeds it the workspace tree via unsolicited `tree` events (a folder was opened, or a
+    // document loaded — see the tree.request below).
+    const files = new FileTree({
+      onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
+      onOpenFolder: () => ipc.send(Kinds.folderOpen),
+    });
+    fileTree = files;
+    ipc.on(Kinds.tree, (message) => {
+      const payload = parseTree(message.payload);
+      if (payload) {
+        files.setTree(payload);
+      }
+    });
+
     const workspace = setupWorkspace(
       {
         centralFrame: centralFrameEl,
@@ -1060,10 +1085,11 @@ function wire(): void {
             requestEditorRelayout();
           }
         },
-        onOpenDocument: () => ipc.send(Kinds.docOpen),
+        onOpenFile: () => ipc.send(Kinds.docOpen),
+        onOpenFolder: () => ipc.send(Kinds.folderOpen),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: assistantChat },
+      { assistant: assistantChat, files },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;

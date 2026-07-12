@@ -13,6 +13,8 @@ const ICON_BODIES: Record<string, string> = {
   outline: `<line x1="5" y1="6" x2="17" y2="6"/><line x1="5" y1="12" x2="19" y2="12"/><line x1="5" y1="18" x2="14" y2="18"/>`,
   // sparkle — the AI assistant
   assistant: `<path d="M12 4 L13.5 10.5 L20 12 L13.5 13.5 L12 20 L10.5 13.5 L4 12 L10.5 10.5 Z"/>`,
+  // folder — the workspace file navigator
+  files: `<path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/>`,
   // sliders — document tools
   tools: `<line x1="4" y1="9" x2="20" y2="9"/><circle cx="8" cy="9" r="2.5" fill="currentColor" stroke="none"/><line x1="4" y1="15" x2="20" y2="15"/><circle cx="16" cy="15" r="2.5" fill="currentColor" stroke="none"/>`,
   // terminal prompt — the log

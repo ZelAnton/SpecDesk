@@ -1,11 +1,18 @@
 /**
  * The Start central view (design concept §10.7 "empty / first-run"): a calm, centered open-a-spec screen.
- * It is one of the views the left-rail navigator switches the central frame to — the concrete second view
- * that proves the substitution architecture. `onOpen` runs the same "Open…" action as the toolbar; the
- * recents list is a placeholder until the host feeds it real data.
+ * It is one of the views the left-rail navigator switches the central frame to. The author can open a single
+ * file or a whole folder (its Markdown tree then fills the left-rail file navigator); the recents list is a
+ * placeholder until the host feeds it real data. Opening a GitHub repository joins these in a later stage.
  */
 
-export function buildHomeView(host: HTMLElement, onOpen: () => void): void {
+export interface HomeActions {
+  /** Open a single spec file (the host shows a file picker). */
+  onOpenFile(): void;
+  /** Open a folder as the workspace (the host shows a folder picker); its tree fills the file navigator. */
+  onOpenFolder(): void;
+}
+
+export function buildHomeView(host: HTMLElement, actions: HomeActions): void {
   const screen = document.createElement("div");
   screen.className = "home-screen";
 
@@ -15,13 +22,24 @@ export function buildHomeView(host: HTMLElement, onOpen: () => void): void {
 
   const prompt = document.createElement("p");
   prompt.className = "home-prompt";
-  prompt.textContent = "Open a spec to start editing, or pick one from the left.";
+  prompt.textContent = "Open a spec to start editing, or a folder to browse.";
 
-  const open = document.createElement("button");
-  open.type = "button";
-  open.className = "home-open";
-  open.textContent = "Open a spec";
-  open.addEventListener("click", onOpen);
+  const actionsRow = document.createElement("div");
+  actionsRow.className = "home-actions";
+
+  const openFile = document.createElement("button");
+  openFile.type = "button";
+  openFile.className = "home-open";
+  openFile.textContent = "Open a file";
+  openFile.addEventListener("click", actions.onOpenFile);
+
+  const openFolder = document.createElement("button");
+  openFolder.type = "button";
+  openFolder.className = "home-open home-open--secondary";
+  openFolder.textContent = "Open a folder";
+  openFolder.addEventListener("click", actions.onOpenFolder);
+
+  actionsRow.append(openFile, openFolder);
 
   const recents = document.createElement("div");
   recents.className = "home-recents";
@@ -33,6 +51,6 @@ export function buildHomeView(host: HTMLElement, onOpen: () => void): void {
   recentsEmpty.textContent = "Your recent specs will appear here.";
   recents.append(recentsLabel, recentsEmpty);
 
-  screen.append(title, prompt, open, recents);
+  screen.append(title, prompt, actionsRow, recents);
   host.appendChild(screen);
 }

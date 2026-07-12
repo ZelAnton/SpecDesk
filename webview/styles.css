@@ -1340,6 +1340,139 @@ button {
   display: none;
 }
 
+/* ---- Workspace file navigator (left rail; workspace/tools/file-tree.ts) ----
+   The opened folder's Markdown tree: a header naming the folder, nested folder/file rows, and an empty
+   state that offers to open a folder. Folders toggle their child list; files open the document. */
+.file-tree {
+  display: block;
+  padding: 0.4rem 0.4rem 0.6rem;
+}
+
+.file-tree-root {
+  margin: 0 0 0.35rem;
+  padding: 0.1rem 0.5rem;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree-list {
+  display: block;
+}
+
+.file-tree-branch {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-tree-branch .file-tree-branch {
+  padding-left: 0.85rem;
+}
+
+.file-tree-item {
+  display: block;
+  width: 100%;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.file-tree-item:hover {
+  background: var(--surface-sunken);
+}
+
+/* The open document, marked so the author keeps their place in a large tree. */
+.file-tree-item.is-current {
+  color: var(--text-strong);
+  font-weight: 600;
+  background: var(--accent-soft);
+}
+
+/* Keep hover feedback on the current row (its own rule would otherwise win by source order). */
+.file-tree-item.is-current:hover {
+  background: var(--surface-sunken);
+}
+
+/* A folder row: a disclosure triangle that rotates when open (aria-expanded is the source of truth). */
+.file-tree-folder {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.file-tree-folder::before {
+  /* The "/ ''" gives the decorative triangle empty alt text so it isn't announced as part of the folder's
+     accessible name (the aria-expanded state already conveys open/closed). */
+  content: "▸" / "";
+  display: inline-block;
+  width: 1em;
+  margin-right: 0.15rem;
+  color: var(--text-muted);
+  transition: transform 0.12s ease;
+}
+
+.file-tree-folder[aria-expanded="true"]::before {
+  transform: rotate(90deg);
+}
+
+.file-tree-file::before {
+  /* Align file labels with folder labels (which carry the triangle). */
+  content: "";
+  display: inline-block;
+  width: 1em;
+  margin-right: 0.15rem;
+}
+
+.file-tree-none {
+  margin: 0;
+  padding: 0.5rem;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
+}
+
+.file-tree-empty {
+  padding: 0.85rem 0.9rem;
+}
+
+.file-tree-empty-hint {
+  margin: 0 0 0.6rem;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
+}
+
+.file-tree-open-folder {
+  padding: 0.35rem 0.8rem;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font: 600 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.file-tree-open-folder:hover {
+  background: var(--surface-sunken);
+}
+
+.file-tree-root[hidden],
+.file-tree-list[hidden],
+.file-tree-empty[hidden],
+.file-tree-branch[hidden] {
+  display: none;
+}
+
 /* ---- Start central view (design concept §10.7; workspace/tools/home-view.ts) ----
    A calm, centered open-a-spec screen the navigator switches the centre to. Shown only when active (the
    central-view hide rule keeps it out otherwise). */
@@ -1380,8 +1513,15 @@ button {
   color: var(--text);
 }
 
-.home-open {
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
   margin-top: 0.5rem;
+}
+
+.home-open {
   padding: 0.5rem 1.1rem;
   color: var(--on-accent);
   background: var(--accent);
@@ -1394,6 +1534,18 @@ button {
 .home-open:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+}
+
+/* The secondary open action (open a folder) — a quiet outline button beside the primary "open a file". */
+.home-open--secondary {
+  color: var(--text-strong);
+  background: transparent;
+  border-color: var(--border-strong);
+}
+
+.home-open--secondary:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
 }
 
 .home-recents {
