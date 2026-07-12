@@ -1634,6 +1634,13 @@ button {
 
 .repo-row {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.1rem;
+}
+
+.repo-row-header {
+  display: flex;
   align-items: center;
   gap: 0.1rem;
 }
@@ -1656,6 +1663,43 @@ button {
 
 .repo-open:hover {
   background: var(--surface-sunken);
+}
+
+.repo-clone-action {
+  padding: 0.25rem 0.4rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: 11px var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-clones,
+.repo-branches {
+  margin: 0 0 0 1rem;
+  padding: 0 0 0 0.65rem;
+  list-style: none;
+  border-left: 1px solid var(--border);
+}
+
+.repo-clone-open {
+  max-width: 100%;
+  padding: 0.2rem 0.35rem;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 12px var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.repo-branches li {
+  padding: 0.15rem 0.35rem;
+  color: var(--text-muted);
+  font: 11px var(--font-ui);
 }
 
 .repo-remove {

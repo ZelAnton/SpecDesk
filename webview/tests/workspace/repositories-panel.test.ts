@@ -7,6 +7,8 @@ const REPO: RegisteredRepo = {
   id: "acme/specs",
   name: "acme/specs",
   url: "https://github.com/acme/specs",
+  defaultBranch: "main",
+  clones: [{ id: "acme-specs", path: "C:\\repos\\acme-specs", branches: ["draft"] }],
 };
 const STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [REPO] };
 
@@ -14,7 +16,9 @@ function ready() {
   const onRegister = vi.fn<(url: string) => void>();
   const onUnregister = vi.fn<(id: string) => void>();
   const onOpenRepo = vi.fn<(repo: RegisteredRepo) => void>();
-  const panel = new RepositoriesPanel({ onRegister, onUnregister, onOpenRepo });
+  const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
+  const onClone = vi.fn<(repo: RegisteredRepo) => void>();
+  const panel = new RepositoriesPanel({ onRegister, onUnregister, onOpenRepo, onOpenClone, onClone });
   const body = document.createElement("div");
   document.body.appendChild(body);
   panel.mount(body);
@@ -23,7 +27,7 @@ function ready() {
   if (!input || !add) {
     throw new Error("repositories panel did not mount its register form");
   }
-  return { panel, body, input, add, onRegister, onUnregister, onOpenRepo };
+  return { panel, body, input, add, onRegister, onUnregister, onOpenRepo, onOpenClone, onClone };
 }
 
 describe("RepositoriesPanel", () => {
@@ -66,5 +70,18 @@ describe("RepositoriesPanel", () => {
     expect(remove?.getAttribute("aria-label")).toBe("Remove repository acme/specs");
     remove?.click();
     expect(onUnregister).toHaveBeenCalledWith("acme/specs");
+  });
+
+  it("renders local copies and non-default branches as a nested tree", () => {
+    const { panel, body, onOpenClone, onClone } = ready();
+    panel.setState(STATE);
+
+    expect(body.querySelector(".repo-clone-open")?.textContent).toBe("acme-specs");
+    expect(body.querySelector(".repo-branches li")?.textContent).toBe("draft");
+    body.querySelector<HTMLButtonElement>(".repo-clone-open")?.click();
+    expect(onOpenClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
+    body.querySelector<HTMLButtonElement>(".repo-clone-action")?.click();
+    expect(onClone).toHaveBeenCalledWith(REPO);
+    expect(body.querySelector(".repo-clone-action")?.getAttribute("aria-label")).toContain("acme/specs");
   });
 });

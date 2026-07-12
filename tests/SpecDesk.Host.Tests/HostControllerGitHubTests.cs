@@ -315,14 +315,14 @@ public sealed class HostControllerGitHubTests
     }
 
     [Test]
-    public void A_non_authorized_signIn_emits_a_plain_language_message()
+	public void A_non_authorized_signIn_emits_a_plain_language_message()
     {
         (HostController controller, List<string> sent, object gate) = Build(new FakeGitHubAuth(SignInResult.Expired()));
         using (controller)
         {
             controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
 
-            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+			IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
 
             Assert.That(account, Is.Not.Null);
             GitHubAccountPayload payload = account!.GetPayload<GitHubAccountPayload>()!;

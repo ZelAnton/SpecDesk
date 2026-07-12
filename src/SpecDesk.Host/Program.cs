@@ -88,6 +88,7 @@ internal static class Program
 			new RemoteTemplateSource(
 				aiHttp, aiOptions.RemoteTemplatesUrl, loggerFactory.CreateLogger<RemoteTemplateSource>()));
 
+		LibGit2RepositoryCloner repositoryCloner = new();
 		using HostController controller = new(
 			render: Renderer.render,
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
@@ -113,7 +114,9 @@ internal static class Program
 			// sidecar under the app data root.
 			workspace: new WorkspaceStore(AppPaths.Workspace),
 			// A6: clones a GitHub repo (repo.open) into AppPaths.Repos and opens it as the workspace.
-			cloner: new LibGit2RepositoryCloner());
+			cloner: repositoryCloner,
+			repositoryInspector: repositoryCloner,
+			repositoryCatalog: new GitHubRepositoryCatalog(gitHubHttp));
 
 		// Devtools + right-click context menu, opt-in via SPECDESK_DEVTOOLS for interactive human+agent
 		// debugging. Accepts 1/true/yes/on (case-insensitive); off by default and for 0/false/empty. A

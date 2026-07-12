@@ -38,6 +38,7 @@ export const Kinds = {
   repoRegister: "repo.register",
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
+  repoClone: "repo.clone",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -444,6 +445,14 @@ export interface RegisteredRepo {
   id: string;
   name: string;
   url: string;
+  defaultBranch: string;
+  clones: RegisteredClone[];
+}
+
+export interface RegisteredClone {
+  id: string;
+  path: string;
+  branches: string[];
 }
 
 /** Payload of `workspace.state` (native→webview): the persisted workspace store — the author's `recent`
@@ -479,4 +488,5 @@ export interface UnregisterRepoPayload {
  *  folder as the workspace, sending a `tree`; an unparseable value comes back as an `error`. */
 export interface RepoOpenPayload {
   url: string;
+  clonePath?: string;
 }

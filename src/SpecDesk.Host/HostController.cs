@@ -86,6 +86,8 @@ public sealed partial class HostController : IDisposable
 	// Optional — null leaves OnOpenRepo inert (nothing to clone), the same graceful-degradation pattern as the
 	// other injected dependencies. See HostController.Workspace.cs.
 	private readonly IRepositoryCloner? _cloner;
+	private readonly ILocalRepositoryInspector? _repositoryInspector;
+	private readonly IGitHubRepositoryCatalog? _repositoryCatalog;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
@@ -123,6 +125,7 @@ public sealed partial class HostController : IDisposable
 	// blocks until the push returns — a bounded responsiveness cost on a slow/stalled network, not a
 	// deadlock. The push itself runs off the message thread; only a concurrent repo-gated action contends.
 	private readonly object _repoGate = new();
+	private bool _disposed;
 
 	// The whole draft editing session as one immutable snapshot (see the DraftSession record below),
 	// swapped atomically as a single reference under _sync. Consolidates what were six separate fields
@@ -186,7 +189,6 @@ public sealed partial class HostController : IDisposable
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
-	private bool _disposed;
 
 	private string _text = string.Empty;
 	private string? _currentPath;
@@ -220,7 +222,9 @@ public sealed partial class HostController : IDisposable
 		IChatAgent? chatAgent = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
-		IRepositoryCloner? cloner = null)
+		IRepositoryCloner? cloner = null,
+		ILocalRepositoryInspector? repositoryInspector = null,
+		IGitHubRepositoryCatalog? repositoryCatalog = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -240,6 +244,8 @@ public sealed partial class HostController : IDisposable
 		_templates = templates;
 		_workspace = workspace;
 		_cloner = cloner;
+		_repositoryInspector = repositoryInspector;
+		_repositoryCatalog = repositoryCatalog;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -256,22 +262,28 @@ public sealed partial class HostController : IDisposable
 	{
 		lock (_signInPublishSync)
 		{
-			lock (_sync)
+			lock (_clonePublishSync)
 			{
-				_disposed = true;
-				_autosaveTimer?.Dispose();
-				_autosaveTimer = null;
-				// Cancel any in-flight sign-in, but leave disposal to that task's finally — disposing the cts
-				// here while its token is still in flight risks ObjectDisposedException from the running task.
-				_signInCts?.Cancel();
-				_signInCts = null;
-				TakePendingRepoActions();
-				// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
-				_chatCts?.Cancel();
-				_chatCts = null;
-				// And for an in-flight repository clone (A6) — cancel it, let its task dispose the cts.
-				_cloneCts?.Cancel();
-				_cloneCts = null;
+				lock (_sync)
+				{
+					_disposed = true;
+					_autosaveTimer?.Dispose();
+					_autosaveTimer = null;
+					_signInCts?.Cancel();
+					_signInCts = null;
+					TakePendingRepoActions();
+					_chatCts?.Cancel();
+					_chatCts = null;
+					_cloneGeneration++;
+					_cloneCts?.Cancel();
+					_cloneCts = null;
+					_cloneRepoId = null;
+					foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+					{
+						lookup.Cts.Cancel();
+					}
+					_repoMetadataLookups.Clear();
+				}
 			}
 		}
 	}
@@ -416,6 +428,9 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.RepoOpen:
 				OnOpenRepo(message);
+				break;
+			case MessageKinds.RepoClone:
+				OnCloneRepo(message);
 				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);

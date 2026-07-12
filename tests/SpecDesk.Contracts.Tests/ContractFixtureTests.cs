@@ -99,7 +99,9 @@ public sealed class ContractFixtureTests
 			new WorkspaceItem(@"C:\specs\billing-repo\specs", "specs", IsFolder: true),
 		],
 		[
-			new RegisteredRepo("octo/spec-repo", "octo/spec-repo", "https://github.com/octo/spec-repo"),
+			new RegisteredRepo(
+				"octo/spec-repo", "octo/spec-repo", "https://github.com/octo/spec-repo", "main",
+				[new RegisteredClone("octo-specs", "C:\\specs\\octo-specs", ["review-copy"])]),
 		])),
 	];
 

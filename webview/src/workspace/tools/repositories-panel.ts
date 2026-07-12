@@ -22,6 +22,8 @@ export interface RepositoriesCallbacks {
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
   onOpenRepo(repo: RegisteredRepo): void;
+  onOpenClone(repo: RegisteredRepo, clonePath: string): void;
+  onClone(repo: RegisteredRepo): void;
 }
 
 export class RepositoriesPanel implements PanelTool {
@@ -140,7 +142,46 @@ export class RepositoriesPanel implements PanelTool {
     remove.title = "Remove repository";
     remove.addEventListener("click", () => this.callbacks.onUnregister(repo.id));
 
-    li.append(open, remove);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "repo-clone-action";
+    copy.textContent = "Copy locally";
+    copy.setAttribute("aria-label", `Copy repository ${repo.name} locally`);
+    copy.addEventListener("click", () => this.callbacks.onClone(repo));
+
+    const header = document.createElement("div");
+    header.className = "repo-row-header";
+    header.append(open, copy, remove);
+    li.append(header);
+
+    if (repo.clones.length > 0) {
+      const clones = document.createElement("ul");
+      clones.className = "repo-clones";
+      for (const clone of repo.clones) {
+        const cloneRow = document.createElement("li");
+        cloneRow.className = "repo-clone";
+        const cloneButton = document.createElement("button");
+        cloneButton.type = "button";
+        cloneButton.className = "repo-clone-open";
+        cloneButton.textContent = clone.id;
+        cloneButton.title = clone.path;
+        cloneButton.addEventListener("click", () => this.callbacks.onOpenClone(repo, clone.path));
+        cloneRow.append(cloneButton);
+
+        if (clone.branches.length > 0) {
+          const branches = document.createElement("ul");
+          branches.className = "repo-branches";
+          for (const branch of clone.branches) {
+            const branchRow = document.createElement("li");
+            branchRow.textContent = branch;
+            branches.append(branchRow);
+          }
+          cloneRow.append(branches);
+        }
+        clones.append(cloneRow);
+      }
+      li.append(clones);
+    }
     return li;
   }
 

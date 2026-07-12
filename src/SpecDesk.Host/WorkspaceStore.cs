@@ -41,7 +41,7 @@ public sealed class WorkspaceStore
 		// Coalesce so a partially-written file (a list absent or explicitly null) still yields a usable store.
 		_recent = state?.Recent ?? [];
 		_favorites = state?.Favorites ?? [];
-		_repositories = state?.Repositories ?? [];
+		_repositories = state?.Repositories?.Select(NormalizeRepo).ToList() ?? [];
 	}
 
 	/// <summary>
@@ -110,9 +110,95 @@ public sealed class WorkspaceStore
 		{
 			if (!_repositories.Exists(existing => string.Equals(existing.Id, repo.Id, StringComparison.OrdinalIgnoreCase)))
 			{
-				_repositories.Add(repo);
+				_repositories.Add(NormalizeRepo(repo));
 				Save();
 			}
+		}
+	}
+
+	public RegisteredRepo? FindRepo(string id)
+	{
+		lock (_sync)
+		{
+			return _repositories.FirstOrDefault(repo =>
+				string.Equals(repo.Id, id, StringComparison.OrdinalIgnoreCase));
+		}
+	}
+
+	public void UpdateRepo(RegisteredRepo repo)
+	{
+		ArgumentNullException.ThrowIfNull(repo);
+		lock (_sync)
+		{
+			int index = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, repo.Id, StringComparison.OrdinalIgnoreCase));
+			if (index < 0)
+			{
+				_repositories.Add(NormalizeRepo(repo));
+			}
+			else
+			{
+				_repositories[index] = NormalizeRepo(repo);
+			}
+			Save();
+		}
+	}
+
+	public void SetRepoDefaultBranch(RegisteredRepo seed, string defaultBranch)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		ArgumentException.ThrowIfNullOrWhiteSpace(defaultBranch);
+		lock (_sync)
+		{
+			int index = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, seed.Id, StringComparison.OrdinalIgnoreCase));
+			RegisteredRepo current = index >= 0 ? _repositories[index] : NormalizeRepo(seed);
+			RegisteredRepo updated = current with { DefaultBranch = defaultBranch };
+			if (index >= 0)
+			{
+				_repositories[index] = updated;
+			}
+			else
+			{
+				_repositories.Add(updated);
+			}
+			Save();
+		}
+	}
+
+	public void UpsertRepoClone(RegisteredRepo seed, RegisteredClone clone, string inferredDefaultBranch)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		ArgumentNullException.ThrowIfNull(clone);
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, seed.Id, StringComparison.OrdinalIgnoreCase));
+			RegisteredRepo current = repoIndex >= 0 ? _repositories[repoIndex] : NormalizeRepo(seed);
+			List<RegisteredClone> clones = [.. current.Clones];
+			int cloneIndex = clones.FindIndex(existing => SamePath(existing.Path, clone.Path));
+			if (cloneIndex >= 0)
+			{
+				clones[cloneIndex] = clone;
+			}
+			else
+			{
+				clones.Add(clone);
+			}
+
+			string defaultBranch = string.IsNullOrWhiteSpace(current.DefaultBranch)
+				? inferredDefaultBranch
+				: current.DefaultBranch;
+			RegisteredRepo updated = current with { DefaultBranch = defaultBranch, Clones = clones };
+			if (repoIndex >= 0)
+			{
+				_repositories[repoIndex] = updated;
+			}
+			else
+			{
+				_repositories.Add(updated);
+			}
+			Save();
 		}
 	}
 
@@ -191,6 +277,15 @@ public sealed class WorkspaceStore
 	// Windows filesystem paths are case-insensitive, and the same file/folder can reach the store under
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+	private static RegisteredRepo NormalizeRepo(RegisteredRepo repo) =>
+		repo with
+		{
+			// A legacy descriptor may not have recorded this field. Keep it unknown until metadata or a
+			// clone identifies the actual default; guessing "main" would misclassify master/trunk repos.
+			DefaultBranch = repo.DefaultBranch ?? string.Empty,
+			Clones = repo.Clones ?? [],
+		};
 
 	// The on-disk shape: one JSON object holding the three lists. A private record (not the wire payload) so
 	// its lists can be nullable — a hand-edited or partially-written file with a missing/null list still loads.

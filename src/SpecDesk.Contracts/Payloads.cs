@@ -43,6 +43,7 @@ public static class MessageKinds
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
+	public const string RepoClone = "repo.clone";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -360,7 +361,17 @@ public sealed record WorkspaceItem(string Path, string Label, bool IsFolder);
 /// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
 /// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
 /// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
-public sealed record RegisteredRepo(string Id, string Name, string Url);
+public sealed record RegisteredClone(
+	string Id,
+	string Path,
+	IReadOnlyList<string> Branches);
+
+public sealed record RegisteredRepo(
+	string Id,
+	string Name,
+	string Url,
+	string DefaultBranch,
+	IReadOnlyList<RegisteredClone> Clones);
 
 /// <summary>Payload of <c>workspace.state</c> (native→webview): the persisted workspace store — the author's
 /// <paramref name="Recent"/> items (most-recent first), their <paramref name="Favorites"/>, and the
@@ -387,4 +398,7 @@ public sealed record UnregisterRepoPayload(string Id);
 /// name="Url"/> (an <c>owner/name</c> or a GitHub URL). The host clones it into a managed local folder — or
 /// reuses the clone if it is already there — and opens that folder as the workspace, emitting a <c>tree</c>;
 /// an unparseable value is reported as an <c>error</c>.</summary>
-public sealed record RepoOpenPayload(string Url);
+public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
+
+/// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
+public sealed record RepoClonePayload(string Id);

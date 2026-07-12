@@ -117,7 +117,15 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
     const state = {
       recent: [{ path: "/a.md", label: "a.md", isFolder: false }],
       favorites: [{ path: "/specs", label: "specs", isFolder: true }],
-      repositories: [{ id: "octo/spec", name: "octo/spec", url: "https://github.com/octo/spec" }],
+      repositories: [
+        {
+          id: "octo/spec",
+          name: "octo/spec",
+          url: "https://github.com/octo/spec",
+          defaultBranch: "master",
+          clones: [{ id: "octo_spec", path: "C:\\repos\\octo_spec", branches: ["draft"] }],
+        },
+      ],
     };
     expect(parseWorkspaceState(state)).toEqual(state);
 

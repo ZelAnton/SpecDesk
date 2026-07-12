@@ -404,10 +404,25 @@ function parseWorkspaceItem(value: unknown): WorkspaceItem | null {
 }
 
 function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
-  if (!isRecord(value) || !isString(value.id) || !isString(value.name) || !isString(value.url)) {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.name) ||
+    !isString(value.url) ||
+    !isString(value.defaultBranch)
+  ) {
     return null;
   }
-  return { id: value.id, name: value.name, url: value.url };
+  const clones = parseArray(value.clones, (clone) => {
+    if (!isRecord(clone) || !isString(clone.id) || !isString(clone.path)) {
+      return null;
+    }
+    const branches = parseArray(clone.branches, (branch) => (isString(branch) ? branch : null));
+    return branches === null ? null : { id: clone.id, path: clone.path, branches };
+  });
+  return clones === null
+    ? null
+    : { id: value.id, name: value.name, url: value.url, defaultBranch: value.defaultBranch, clones };
 }
 
 export function parseWorkspaceState(value: unknown): WorkspaceStatePayload | null {

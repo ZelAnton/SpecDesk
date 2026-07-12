@@ -9,7 +9,7 @@ namespace SpecDesk.Git;
 /// owner and name), so this type never derives a folder name and same-named repos from different owners
 /// can't collide.
 /// </summary>
-public sealed class LibGit2RepositoryCloner : IRepositoryCloner
+public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositoryInspector
 {
     public bool IsCloned(string destinationPath)
     {
@@ -83,6 +83,40 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner
             throw;
         }
     }
+
+	public LocalRepositoryInfo Inspect(string repositoryPath, string knownDefaultBranch)
+	{
+		using Repository repository = new(repositoryPath);
+		string defaultBranch = knownDefaultBranch;
+		if (string.IsNullOrWhiteSpace(defaultBranch))
+		{
+			Branch? remoteHead = repository.Branches["origin/HEAD"];
+			defaultBranch = remoteHead?.TrackedBranch?.FriendlyName ?? string.Empty;
+			if (!string.IsNullOrWhiteSpace(defaultBranch)
+				&& defaultBranch.StartsWith("origin/", StringComparison.Ordinal))
+			{
+				defaultBranch = defaultBranch["origin/".Length..];
+			}
+
+			if (string.IsNullOrWhiteSpace(defaultBranch))
+			{
+				// A normal clone checks out the remote default branch, so HEAD is the final reliable fallback.
+				defaultBranch = repository.Head.FriendlyName;
+			}
+		}
+		string remotePrefix = "origin/";
+		string[] branches = repository.Branches
+			.Select(branch => branch.IsRemote && branch.FriendlyName.StartsWith(remotePrefix, StringComparison.Ordinal)
+				? branch.FriendlyName[remotePrefix.Length..]
+				: branch.FriendlyName)
+			.Where(branch => branch.Length > 0
+				&& !string.Equals(branch, defaultBranch, StringComparison.OrdinalIgnoreCase)
+				&& !string.Equals(branch, "HEAD", StringComparison.OrdinalIgnoreCase))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Order(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		return new LocalRepositoryInfo(defaultBranch, branches);
+	}
 
     // Best-effort recursive delete that first clears the read-only attribute git sets on pack files (mirrors
     // the Git tests' own teardown). Never throws: leaving debris behind is preferable to faulting the clone.

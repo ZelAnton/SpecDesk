@@ -171,7 +171,15 @@
       {
         "id": "octo/spec-repo",
         "name": "octo/spec-repo",
-        "url": "https://github.com/octo/spec-repo"
+        "url": "https://github.com/octo/spec-repo",
+        "defaultBranch": "main",
+        "clones": [
+          {
+            "id": "octo-specs",
+            "path": "C:\\specs\\octo-specs",
+            "branches": ["review-copy"]
+          }
+        ]
       }
     ]
   }

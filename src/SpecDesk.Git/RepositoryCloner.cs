@@ -33,3 +33,10 @@ public interface IRepositoryCloner
     /// </summary>
     string CloneOrReuse(string url, string destinationPath, string? accessToken, CancellationToken ct);
 }
+
+public sealed record LocalRepositoryInfo(string DefaultBranch, IReadOnlyList<string> Branches);
+
+public interface ILocalRepositoryInspector
+{
+	LocalRepositoryInfo Inspect(string repositoryPath, string knownDefaultBranch);
+}

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
+using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
 namespace SpecDesk.Host.Tests;
@@ -13,6 +14,32 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class HostControllerWorkspaceTests
 {
+	private sealed class RacingMetadataCatalog : IGitHubRepositoryCatalog
+	{
+		private int _calls;
+		public bool ThrowFirst { get; init; }
+		public TaskCompletionSource FirstStarted { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource ReleaseFirst { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public async Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default)
+		{
+			int call = Interlocked.Increment(ref _calls);
+			if (call == 1)
+			{
+				FirstStarted.SetResult();
+				await ReleaseFirst.Task;
+				if (ThrowFirst)
+				{
+					throw new HttpRequestException("stale metadata failure");
+				}
+				return new GitHubRepositoryMetadata("master");
+			}
+			return new GitHubRepositoryMetadata("trunk");
+		}
+	}
 	private sealed class NoDialogs : IFileDialogs
 	{
 		public string? PickOpenFile() => null;
@@ -291,6 +318,64 @@ public sealed class HostControllerWorkspaceTests
 		});
 	}
 
+	[TestCase(false, false)]
+	[TestCase(true, false)]
+	[TestCase(true, true)]
+	public void StaleMetadataCannotPublishAfterUnregisterReRegisterOrDispose(
+		bool throwFirst,
+		bool disposeBeforeRelease)
+	{
+		RacingMetadataCatalog catalog = new() { ThrowFirst = throwFirst };
+		void Send(string json)
+		{
+			lock (_gate)
+			{
+				_sent.Add(json);
+			}
+		}
+		HostController controller = new(
+			StubRender, Send, new NoDialogs(), (_, _, _, _, _) => null,
+			new FakeVersioning(), NullLogger<HostController>.Instance,
+			auth: new FakeGitHubAuth(true), workspace: new WorkspaceStore(_wsPath),
+			repositoryCatalog: catalog);
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+		Assert.That(catalog.FirstStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+		for (int attempt = 0; attempt < 100; attempt++)
+		{
+			IReadOnlyList<RegisteredRepo> repositories = new WorkspaceStore(_wsPath).State().Repositories;
+			if (repositories.Count > 0 && repositories[0].DefaultBranch == "trunk")
+			{
+				break;
+			}
+			Thread.Sleep(20);
+		}
+		if (disposeBeforeRelease)
+		{
+			controller.Dispose();
+		}
+		catalog.ReleaseFirst.SetResult();
+		Thread.Sleep(100);
+		if (!disposeBeforeRelease)
+		{
+			controller.Dispose();
+		}
+
+		RegisteredRepo saved = new WorkspaceStore(_wsPath).State().Repositories.Single();
+		Assert.That(saved.DefaultBranch, Is.EqualTo("trunk"));
+		lock (_gate)
+		{
+			Assert.That(_sent
+				.Select(IpcSerializer.TryDeserialize)
+				.Where(message => message?.Kind == MessageKinds.Error), Is.Empty);
+		}
+	}
+
 	[Test]
 	public void RegisterRepo_WithAnInvalidUrl_EmitsAnErrorAndStoresNothing()
 	{
@@ -319,6 +404,32 @@ public sealed class HostControllerWorkspaceTests
 			MessageKinds.RepoUnregister, new UnregisterRepoPayload("owner/name")));
 
 		Assert.That(LatestState()!.Repositories, Is.Empty);
+	}
+
+	[Test]
+	public void UnregisterAfterDispose_DoesNotMutateOrPublishWorkspaceState()
+	{
+		HostController controller = NewController();
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoRegister,
+			new RegisterRepoPayload("octo/specs")));
+		lock (_gate)
+		{
+			_sent.Clear();
+		}
+
+		controller.Dispose();
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoUnregister,
+			new UnregisterRepoPayload("octo/specs")));
+
+		IReadOnlyList<RegisteredRepo> repositories = new WorkspaceStore(_wsPath).State().Repositories;
+		Assert.That(repositories, Has.Count.EqualTo(1));
+		Assert.That(repositories[0].Id, Is.EqualTo("octo/specs"));
+		lock (_gate)
+		{
+			Assert.That(_sent, Is.Empty);
+		}
 	}
 
 	[TestCase("https://github.com/octo/spec-repo", "octo", "spec-repo")]

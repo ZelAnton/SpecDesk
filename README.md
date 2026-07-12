@@ -52,3 +52,7 @@ SpecDesk uses GitHub's device authorization flow and stores the resulting token 
 starting a development build. No client secret is used or stored. When a disconnected user adds or opens a
 repository, SpecDesk opens GitHub's standard authorization page in the system browser and resumes the action
 after authorization.
+
+Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
+groups any number of managed local copies beneath each repository and shows only non-default branches under
+each copy. **Copy locally** creates another copy in SpecDesk's managed repositories folder.

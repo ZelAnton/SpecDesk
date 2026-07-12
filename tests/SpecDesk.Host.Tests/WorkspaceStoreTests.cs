@@ -97,12 +97,12 @@ public sealed class WorkspaceStoreTests
 	public void RegisterRepo_DedupesById_AndUnregisterRemovesIt()
 	{
 		WorkspaceStore store = new(_path);
-		RegisteredRepo repo = new("octo/spec", "octo/spec", "https://github.com/octo/spec");
+		RegisteredRepo repo = new("octo/spec", "octo/spec", "https://github.com/octo/spec", "main", []);
 
 		store.RegisterRepo(repo);
 		// Same id → no second entry.
-		store.RegisterRepo(new RegisteredRepo("octo/spec", "octo/spec", "https://github.com/octo/spec"));
-		store.RegisterRepo(new RegisteredRepo("octo/other", "octo/other", "https://github.com/octo/other"));
+		store.RegisterRepo(new RegisteredRepo("octo/spec", "octo/spec", "https://github.com/octo/spec", "main", []));
+		store.RegisterRepo(new RegisteredRepo("octo/other", "octo/other", "https://github.com/octo/other", "main", []));
 		Assert.That(store.State().Repositories, Has.Count.EqualTo(2));
 
 		store.UnregisterRepo("octo/spec");
@@ -111,12 +111,47 @@ public sealed class WorkspaceStoreTests
 	}
 
 	[Test]
+	public void DefaultBranchAndCloneMutations_AreAtomicAndPreserveEachOther()
+	{
+		WorkspaceStore store = new(_path);
+		RegisteredRepo seed = new("octo/spec", "octo/spec", "https://github.com/octo/spec", string.Empty, []);
+		RegisteredClone clone = new("copy-1", Path.Combine(_dir, "copy-1"), ["draft"]);
+		using ManualResetEventSlim start = new(false);
+
+		Task metadata = Task.Run(() =>
+		{
+			start.Wait();
+			for (int index = 0; index < 100; index++)
+			{
+				store.SetRepoDefaultBranch(seed, "trunk");
+			}
+		});
+		Task localCopy = Task.Run(() =>
+		{
+			start.Wait();
+			for (int index = 0; index < 100; index++)
+			{
+				store.UpsertRepoClone(seed, clone, "master");
+			}
+		});
+		start.Set();
+		Task.WaitAll(metadata, localCopy);
+
+		RegisteredRepo saved = store.State().Repositories.Single();
+		Assert.Multiple(() =>
+		{
+			Assert.That(saved.DefaultBranch, Is.EqualTo("trunk"));
+			Assert.That(saved.Clones, Is.EqualTo(new[] { clone }));
+		});
+	}
+
+	[Test]
 	public void Save_ThenAFreshStore_RoundTripsThroughTheFile()
 	{
 		WorkspaceStore store = new(_path);
 		store.AddRecent(File("/a.md"));
 		store.SetFavorite(new WorkspaceItem("/specs", "specs", IsFolder: true), favorite: true);
-		store.RegisterRepo(new RegisteredRepo("octo/spec", "octo/spec", "https://github.com/octo/spec"));
+		store.RegisterRepo(new RegisteredRepo("octo/spec", "octo/spec", "https://github.com/octo/spec", "main", []));
 
 		// A brand-new store over the same path must Load exactly what the first one persisted.
 		WorkspaceStatePayload reloaded = new WorkspaceStore(_path).State();

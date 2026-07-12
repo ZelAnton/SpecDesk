@@ -1126,6 +1126,8 @@ function wire(): void {
       onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
       onOpenRepo: (repo) => openRepo(repo.url),
+      onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
+      onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
     });
 
     const workspace = setupWorkspace(
