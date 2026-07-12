@@ -37,8 +37,15 @@ export class CentralFrame {
   private readonly views = new Map<string, CentralView>();
   private activeId: string | null;
 
-  /** @param host the element wrapping every view; its `data-view` seeds and then tracks the active id. */
-  constructor(private readonly host: HTMLElement) {
+  /**
+   * @param host the element wrapping every view; its `data-view` seeds and then tracks the active id.
+   * @param onChange notified with the new view id after each actual switch (not a no-op re-show) — the
+   *   owner uses it to reflect the active destination in the navigator and to gate editor-only chrome.
+   */
+  constructor(
+    private readonly host: HTMLElement,
+    private readonly onChange?: (id: string) => void,
+  ) {
     // Adopt whatever the markup declares as the starting view (see index.html) so a freshly registered
     // view that is already active is not toggled off and back on — the initial paint stays flash-free.
     // Precondition: `data-view` must name a view registered at startup. If it names none, every register()
@@ -99,5 +106,9 @@ export class CentralFrame {
     this.activeId = id;
     previous?.onHide?.();
     next.onShow?.();
+    // After the swap and the views' own hooks, notify the owner so it can reflect the new active view
+    // (navigator highlight, editor-only chrome gating). Fires only on a real switch — the early return
+    // above means a redundant show can't re-fire it.
+    this.onChange?.(id);
   }
 }

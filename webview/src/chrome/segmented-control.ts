@@ -32,6 +32,15 @@ export class SegmentedControl<T extends string> {
     }
   }
 
+  /** Enable or disable the whole group — used when the control doesn't apply (e.g. the view-mode switch
+   *  while a non-editor central view is shown). Disabled radios drop out of the tab order and can't be
+   *  clicked; the `aria-checked` selection is untouched, so re-enabling restores it exactly. */
+  setDisabled(disabled: boolean): void {
+    for (const option of this.options) {
+      option.el.disabled = disabled;
+    }
+  }
+
   // Left/Up move to the previous radio, Right/Down to the next (wrapping); the moved-to radio takes
   // focus and is selected, the WAI-ARIA radiogroup keyboard pattern.
   private onKeydown(event: KeyboardEvent, current: SegmentedOption<T>): void {

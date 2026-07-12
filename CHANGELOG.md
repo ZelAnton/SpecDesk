@@ -12,8 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dock, each opened/collapsed from a toolbar toggle (or an in-panel collapse control) and resizable by
   dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between
   several modes from its header. Whether each panel is open, its size, and its active mode are remembered
-  across restarts. The panels are scaffolding for now — the tools inside are placeholders — and the editing
-  area re-measures as they open, close, or resize so the split view stays aligned.
+  across restarts. Most tools inside are placeholders for now, and the editing area re-measures as the
+  panels open, close, or resize so the split view stays aligned.
+- The left panel's navigator switches the main area between views: "Document" edits the spec, "Start" shows
+  a calm open-a-spec screen. It's the first navigation tool that replaces the centre's content; the
+  navigator highlights wherever the centre currently is, and the view-mode switch (Code / Split / Formatted)
+  is disabled while a non-document view is shown.
 - `SPECDESK_DATA_ROOT` redirects the app's entire local data root — the sample repo, the GitHub auth
   token directory, and the logs — to a chosen directory (for a dev run, or an isolated full-app test
   against a disposable copy). Unset, the default `%LOCALAPPDATA%\SpecDesk` is unchanged.

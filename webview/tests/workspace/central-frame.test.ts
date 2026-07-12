@@ -150,4 +150,21 @@ describe("CentralFrame.show", () => {
     expect(isActive(byId("home"))).toBe(false);
     expect(frame.active()).toBe("editor");
   });
+
+  it("notifies onChange with the new id on a real switch, not on a no-op re-show", () => {
+    const { byId, host } = harness();
+    const onChange = vi.fn<(id: string) => void>();
+    const frame = new CentralFrame(host, onChange);
+    frame.register({ id: "editor", el: byId("panes") });
+    frame.register({ id: "home", el: byId("home") });
+
+    // Re-showing the already-active editor is a no-op → no notification.
+    frame.show("editor");
+    expect(onChange).not.toHaveBeenCalled();
+
+    // A real switch notifies with the new id, exactly once.
+    frame.show("home");
+    expect(onChange).toHaveBeenCalledWith("home");
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
 });

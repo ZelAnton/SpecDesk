@@ -138,9 +138,9 @@
     <div id="workspace">
       <div id="workspace-main">
         <!-- Dock containers (design concept §9): collapsed by default; dock.ts fills each with a header and
-             the active tool. The tools are placeholders for now, so the landmark role (e.g. a navigation
-             rail) and an edge label stay deferred until the real tools land — a landmark advertising
-             placeholder content would only mislead a screen reader. -->
+             the active tool. The left rail's navigator is a real tool that brings its own <nav> landmark
+             (workspace/tools/navigator.ts); the remaining tools are placeholders, so a dock-level landmark
+             stays deferred until they land. -->
         <div id="left-dock" class="dock dock-left" hidden></div>
         <!-- The central frame is the app's main content region; data-view names the active central view,
              which central-frame.ts seeds from and keeps in sync (it starts on the editor). -->
@@ -154,6 +154,10 @@
             <div id="preview" class="sd-doc"></div>
             <div id="formatted"></div>
           </div>
+          <!-- The Start central view (workspace/tools/home-view.ts fills it): a calm open-a-spec screen the
+               left-rail navigator switches to. Starts hidden (no central-view--active) — the CSS hide rule
+               keeps it out of the layout until shown. -->
+          <div id="home-view" class="central-view"></div>
         </main>
         <div id="right-dock" class="dock dock-right" hidden></div>
       </div>

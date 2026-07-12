@@ -300,6 +300,21 @@ button {
   box-shadow: var(--shadow-card);
 }
 
+/* Disabled (a non-editor central view is shown, so the switch doesn't apply): dim it and drop the active
+   segment's raised card, so it reads as inert rather than an operable control that silently ignores clicks.
+   Matches the app's #format-bar button:disabled convention. Placed after the rules above so it wins the
+   equal-specificity ties; the active-disabled selector also carries higher specificity. */
+#view-modes button:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+#view-modes button:disabled[aria-checked="true"] {
+  color: var(--text-faint);
+  background: transparent;
+  box-shadow: none;
+}
+
 /* Status: a dot + label (no border); the word always carries the state, never colour alone (§11). */
 #status {
   margin-left: auto;
@@ -993,6 +1008,135 @@ button {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: var(--accent-soft-border);
+}
+
+/* ---- Navigator (the left rail's navigation tool; workspace/tools/navigator.ts) ----
+   A list of destinations that substitute the central frame; the current one gets the accent-soft wash. */
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.4rem;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.4rem 0.55rem;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: var(--surface-sunken);
+}
+
+.nav-item--current {
+  background: var(--accent-soft);
+}
+
+.nav-item-label {
+  font: 500 13px var(--font-ui);
+  color: var(--text-strong);
+}
+
+.nav-item--current .nav-item-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Forced-colors drops the accent-soft wash and the accent label colour, leaving only the weight change to
+   mark the current destination; add a system-colored outline so it stays clearly distinguishable (matches
+   the splitter's forced-colors treatment). */
+@media (forced-colors: active) {
+  .nav-item--current {
+    outline: 2px solid;
+    outline-offset: -2px;
+  }
+}
+
+.nav-item-hint {
+  font: 12px var(--font-ui);
+  color: var(--text-muted);
+}
+
+/* ---- Start central view (design concept §10.7; workspace/tools/home-view.ts) ----
+   A calm, centered open-a-spec screen the navigator switches the centre to. Shown only when active (the
+   central-view hide rule keeps it out otherwise). */
+#home-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: auto;
+  background: var(--canvas);
+}
+
+/* margin:auto centers on both axes when there's room, but collapses to 0 when the content is taller than
+   the viewport — so the top stays scroll-reachable instead of being clipped (the align-items:center + scroll
+   trap). */
+.home-screen {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  max-width: 30rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.home-title {
+  margin: 0;
+  font: 600 26px var(--font-doc-head);
+  letter-spacing: -0.01em;
+  color: var(--text-strong);
+}
+
+.home-prompt {
+  margin: 0;
+  /* --text (not --text-muted): the prompt is primary guidance, and --text clears AA on --canvas in warm
+     too (where muted body text is marginally under). */
+  font: 15px / 1.6 var(--font-ui);
+  color: var(--text);
+}
+
+.home-open {
+  margin-top: 0.5rem;
+  padding: 0.5rem 1.1rem;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+}
+
+.home-open:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.home-recents {
+  width: 100%;
+  margin-top: 1.5rem;
+}
+
+.home-recents-label {
+  margin: 0 0 0.25rem;
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.home-recents-empty {
+  margin: 0;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
 }
 
 /* ---- Panes ---- */

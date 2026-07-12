@@ -76,3 +76,19 @@ describe("SegmentedControl interaction", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+describe("SegmentedControl.setDisabled", () => {
+  it("disables and re-enables every radio while preserving the selection", () => {
+    const { control, byId } = harness();
+    control.setSelected("b");
+    control.setDisabled(true);
+    expect(byId("a").disabled).toBe(true);
+    expect(byId("b").disabled).toBe(true);
+    expect(byId("c").disabled).toBe(true);
+    // The selection is untouched, so re-enabling restores it exactly.
+    expect(byId("b").getAttribute("aria-checked")).toBe("true");
+    control.setDisabled(false);
+    expect(byId("a").disabled).toBe(false);
+    expect(byId("b").getAttribute("aria-checked")).toBe("true");
+  });
+});

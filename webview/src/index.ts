@@ -37,6 +37,7 @@ import {
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds } from "./wire/protocol.js";
+import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { setupWorkspace } from "./workspace/workspace.js";
 
@@ -109,6 +110,7 @@ function wire(): void {
   // The collapsible-panel workspace (design §9): the central-frame host and the three docks with their
   // toolbar toggles. All optional — the jsdom index.ts tests mount only the editor panes.
   const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
+  const homeViewEl = document.querySelector<HTMLElement>("#home-view");
   const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
   const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
   const bottomDockEl = document.querySelector<HTMLElement>("#bottom-dock");
@@ -205,6 +207,17 @@ function wire(): void {
   // dock open/close/resize). Assigned in wireEditors once the editor + reconcile scheduler exist; both the
   // window-resize handler and the workspace's centre-resize observer call it (through the live binding).
   let requestEditorRelayout: () => void = () => {};
+  // The view-mode switch (Code/Split/Formatted), assigned in wireViewMode. Held at wire() scope so
+  // wireWorkspace can disable it while a non-editor central view is shown — the switch only applies to the
+  // editor view.
+  let viewModeControl: SegmentedControl<ViewMode>;
+  // The CentralFrame host, assigned in wireWorkspace. A reconcile/relayout must never run against the editor
+  // panes while a non-editor central view is shown: they are display:none, so height-sync would measure
+  // degenerate geometry and could clobber the reading position. Undefined before the workspace wires (the
+  // editor is always the centre then), which reads as "editor is central".
+  let centralFrame: CentralFrame | undefined;
+  const isEditorCentral = (): boolean =>
+    centralFrame === undefined || centralFrame.active() === CENTRAL_VIEW_EDITOR;
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -359,7 +372,9 @@ function wire(): void {
     // is active — the coordinator owns that "which pane leads" decision (formerly a `leadingPane` here).
     const reconcileScheduler = new ReconcileScheduler((generation) => {
       trace("reconcile", "reconcile.run", { generation, split: isSplit(mode) });
-      if (isSplit(mode)) {
+      // Only reconcile when Split AND the editor is the active central view — the panes are display:none
+      // under a non-editor view, so measuring/padding them would read degenerate geometry.
+      if (isSplit(mode) && isEditorCentral()) {
         splitSync.reconciled(heightSync.reconcile());
       }
     });
@@ -556,6 +571,11 @@ function wire(): void {
     // new width (both panes reflow); the coalesced reconcile then rebuilds the coordinator's maps from the
     // fresh snapshot. Shared by the window-resize handler and the workspace's dock-resize observer.
     requestEditorRelayout = () => {
+      // A resize while a non-editor central view is shown must not touch the hidden panes (see the
+      // reconcile scheduler above); the editor re-measures on its own when it becomes the centre again.
+      if (!isEditorCentral()) {
+        return;
+      }
       editor.refresh();
       reconcileHeights();
     };
@@ -610,6 +630,12 @@ function wire(): void {
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
+        // A freshly loaded document belongs in the editor: return the centre to it if a non-editor central
+        // view (the Start screen) was showing, so the doc is visible and the view-mode switch re-enables.
+        // Remember whether we switched, to move focus into the editing surface at the end (the Start view's
+        // focused control — e.g. its Open button — is about to be hidden).
+        const returnedToEditor = !isEditorCentral();
+        centralFrame?.show(CENTRAL_VIEW_EDITOR);
         // T-109: feed BOTH panes the SAME already-normalized text — see normalizeLineEndings, the root
         // cause of the spacers-never-render-until-a-mode-switch bug (a raw CRLF payload.text left the
         // source editor's own getText() silently LF-only while the formatted pane's kept the CRLF, a
@@ -654,6 +680,15 @@ function wire(): void {
         // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
         showPlainStatus(payload.path);
         dialogs.closeAll();
+        // If we just returned from a non-editor central view, move focus into the freshly shown editing
+        // surface so a keyboard user isn't left on the now-hidden Start screen (and lands ready to edit).
+        if (returnedToEditor) {
+          if (paneVisibility(mode).editor) {
+            editor.focus();
+          } else {
+            formatted.focus();
+          }
+        }
       }
     });
 
@@ -816,9 +851,9 @@ function wire(): void {
   // Wiring group 4 — the view-mode switch and the view/toolbar chrome around it: mode changes (Code /
   // Split / Formatted), the wrap toggle, the theme toggle, export-log, and the skip link.
   function wireViewMode(): void {
-    // The view-switch radiogroup; assigned below once the mode buttons are gathered, referenced earlier
-    // only inside applyMode, which runs after the control is wired (on a click / arrow key).
-    let viewModeControl: SegmentedControl<ViewMode>;
+    // The view-switch radiogroup (viewModeControl) is forward-declared at wire() scope and assigned below
+    // once the mode buttons are gathered; it is referenced earlier only inside applyMode, which runs after
+    // the control is wired (on a click / arrow key), and by wireWorkspace to disable it off the editor view.
 
     // Switch between code / split / formatted. Panes are only shown/hidden (CSS keyed off
     // #panes[data-mode]), never destroyed. A surface that becomes visible is hydrated from the current
@@ -968,15 +1003,28 @@ function wire(): void {
     if (!centralFrameEl || !panesEl) {
       return;
     }
-    setupWorkspace(
+    centralFrame = setupWorkspace(
       {
         centralFrame: centralFrameEl,
         panes: panesEl,
+        homeView: homeViewEl,
         docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
         toggles: { left: leftToggleBtn, right: rightToggleBtn, bottom: bottomToggleBtn },
       },
       browserDockStore(),
-      { onCentreResize: () => requestEditorRelayout() },
+      {
+        onCentreResize: () => requestEditorRelayout(),
+        // The view-mode switch only applies to the editor view: disable it while a non-editor central view
+        // is shown, and re-measure the editor when it returns (it was hidden, so its geometry went stale).
+        onCentralViewChange: (viewId) => {
+          const editorActive = viewId === CENTRAL_VIEW_EDITOR;
+          viewModeControl.setDisabled(!editorActive);
+          if (editorActive) {
+            requestEditorRelayout();
+          }
+        },
+        onOpenDocument: () => ipc.send(Kinds.docOpen),
+      },
     );
   }
 
