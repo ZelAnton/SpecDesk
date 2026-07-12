@@ -23,14 +23,14 @@
 		     build-time license key, unlike ImageSharp 4.x). The base package carries the Windows and
 		     macOS native binaries; the Linux .so for CI test runs is added on the test project via
 		     SkiaSharp.NativeAssets.Linux.NoDependencies (no fontconfig needed — we never render text). -->
-		<PackageVersion Include="SkiaSharp" Version="4.148.0" />
-		<PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.148.0" />
+		<PackageVersion Include="SkiaSharp" Version="4.150.0" />
+		<PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.150.0" />
 
 		<!-- Logging: the Microsoft.Extensions.Logging abstraction backed by Serilog (rolling file).
 		     The Abstractions package is referenced directly by the library projects (e.g. SpecDesk.Ai). -->
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.9" />
 		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
-		<PackageVersion Include="Serilog" Version="4.3.1" />
+		<PackageVersion Include="Serilog" Version="4.4.0" />
 		<PackageVersion Include="Serilog.Extensions.Logging" Version="10.0.0" />
 		<PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
