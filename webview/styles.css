@@ -694,10 +694,48 @@ button {
   background: var(--border);
 }
 
+/* ---- Workspace: the collapsible-panel shell (design concept §9) ----
+   The toolbar and inline bars stack above; this region fills the rest. #workspace is a vertical stack of
+   the main row (left rail · centre · right rail) and a full-width bottom dock. #central-frame fills the main
+   row and hosts the central views (workspace/central-frame.ts) — #panes is the primary one. The dock
+   containers are hidden placeholders in this pass; their chrome and interactivity land in a later stage. */
+#workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+#workspace-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+#central-frame {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* Only the active central view is shown; the others stay in the DOM (each keeps its own scroll/state), the
+   same "hide, never destroy" policy the view-mode panes use. The child combinator matches the frame's
+   DIRECT children only (each central view is a direct child, a sibling of #panes — see central-frame.ts's
+   CentralView.el contract). This selector's specificity (#central-frame id + two classes = 1,2,0) exceeds
+   #panes' own `display: flex` id rule (1,0,0), so it can hide the editor view too — an id-level rule a
+   single class could not override. */
+#central-frame > .central-view:not(.central-view--active) {
+  display: none;
+}
+
 /* ---- Panes ---- */
+/* min-width:0 lets the row shrink below its content's intrinsic width (the horizontal-overflow guard now
+   that #panes is a horizontal main-axis item of #central-frame); min-height:0 is retained from the previous
+   direct-body-child layout (harmless now that #panes sizes by cross-axis stretch, not main-axis flex). */
 #panes {
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 

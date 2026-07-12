@@ -37,6 +37,7 @@ import {
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds } from "./wire/protocol.js";
+import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./workspace/central-frame.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
 interface MirrorTarget {
@@ -941,10 +942,28 @@ function wire(): void {
     });
   }
 
+  // The collapsible-panel workspace (design concept §9). This pass wires only the central-frame host: it
+  // registers the editor panes as the primary central view so a later stage's left-rail navigation can
+  // substitute the centre with another registered view. A later stage retains the CentralFrame instance
+  // (to switch views) and registers those alternates; here it only establishes the seam, so registering
+  // the already-active editor is a confirming no-op. The dock containers are inert placeholders until then.
+  // Bails without the shell (#central-frame / #panes) — the jsdom index.ts tests mount only the load-bearing
+  // editor panes, and the frame is optional chrome, so its absence must not break wiring.
+  function wireWorkspace(): void {
+    const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
+    if (!centralFrameEl || !panesEl) {
+      return;
+    }
+    const centralFrame = new CentralFrame(centralFrameEl);
+    centralFrame.register({ id: CENTRAL_VIEW_EDITOR, el: panesEl });
+    centralFrame.show(CENTRAL_VIEW_EDITOR);
+  }
+
   wireEditors();
   wireLifecycle();
   wireGitHub();
   wireViewMode();
+  wireWorkspace();
 
   ipc.start();
   postReady();

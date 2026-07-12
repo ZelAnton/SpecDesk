@@ -124,13 +124,34 @@
     <div id="review-overflow-bar" role="status" hidden>
       Too many changes to show in detail — the document is too large to compare closely.
     </div>
-    <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads it
-         back into its `mode` variable at startup (see the comment there) instead of repeating the
-         literal, and the CSS below keys pane visibility off this same attribute. -->
-    <div id="panes" data-mode="split">
-      <div id="editor"></div>
-      <div id="preview" class="sd-doc"></div>
-      <div id="formatted"></div>
+    <!-- Workspace: the collapsible-panel shell (design concept §9). The toolbar and inline bars stack
+         above; this region fills the rest. A main row (left rail · centre · right rail) stacks over a
+         full-width bottom dock. The centre is the CentralFrame host (workspace/central-frame.ts): #panes is
+         its primary "editor" view, and a later stage's left-rail navigation swaps in other registered
+         views. The dock containers are hidden placeholders in this pass — their chrome and interactivity
+         land in a later stage. -->
+    <div id="workspace">
+      <div id="workspace-main">
+        <!-- Dock placeholders (design concept §9): hidden and empty in this pass. Their landmark role
+             (e.g. a navigation rail) and label belong with the content, so a later stage adds those when it
+             fills them — an empty labelled landmark now would only mislead a screen reader. -->
+        <div id="left-dock" class="dock dock-left" hidden></div>
+        <!-- The central frame is the app's main content region; data-view names the active central view,
+             which central-frame.ts seeds from and keeps in sync (it starts on the editor). -->
+        <main id="central-frame" data-view="editor">
+          <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads
+               it back into its `mode` variable at startup (see the comment there) instead of repeating the
+               literal, and the CSS keys pane visibility off this same attribute. The central-view classes
+               mark #panes as the active primary central view (see workspace/central-frame.ts). -->
+          <div id="panes" class="central-view central-view--active" data-mode="split">
+            <div id="editor"></div>
+            <div id="preview" class="sd-doc"></div>
+            <div id="formatted"></div>
+          </div>
+        </main>
+        <div id="right-dock" class="dock dock-right" hidden></div>
+      </div>
+      <div id="bottom-dock" class="dock dock-bottom" hidden></div>
     </div>
 
     <script type="module" src="./webview.js"></script>
