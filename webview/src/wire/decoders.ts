@@ -570,36 +570,51 @@ export function parseTree(value: unknown): TreePayload | null {
 export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload | null {
   if (
     !isRecord(value) ||
-    !(value.repository === null || isString(value.repository)) ||
-    !(value.repositoryRoot === null || isString(value.repositoryRoot)) ||
-    !(value.branch === null || isString(value.branch)) ||
+    !(value.repository === undefined || value.repository === null || isString(value.repository)) ||
+    !(
+      value.repositoryRoot === undefined ||
+      value.repositoryRoot === null ||
+      isString(value.repositoryRoot)
+    ) ||
+    !(value.branch === undefined || value.branch === null || isString(value.branch)) ||
     !(
       value.branchState === "named" ||
       value.branchState === "detached" ||
       value.branchState === "unavailable"
     ) ||
-    !(value.defaultBranch === null || isString(value.defaultBranch)) ||
+    !(
+      value.defaultBranch === undefined ||
+      value.defaultBranch === null ||
+      isString(value.defaultBranch)
+    ) ||
     !isString(value.path)
   ) {
     return null;
   }
+
+  // System.Text.Json's native wire convention omits nullable payload properties. Normalize those
+  // missing keys before validating the context invariants so every consumer receives one stable shape.
+  const repository = value.repository ?? null;
+  const repositoryRoot = value.repositoryRoot ?? null;
+  const branch = value.branch ?? null;
+  const defaultBranch = value.defaultBranch ?? null;
   if (
-    (value.branchState === "named" && !isString(value.branch)) ||
-    (value.branchState !== "named" && value.branch !== null) ||
-    (value.repository === null &&
-      (value.repositoryRoot !== null ||
-        value.branch !== null ||
+    (value.branchState === "named" && !isString(branch)) ||
+    (value.branchState !== "named" && branch !== null) ||
+    (repository === null &&
+      (repositoryRoot !== null ||
+        branch !== null ||
         value.branchState !== "unavailable" ||
-        value.defaultBranch !== null))
+        defaultBranch !== null))
   ) {
     return null;
   }
   return {
-    repository: value.repository,
-    repositoryRoot: value.repositoryRoot,
-    branch: value.branch,
+    repository,
+    repositoryRoot,
+    branch,
     branchState: value.branchState,
-    defaultBranch: value.defaultBranch,
+    defaultBranch,
     path: value.path,
   };
 }

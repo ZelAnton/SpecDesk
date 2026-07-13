@@ -1063,7 +1063,6 @@ button {
   flex: none;
   width: 34px;
   height: 34px;
-  display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--mode-rail-text);
@@ -1071,6 +1070,10 @@ button {
   border: none;
   border-radius: var(--r-sm);
   cursor: pointer;
+}
+
+.dock-rail-btn:not([hidden]) {
+  display: inline-flex;
 }
 
 .dock-rail-btn:hover {
@@ -2109,6 +2112,7 @@ button {
 .repo-register {
   display: flex;
   position: relative;
+  flex-wrap: wrap;
   gap: 0.35rem;
   padding: 0.25rem 0.5rem 0.55rem;
 }
@@ -2244,7 +2248,6 @@ button {
   z-index: 5;
   top: calc(100% - 0.4rem);
   right: 0.5rem;
-  display: flex;
   min-width: 12rem;
   flex-direction: column;
   padding: 0.25rem;
@@ -2252,6 +2255,10 @@ button {
   border-radius: var(--r-md);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
+}
+
+.repo-clone-menu:not([hidden]) {
+  display: flex;
 }
 
 .repo-clone-menu button {

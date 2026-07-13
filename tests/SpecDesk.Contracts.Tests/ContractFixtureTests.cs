@@ -181,13 +181,34 @@ public sealed class ContractFixtureTests
 	[Test]
 	public void StatusPayload_WithNullBranch_OmitsBranchFromTheWire()
 	{
-		// Branch is the only nullable native→webview field; WhenWritingNull drops it so the webview's
-		// optional-branch decoder path stays valid. Pin that here — the decoders never see this null.
+		// WhenWritingNull drops nullable payload properties so the webview decoder receives an omitted key.
 		JsonNode? node = JsonSerializer.SerializeToNode(
 			new StatusPayload("published", "Published", null), IpcSerializer.Options);
 		Assert.That(node, Is.Not.Null);
 		Assert.That(node!.AsObject().ContainsKey("branch"), Is.False,
 			"A null Branch must be omitted from the wire, not serialized as null.");
+	}
+
+	[Test]
+	public void WorkspaceContextPayload_WithNullFields_OmitsThemFromTheWire()
+	{
+		JsonNode? detached = JsonSerializer.SerializeToNode(
+			new WorkspaceContextPayload("sample-repo", @"C:\repo", null, "detached", "main", ".spectool.toml"),
+			IpcSerializer.Options);
+		JsonNode? unavailable = JsonSerializer.SerializeToNode(
+			new WorkspaceContextPayload(null, null, null, "unavailable", null, "outside.md"),
+			IpcSerializer.Options);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(detached, Is.Not.Null);
+			Assert.That(detached!.AsObject().ContainsKey("branch"), Is.False);
+			Assert.That(unavailable, Is.Not.Null);
+			Assert.That(unavailable!.AsObject().ContainsKey("repository"), Is.False);
+			Assert.That(unavailable.AsObject().ContainsKey("repositoryRoot"), Is.False);
+			Assert.That(unavailable.AsObject().ContainsKey("branch"), Is.False);
+			Assert.That(unavailable.AsObject().ContainsKey("defaultBranch"), Is.False);
+		});
 	}
 
 	[Test]

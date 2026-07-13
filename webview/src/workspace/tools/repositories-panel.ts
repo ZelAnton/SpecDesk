@@ -4,11 +4,9 @@
  * host validates and stores it, or emits an `error` the app already surfaces; each listed repo can be
  * opened or removed.
  *
- * A6: clicking a repo opens it as the workspace — the host clones it into a managed folder (if not already
- * local) and opens that folder (via {@link RepositoriesCallbacks.onOpenRepo}). Like FileTree, this keeps NO
- * IPC/Kinds knowledge — the integrator (index.ts) passes plain callbacks, so the panel is unit-testable
- * without a host bridge. The author never sees git vocabulary: it's "Repositories", "Add", "Open", and
- * "Remove", not clone/branch/remote.
+ * Clicking a registered repository browses its remote tree without requiring a local copy. Explicit copy
+ * actions remain separate. Like FileTree, this keeps NO IPC/Kinds knowledge — the integrator (index.ts)
+ * passes plain callbacks, so the panel is unit-testable without a host bridge.
  */
 
 import type {
@@ -724,8 +722,7 @@ export class RepositoriesPanel implements PanelTool {
     const li = document.createElement("li");
     li.className = "repo-row";
 
-    // Clicking a repo opens it as the workspace — the host clones it into a managed folder (if it isn't
-    // already local) and opens that folder.
+    // Clicking a repo browses its remote tree. Copying it locally remains an explicit adjacent action.
     const open = document.createElement("button");
     open.type = "button";
     open.className = "repo-open";

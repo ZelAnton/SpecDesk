@@ -45,7 +45,7 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
   const toggle = page.locator(".repo-register-add");
   await expect(toggle).toHaveText("Clone…");
   await toggle.click();
-  const actions = page.locator('[role="menuitem"]');
+  const actions = page.locator('.repo-clone-menu [role="menuitem"]');
   await expect(actions).toHaveText(["Clone…", "Clone to folder…"]);
   await page.screenshot({ path: testInfo.outputPath("clone-menu.png"), fullPage: true });
 

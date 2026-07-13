@@ -36,5 +36,18 @@ test("repository description is visible before Clone is enabled", async ({ page 
     "Description: Product specifications for the Acme team",
   );
   await expect(clone).toBeEnabled();
+  const layout = await page.locator(".repo-register").evaluate((form) => {
+    const input = form.querySelector<HTMLElement>(".repo-register-input")?.getBoundingClientRect();
+    const description = form.querySelector<HTMLElement>(".repo-description")?.getBoundingClientRect();
+    return {
+      inputWidth: input?.width ?? 0,
+      inputBottom: input?.bottom ?? 0,
+      descriptionWidth: description?.width ?? 0,
+      descriptionTop: description?.top ?? 0,
+    };
+  });
+  expect(layout.inputWidth).toBeGreaterThan(80);
+  expect(layout.descriptionWidth).toBeGreaterThan(150);
+  expect(layout.descriptionTop).toBeGreaterThanOrEqual(layout.inputBottom);
   await page.screenshot({ path: testInfo.outputPath("repository-description.png"), fullPage: true });
 });

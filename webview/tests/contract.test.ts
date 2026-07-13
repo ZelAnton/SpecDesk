@@ -305,6 +305,37 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       }),
     ).toBeNull();
   });
+
+  it("workspace.context normalizes native omitted nulls for detached, remote, and outside files", () => {
+    const base = fixture["workspace.context"];
+
+    expect(
+      parseWorkspaceContext({ ...base, branch: undefined, branchState: "detached" }),
+    ).toMatchObject({ branch: null, branchState: "detached" });
+    expect(
+      parseWorkspaceContext({
+        repository: "acme/specs",
+        branch: "feature/docs",
+        branchState: "named",
+        path: "docs/guide.md",
+      }),
+    ).toEqual({
+      repository: "acme/specs",
+      repositoryRoot: null,
+      branch: "feature/docs",
+      branchState: "named",
+      defaultBranch: null,
+      path: "docs/guide.md",
+    });
+    expect(parseWorkspaceContext({ branchState: "unavailable", path: "outside.md" })).toEqual({
+      repository: null,
+      repositoryRoot: null,
+      branch: null,
+      branchState: "unavailable",
+      defaultBranch: null,
+      path: "outside.md",
+    });
+  });
 });
 
 describe("wire kinds (TS Kinds match the C# MessageKinds fixture)", () => {

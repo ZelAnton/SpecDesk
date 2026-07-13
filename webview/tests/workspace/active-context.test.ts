@@ -62,6 +62,21 @@ describe("active workspace context", () => {
     expect(tools(context)).toEqual(["assistant", "outline", "versions"]);
   });
 
+  it("keeps Versions for a non-Markdown repository file on detached HEAD", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo\\.spectool.toml");
+    const context = model.workspaceChanged({
+      ...named,
+      branch: null,
+      branchState: "detached",
+      path: ".spectool.toml",
+    });
+
+    expect(context.file).toMatchObject({ type: "other", repository: context.repository });
+    expect(context.branch).toBeNull();
+    expect(tools(context)).toEqual(["assistant", "versions"]);
+  });
+
   it("keeps an outside Markdown file independent from repository capabilities", () => {
     const model = new ActiveContextModel();
     model.workspaceChanged({

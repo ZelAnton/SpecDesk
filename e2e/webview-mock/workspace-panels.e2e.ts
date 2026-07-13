@@ -12,7 +12,15 @@ const STATE = {
       { path: "C:\\specs\\repo\\intro.md", label: "intro.md", isFolder: false },
     ],
     favorites: [{ path: "C:\\specs\\repo\\intro.md", label: "intro.md", isFolder: false }],
-    repositories: [{ id: "acme/specs", name: "acme/specs", url: "https://github.com/acme/specs" }],
+    repositories: [
+      {
+        id: "acme/specs",
+        name: "acme/specs",
+        url: "https://github.com/acme/specs",
+        defaultBranch: "main",
+        clones: [],
+      },
+    ],
   },
 };
 
@@ -119,9 +127,9 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
     destinationPath: "C:\\SpecDesk\\repos\\owner_name",
   });
 
-  // A6: clicking a repo clones it into a managed folder and opens it — sends `repo.open`.
+  // Clicking a registered repo browses its remote tree without requiring a local copy.
   await repos.locator(".repo-open").click();
-  expect((await sentFrames(page)).find((f) => f.kind === "repo.open")?.payload).toMatchObject({
-    url: "https://github.com/acme/specs",
+  expect((await sentFrames(page)).find((f) => f.kind === "repo.browse")?.payload).toMatchObject({
+    id: "acme/specs",
   });
 });

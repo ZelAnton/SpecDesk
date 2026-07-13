@@ -14,22 +14,27 @@ test("right-panel modes follow named, detached, and review context", async ({ pa
   await expect.poll(() => labels(page)).toEqual(["Assistant"]);
 
   await loadDoc(page, {
-    path: "C:\\specs\\repo\\docs\\proposal.md",
-    text: "# Repository proposal\n\nReady for review.\n",
-    docDir: "docs",
+    path: "C:\\specs\\repo\\.spectool.toml",
+    text: '[repo]\ndefault-base = "main"\n',
+    docDir: "",
   });
   await emit(page, {
     kind: "workspace.context",
     payload: {
       repository: "acme/specs",
       repositoryRoot: "C:\\specs\\repo",
-      branch: null,
       branchState: "detached",
       defaultBranch: "main",
-      path: "docs/proposal.md",
+      path: ".spectool.toml",
     },
   });
-  await expect.poll(() => labels(page)).toEqual(["Assistant", "Outline", "Versions"]);
+  await expect.poll(() => labels(page)).toEqual(["Assistant", "Versions"]);
+
+  await loadDoc(page, {
+    path: "C:\\specs\\repo\\docs\\proposal.md",
+    text: "# Repository proposal\n\nReady for review.\n",
+    docDir: "docs",
+  });
 
   await emit(page, {
     kind: "workspace.context",

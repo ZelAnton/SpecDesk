@@ -1267,6 +1267,7 @@ function wire(): void {
     const openWorkspaceItem = (item: WorkspaceItem): void => {
       if (item.kind === "repository") {
         if (item.repositoryId) {
+          revealWorkspaceFiles();
           ipc.send(Kinds.repoBrowse, { id: item.repositoryId });
         }
         return;
@@ -1299,8 +1300,8 @@ function wire(): void {
     };
     const recent = recentPanel(listCallbacks);
     const favorites = favoritesPanel(listCallbacks);
-    // The Repositories panel: register from an owner/name or URL, remove by id, and open a repo — the host
-    // clones it into a managed folder and opens it as the workspace (A6). The primary click clones-and-opens.
+    // The Repositories panel: register from an owner/name or URL, remove it, browse its remote tree, or
+    // explicitly copy it locally. Browsing reveals Files before the host returns the tree.
     const repositories = new RepositoriesPanel({
       onCloneManaged: (url, destinationPath) =>
         ipc.send(Kinds.repoCloneManaged, { url, destinationPath }),
@@ -1310,7 +1311,10 @@ function wire(): void {
       onDescriptionRequest: (url, requestId) =>
         ipc.send(Kinds.repoDescriptionRequest, { url, requestId }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
-      onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
+      onBrowseRepo: (repo) => {
+        revealWorkspaceFiles();
+        ipc.send(Kinds.repoBrowse, { id: repo.id });
+      },
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
       onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
       onToggleFavorite: (repo, favorite) =>

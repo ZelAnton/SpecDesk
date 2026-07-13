@@ -16,8 +16,9 @@ test("Review mode loads assigned work and opens it on GitHub", async ({ page }, 
   });
 
   await page.locator('#left-dock .dock-rail-btn[aria-label="Review"]').click();
-  await expect(page.locator('#left-dock [data-tool="reviews"]')).toBeVisible();
-  await expect(page.locator(".remote-review-list")).toHaveAttribute("data-state", "loading");
+  const reviewPanel = page.locator('#left-dock .dock-tool[data-tool="reviews"]');
+  await expect(reviewPanel).toBeVisible();
+  await expect(reviewPanel.locator(".remote-review-list")).toHaveAttribute("data-state", "loading");
   await waitForSent(page, "pr.list.request");
   const request = (await sentFrames(page)).find(
     (frame) =>
@@ -48,8 +49,8 @@ test("Review mode loads assigned work and opens it on GitHub", async ({ page }, 
     },
   });
 
-  await expect(page.locator(".remote-review-title")).toHaveText("Payment terms");
-  await page.locator(".remote-review-open").click();
+  await expect(reviewPanel.locator(".remote-review-title")).toHaveText("Payment terms");
+  await reviewPanel.locator(".remote-review-open").click();
   expect((await sentFrames(page)).some((frame) => frame.kind === "link.open")).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("review-requests.png"), fullPage: true });
 });

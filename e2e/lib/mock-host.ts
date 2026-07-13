@@ -76,7 +76,7 @@ export interface LoadDocOptions {
 export async function loadDoc(page: Page, doc: LoadDocOptions): Promise<void> {
   await emit(page, {
     kind: "doc.loaded",
-    payload: { path: doc.path, text: doc.text, docDir: doc.docDir ?? "" },
+    payload: { path: doc.path, text: doc.text, docDir: doc.docDir ?? "", readOnly: false },
   });
   await page.waitForFunction(
     () =>

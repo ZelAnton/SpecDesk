@@ -20,7 +20,7 @@ test.beforeEach(async ({ context }) => {
 
 /** Open the left dock and switch the central frame to the Start screen via the navigator. */
 async function goToStart(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigation"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
   await expect(page.locator("#home-view")).toBeVisible();
 }
@@ -34,7 +34,7 @@ test("the Start screen opens the Repositories panel without its own repo input",
   await expect(page.locator("#home-view form")).toHaveCount(0);
   await page.locator("#home-view .home-open", { hasText: "Open Repository" }).click();
 
-  await expect(page.locator('#left-dock [data-tool="repositories"]')).toBeVisible();
+  await expect(page.locator('#left-dock .dock-tool[data-tool="repositories"]')).toBeVisible();
   await expect(
     page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]'),
   ).toHaveAttribute("aria-expanded", "true");
@@ -59,7 +59,7 @@ test("opening a folder reveals the Files panel even when the left dock was colla
 
   await emit(page, TREE);
   await expect(page.locator("#left-dock")).toBeVisible();
-  await expect(page.locator('#left-dock [data-tool="files"]')).toBeVisible();
+  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
 });
 
 test("a tree from a plain document load does NOT reveal the Files panel", async ({ page }) => {
@@ -74,13 +74,21 @@ test("a tree from a plain document load does NOT reveal the Files panel", async 
   await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
 });
 
-test("clicking a repository in the Repositories panel clones-and-opens it", async ({ page }) => {
+test("clicking a repository in the Repositories panel browses it", async ({ page }) => {
   const STATE = {
     kind: "workspace.state",
     payload: {
       recent: [],
       favorites: [],
-      repositories: [{ id: "acme/specs", name: "acme/specs", url: "https://github.com/acme/specs" }],
+      repositories: [
+        {
+          id: "acme/specs",
+          name: "acme/specs",
+          url: "https://github.com/acme/specs",
+          defaultBranch: "main",
+          clones: [],
+        },
+      ],
     },
   };
 
@@ -89,13 +97,13 @@ test("clicking a repository in the Repositories panel clones-and-opens it", asyn
   await emit(page, STATE);
 
   await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
-  await page.locator('#left-dock [data-tool="repositories"] .repo-open').click();
+  await page.locator('#left-dock .dock-tool[data-tool="repositories"] .repo-open').click();
 
-  expect((await sentFrames(page)).find((f) => f.kind === "repo.open")?.payload).toMatchObject({
-    url: "https://github.com/acme/specs",
+  expect((await sentFrames(page)).find((f) => f.kind === "repo.browse")?.payload).toMatchObject({
+    id: "acme/specs",
   });
 
-  // The reveal arms on repo.open too: the returned tree surfaces the Files panel.
+  // The returned remote tree surfaces the Files panel.
   await emit(page, TREE);
-  await expect(page.locator('#left-dock [data-tool="files"]')).toBeVisible();
+  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
 });

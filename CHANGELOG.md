@@ -345,6 +345,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Context-specific dock modes now remain hidden outside their applicable pull request, branch, repository,
+  or Markdown-file context instead of leaking into every right-panel rail.
+- Detached, remote-only, and outside-repository documents now apply their active context correctly when
+  nullable native fields are omitted, keeping Versions available for every repository file.
+- Closing a repository copy menu now removes it from hit testing, so it no longer blocks repository rows.
+- Opening a registered repository or repository favorite now reveals the Files panel before its remote tree
+  arrives.
+- Repository descriptions and managed destinations now wrap below the entry row instead of squeezing the
+  repository field to an unreadable width.
 - Disconnecting GitHub now forms a hard account boundary for review lists, document comments, review
   publishing, and Copilot streams, so cancellation-ignoring late work cannot publish private results or
   continue with another account-bound action.

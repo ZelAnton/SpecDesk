@@ -53,7 +53,7 @@ test("Pull Requests mode lists authored and involved open work", async ({ page }
     },
   });
 
-  await expect(page.locator('#left-dock [data-tool="pullRequests"]')).toBeVisible();
+  await expect(page.locator('#left-dock .dock-tool[data-tool="pullRequests"]')).toBeVisible();
   await expect(page.locator(".remote-review-title")).toHaveText(["Mine", "Joined"]);
   await page.screenshot({ path: testInfo.outputPath("pull-requests.png"), fullPage: true });
 });

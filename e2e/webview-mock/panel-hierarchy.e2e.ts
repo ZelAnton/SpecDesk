@@ -76,6 +76,7 @@ test("panel surfaces keep a visible, accessible grey hierarchy in light and dark
 
   for (const theme of ["light", "dark"] as const) {
     if (theme === "dark") {
+      await page.locator("#github-btn").click();
       await page.locator("#theme-btn").click();
     }
 

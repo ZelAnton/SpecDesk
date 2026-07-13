@@ -93,7 +93,7 @@ test("real Host packages Copilot 1.0.6 and exposes the honest signed-out chat bo
   expect(pixels.byteLength).toBeGreaterThan(1_000);
 });
 
-test("right tools keep Chat first and follow real named, detached, and file-type context", async ({}) => {
+test("right tools keep Chat first and follow real named, detached, and file-type context", async ({}, testInfo) => {
   const { page, app } = ctx;
 
   await openFile(page, "welcome.md");
@@ -104,10 +104,21 @@ test("right tools keep Chat first and follow real named, detached, and file-type
     "Change history",
   ]);
   await expect(page.locator('#right-dock .dock-rail-btn[aria-label="Comments"]')).toBeHidden();
+  await page.screenshot({
+    path: testInfo.outputPath("context-named-markdown.png"),
+    fullPage: true,
+  });
 
   git(app.repo, "checkout", "--detach", "HEAD");
   await openFile(page, ".spectool.toml");
+  await expect(page.locator("#current-repository")).toHaveText("sample-repo");
+  await expect(page.locator("#current-branch")).toHaveText("Unnamed version");
+  await expect(page.locator("#current-path")).toHaveText(".spectool.toml");
   await expect.poll(() => visibleRightTools(page)).toEqual(["Assistant", "Versions"]);
+  await page.screenshot({
+    path: testInfo.outputPath("context-detached-nonmarkdown.png"),
+    fullPage: true,
+  });
 
   git(app.repo, "checkout", "main");
   await openFile(page, "welcome.md");
@@ -117,6 +128,10 @@ test("right tools keep Chat first and follow real named, detached, and file-type
     "Versions",
     "Change history",
   ]);
+  await page.screenshot({
+    path: testInfo.outputPath("context-restored-markdown.png"),
+    fullPage: true,
+  });
 });
 
 test("the real WebView2 renders the VS Code-style composer hierarchy, focus treatment, and multiline keyboard", async ({}, testInfo) => {

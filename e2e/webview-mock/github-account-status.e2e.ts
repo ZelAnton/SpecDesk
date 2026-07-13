@@ -23,7 +23,7 @@ test("GitHub authorization stays in the main toolbar and identity is visible in 
     },
   });
 
-  const account = page.locator("#toolbar #github-btn");
+  const account = page.locator("#toolbar #github-auth-btn");
   await expect(account).toBeVisible();
   await expect(account).toHaveText("Sign out @octocat");
   const status = page.locator("#status-bar #github-account-status");
