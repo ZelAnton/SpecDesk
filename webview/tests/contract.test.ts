@@ -10,10 +10,12 @@
 import { describe, expect, it } from "vitest";
 import {
   parseBranchNameSuggested,
+  parseChatAttachment,
   parseChatDelta,
   parseChatDone,
   parseDiffResult,
   parseDocLoaded,
+  parseDocumentActivity,
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
@@ -162,6 +164,26 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
   it("chat.done", () => {
     const payload = parseChatDone(fixture["chat.done"]);
     expect(payload?.id).toBe("7");
+  });
+
+  it("chat.attachment.picked", () => {
+    const payload = parseChatAttachment(fixture["chat.attachment.picked"]);
+    expect(payload).toEqual({
+      kind: "file",
+      label: "billing.md",
+      reference: "C:\\specs\\billing.md",
+    });
+  });
+
+  it("document.activity", () => {
+    const payload = parseDocumentActivity(fixture["document.activity"]);
+    expect(payload?.document).toBe("billing.md");
+    expect(payload?.versions[0]?.note).toBe("Clarify refunds");
+    expect(payload?.comments).toEqual([]);
+    expect(payload?.history[0]).toMatchObject({
+      label: "Document updated",
+      note: "Clarify refunds",
+    });
   });
 
   it("templates (personal + remote sets)", () => {

@@ -112,6 +112,34 @@
   "chat.done": {
     "id": "7"
   },
+  "chat.attachment.picked": {
+    "kind": "file",
+    "label": "billing.md",
+    "reference": "C:\\specs\\billing.md"
+  },
+  "document.activity": {
+    "document": "billing.md",
+    "versions": [
+      {
+        "id": "abc123",
+        "note": "Clarify refunds",
+        "author": "Alex",
+        "when": "1970-01-01T00:00:00\u002B00:00"
+      }
+    ],
+    "historyState": "loaded",
+    "comments": [],
+    "commentsState": "loaded",
+    "history": [
+      {
+        "id": "abc123",
+        "label": "Document updated",
+        "note": "Clarify refunds",
+        "author": "Alex",
+        "when": "1970-01-01T00:00:00\u002B00:00"
+      }
+    ]
+  },
   "templates": {
     "personal": [
       {

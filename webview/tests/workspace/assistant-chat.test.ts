@@ -1,14 +1,20 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import type { TemplatesPayload } from "../../src/wire/protocol.js";
+import type { ChatAttachment, TemplatesPayload } from "../../src/wire/protocol.js";
 import { AssistantChat } from "../../src/workspace/tools/assistant-chat.js";
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
-  const sendMessage = vi.fn<(text: string) => void>();
+  const sendMessage = vi.fn<(text: string, attachments: readonly ChatAttachment[]) => void>();
   const requestTemplates = vi.fn<() => Promise<TemplatesPayload>>().mockResolvedValue(templates);
-  const chat = new AssistantChat({ sendMessage, requestTemplates });
+  const pickAttachment = vi.fn<(kind: "file" | "folder") => Promise<ChatAttachment | null>>(
+    async (kind) =>
+      kind === "file"
+        ? { kind, label: "roadmap.md", reference: "C:\\specs\\roadmap.md" }
+        : { kind, label: "specs", reference: "C:\\specs" },
+  );
+  const chat = new AssistantChat({ sendMessage, requestTemplates, pickAttachment });
   const body = document.createElement("div");
   document.body.appendChild(body);
   chat.mount(body);
@@ -20,14 +26,28 @@ function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
   if (!input || !sendBtn || !templatesBtn) {
     throw new Error("chat did not mount its composer");
   }
-  return { chat, body, sendMessage, requestTemplates, input, sendBtn, templatesBtn, messages };
+  return {
+    chat,
+    body,
+    sendMessage,
+    requestTemplates,
+    pickAttachment,
+    input,
+    sendBtn,
+    templatesBtn,
+    messages,
+  };
 }
 
 describe("AssistantChat", () => {
   it("mounts a transcript and a composer", () => {
-    const { body } = harness();
+    const { body, input, sendBtn } = harness();
     expect(body.querySelector(".chat-log")).not.toBeNull();
     expect(body.querySelector(".chat-composer")).not.toBeNull();
+    expect(input.rows).toBe(3);
+    expect(input.getAttribute("aria-describedby")).toBe("chat-input-hint");
+    expect(body.querySelector("#chat-input-hint")?.textContent).toBe("Ctrl/Cmd+Enter to send");
+    expect(sendBtn.getAttribute("aria-keyshortcuts")).toContain("Control+Enter");
   });
 
   it("sends the composed message, shows a user bubble, opens a pending reply, and disables the composer", () => {
@@ -35,7 +55,7 @@ describe("AssistantChat", () => {
     input.value = "Summarize the changes";
     sendBtn.click();
 
-    expect(sendMessage).toHaveBeenCalledWith("Summarize the changes");
+    expect(sendMessage).toHaveBeenCalledWith("Summarize the changes", []);
     expect(input.value).toBe(""); // cleared
     expect(sendBtn.disabled).toBe(true); // busy until chat.done
 
@@ -54,15 +74,29 @@ describe("AssistantChat", () => {
     expect(messages()).toHaveLength(0);
   });
 
-  it("Enter sends; Shift+Enter does not", () => {
+  it("plain Enter remains available for new lines; Ctrl/Cmd+Enter sends", () => {
     const { input, sendMessage } = harness();
     input.value = "hi";
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
-    );
+    const plainEnter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(plainEnter);
     expect(sendMessage).not.toHaveBeenCalled();
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(sendMessage).toHaveBeenCalledWith("hi");
+    expect(plainEnter.defaultPrevented).toBe(false);
+
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
+    );
+    expect(sendMessage).toHaveBeenCalledWith("hi", []);
+
+    const second = harness();
+    second.input.value = "hello";
+    second.input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
+    );
+    expect(second.sendMessage).toHaveBeenCalledWith("hello", []);
   });
 
   it("appends streamed deltas to the pending assistant message and re-enables on endTurn", () => {
@@ -119,5 +153,69 @@ describe("AssistantChat", () => {
     expect(body.querySelector(".chat-templates-empty")?.textContent).toContain(
       "No prompt templates",
     );
+  });
+
+  it("picks a file and folder without opening them, exposes repositories, and sends structured state", async () => {
+    const { chat, body, input, sendBtn, sendMessage } = harness();
+    chat.setRepositories([
+      { id: "octo/specs", name: "octo/specs", url: "https://github.com/octo/specs" },
+    ]);
+
+    const attach = body.querySelector<HTMLButtonElement>(".chat-attach-toggle");
+    attach?.click();
+    const menuItems = Array.from(body.querySelectorAll<HTMLButtonElement>(".chat-attach-item"));
+    expect(menuItems.map((item) => item.textContent)).toEqual(["Files", "Folders", "octo/specs"]);
+    menuItems[0]?.click();
+    await flush();
+
+    attach?.click();
+    body.querySelectorAll<HTMLButtonElement>(".chat-attach-item")[1]?.click();
+    await flush();
+    expect(
+      Array.from(body.querySelectorAll(".chat-attachment"), (item) => item.textContent),
+    ).toEqual(["roadmap.md×", "specs×"]);
+
+    input.value = "Compare these";
+    sendBtn.click();
+    expect(sendMessage).toHaveBeenCalledWith("Compare these", [
+      { kind: "file", label: "roadmap.md", reference: "C:\\specs\\roadmap.md" },
+      { kind: "folder", label: "specs", reference: "C:\\specs" },
+    ]);
+    expect(body.querySelector(".chat-attachments")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("shows an honest repository empty state and removes an attached chip accessibly", async () => {
+    const { body } = harness();
+    const attach = body.querySelector<HTMLButtonElement>(".chat-attach-toggle");
+    attach?.click();
+    expect(body.querySelector(".chat-templates-empty")?.textContent).toContain("No registered");
+
+    body.querySelector<HTMLButtonElement>(".chat-attach-item")?.click();
+    await flush();
+    const remove = body.querySelector<HTMLButtonElement>(".chat-attachment-remove");
+    expect(remove?.getAttribute("aria-label")).toBe("Remove roadmap.md");
+    remove?.click();
+    expect(body.querySelectorAll(".chat-attachment")).toHaveLength(0);
+  });
+
+  it("supports Arrow/Home/End navigation and closes on Escape", () => {
+    const { chat, body } = harness();
+    chat.setRepositories([
+      { id: "octo/specs", name: "octo/specs", url: "https://github.com/octo/specs" },
+    ]);
+    const attach = body.querySelector<HTMLButtonElement>(".chat-attach-toggle");
+    attach?.click();
+    const fileItem = body.querySelector<HTMLButtonElement>(".chat-attach-item");
+    expect(document.activeElement).toBe(fileItem);
+    const menu = body.querySelector<HTMLElement>(".chat-attach-menu");
+    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    expect(document.activeElement?.textContent).toBe("octo/specs");
+    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    expect(document.activeElement).toBe(fileItem);
+    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement?.textContent).toBe("Folders");
+    menu?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(menu?.hidden).toBe(true);
+    expect(document.activeElement).toBe(attach);
   });
 });

@@ -1252,7 +1252,7 @@ button {
   color: var(--text-muted);
 }
 
-/* Composer: template-picker toggle, the growing input, and Send. */
+/* Composer: template-picker toggle, the multi-line input, and Send. */
 .chat-composer {
   flex: none;
   display: flex;
@@ -1279,6 +1279,99 @@ button {
   cursor: pointer;
 }
 
+.chat-attach-toggle {
+  flex: none;
+  height: 30px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 500 12px / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.chat-attach-toggle:hover:not(:disabled),
+.chat-attach-item:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.chat-attach-menu {
+  flex: none;
+  margin: 0 0.6rem 0.4rem;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.chat-attach-menu[hidden],
+.chat-attachments[hidden] {
+  display: none;
+}
+
+.chat-attach-item {
+  width: 100%;
+  display: block;
+  margin: 0 0 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-attach-item:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+}
+
+.chat-attach-heading {
+  padding: 0.35rem 0.5rem 0.2rem;
+  color: var(--text-muted);
+  font: 600 11px / 1.3 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-attachments {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.25rem 0.35rem 0.25rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: 12px / 1.2 var(--font-ui);
+}
+
+.chat-attachment-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .chat-templates-toggle:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-soft-border);
@@ -1286,9 +1379,10 @@ button {
 }
 
 .chat-input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  resize: none;
+  min-height: 4.5rem;
+  resize: vertical;
   max-height: 8rem;
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--border-strong);
@@ -1296,6 +1390,19 @@ button {
   background: var(--surface);
   color: var(--text);
   font: 13px / 1.5 var(--font-ui);
+}
+
+.chat-input-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.chat-input-hint {
+  color: var(--text-subtle);
+  font: 11px / 1.3 var(--font-ui);
 }
 
 .chat-send {
@@ -1315,9 +1422,56 @@ button {
 
 .chat-send:disabled,
 .chat-templates-toggle:disabled,
+.chat-attach-toggle:disabled,
 .chat-input:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.document-activity {
+  height: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.document-activity-name {
+  margin: 0 0 0.65rem;
+  color: var(--text-muted);
+  font: 500 12px / 1.4 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.document-activity-empty {
+  margin: 1rem 0;
+  color: var(--text-muted);
+  font: 13px / 1.5 var(--font-ui);
+}
+
+.document-activity-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.document-activity-item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.document-activity-item strong {
+  color: var(--text);
+  font: 600 13px / 1.4 var(--font-ui);
+}
+
+.document-activity-item span {
+  color: var(--text-muted);
+  font: 11px / 1.4 var(--font-ui);
 }
 
 /* Splitters (design §9): a 1px hairline with a wider invisible grab zone (::before) that lights up

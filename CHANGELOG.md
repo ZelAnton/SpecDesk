@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The right panel now includes Versions, Comments, and Change history for the selected document. Versions
+  and history come from the document's saved repository history; Comments lists the selected file's inline
+  GitHub review comments when connected and shows an honest empty state otherwise.
+- The assistant now has an Attach menu for the open file, current folder, and registered repositories;
+  selected context appears as removable chips and is sent with the next message.
+- The assistant message box is now visibly multi-line: Enter writes a new line, Ctrl+Enter (or Cmd+Enter)
+  sends, and the box can be resized vertically for longer prompts.
 - You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub
   repo") or by clicking one in the Repositories list. SpecDesk copies it into a local folder and opens it as
   your workspace. Opening a folder or a repository now also reveals the file navigator (and opens the left

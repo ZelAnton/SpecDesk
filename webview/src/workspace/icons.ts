@@ -29,6 +29,8 @@ const ICON_BODIES: Record<string, string> = {
   log: `<polyline points="6 8 10 12 6 16"/><line x1="12" y1="16" x2="18" y2="16"/>`,
   // speech bubble — a comment
   comment: `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
+  versions: `<path d="M7 3h10v4H7z"/><path d="M5 7h14v14H5z"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="14" y2="16"/>`,
+  history: `<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/><path d="M3 5v5h5"/>`,
   // dot fallback — an unknown mode
   fallback: `<circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>`,
 };

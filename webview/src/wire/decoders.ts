@@ -8,6 +8,7 @@
 
 import {
   type BranchNameSuggestedPayload,
+  type ChatAttachment,
   type ChatDeltaPayload,
   type ChatDonePayload,
   type ChildDiffPayload,
@@ -15,6 +16,10 @@ import {
   type DiffOverflowPayload,
   type DiffResultPayload,
   type DocLoadedPayload,
+  type DocumentActivityPayload,
+  type DocumentChange,
+  type DocumentComment,
+  type DocumentVersion,
   type ErrorPayload,
   type GitHubAccountPayload,
   type GitHubCodePayload,
@@ -343,6 +348,96 @@ export function parseChatDone(value: unknown): ChatDonePayload | null {
     return null;
   }
   return { id: value.id };
+}
+
+export function parseChatAttachment(value: unknown): ChatAttachment | null {
+  if (
+    !isRecord(value) ||
+    (value.kind !== "file" && value.kind !== "folder" && value.kind !== "repository") ||
+    !isString(value.label) ||
+    !isString(value.reference)
+  ) {
+    return null;
+  }
+  return { kind: value.kind, label: value.label, reference: value.reference };
+}
+
+function parseDocumentVersion(value: unknown): DocumentVersion | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.note) ||
+    !isString(value.author) ||
+    !isString(value.when)
+  )
+    return null;
+  return { id: value.id, note: value.note, author: value.author, when: value.when };
+}
+
+function parseDocumentComment(value: unknown): DocumentComment | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.author) ||
+    !isString(value.body) ||
+    !isString(value.when)
+  )
+    return null;
+  return {
+    id: value.id,
+    author: value.author,
+    body: value.body,
+    when: value.when,
+  };
+}
+
+function parseDocumentChange(value: unknown): DocumentChange | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.label) ||
+    !isString(value.note) ||
+    !isString(value.author) ||
+    !isString(value.when)
+  )
+    return null;
+  return {
+    id: value.id,
+    label: value.label,
+    note: value.note,
+    author: value.author,
+    when: value.when,
+  };
+}
+
+export function parseDocumentActivity(value: unknown): DocumentActivityPayload | null {
+  if (
+    !isRecord(value) ||
+    (value.document !== undefined && !isString(value.document)) ||
+    (value.historyState !== "loaded" &&
+      value.historyState !== "notVersioned" &&
+      value.historyState !== "unavailable") ||
+    (value.historyMessage !== undefined && !isString(value.historyMessage)) ||
+    (value.commentsState !== "loaded" &&
+      value.commentsState !== "notConnected" &&
+      value.commentsState !== "unavailable") ||
+    (value.commentsMessage !== undefined && !isString(value.commentsMessage))
+  )
+    return null;
+  const versions = parseArray(value.versions, parseDocumentVersion);
+  const comments = parseArray(value.comments, parseDocumentComment);
+  const history = parseArray(value.history, parseDocumentChange);
+  if (versions === null || comments === null || history === null) return null;
+  return {
+    ...(value.document === undefined ? {} : { document: value.document }),
+    versions,
+    historyState: value.historyState,
+    ...(value.historyMessage === undefined ? {} : { historyMessage: value.historyMessage }),
+    comments,
+    commentsState: value.commentsState,
+    ...(value.commentsMessage === undefined ? {} : { commentsMessage: value.commentsMessage }),
+    history,
+  };
 }
 
 function parsePromptTemplate(value: unknown): PromptTemplate | null {

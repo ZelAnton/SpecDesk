@@ -20,6 +20,12 @@ public interface IFileDialogs
 	/// <summary>Prompt for a folder to open as the workspace; <c>null</c> if the user cancelled.</summary>
 	string? PickOpenFolder();
 
+	/// <summary>Prompt for a file to attach without opening it in the editor.</summary>
+	string? PickAttachmentFile() => PickOpenFile();
+
+	/// <summary>Prompt for a folder to attach without changing the workspace.</summary>
+	string? PickAttachmentFolder() => PickOpenFolder();
+
 	/// <summary>Prompt for a save location; <c>null</c> if the user cancelled.</summary>
 	string? PickSaveFile(string? suggestedPath);
 }
@@ -109,6 +115,7 @@ public sealed partial class HostController : IDisposable
 	private readonly PreviewCoordinator _coordinator = new();
 	private readonly LogBridge _logBridge;
 	private readonly TraceBridge _traceBridge;
+	private readonly CancellationTokenSource _lifetimeCts = new();
 
 	// Guards the lifecycle / autosave fields below, which the message thread and the autosave timer
 	// callback both touch. _text/_currentPath/_repoRoot are also published and snapshotted under this
@@ -253,6 +260,7 @@ public sealed partial class HostController : IDisposable
 	/// <summary>Disposes the pending autosave timer and cancels any in-flight sign-in.</summary>
 	public void Dispose()
 	{
+		_lifetimeCts.Cancel();
 		lock (_sync)
 		{
 			_autosaveTimer?.Dispose();
@@ -268,6 +276,7 @@ public sealed partial class HostController : IDisposable
 			_cloneCts?.Cancel();
 			_cloneCts = null;
 		}
+		_lifetimeCts.Dispose();
 	}
 
 	/// <summary>Route one incoming wire envelope. Unknown or malformed frames are ignored. Runs on the
@@ -392,6 +401,12 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.ChatSend:
 				OnChatSend(message);
+				break;
+			case MessageKinds.ChatAttachmentPick:
+				OnChatAttachmentPick(message);
+				break;
+			case MessageKinds.DocumentActivityRequest:
+				OnDocumentActivityRequest(message);
 				break;
 			case MessageKinds.TemplatesRequest:
 				OnRequestTemplates(message);

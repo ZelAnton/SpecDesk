@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.Markdown;
@@ -21,6 +22,13 @@ public sealed class HostControllerChatTests
 		public string? PickSaveFile(string? suggestedPath) => null;
 	}
 
+	private sealed class AttachmentDialogs(string file, string folder) : IFileDialogs
+	{
+		public string? PickOpenFile() => file;
+		public string? PickOpenFolder() => folder;
+		public string? PickSaveFile(string? suggestedPath) => null;
+	}
+
 	private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
 
 	private readonly List<string> _sent = [];
@@ -35,7 +43,10 @@ public sealed class HostControllerChatTests
 		}
 	}
 
-	private HostController NewController(IChatAgent? agent = null, ITemplateLibrary? templates = null)
+	private HostController NewController(
+		IChatAgent? agent = null,
+		ITemplateLibrary? templates = null,
+		IFileDialogs? dialogs = null)
 	{
 		void Send(string json)
 		{
@@ -48,12 +59,202 @@ public sealed class HostControllerChatTests
 		return new HostController(
 			StubRender,
 			Send,
-			new NoDialogs(),
+			dialogs ?? new NoDialogs(),
 			(_, _, _, _, _) => null,
 			new FakeVersioning(),
 			NullLogger<HostController>.Instance,
 			chatAgent: agent,
 			templates: templates);
+	}
+
+	[Test]
+	public void AttachmentPick_UsesNativeDialogsWithoutOpeningTheSelection()
+	{
+		using HostController controller = NewController(
+			dialogs: new AttachmentDialogs(@"C:\specs\billing.md", @"C:\specs"));
+
+		controller.OnMessage(IpcSerializer.Serialize(new IpcMessage(
+			MessageKinds.ChatAttachmentPick,
+			Id: "pick-1",
+			Payload: JsonSerializer.SerializeToElement(
+				new ChatAttachmentPickPayload("file"), IpcSerializer.Options))));
+
+		IpcMessage? reply = FindKind(MessageKinds.ChatAttachmentPicked);
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply?.Id, Is.EqualTo("pick-1"));
+			Assert.That(reply?.GetPayload<ChatAttachmentPayload>(), Is.EqualTo(
+				new ChatAttachmentPayload("file", "billing.md", @"C:\specs\billing.md")));
+			Assert.That(FindKind(MessageKinds.DocLoaded), Is.Null);
+		});
+	}
+
+	[Test]
+	public void ChatSend_WithFileAttachment_PassesBoundedContentWithoutTheAbsolutePath()
+	{
+		string file = Path.GetTempFileName();
+		try
+		{
+			File.WriteAllText(file, "refund window is 30 days");
+			FakeChatAgent agent = new();
+			using HostController controller = NewController(
+				agent, dialogs: new AttachmentDialogs(file, Path.GetDirectoryName(file)!));
+			controller.OnMessage(IpcSerializer.Serialize(new IpcMessage(
+				MessageKinds.ChatAttachmentPick,
+				Id: "pick-file",
+				Payload: JsonSerializer.SerializeToElement(new ChatAttachmentPickPayload("file"), IpcSerializer.Options))));
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ChatSend,
+				new ChatSendPayload("Summarize", [new ChatAttachmentPayload("file", "policy.md", file)])));
+
+			Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+			Assert.Multiple(() =>
+			{
+				Assert.That(agent.LastMessage, Does.Contain("File policy.md"));
+				Assert.That(agent.LastMessage, Does.Contain("refund window is 30 days"));
+				Assert.That(agent.LastMessage, Does.Not.Contain(file));
+			});
+		}
+		finally
+		{
+			File.Delete(file);
+		}
+	}
+
+	[Test]
+	public void ChatSend_RejectsAFilePathThatWasNotReturnedByTheNativePicker()
+	{
+		string file = Path.GetTempFileName();
+		try
+		{
+			File.WriteAllText(file, "private local text");
+			FakeChatAgent agent = new();
+			using HostController controller = NewController(agent);
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ChatSend,
+				new ChatSendPayload("Hello", [new ChatAttachmentPayload("file", "forged.md", file)])));
+
+			Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+			Assert.That(agent.LastMessage, Is.EqualTo("Hello"));
+		}
+		finally
+		{
+			File.Delete(file);
+		}
+	}
+
+	[Test]
+	public void ChatSend_WithMalformedAttachmentPath_IgnoresItAndStillCompletes()
+	{
+		FakeChatAgent agent = new();
+		using HostController controller = NewController(agent);
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.ChatSend,
+			new ChatSendPayload("Hello", [new ChatAttachmentPayload("file", "bad", "bad\0path")])));
+
+		Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+		Assert.That(agent.LastMessage, Is.EqualTo("Hello"));
+	}
+
+	[Test]
+	public void ChatSend_WithOversizedFileAttachment_ReadsOnlyABoundedPrefix()
+	{
+		string file = Path.GetTempFileName();
+		try
+		{
+			File.WriteAllText(file, new string('a', 210_000) + "SECRET_TAIL");
+			FakeChatAgent agent = new();
+			using HostController controller = NewController(
+				agent, dialogs: new AttachmentDialogs(file, Path.GetDirectoryName(file)!));
+			PickAttachment(controller, "file");
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ChatSend,
+				new ChatSendPayload("Inspect", [new ChatAttachmentPayload("file", "large.md", file)])));
+
+			Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+			Assert.Multiple(() =>
+			{
+				Assert.That(agent.LastMessage, Does.Contain("[Attachment truncated]"));
+				Assert.That(agent.LastMessage, Does.Not.Contain("SECRET_TAIL"));
+				Assert.That(agent.LastMessage?.Length, Is.LessThan(201_000));
+			});
+		}
+		finally
+		{
+			File.Delete(file);
+		}
+	}
+
+	[Test]
+	public void ChatSend_WithLargeFolderAttachment_CapsTraversalAndSkipsNoiseDirectories()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"specdesk-chat-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			for (int i = 0; i < 240; i++)
+			{
+				string directory = Directory.CreateDirectory(Path.Combine(root, $"d{i:D3}")).FullName;
+				File.WriteAllText(Path.Combine(directory, $"doc{i:D3}.md"), "content");
+			}
+			string noise = Directory.CreateDirectory(Path.Combine(root, "node_modules")).FullName;
+			File.WriteAllText(Path.Combine(noise, "secret.md"), "must not be traversed");
+
+			FakeChatAgent agent = new();
+			using HostController controller = NewController(agent, dialogs: new AttachmentDialogs("", root));
+			PickAttachment(controller, "folder");
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ChatSend,
+				new ChatSendPayload("List", [new ChatAttachmentPayload("folder", "large", root)])));
+
+			Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+			Assert.Multiple(() =>
+			{
+				Assert.That(agent.LastMessage, Does.Contain("Folder large"));
+				Assert.That(agent.LastMessage, Does.Not.Contain("secret.md"));
+				Assert.That(agent.LastMessage?.Split(".md").Length - 1, Is.LessThanOrEqualTo(20));
+			});
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private static void PickAttachment(HostController controller, string kind) =>
+		controller.OnMessage(IpcSerializer.Serialize(new IpcMessage(
+			MessageKinds.ChatAttachmentPick,
+			Id: $"pick-{kind}",
+			Payload: JsonSerializer.SerializeToElement(new ChatAttachmentPickPayload(kind), IpcSerializer.Options))));
+
+	[Test]
+	public void ChatSend_WithThousandsOfIrrelevantFiles_StopsAtTheGlobalEntryCap()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"specdesk-chat-flat-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			for (int i = 0; i < 2_100; i++)
+			{
+				File.WriteAllText(Path.Combine(root, $"noise{i:D4}.txt"), string.Empty);
+			}
+			File.WriteAllText(Path.Combine(root, "tail.md"), "outside the bounded scan");
+
+			FakeChatAgent agent = new();
+			using HostController controller = NewController(agent, dialogs: new AttachmentDialogs("", root));
+			PickAttachment(controller, "folder");
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ChatSend,
+				new ChatSendPayload("List", [new ChatAttachmentPayload("folder", "flat", root)])));
+
+			Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+			Assert.That(agent.LastMessage, Does.Contain("Folder flat"));
+			Assert.That(agent.LastMessage, Does.Not.Contain("tail.md"));
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
 	}
 
 	[Test]

@@ -47,6 +47,10 @@ public enum ReviewRole
 public sealed record ReviewSummary(
     int Number, string Title, string Url, string Repo, ReviewRole Role, ReviewDecision Decision);
 
+/// <summary>One bounded inline review comment from GitHub, including its repository-relative file path.</summary>
+public sealed record ReviewComment(
+    string Id, string Path, string Author, string Body, DateTimeOffset When);
+
 /// <summary>
 /// The GitHub review operations behind the "Send for review" flow. The access token is passed in (the host
 /// gets it transiently via <see cref="IGitHubAuth.WithAccessTokenAsync{T}"/>) and used only as the Bearer
@@ -106,6 +110,14 @@ public interface IGitHubReview
     /// for the open document is <see cref="GetReviewStatusAsync"/>).</summary>
     Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
         string accessToken, CancellationToken cancellationToken = default);
+
+    /// <summary>Return at most 100 inline comments from the first API page of a review.</summary>
+    Task<IReadOnlyList<ReviewComment>> ListReviewCommentsAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -114,6 +126,7 @@ public interface IGitHubReview
 /// </summary>
 public sealed class GitHubReviewClient : IGitHubReview
 {
+    private const int MaxReviewCommentsResponseBytes = 1_048_576;
     private readonly HttpClient _http;
 
     public GitHubReviewClient(HttpClient http) => _http = http;
@@ -213,6 +226,82 @@ public sealed class GitHubReviewClient : IGitHubReview
         }
 
         return count;
+    }
+
+    public async Task<IReadOnlyList<ReviewComment>> ListReviewCommentsAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/comments?per_page=100&sort=created&direction=desc");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+        using HttpResponseMessage response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the review-comments request (HTTP {(int)response.StatusCode}).");
+        }
+
+        byte[] responseBody = await ReadBoundedAsync(
+            response.Content, MaxReviewCommentsResponseBytes, timeout.Token);
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            throw new HttpRequestException("GitHub returned malformed review comments.");
+        }
+        List<ReviewComment> comments = [];
+        foreach (JsonElement item in document.RootElement.EnumerateArray().Take(100))
+        {
+            string path = GitHubHttp.StringOf(item, "path");
+            string body = GitHubHttp.StringOf(item, "body");
+            if (path.Length == 0 || body.Length == 0)
+            {
+                continue;
+            }
+            string author = item.TryGetProperty("user", out JsonElement user)
+                ? GitHubHttp.StringOf(user, "login")
+                : string.Empty;
+            string created = GitHubHttp.StringOf(item, "created_at");
+            DateTimeOffset when = DateTimeOffset.TryParse(created, out DateTimeOffset parsed)
+                ? parsed
+                : DateTimeOffset.UnixEpoch;
+            string id = item.TryGetProperty("id", out JsonElement idElement)
+                ? idElement.GetRawText()
+                : string.Empty;
+            string boundedBody = body.Length <= 4_000 ? body : body[..4_000] + "…";
+            comments.Add(new ReviewComment(id, path, author, boundedBody, when));
+        }
+        return comments;
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(
+        HttpContent content, int maxBytes, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is long length && length > maxBytes)
+        {
+            throw new InvalidDataException("GitHub review comments response exceeded the size limit.");
+        }
+        await using Stream source = await content.ReadAsStreamAsync(cancellationToken);
+        using MemoryStream destination = new(capacity: Math.Min(maxBytes, 64 * 1024));
+        byte[] buffer = new byte[8 * 1024];
+        while (true)
+        {
+            int read = await source.ReadAsync(buffer, cancellationToken);
+            if (read == 0)
+            {
+                return destination.ToArray();
+            }
+            if (destination.Length + read > maxBytes)
+            {
+                throw new InvalidDataException("GitHub review comments response exceeded the size limit.");
+            }
+            destination.Write(buffer, 0, read);
+        }
     }
 
     // The recent PRs for the branch (newest first — we prefer an open one, see below), each with its

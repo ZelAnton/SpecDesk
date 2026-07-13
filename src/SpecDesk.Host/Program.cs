@@ -223,6 +223,24 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger log
 				return selection.Length > 0 ? selection[0] : null;
 			});
 
+	public string? PickAttachmentFile() =>
+		OnUiThread(
+			"ShowAttachFile",
+			static w =>
+			{
+				string[] selection = w.ShowOpenFile("Attach file", string.Empty, false, [("All files", ["*.*"])]);
+				return selection.Length > 0 ? selection[0] : null;
+			});
+
+	public string? PickAttachmentFolder() =>
+		OnUiThread(
+			"ShowAttachFolder",
+			static w =>
+			{
+				string[] selection = w.ShowOpenFolder("Attach folder", string.Empty, false);
+				return selection.Length > 0 ? selection[0] : null;
+			});
+
 	public string? PickSaveFile(string? suggestedPath) =>
 		OnUiThread(
 			"ShowSaveFile",

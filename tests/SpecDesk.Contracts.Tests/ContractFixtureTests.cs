@@ -70,6 +70,18 @@ public sealed class ContractFixtureTests
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
 		(MessageKinds.ChatDelta, new ChatDeltaPayload("Here is a summary of the change: ")),
 		(MessageKinds.ChatDone, new ChatDonePayload("7")),
+		(MessageKinds.ChatAttachmentPicked,
+			new ChatAttachmentPayload("file", "billing.md", @"C:\specs\billing.md")),
+		(MessageKinds.DocumentActivity, new DocumentActivityPayload(
+			"billing.md",
+			[new DocumentVersionPayload("abc123", "Clarify refunds", "Alex", DateTimeOffset.UnixEpoch)],
+			"loaded",
+			null,
+			[],
+			"loaded",
+			null,
+			[new DocumentChangePayload(
+				"abc123", "Document updated", "Clarify refunds", "Alex", DateTimeOffset.UnixEpoch)])),
 		// One personal + one remote template (both lists exercised; the remote list may be empty at runtime).
 		(MessageKinds.Templates, new TemplatesPayload(
 		[
