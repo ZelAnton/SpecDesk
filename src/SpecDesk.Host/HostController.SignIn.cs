@@ -62,6 +62,7 @@ public sealed partial class HostController
 				}
 				else if (result.Outcome == SignInOutcome.Authorized)
 				{
+					await ResetChatAgentAsync();
 					PublishTerminalIfCurrent(cts, signedIn: true, result.Login, message: null, resume: true);
 				}
 				else
@@ -178,9 +179,11 @@ public sealed partial class HostController
 				TakePendingRepoActions();
 				_signInCts?.Cancel();
 				_signInCts = null;
+				_chatCts?.Cancel();
 			}
 			InvalidateAccountDetails();
 			_auth?.SignOut();
+			_ = ResetChatAgentAsync();
 			SendCurrentAccount();
 		}
 	}

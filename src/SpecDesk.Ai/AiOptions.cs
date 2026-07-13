@@ -6,15 +6,14 @@ namespace SpecDesk.Ai;
 /// mechanism the rest of the host uses for optional config (<c>SPECDESK_DATA_ROOT</c>, the GitHub client
 /// id) — so a TOML loader can replace <see cref="FromEnvironment"/> later without touching consumers.
 /// </summary>
-/// <param name="Provider">The intended provider name (<c>claude</c> / <c>openai</c> / <c>azure-openai</c> /
-/// …), or <c>offline</c> for the built-in stub. Informational in this scaffold: the chat always runs on the
-/// offline <see cref="EchoChatClient"/> until a real provider client is wired behind the same seam.</param>
-/// <param name="Model">The provider-specific model id (informational until a real provider is wired).</param>
+/// <param name="Provider">Legacy provider setting retained while settings migrate to Copilot; the runtime
+/// chat always uses the GitHub account connected in SpecDesk.</param>
+/// <param name="Model">Optional Copilot model id; blank lets Copilot choose the account default.</param>
 /// <param name="RemoteTemplatesUrl">The URL of the remote prompt-template library, or <c>null</c> when
 /// none is configured (then the remote library is simply empty). See <see cref="RemoteTemplateSource"/>.</param>
 public sealed record AiOptions(string Provider, string Model, Uri? RemoteTemplatesUrl)
 {
-	/// <summary>The offline default: the in-repo stub provider, no remote template URL.</summary>
+	/// <summary>Default settings: Copilot's account-default model and no remote template URL.</summary>
 	public static AiOptions Offline { get; } = new("offline", string.Empty, RemoteTemplatesUrl: null);
 
 	/// <summary>Environment variable names, grouped so the (few) config keys have one definition.</summary>

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using SpecDesk.Ai;
 using SpecDesk.Contracts;
+using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
 namespace SpecDesk.Host.Tests;
@@ -46,7 +47,9 @@ public sealed class HostControllerChatTests
 	private HostController NewController(
 		IChatAgent? agent = null,
 		ITemplateLibrary? templates = null,
-		IFileDialogs? dialogs = null)
+		IFileDialogs? dialogs = null,
+		SpecDesk.GitHub.IGitHubAuth? auth = null,
+		IChatAgentFactory? agentFactory = null)
 	{
 		void Send(string json)
 		{
@@ -63,8 +66,251 @@ public sealed class HostControllerChatTests
 			(_, _, _, _, _) => null,
 			new FakeVersioning(),
 			NullLogger<HostController>.Instance,
+			auth: auth,
 			chatAgent: agent,
+			chatAgentFactory: agentFactory,
 			templates: templates);
+	}
+
+	[Test]
+	public void CopilotChat_WhenSignedOut_RequestsGitHubConnectionWithoutCreatingAnAgent()
+	{
+		TrackingAgentFactory factory = new();
+		using HostController controller = NewController(
+			auth: new FakeGitHubAuth(signedIn: false), agentFactory: factory);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.ChatSend, new ChatSendPayload("Hello", [])));
+
+		Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(factory.CreateCount, Is.Zero);
+			Assert.That(FindKind(MessageKinds.ChatDelta)?.GetPayload<ChatDeltaPayload>()?.Text,
+				Is.EqualTo("Connect to GitHub to use Copilot."));
+		});
+	}
+
+	[Test]
+	public async Task CopilotChat_SignOutDisposesTheSession_AndReauthenticationCreatesANewOne()
+	{
+		const string token = "gho_secret_never_on_wire";
+		FakeGitHubAuth auth = new(signedIn: true, token);
+		TrackingAgentFactory factory = new();
+		using HostController controller = NewController(auth: auth, agentFactory: factory);
+
+		SendChat(controller, "first");
+		Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+		Assert.That(factory.CreateCount, Is.EqualTo(1));
+		Assert.That(SnapshotSent().Any(json => json.Contains(token, StringComparison.Ordinal)), Is.False);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+		await factory.Agents[0].Disposed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+		auth.SignedIn = true;
+		SendChat(controller, "second");
+		Assert.That(WaitForChatDoneCount(2), Is.True);
+		Assert.Multiple(() =>
+		{
+			Assert.That(factory.CreateCount, Is.EqualTo(2));
+			Assert.That(SnapshotSent().Any(json => json.Contains(token, StringComparison.Ordinal)), Is.False);
+		});
+	}
+
+	[Test]
+	public async Task CopilotChat_NeverCompletingAbort_DoesNotBlockSignOutReauthenticationOrDispose()
+	{
+		NeverAbortTransport firstTransport = new();
+		IdleTransport secondTransport = new();
+		QueueAgentFactory factory = new(
+			new CopilotChatAgent(
+				() => firstTransport,
+				abortTimeout: TimeSpan.FromMilliseconds(30),
+				disposeTimeout: TimeSpan.FromMilliseconds(30)),
+			new CopilotChatAgent(
+				() => secondTransport,
+				abortTimeout: TimeSpan.FromMilliseconds(30),
+				disposeTimeout: TimeSpan.FromMilliseconds(30)));
+		ReauthGitHubAuth auth = new();
+		HostController controller = NewController(auth: auth, agentFactory: factory);
+
+		SendChat(controller, "first");
+		await firstTransport.SendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+		Assert.That(WaitForSignedInAccount(), Is.True, "re-authentication stayed blocked behind abort");
+
+		SendChat(controller, "second");
+		Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(factory.CreateCount, Is.EqualTo(2));
+			Assert.That(secondTransport.SendCount, Is.EqualTo(1));
+		});
+		await Task.Run(controller.Dispose).WaitAsync(TimeSpan.FromSeconds(1));
+	}
+
+	private void SendChat(HostController controller, string text) =>
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.ChatSend, new ChatSendPayload(text, [])));
+
+	private bool WaitForChatDoneCount(int expected)
+	{
+		for (int i = 0; i < 200; i++)
+		{
+			lock (_gate)
+			{
+				if (_sent.Count(json => IpcSerializer.Deserialize(json)?.Kind == MessageKinds.ChatDone) >= expected)
+				{
+					return true;
+				}
+			}
+			Thread.Sleep(10);
+		}
+		return false;
+	}
+
+	private bool WaitForSignedInAccount()
+	{
+		for (int i = 0; i < 200; i++)
+		{
+			lock (_gate)
+			{
+				if (_sent
+					.Select(IpcSerializer.Deserialize)
+					.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+					.Any(message => message?.GetPayload<GitHubAccountPayload>()?.SignedIn == true))
+				{
+					return true;
+				}
+			}
+			Thread.Sleep(10);
+		}
+		return false;
+	}
+
+	private string[] SnapshotSent()
+	{
+		lock (_gate)
+		{
+			return [.. _sent];
+		}
+	}
+
+	private sealed class TrackingAgentFactory : IChatAgentFactory
+	{
+		public List<TrackingAgent> Agents { get; } = [];
+		public int CreateCount => Agents.Count;
+
+		public IChatAgent Create(string githubAccessToken)
+		{
+			TrackingAgent agent = new();
+			Agents.Add(agent);
+			return agent;
+		}
+	}
+
+	private sealed class TrackingAgent : IChatAgent, IAsyncDisposable
+	{
+		public TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public async IAsyncEnumerable<string> StreamAsync(
+			string userMessage,
+			[System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+		{
+			await Task.Yield();
+			cancellationToken.ThrowIfCancellationRequested();
+			yield return $"Copilot: {userMessage}";
+		}
+
+		public ValueTask DisposeAsync()
+		{
+			Disposed.TrySetResult();
+			return ValueTask.CompletedTask;
+		}
+	}
+
+	private sealed class QueueAgentFactory(params IChatAgent[] agents) : IChatAgentFactory
+	{
+		private readonly Queue<IChatAgent> _agents = new(agents);
+		public int CreateCount { get; private set; }
+
+		public IChatAgent Create(string githubAccessToken)
+		{
+			CreateCount++;
+			return _agents.Dequeue();
+		}
+	}
+
+	private sealed class ReauthGitHubAuth : IGitHubAuth
+	{
+		private bool _signedIn = true;
+
+		public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default) =>
+			Task.FromResult(new DeviceCodePrompt(
+				"CODE", new Uri("https://github.com/login/device"), TimeSpan.FromMinutes(1),
+				TimeSpan.FromSeconds(1), "device"));
+
+		public Task<SignInResult> AwaitAuthorizationAsync(
+			DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+		{
+			_signedIn = true;
+			return Task.FromResult(SignInResult.Authorized("octocat"));
+		}
+
+		public bool IsSignedIn() => _signedIn;
+
+		public string? SignedInLogin() => _signedIn ? "octocat" : null;
+
+		public Task<T> WithAccessTokenAsync<T>(
+			Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+			use("gho_test", cancellationToken);
+
+		public void SignOut() => _signedIn = false;
+	}
+
+	private sealed class NeverAbortTransport : ICopilotSessionTransport
+	{
+		public TaskCompletionSource SendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public IDisposable On(Action<SessionEvent> handler) => new ActionDisposable(static () => { });
+
+		public async Task SendAsync(string message, CancellationToken cancellationToken)
+		{
+			SendStarted.SetResult();
+			await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+		}
+
+		public Task AbortAsync(CancellationToken cancellationToken) => new TaskCompletionSource().Task;
+
+		public ValueTask DisposeAsync() => new(new TaskCompletionSource().Task);
+	}
+
+	private sealed class IdleTransport : ICopilotSessionTransport
+	{
+		private Action<SessionEvent>? _handler;
+		public int SendCount { get; private set; }
+
+		public IDisposable On(Action<SessionEvent> handler)
+		{
+			_handler = handler;
+			return new ActionDisposable(() => _handler = null);
+		}
+
+		public Task SendAsync(string message, CancellationToken cancellationToken)
+		{
+			SendCount++;
+			_handler?.Invoke(new SessionIdleEvent { Data = new SessionIdleData() });
+			return Task.CompletedTask;
+		}
+
+		public Task AbortAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+		public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+	}
+
+	private sealed class ActionDisposable(Action action) : IDisposable
+	{
+		public void Dispose() => action();
 	}
 
 	[Test]

@@ -53,9 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it's written. Assistant replies are shown as quiet text; your own messages sit in a subtle bubble. A
   prompt-template picker (▤) inserts a ready-made prompt into the message box — from your personal library
   (a local file) and a shared library fetched from a configured URL — which you can edit before sending.
-  Out of the box the assistant runs on a built-in offline preview that echoes your message, so it works with
-  no account or API key configured; a real AI provider can be connected later behind the same seam. Nothing
-  in the document is ever changed without your confirmation.
+  Connect your GitHub account to use GitHub Copilot; when disconnected, the panel asks you to connect instead
+  of generating a placeholder reply. Nothing in the document is ever changed without your confirmation.
 - Collapsible side and bottom panels around the editor: a left rail, a right rail, and a full-width bottom
   dock. Click the active mode icon to collapse or expand its panel; choosing another icon opens that mode.
   Collapsed side rails keep their vertical icons visible, while the collapsed bottom panel becomes a
@@ -126,6 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- Assistant replies now come from GitHub Copilot after GitHub sign-in instead of the offline echo preview;
+  disconnecting or changing accounts cancels the active turn and discards that account's chat session.
 - The Start screen now opens the Repositories panel with one `Open Repository` button instead of asking for a
   repository address itself.
 - Markdown actions, wrapping, change highlighting, and the Code / Split / Formatted switch now live directly

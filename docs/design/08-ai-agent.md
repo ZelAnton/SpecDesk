@@ -1,24 +1,23 @@
 # 08 — AI Agent
 
-The agent automates tedious steps (commit/PR text, search, drafting) and answers questions
-about the document. Built on **Microsoft Agent Framework** (GA 2026-04-03; first-party
-Anthropic Claude connector; native MCP support), so the agent layer is a mature, .NET-native
-fit.
+The assistant answers questions and helps draft Markdown through the official **GitHub Copilot SDK**.
+It authenticates with the GitHub account already connected in SpecDesk; the access token remains in the
+native process and is never logged, persisted by SpecDesk, or sent to the webview.
 
-## Why Microsoft Agent Framework here
+## Current chat-only integration
 
-- .NET-native — the agent lives in `SpecDesk.Ai` alongside the rest of the C# integrations,
-  no separate runtime.
-- First-party Claude connector with one-line provider swap (Claude / OpenAI / Azure OpenAI /
-  Gemini / Bedrock / Ollama) — not locked to one vendor.
-- Native MCP — app operations can be exposed as MCP tools, and external MCP servers (e.g. a
-  GitHub MCP) can be plugged in.
-- Successor to Semantic Kernel + AutoGen, so it carries their tool-calling and orchestration
-  maturity.
+- `SpecDesk.Ai` uses `GitHub.Copilot.SDK` directly; the bundled Copilot runtime is managed by the SDK.
+- The SDK client runs in hardened `Empty` mode with an empty tool allowlist. A deny-all permission handler
+  is also installed, so the chat cannot read or write files, execute commands, or mutate a repository.
+- One Copilot session is reused for the connected account so conversation context survives across turns.
+  Sign-out or account replacement cancels the active turn and disposes the session before another account
+  can use the chat.
+- Only context explicitly attached through SpecDesk is included in the prompt.
 
-## Tools the agent can call
+## Planned tools
 
-Tools are thin functions over existing app operations (same operations the buttons use):
+The current chat has no tools. A later milestone may expose thin functions over existing app operations
+(the same operations the buttons use):
 
 | Tool | Purpose | Mutating? |
 |------|---------|-----------|
@@ -41,13 +40,12 @@ reviews and adjusts, then the author applies it. The agent's "mutating" tools th
 *stage a proposal* and hand control to the confirmation UI; they do not perform the side
 effect themselves.
 
-Additional guardrails:
+Additional guardrails for that future tool surface:
 - Treat document content, search results, and any MCP/tool output as **data, not
   instructions** — text inside a spec cannot direct the agent to push or merge.
 - The agent operates only within the active repo; no access to arbitrary filesystem or other
   repos.
-- Provider credentials are configured by the user; keys are never written into the repo or
-  surfaced to the webview.
+- The GitHub OAuth token is never written into the repo, logged, or surfaced to the webview.
 
 ## Chat surface
 
@@ -60,15 +58,14 @@ section" have context without the author pasting anything.
 
 Early phases generate version-note / PR text from deterministic templates (no AI dependency).
 Phase 8 swaps those for `suggestVersionNote` / `suggestPrDescription`. The templates remain as a
-fallback when no provider is configured or the call fails, so the core workflow never depends
+fallback when Copilot is unavailable or the call fails, so the core workflow never depends
 on the agent being available.
 
 ## Configuration
 
 ```toml
 [ai]
-provider = "claude"          # claude | openai | azure-openai | gemini | bedrock | ollama
-model    = "claude-opus-4-8" # provider-specific
+model    = ""                # optional Copilot model; blank uses the account default
 enabled  = true
-# credentials come from user/app settings, never from the repo
+# authentication comes from SpecDesk's GitHub connection
 ```

@@ -82,7 +82,9 @@ public sealed partial class HostController : IDisposable
 	// The AI assistant (PoC-8): the chat agent that streams a reply, and the prompt-template library the
 	// composer's picker inserts from. Both optional — null leaves the chat/templates handlers inert (they
 	// reply with an empty template set / do nothing), the same graceful-degradation pattern as _auth.
-	private readonly IChatAgent? _chatAgent;
+	private IChatAgent? _chatAgent;
+	private readonly IChatAgentFactory? _chatAgentFactory;
+	private readonly SemaphoreSlim _chatAgentGate = new(1, 1);
 	private readonly ITemplateLibrary? _templates;
 	// A4: the persisted workspace store (recents / favorites / registered repos). Optional — null leaves the
 	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
@@ -233,6 +235,7 @@ public sealed partial class HostController : IDisposable
 		IGitPublishing? publishing = null,
 		IGitHubReview? review = null,
 		IChatAgent? chatAgent = null,
+		IChatAgentFactory? chatAgentFactory = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
 		IRepositoryCloner? cloner = null,
@@ -254,6 +257,7 @@ public sealed partial class HostController : IDisposable
 		_publishing = publishing;
 		_review = review;
 		_chatAgent = chatAgent;
+		_chatAgentFactory = chatAgentFactory;
 		_templates = templates;
 		_workspace = workspace;
 		_cloner = cloner;
@@ -262,6 +266,10 @@ public sealed partial class HostController : IDisposable
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
+		if (chatAgent is not null && chatAgentFactory is not null)
+		{
+			throw new ArgumentException("Provide either a fixed chat agent or an authenticated chat-agent factory, not both.");
+		}
 		_traceBridge = new TraceBridge(_logger, Logging.LogDirectory);
 		_logBridge = new LogBridge(
 			_logger, _dialogs, SendError, Logging.LogDirectory, () => _traceBridge.RenderTail(200));
@@ -319,6 +327,8 @@ public sealed partial class HostController : IDisposable
 			}
 			}
 		}
+		ResetChatAgentAsync().GetAwaiter().GetResult();
+		_chatAgentGate.Dispose();
 	}
 
 	/// <summary>Route one incoming wire envelope. Unknown or malformed frames are ignored. Runs on the

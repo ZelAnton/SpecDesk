@@ -22,3 +22,10 @@ public interface IChatAgent
 	/// </summary>
 	IAsyncEnumerable<string> StreamAsync(string userMessage, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Creates one authenticated assistant session for the current GitHub account. The access token
+/// is supplied by the host's secure-auth scope and must never be logged or sent to the webview.</summary>
+public interface IChatAgentFactory
+{
+	IChatAgent Create(string githubAccessToken);
+}

@@ -35,13 +35,12 @@
 		<PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
 		<PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
 
-		<!-- AI agent chat (PoC-8): the Microsoft Agent Framework (ChatClientAgent) over a
-		     Microsoft.Extensions.AI IChatClient. The default provider is an in-repo offline stub
-		     (SpecDesk.Ai/EchoChatClient) so the app runs with zero credentials; a real provider client
-		     is swapped in behind the same IChatClient seam. Abstractions is pinned to the Agent
-		     Framework's own floor to avoid a Central-Package-Management version conflict. -->
+		<!-- AI agent chat (PoC-8): the official Copilot SDK powers the signed-in runtime chat. The
+		     Microsoft Agent Framework packages remain for the provider-neutral/offline adapter tests.
+		     Abstractions is pinned to the Agent Framework's own floor to avoid a CPM conflict. -->
 		<PackageVersion Include="Microsoft.Agents.AI" Version="1.13.0" />
 		<PackageVersion Include="Microsoft.Extensions.AI.Abstractions" Version="10.6.0" />
+		<PackageVersion Include="GitHub.Copilot.SDK" Version="1.0.6" />
 
 		<!-- Test stack -->
 		<PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />

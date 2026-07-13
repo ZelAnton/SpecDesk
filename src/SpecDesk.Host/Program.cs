@@ -75,14 +75,17 @@ internal static class Program
 			? new GitHubDeviceFlowAuth(GitHubAuthOptions.ForClient(gitHubClientId), gitHubHttp, AppPaths.Auth)
 			: null;
 
-		// AI assistant (PoC-8). The chat runs on the offline stub provider by default (no credentials, no
-		// network) — CreateDefault picks it; a real provider selected by SPECDESK_AI_* would drop in behind
-		// the same IChatClient seam. The prompt library combines the author's personal templates (a
+		// AI assistant (PoC-8). Copilot is created lazily after GitHub sign-in, using the OAuth token only
+		// inside the host. The prompt library combines the author's personal templates (a
 		// host-owned JSON file) with a remote set fetched from SPECDESK_AI_TEMPLATES_URL (empty if unset or
 		// the fetch fails). Disposed after the controller so an in-flight turn is cancelled first.
 		AiOptions aiOptions = AiOptions.FromEnvironment();
 		using HttpClient aiHttp = new();
-		using AgentFrameworkChatAgent chatAgent = AgentFrameworkChatAgent.CreateDefault(aiOptions, loggerFactory);
+		CopilotChatAgentFactory chatAgentFactory = new(
+			AppPaths.Root,
+			Path.Combine(AppPaths.Root, "copilot"),
+			aiOptions.Model,
+			loggerFactory);
 		TemplateLibrary templateLibrary = new(
 			new PromptTemplateStore(AppPaths.PromptTemplates),
 			new RemoteTemplateSource(
@@ -108,7 +111,7 @@ internal static class Program
 			// review" gates on a connected account before it touches them.
 			publishing: versioning,
 			review: new GitHubReviewClient(gitHubHttp),
-			chatAgent: chatAgent,
+			chatAgentFactory: chatAgentFactory,
 			templates: templateLibrary,
 			// A4: the persisted workspace store (recents / favorites / registered repos), a host-owned JSON
 			// sidecar under the app data root.

@@ -4,8 +4,9 @@ Author and review GitHub-hosted Markdown specs from the desktop — automated gi
 diffs, inline comments, and AI assist. SpecDesk lets non-technical authors edit Markdown specs
 stored in GitHub without ever touching git, branches, or pull requests directly.
 
-The assistant's right-panel composer supports multi-line prompts: press Enter for a new line and
-Ctrl+Enter (Cmd+Enter on macOS) to send.
+Connect your GitHub account to use GitHub Copilot in the assistant's right panel. The OAuth token stays
+inside the native host, and the chat runs without filesystem, command, or repository tools. The composer
+supports multi-line prompts: press Enter for a new line and Ctrl+Enter (Cmd+Enter on macOS) to send.
 Use **Attach** beside the composer to include the open file, current folder, or a registered repository
 as context for the next message; attachments can be removed before sending.
 The right panel also exposes the selected document's saved versions, comments, and change history.
@@ -30,7 +31,7 @@ src/
   SpecDesk.Diff/           # F#  — semantic (AST) diff
   SpecDesk.Git/            # C#  — LibGit2Sharp wrapper
   SpecDesk.GitHub/         # C#  — GitHub OAuth device-flow auth (BCL HttpClient)
-  SpecDesk.Ai/             # C#  — Microsoft Agent Framework (PoC-8)
+  SpecDesk.Ai/             # C#  — GitHub Copilot chat integration (PoC-8)
   SpecDesk.Host/           # C#  — Photino bootstrap, IPC router (the exe)
 tests/
   SpecDesk.Core.Tests/     # F#

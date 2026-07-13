@@ -37,5 +37,6 @@ internal sealed class FakeGitHubAuth(bool signedIn, string accessToken = "gho_te
 
     public void SignOut()
     {
+		SignedIn = false;
     }
 }

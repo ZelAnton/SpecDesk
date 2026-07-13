@@ -31,15 +31,6 @@ public sealed partial class HostController
 
 		string text = BuildChatPrompt(payload.Text, payload.Attachments ?? []);
 
-		if (_chatAgent is null)
-		{
-			// No agent configured: answer once so the composer doesn't hang waiting for a reply.
-			string turnId = NextChatTurnId();
-			EmitChatDelta("The assistant isn't available right now.");
-			EmitChatDone(turnId);
-			return;
-		}
-
 		CancellationTokenSource cts;
 		string id;
 		lock (_sync)
@@ -62,12 +53,30 @@ public sealed partial class HostController
 		{
 			try
 			{
-				await foreach (string chunk in _chatAgent.StreamAsync(text, token))
+				await _chatAgentGate.WaitAsync(token);
+				try
 				{
-					if (chunk.Length > 0)
+					IChatAgent? agent = await ResolveChatAgentAsync(token);
+					if (agent is null)
 					{
-						EmitChatDelta(chunk);
+						EmitChatDelta(_chatAgentFactory is not null
+							? "Connect to GitHub to use Copilot."
+							: "The assistant isn't available right now.");
+						EmitChatDone(id);
+						return;
 					}
+
+					await foreach (string chunk in agent.StreamAsync(text, token))
+					{
+						if (chunk.Length > 0)
+						{
+							EmitChatDelta(chunk);
+						}
+					}
+				}
+				finally
+				{
+					_chatAgentGate.Release();
 				}
 
 				EmitChatDone(id);
@@ -97,6 +106,68 @@ public sealed partial class HostController
 				cts.Dispose();
 			}
 		});
+	}
+
+	// Called with _chatAgentGate held so sign-out/account replacement cannot dispose the session while a
+	// turn is starting or streaming. The host hands the token directly to the factory; the SDK retains it
+	// only in process for this account session. SpecDesk never logs, persists, or sends it over IPC, and
+	// disposing the session on sign-out/account replacement releases it.
+	private async Task<IChatAgent?> ResolveChatAgentAsync(CancellationToken cancellationToken)
+	{
+		if (_chatAgentFactory is null)
+		{
+			return _chatAgent;
+		}
+		if (_auth is null || !_auth.IsSignedIn())
+		{
+			return null;
+		}
+		if (_chatAgent is not null)
+		{
+			return _chatAgent;
+		}
+
+		_chatAgent = await _auth.WithAccessTokenAsync(
+			(accessToken, _) => Task.FromResult(_chatAgentFactory.Create(accessToken)),
+			cancellationToken);
+		return _chatAgent;
+	}
+
+	private async Task ResetChatAgentAsync()
+	{
+		if (_chatAgentFactory is null)
+		{
+			return;
+		}
+
+		await _chatAgentGate.WaitAsync();
+		try
+		{
+			IChatAgent? agent = _chatAgent;
+			_chatAgent = null;
+			try
+			{
+				switch (agent)
+				{
+					case IAsyncDisposable asyncDisposable:
+						await asyncDisposable.DisposeAsync();
+						break;
+					case IDisposable disposable:
+						disposable.Dispose();
+						break;
+				}
+			}
+			catch (Exception ex)
+			{
+				// The account is already disconnected and the reference cleared; a provider cleanup fault must
+				// not retain the old account session or prevent a later sign-in from creating a fresh one.
+				_logger.LogWarning(ex, "Could not fully dispose the previous Copilot chat session");
+			}
+		}
+		finally
+		{
+			_chatAgentGate.Release();
+		}
 	}
 
 	// Reply (correlated by id) with the prompt library: the author's personal templates plus the remote
