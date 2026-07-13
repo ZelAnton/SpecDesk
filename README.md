@@ -10,6 +10,7 @@ supports multi-line prompts: press Enter for a new line and Ctrl+Enter (Cmd+Ente
 Use **Attach** beside the composer to include the open file, current folder, or a registered repository
 as context for the next message; attachments can be removed before sending.
 The right panel also exposes the selected document's saved versions, comments, and change history.
+Assistant is the first mode on that panel's toolbar so chat stays in a consistent position.
 
 > **Working title.** `SpecDesk` is a placeholder name; rename before any registry/namespace work.
 

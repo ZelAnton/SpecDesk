@@ -125,6 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- The Assistant button is now the first mode on the right toolbar, ahead of document-specific tools.
 - Assistant replies now come from GitHub Copilot after GitHub sign-in instead of the offline echo preview;
   disconnecting or changing accounts cancels the active turn and discards that account's chat session.
 - The Start screen now opens the Repositories panel with one `Open Repository` button instead of asking for a

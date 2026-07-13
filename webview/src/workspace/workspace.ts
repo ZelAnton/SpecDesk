@@ -193,7 +193,6 @@ export function setupWorkspace(
         ),
     ],
     right: [
-      outline,
       // The real AI assistant chat when index.ts wired it; the placeholder in a reduced DOM (tests/host).
       tools.assistant ??
         placeholderTool(
@@ -202,6 +201,7 @@ export function setupWorkspace(
           icon("assistant"),
           "Tools that act on the active document will appear here, starting with an AI assistant.",
         ),
+      outline,
       tools.versions ??
         placeholderTool(
           "versions",
