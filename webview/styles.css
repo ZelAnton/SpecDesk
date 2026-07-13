@@ -930,6 +930,40 @@ button {
   flex-direction: column;
 }
 
+#notifications-view {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.notifications-screen {
+  width: min(760px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0;
+}
+
+.notifications-title {
+  margin: 0 0 1rem;
+  font: 600 24px / 1.25 var(--font-doc-head);
+  color: var(--text-strong);
+}
+
+.notifications-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel);
+}
+
+.notifications-placeholder {
+  padding: 1rem;
+  font: 13px / 1.5 var(--font-ui);
+  color: var(--text-muted);
+}
+
 /* ---- Docks (design concept §9 / §7 side panels) ----
    A collapsible left/right rail or the full-width bottom dock: a vertical icon rail (the mode switcher) on
    the dock's OUTER edge, beside a main column — a header (the active mode's title + collapse) over a body

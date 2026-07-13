@@ -19,10 +19,13 @@ import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
 import { buildHomeView, type HomeView } from "./tools/home-view.js";
 import { type NavDestination, Navigator } from "./tools/navigator.js";
+import { buildNotificationsView } from "./tools/notifications-view.js";
 import { Outline } from "./tools/outline.js";
 
 /** The central view id of the Start screen — the concrete second view the navigator substitutes in. */
 export const CENTRAL_VIEW_HOME = "home";
+/** The central Notifications list opened from the global toolbar. */
+export const CENTRAL_VIEW_NOTIFICATIONS = "notifications";
 
 /** The navigator's destinations, in list order: the document editor and the Start screen. */
 const NAV_DESTINATIONS: readonly NavDestination[] = [
@@ -37,6 +40,7 @@ export interface WorkspaceElements {
   /** The editor central view — wraps the formatting toolbar and the panes (see index.html #editor-view). */
   readonly editorView: HTMLElement;
   readonly homeView: HTMLElement | null;
+  readonly notificationsView: HTMLElement | null;
   readonly docks: Record<DockEdge, HTMLElement | null>;
 }
 
@@ -124,6 +128,10 @@ export function setupWorkspace(
       onOpenRepo: (url) => callbacks.onOpenRepo(url),
     });
     centralFrame.register({ id: CENTRAL_VIEW_HOME, el: elements.homeView });
+  }
+  if (elements.notificationsView !== null) {
+    buildNotificationsView(elements.notificationsView);
+    centralFrame.register({ id: CENTRAL_VIEW_NOTIFICATIONS, el: elements.notificationsView });
   }
   centralFrame.show(CENTRAL_VIEW_EDITOR);
   // Seed the navigator's highlight (the initial show above is a no-op when the editor is already active, so

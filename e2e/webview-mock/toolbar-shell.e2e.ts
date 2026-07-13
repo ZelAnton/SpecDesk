@@ -113,7 +113,11 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(page.locator('#panes[data-mode="formatted"]')).toHaveCount(1);
 
   await page.locator("#notifications-btn").click();
-  await expect(page.locator("#toolbar-announcer")).toHaveText("You have no new notifications.");
+  await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "notifications");
+  await expect(page.locator("#notifications-view")).toBeVisible();
+  await expect(page.locator("#notifications-view .notifications-list")).toContainText(
+    "Review requests and mentions will appear here.",
+  );
 
   await emit(page, {
     kind: "github.account",

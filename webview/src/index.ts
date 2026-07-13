@@ -64,7 +64,7 @@ import {
   recentPanel,
   type WorkspaceListCallbacks,
 } from "./workspace/tools/workspace-list.js";
-import { setupWorkspace } from "./workspace/workspace.js";
+import { CENTRAL_VIEW_NOTIFICATIONS, setupWorkspace } from "./workspace/workspace.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
 interface MirrorTarget {
@@ -143,6 +143,7 @@ function wire(): void {
   const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
   const editorViewEl = document.querySelector<HTMLElement>("#editor-view");
   const homeViewEl = document.querySelector<HTMLElement>("#home-view");
+  const notificationsViewEl = document.querySelector<HTMLElement>("#notifications-view");
   const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
   const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
   const bottomDockEl = document.querySelector<HTMLElement>("#bottom-dock");
@@ -1088,9 +1089,7 @@ function wire(): void {
     });
 
     notificationsBtn?.addEventListener("click", () => {
-      if (toolbarAnnouncer) {
-        toolbarAnnouncer.textContent = "You have no new notifications.";
-      }
+      centralFrame?.show(CENTRAL_VIEW_NOTIFICATIONS);
     });
 
     exportLogBtn?.addEventListener("click", () => {
@@ -1299,6 +1298,7 @@ function wire(): void {
         centralFrame: centralFrameEl,
         editorView: editorViewEl,
         homeView: homeViewEl,
+        notificationsView: notificationsViewEl,
         docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
       },
       browserDockStore(),

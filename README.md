@@ -57,6 +57,9 @@ The left, right, and bottom mode rails stay available around the document. Choos
 panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
 bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
 
+The notification icon switches the main workspace to a Notifications list. The current list is a
+placeholder for future review-request and mention events.
+
 ## GitHub access
 
 SpecDesk uses GitHub's device authorization flow and stores the resulting token with Windows DPAPI. The

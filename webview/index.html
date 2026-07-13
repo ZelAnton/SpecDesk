@@ -172,6 +172,9 @@
                left-rail navigator switches to. Starts hidden (no central-view--active) — the CSS hide rule
                keeps it out of the layout until shown. -->
           <div id="home-view" class="central-view"></div>
+          <!-- Notifications is a registered central view, not an overlay; its initial list is a deliberate
+               stub until the host-side notification feed lands. -->
+          <div id="notifications-view" class="central-view"></div>
         </main>
         <div id="right-dock" class="dock dock-right" hidden></div>
       </div>

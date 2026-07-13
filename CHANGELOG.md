@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Clicking the notification icon now opens a dedicated Notifications list in the main workspace; the
+  placeholder explains where review requests and mentions will appear as notification sources are added.
 - Repositories, folders, and files can now be starred as favorites and reopened later, including exact online
   branches and paths for repositories that have not been copied locally.
 - Selecting a registered repository now browses its complete folder/file tree directly from GitHub even
