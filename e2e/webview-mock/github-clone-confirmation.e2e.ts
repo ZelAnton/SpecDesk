@@ -5,7 +5,12 @@ import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 test.beforeEach(async ({ context, page }) => {
   await serveBundle(context);
   await installMockHost(context);
-  await page.addInitScript(() => localStorage.clear());
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("specdesk-e2e-storage-cleared") !== "true") {
+      localStorage.clear();
+      sessionStorage.setItem("specdesk-e2e-storage-cleared", "true");
+    }
+  });
 });
 
 test("clone requires Yes and can persist Do not show again", async ({ page }, testInfo) => {
@@ -49,4 +54,31 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
   await confirmation.locator('input[type="checkbox"]').check();
   await confirmation.locator(".repo-clone-confirm-yes").click();
   expect((await sentFrames(page)).some((frame) => frame.kind === "repo.cloneManaged")).toBe(true);
+
+  await page.reload();
+  await waitForSent(page, "ready");
+  await page.locator("#toggle-left-dock").click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  const reloadedInput = page.locator(".repo-register-input");
+  await reloadedInput.fill("outside/second-specs");
+  await waitForSent(page, "repo.description.request");
+  const reloadedDescriptionRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.description.request",
+  );
+  await emit(page, {
+    kind: "repo.description",
+    payload: {
+      url: "outside/second-specs",
+      requestId: (reloadedDescriptionRequest?.payload as { requestId: number }).requestId,
+      state: "found",
+      description: "Second public specification repository",
+    },
+  });
+  await page.locator(".repo-register-add").click();
+  await page.locator('[role="menuitem"]').filter({ hasText: "Clone to folder…" }).click();
+
+  await expect(page.locator(".repo-clone-confirmation")).toBeHidden();
+  expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneToFolder")?.payload).toEqual({
+    url: "outside/second-specs",
+  });
 });

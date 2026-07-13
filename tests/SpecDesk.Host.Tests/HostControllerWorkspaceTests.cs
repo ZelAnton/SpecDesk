@@ -14,6 +14,33 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class HostControllerWorkspaceTests
 {
+	private sealed class RecordingMetadataCatalog(GitHubRepositoryMetadata metadata)
+		: IGitHubRepositoryCatalog
+	{
+		public string? Owner { get; private set; }
+		public string? Name { get; private set; }
+		public string? AccessToken { get; private set; }
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default)
+		{
+			Owner = owner;
+			Name = name;
+			AccessToken = accessToken;
+			return Task.FromResult(metadata);
+		}
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException("Repository browsing is not exercised by this fake.");
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException("Repository browsing is not exercised by this fake.");
+	}
+
 	private sealed class RacingMetadataCatalog : IGitHubRepositoryCatalog
 	{
 		private int _calls;
@@ -85,7 +112,9 @@ public sealed class HostControllerWorkspaceTests
 		}
 	}
 
-	private HostController NewController()
+	private HostController NewController(
+		IGitHubAuth? auth = null,
+		IGitHubRepositoryCatalog? repositoryCatalog = null)
 	{
 		void Send(string json)
 		{
@@ -103,8 +132,9 @@ public sealed class HostControllerWorkspaceTests
 			new FakeVersioning(),
 			NullLogger<HostController>.Instance,
 			initialDocPath: null,
-			auth: new FakeGitHubAuth(true),
-			workspace: new WorkspaceStore(_wsPath));
+			auth: auth ?? new FakeGitHubAuth(true),
+			workspace: new WorkspaceStore(_wsPath),
+			repositoryCatalog: repositoryCatalog);
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
 		lock (_gate)
 		{
@@ -149,6 +179,12 @@ public sealed class HostControllerWorkspaceTests
 		return null;
 	}
 
+	private IpcMessage? WaitFor(string kind)
+	{
+		SpinWait.SpinUntil(() => Find(kind) is not null, TimeSpan.FromSeconds(2));
+		return Find(kind);
+	}
+
 	private string WriteDoc(string name)
 	{
 		string path = Path.Combine(_root, name);
@@ -170,6 +206,37 @@ public sealed class HostControllerWorkspaceTests
 			Assert.That(state!.Recent, Is.Empty);
 			Assert.That(state.Favorites, Is.Empty);
 			Assert.That(state.Repositories, Is.Empty);
+		});
+	}
+
+	[TestCase(false, false, RepoDescriptionStates.Found, "")]
+	[TestCase(true, true, RepoDescriptionStates.Private, "gho_test")]
+	public void RepositoryDescriptionRequest_PublishesMetadataForTheCurrentAuthorization(
+		bool signedIn,
+		bool isPrivate,
+		string expectedState,
+		string expectedAccessToken)
+	{
+		RecordingMetadataCatalog catalog = new(
+			new GitHubRepositoryMetadata("main", "Product specifications", isPrivate));
+		using HostController controller = NewController(new FakeGitHubAuth(signedIn), catalog);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoDescriptionRequest,
+			new RepoDescriptionRequestPayload("outside/product-specs", 42)));
+
+		RepoDescriptionPayload? payload = WaitFor(MessageKinds.RepoDescription)?
+			.GetPayload<RepoDescriptionPayload>();
+		Assert.That(payload, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(catalog.Owner, Is.EqualTo("outside"));
+			Assert.That(catalog.Name, Is.EqualTo("product-specs"));
+			Assert.That(catalog.AccessToken, Is.EqualTo(expectedAccessToken));
+			Assert.That(payload!.Url, Is.EqualTo("outside/product-specs"));
+			Assert.That(payload.RequestId, Is.EqualTo(42));
+			Assert.That(payload.State, Is.EqualTo(expectedState));
+			Assert.That(payload.Description, Is.EqualTo("Product specifications"));
 		});
 	}
 

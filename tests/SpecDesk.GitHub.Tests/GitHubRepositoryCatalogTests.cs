@@ -38,6 +38,42 @@ public sealed class GitHubRepositoryCatalogTests
 	}
 
 	[Test]
+	public async Task Metadata_preserves_description_and_private_visibility()
+	{
+		Handler handler = new(_ => Json(
+			"""{"default_branch":"main","description":"Internal specifications","private":true}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		GitHubRepositoryMetadata result = await catalog.GetMetadataAsync("octo", "specs", "secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(result.DefaultBranch, Is.EqualTo("main"));
+			Assert.That(result.Description, Is.EqualTo("Internal specifications"));
+			Assert.That(result.IsPrivate, Is.True);
+		});
+	}
+
+	[Test]
+	public async Task PublicMetadata_omits_authorization_and_preserves_description()
+	{
+		Handler handler = new(_ => Json(
+			"""{"default_branch":"main","description":"Public specifications","private":false}"""));
+		using HttpClient http = new(handler);
+		IGitHubRepositoryCatalog catalog = new GitHubRepositoryCatalog(http);
+
+		GitHubRepositoryMetadata result = await catalog.GetPublicMetadataAsync("outside", "specs");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(handler.LastRequest?.Headers.Authorization, Is.Null);
+			Assert.That(result.Description, Is.EqualTo("Public specifications"));
+			Assert.That(result.IsPrivate, Is.False);
+		});
+	}
+
+	[Test]
 	public async Task Organizations_paginate_deduplicate_and_sort_authorized_memberships()
 	{
 		int requests = 0;
