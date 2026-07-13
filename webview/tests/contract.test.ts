@@ -25,6 +25,7 @@ import {
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceContext,
   parseWorkspaceState,
 } from "../src/wire/decoders.js";
 import { DIFF_KINDS, Kinds, STATUS_STATES } from "../src/wire/protocol.js";
@@ -200,6 +201,48 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       id: "octo/spec-repo",
       url: "https://github.com/octo/spec-repo",
     });
+  });
+
+  it("workspace.context (authoritative repository, branches, and relative path)", () => {
+    const payload = parseWorkspaceContext(fixture["workspace.context"]);
+    expect(payload).toEqual({
+      repository: "billing-repo",
+      repositoryRoot: "C:\\specs\\billing-repo",
+      branch: "spec/billing-refunds",
+      branchState: "named",
+      defaultBranch: "main",
+      path: "specs/billing.md",
+    });
+  });
+
+  it("workspace.context rejects contradictory branch states", () => {
+    const base = fixture["workspace.context"];
+    expect(parseWorkspaceContext({ ...base, branch: null, branchState: "named" })).toBeNull();
+    expect(
+      parseWorkspaceContext({ ...base, branch: "feature", branchState: "detached" }),
+    ).toBeNull();
+    expect(
+      parseWorkspaceContext({ ...base, branch: "feature", branchState: "unavailable" }),
+    ).toBeNull();
+    expect(
+      parseWorkspaceContext({
+        ...base,
+        repository: null,
+        repositoryRoot: null,
+        branch: null,
+        branchState: "detached",
+        defaultBranch: null,
+      }),
+    ).toBeNull();
+    expect(
+      parseWorkspaceContext({
+        ...base,
+        repository: null,
+        repositoryRoot: null,
+        branch: null,
+        branchState: "unavailable",
+      }),
+    ).toBeNull();
   });
 });
 

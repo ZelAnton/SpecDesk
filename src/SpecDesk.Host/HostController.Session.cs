@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Logging;
+using SpecDesk.AppInfo;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.Git;
+using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 // LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it
 // defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel).
@@ -447,6 +449,7 @@ public sealed partial class HostController
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.DocLoaded,
 				new DocLoadedPayload(path, revertedText, DocRelativeDir())));
+			SendWorkspaceContext();
 			SendLifecycleStatus();
 		}
 		catch (LibGit2SharpException ex)
@@ -743,7 +746,7 @@ public sealed partial class HostController
 		// Reset any in-progress draft this HOST OBJECT remembers so an autosave can never commit the
 		// newly opened file onto some other, previously-open document's branch.
 		CancelAutosave();
-		string repoRoot = ResolveRepoRoot(path);
+		string repoRoot = ResolveDocumentRepoRoot(path);
 		// M-16: the FIRST document loaded in this process cannot trust its own (virgin) in-memory
 		// _session — a previous session may have been force-quit / crashed / restarted mid-draft, leaving
 		// a working (draft) branch checked out on disk with no in-memory record of it. Always stamping
@@ -786,6 +789,7 @@ public sealed partial class HostController
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
 			new DocLoadedPayload(path, text, DocRelativeDir())));
+		SendWorkspaceContext();
 
 		// A4: a user-opened file just loaded successfully is now the most-recent workspace item (emits
 		// workspace.state). The initial welcome doc is skipped (recordRecent false) — see the parameter.
@@ -1016,6 +1020,74 @@ public sealed partial class HostController
 		return relative == "." ? string.Empty : relative.Replace('\\', '/');
 	}
 
+	/// <summary>Emit the open document's repository context from the versioning root. The independently
+	/// browsed file-tree root is deliberately never consulted.</summary>
+	private void SendWorkspaceContext()
+	{
+		string? path;
+		string? repoRoot;
+		lock (_sync)
+		{
+			path = _currentPath;
+			repoRoot = _repoRoot;
+		}
+
+		if (path is null || repoRoot is null || !IsRepoVersioned(repoRoot))
+		{
+			SendWorkspaceContext(
+				new WorkspaceContextPayload(
+					null, null, null, "unavailable", null, Path.GetFileName(path ?? string.Empty)));
+			return;
+		}
+
+		string? branch = null;
+		string branchState = "unavailable";
+		string? defaultBranch = null;
+		string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+		try
+		{
+			string? configured = WorkflowConfig.defaultBaseForHost(WorkflowSeeds.TryReadRepoToml(repoRoot));
+			lock (_repoGate)
+			{
+				CurrentBranchInfo current = _versioning.DescribeCurrentBranch(repoRoot);
+				branch = current.Name;
+				branchState = current.IsDetached ? "detached" : current.Name is null ? "unavailable" : "named";
+				defaultBranch = _versioning.DefaultBranch(repoRoot, configured);
+				GitHubRepo? remote = _publishing is null
+					? null
+					: GitHubRemote.TryParse(_publishing.RemoteUrl(repoRoot));
+				if (remote is not null)
+				{
+					repository = $"{remote.Owner}/{remote.Name}";
+				}
+			}
+		}
+		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+		{
+			_logger.LogWarning(ex, "Could not read repository context for {Root}", repoRoot);
+		}
+
+		string relative = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+		if (relative == ".." || relative.StartsWith("../", StringComparison.Ordinal))
+		{
+			relative = Path.GetFileName(path);
+		}
+		SendWorkspaceContext(
+			new WorkspaceContextPayload(
+				repository,
+				repoRoot,
+				branch,
+				branchState,
+				defaultBranch,
+				relative));
+	}
+
+	/// <summary>Explicit context publication path shared by local documents and remote-only document
+	/// loaders. A remote loader supplies owner/name, branch and repository-relative path with a null local
+	/// root; it does not need to populate <c>_currentPath</c> or <c>_repoRoot</c>.</summary>
+	private void SendWorkspaceContext(WorkspaceContextPayload context) =>
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.WorkspaceContext, context));
+
 	/// <summary>
 	/// The dominant line ending in raw (on-disk) file content: "\r\n" if CRLF line breaks outnumber
 	/// bare-LF ones, else "\n" — including for a document with no line breaks at all, which has no
@@ -1081,5 +1153,88 @@ public sealed partial class HostController
 		}
 
 		return fallback;
+	}
+
+	/// <summary>Resolve the versioning root for an opened document. A versioned workspace (including a
+	/// managed clone) wins only when the document is actually inside it; an independently browsed folder
+	/// can therefore never relabel a document opened elsewhere.</summary>
+	private string ResolveDocumentRepoRoot(string docPath)
+	{
+		string? persistedRoot = ResolvePersistedRepoRoot(docPath);
+		if (persistedRoot is not null)
+		{
+			return persistedRoot;
+		}
+
+		string? workspaceRoot;
+		lock (_sync)
+		{
+			workspaceRoot = _workspaceRoot;
+		}
+
+		if (workspaceRoot is not null)
+		{
+			string relative = Path.GetRelativePath(workspaceRoot, docPath);
+			bool inside = relative != ".."
+				&& !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+				&& !Path.IsPathRooted(relative);
+			if (inside && IsRepoVersioned(workspaceRoot))
+			{
+				return workspaceRoot;
+			}
+		}
+
+		return ResolveRepoRoot(docPath);
+	}
+
+	/// <summary>Find the longest persisted versioned root that contains the document. Recent folder roots
+	/// cover user-selected clones, while registered repositories map to the current managed-clone location;
+	/// the repository tree model can add its explicit clone paths to this candidate list when multi-clone
+	/// descriptors land.</summary>
+	private string? ResolvePersistedRepoRoot(string docPath)
+	{
+		WorkspaceStatePayload? state = _workspace?.State();
+		if (state is null)
+		{
+			return null;
+		}
+
+		List<string> candidates = [.. state.Recent.Where(item => item.IsFolder).Select(item => item.Path)];
+		foreach (RegisteredRepo repo in state.Repositories)
+		{
+			if (TryParseGitHubRepo(repo.Id, out string owner, out string name))
+			{
+				candidates.Add(Path.Combine(AppPaths.Repos, $"{owner}_{name}"));
+			}
+		}
+
+		string? best = null;
+		foreach (string candidate in candidates)
+		{
+			try
+			{
+				string fullPath = Path.GetFullPath(candidate);
+				if (PathContains(fullPath, docPath)
+					&& IsRepoVersioned(fullPath)
+					&& (best is null || fullPath.Length > best.Length))
+				{
+					best = fullPath;
+				}
+			}
+			catch (Exception ex) when (
+				ex is ArgumentException or NotSupportedException or IOException or UnauthorizedAccessException)
+			{
+				_logger.LogDebug(ex, "Ignoring invalid persisted repository path {Path}", candidate);
+			}
+		}
+		return best;
+	}
+
+	private static bool PathContains(string root, string path)
+	{
+		string relative = Path.GetRelativePath(root, path);
+		return relative != ".."
+			&& !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+			&& !Path.IsPathRooted(relative);
 	}
 }

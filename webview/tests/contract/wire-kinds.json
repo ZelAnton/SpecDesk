@@ -45,6 +45,7 @@
   "tree.request",
   "version.note.request",
   "version.note.suggested",
+  "workspace.context",
   "workspace.favorite",
   "workspace.request",
   "workspace.state"

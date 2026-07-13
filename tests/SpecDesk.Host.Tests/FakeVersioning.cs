@@ -21,6 +21,12 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// reports <c>null</c>, never libgit2's own "(no branch)" placeholder, for that case).</summary>
     public string? Branch { get; set; } = "main";
 
+    public bool BranchIsDetached { get; set; }
+
+    public bool ThrowOnBranchInfo { get; set; }
+
+    public string? DefaultBranchValue { get; set; } = "main";
+
     public int BeginEditCalls { get; private set; }
 
     public int SaveVersionCalls { get; private set; }
@@ -106,6 +112,17 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     }
 
     public string? CurrentBranch(string repoRoot) => Branch;
+
+    public CurrentBranchInfo DescribeCurrentBranch(string repoRoot)
+    {
+        if (ThrowOnBranchInfo)
+        {
+            throw new InvalidOperationException("Repository branch unavailable.");
+        }
+        return new CurrentBranchInfo(BranchIsDetached ? null : Branch, BranchIsDetached);
+    }
+
+    public string? DefaultBranch(string repoRoot, string? preferredBranch) => DefaultBranchValue;
 
     public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
     {

@@ -95,6 +95,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- Markdown actions, wrapping, change highlighting, and the Code / Split / Formatted switch now live directly
+  above the editor. The global toolbar now shows the current repository, version line, document path, working
+  document search, notifications, and an accessible account menu with Settings, Help, and Sign out.
 - Side panels now use a clearer grey hierarchy: dark mode rails, light panel bodies, and slightly stronger
   headers keep tools visually separate from the document in both light and dark themes.
 - Split scroll synchronization is now driven by a single coordinator over one line↔px map instead of three

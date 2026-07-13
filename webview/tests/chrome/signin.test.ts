@@ -5,7 +5,12 @@ import { SignInController } from "../../src/chrome/signin.js";
 // Markup mirroring the GitHub account affordance + sign-in code bar in index.html (both start hidden).
 function setupDom(): void {
   document.body.innerHTML = `
-    <button id="github-btn" hidden>Connect to GitHub</button>
+    <button id="github-btn" aria-expanded="false">Account</button>
+    <div id="account-menu" role="menu" hidden>
+      <button id="account-settings" role="menuitem">Settings</button>
+      <button id="account-connect" role="menuitem" hidden>Connect to GitHub</button>
+      <button id="account-signout" role="menuitem" hidden>Sign out</button>
+    </div>
     <div id="github-signin-bar" hidden>
       <span id="github-signin-text"></span>
       <code id="github-user-code"></code>
@@ -32,6 +37,9 @@ function mount() {
   const openUrl = vi.fn();
   const controller = new SignInController({
     accountBtn: document.querySelector<HTMLButtonElement>("#github-btn"),
+    menu: document.querySelector<HTMLElement>("#account-menu"),
+    connectBtn: document.querySelector<HTMLButtonElement>("#account-connect"),
+    signOutBtn: document.querySelector<HTMLButtonElement>("#account-signout"),
     bar: document.querySelector<HTMLElement>("#github-signin-bar"),
     text: document.querySelector<HTMLElement>("#github-signin-text"),
     userCode: document.querySelector<HTMLElement>("#github-user-code"),
@@ -47,33 +55,67 @@ function mount() {
 }
 
 describe("SignInController — account button", () => {
-  it("hides the affordance when sign-in is unavailable", () => {
+  it("keeps the general account menu available when GitHub sign-in is unavailable", () => {
     const { controller } = mount();
     controller.applyAccount({ available: false, signedIn: false });
-    expect(el("github-btn").hidden).toBe(true);
+    expect(el("github-btn").hidden).toBe(false);
+    expect(el("account-connect").hidden).toBe(true);
+    expect(el("account-signout").hidden).toBe(true);
   });
 
   it("offers Connect when signed out, and signs in on click", () => {
     const { controller, signIn } = mount();
     controller.applyAccount({ available: true, signedIn: false });
-    expect(el("github-btn").hidden).toBe(false);
-    expect(el("github-btn").textContent).toBe("Connect to GitHub");
     el("github-btn").click();
+    expect(el("account-menu").hidden).toBe(false);
+    el("account-connect").click();
     expect(signIn).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the handle when signed in, and signs out on click", () => {
+  it("shows the handle in the accessible account name, and signs out from the menu", () => {
     const { controller, signOut } = mount();
     controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
-    expect(el("github-btn").textContent).toBe("Sign out @octocat");
+    expect(el("github-btn").getAttribute("aria-label")).toBe("Account, signed in as @octocat");
     el("github-btn").click();
+    expect(el("account-signout").textContent).toBe("Sign out @octocat");
+    el("account-signout").click();
     expect(signOut).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to a plain Sign out when the handle is unknown", () => {
     const { controller } = mount();
     controller.applyAccount({ available: true, signedIn: true, login: "" });
-    expect(el("github-btn").textContent).toBe("Sign out");
+    expect(el("account-signout").textContent).toBe("Sign out");
+  });
+
+  it("supports ArrowDown to open and Escape to return focus", () => {
+    const { controller } = mount();
+    controller.applyAccount({ available: true, signedIn: false });
+    el("github-btn").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    );
+    expect(el("account-menu").hidden).toBe(false);
+    expect(document.activeElement).toBe(el("account-settings"));
+    el("account-settings").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    expect(el("account-menu").hidden).toBe(true);
+    expect(document.activeElement).toBe(el("github-btn"));
+  });
+
+  it("supports Home and End across the visible menu items", () => {
+    const { controller } = mount();
+    controller.applyAccount({ available: true, signedIn: false });
+    el("github-btn").click();
+
+    el("account-settings").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "End", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(el("account-connect"));
+    el("account-connect").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Home", bubbles: true }),
+    );
+    expect(document.activeElement).toBe(el("account-settings"));
   });
 });
 
@@ -104,7 +146,7 @@ describe("SignInController — code bar", () => {
     expect(el("github-signin-bar").hidden).toBe(true);
   });
 
-  it("hides the account button while connecting, then restores it", () => {
+  it("keeps the account menu trigger available while connecting", () => {
     const { controller } = mount();
     controller.applyAccount({ available: true, signedIn: false });
     expect(el("github-btn").hidden).toBe(false);
@@ -112,7 +154,7 @@ describe("SignInController — code bar", () => {
       userCode: "WXYZ-1234",
       verificationUri: "https://github.com/login/device",
     });
-    expect(el("github-btn").hidden).toBe(true); // no restart race while the bar is up
+    expect(el("github-btn").hidden).toBe(false);
     controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
     expect(el("github-btn").hidden).toBe(false); // restored by the terminal event
   });
@@ -125,7 +167,7 @@ describe("SignInController — code bar", () => {
     });
     controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
     expect(el("github-signin-bar").hidden).toBe(true);
-    expect(el("github-btn").textContent).toBe("Sign out @octocat");
+    expect(el("account-signout").textContent).toBe("Sign out @octocat");
   });
 
   it("keeps the bar with a plain-language message when sign-in fails", () => {

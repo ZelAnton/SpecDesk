@@ -72,6 +72,47 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         return repo.Info.IsHeadDetached ? null : repo.Head.FriendlyName;
     }
 
+    public CurrentBranchInfo DescribeCurrentBranch(string repoRoot)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        using Repository repo = new(repoRoot);
+        return repo.Info.IsHeadDetached
+            ? new CurrentBranchInfo(null, IsDetached: true)
+            : new CurrentBranchInfo(repo.Head.FriendlyName, IsDetached: false);
+    }
+
+    public string? DefaultBranch(string repoRoot, string? preferredBranch)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        using Repository repo = new(repoRoot);
+
+        const string remotePrefix = "refs/remotes/origin/";
+        string? remoteTarget = repo.Refs["refs/remotes/origin/HEAD"]?.TargetIdentifier;
+        if (remoteTarget?.StartsWith(remotePrefix, StringComparison.Ordinal) == true)
+        {
+            string remoteDefault = remoteTarget[remotePrefix.Length..];
+            if (remoteDefault.Length > 0)
+            {
+                return remoteDefault;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(preferredBranch) && repo.Branches[preferredBranch] is not null)
+        {
+            return preferredBranch;
+        }
+
+        if (repo.Branches["main"] is not null)
+        {
+            return "main";
+        }
+        if (repo.Branches["master"] is not null)
+        {
+            return "master";
+        }
+        return repo.Info.IsHeadDetached ? null : repo.Head.FriendlyName;
+    }
+
     public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);

@@ -38,6 +38,7 @@ import {
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceContext,
   parseWorkspaceState,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
@@ -110,6 +111,12 @@ function wire(): void {
   const previewEl = document.querySelector<HTMLElement>("#preview");
   const formattedEl = document.querySelector<HTMLElement>("#formatted");
   const statusEl = document.querySelector<HTMLElement>("#status");
+  const currentRepositoryEl = document.querySelector<HTMLElement>("#current-repository");
+  const currentBranchEl = document.querySelector<HTMLElement>("#current-branch");
+  const currentPathEl = document.querySelector<HTMLElement>("#current-path");
+  const toolbarSearch = document.querySelector<HTMLInputElement>("#toolbar-search");
+  const notificationsBtn = document.querySelector<HTMLButtonElement>("#notifications-btn");
+  const toolbarAnnouncer = document.querySelector<HTMLElement>("#toolbar-announcer");
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
   const saveVersionBtn = document.querySelector<HTMLButtonElement>("#save-version-btn");
@@ -164,6 +171,11 @@ function wire(): void {
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const accountMenu = document.querySelector<HTMLElement>("#account-menu");
+  const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
+  const accountSignOutBtn = document.querySelector<HTMLButtonElement>("#account-signout");
+  const accountSettingsBtn = document.querySelector<HTMLButtonElement>("#account-settings");
+  const accountHelpBtn = document.querySelector<HTMLButtonElement>("#account-help");
   const githubSigninBar = document.querySelector<HTMLElement>("#github-signin-bar");
   const githubSigninText = document.querySelector<HTMLElement>("#github-signin-text");
   const githubUserCode = document.querySelector<HTMLElement>("#github-user-code");
@@ -251,6 +263,12 @@ function wire(): void {
   // Armed for a repo open (a slow clone) so the "Opening…" note clears on the resulting tree/error. A folder
   // open reveals Files immediately and needs no note; a plain file open never arms this.
   let pendingRepoOpen = false;
+  const setContext = (element: HTMLElement | null, text: string): void => {
+    if (element) {
+      element.textContent = text;
+      element.title = text;
+    }
+  };
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -824,6 +842,30 @@ function wire(): void {
         }
       }
     });
+
+    ipc.on(Kinds.workspaceContext, (message) => {
+      const payload = parseWorkspaceContext(message.payload);
+      if (!payload) {
+        return;
+      }
+      setContext(currentRepositoryEl, payload.repository ?? "No repository");
+      if (currentRepositoryEl && payload.repositoryRoot) {
+        currentRepositoryEl.title = payload.repositoryRoot;
+      }
+      const branch =
+        payload.repository === null
+          ? "No version"
+          : payload.branchState === "detached"
+            ? "Unnamed version"
+            : payload.branchState === "unavailable"
+              ? "Version unavailable"
+              : (payload.branch ?? "Version unavailable");
+      setContext(currentBranchEl, branch);
+      if (currentBranchEl && payload.defaultBranch) {
+        currentBranchEl.title = `${branch} (default: ${payload.defaultBranch})`;
+      }
+      setContext(currentPathEl, payload.path.length > 0 ? payload.path : "No document");
+    });
   }
 
   // Wiring group 3 — GitHub: the "Connect to GitHub" affordance + sign-in code bar, the "My reviews"
@@ -844,6 +886,9 @@ function wire(): void {
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
       accountBtn: githubBtn,
+      menu: accountMenu,
+      connectBtn: accountConnectBtn,
+      signOutBtn: accountSignOutBtn,
       bar: githubSigninBar,
       text: githubSigninText,
       userCode: githubUserCode,
@@ -854,6 +899,23 @@ function wire(): void {
       cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
       signOut: () => ipc.send(Kinds.githubSignOut),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+    });
+
+    accountSettingsBtn?.addEventListener("click", () => {
+      if (accountMenu) {
+        accountMenu.hidden = true;
+      }
+      githubBtn?.setAttribute("aria-expanded", "false");
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = "Settings are not available yet.";
+      }
+    });
+    accountHelpBtn?.addEventListener("click", () => {
+      if (accountMenu) {
+        accountMenu.hidden = true;
+      }
+      githubBtn?.setAttribute("aria-expanded", "false");
+      ipc.send(Kinds.linkOpen, { url: "https://github.com/ZelAnton/SpecDesk#readme" });
     });
 
     // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
@@ -985,6 +1047,31 @@ function wire(): void {
       wrapBtn.setAttribute("aria-pressed", String(wrap));
     });
 
+    toolbarSearch?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      const query = toolbarSearch.value.trim();
+      if (query.length === 0) {
+        if (toolbarAnnouncer) {
+          toolbarAnnouncer.textContent = "Enter text to search the current document.";
+        }
+        return;
+      }
+      centralFrame?.show(CENTRAL_VIEW_EDITOR);
+      const found = mode === "formatted" ? formatted.findText(query) : editor.findText(query);
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = found ? `Found ${query}.` : `${query} was not found.`;
+      }
+    });
+
+    notificationsBtn?.addEventListener("click", () => {
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = "You have no new notifications.";
+      }
+    });
+
     exportLogBtn?.addEventListener("click", () => {
       // Dump the diagnostic trace ring FIRST (the host persists it and appends its tail to the export),
       // then export the log — OnMessage processes the two frames in order, so the export sees this dump.
@@ -1002,8 +1089,8 @@ function wire(): void {
         document.documentElement.removeAttribute("data-theme");
       }
       if (themeBtn) {
-        themeBtn.setAttribute("aria-pressed", String(dark));
-        themeBtn.textContent = dark ? "Light" : "Dark";
+        themeBtn.setAttribute("aria-checked", String(dark));
+        themeBtn.textContent = "Dark theme";
       }
     }
     applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches);

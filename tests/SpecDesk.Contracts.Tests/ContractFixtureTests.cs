@@ -89,6 +89,8 @@ public sealed class ContractFixtureTests
 			]),
 			new TreeNode("README.md", @"C:\specs\billing-repo\README.md", IsDirectory: false, []),
 		])),
+		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
+			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md")),
 		// A4 workspace store: one recent file, one favorited folder, and one registered GitHub repo -
 		// exercises both WorkspaceItem shapes (file vs folder) and the RegisteredRepo record.
 		(MessageKinds.WorkspaceState, new WorkspaceStatePayload(

@@ -152,6 +152,14 @@
       }
     ]
   },
+  "workspace.context": {
+    "repository": "billing-repo",
+    "repositoryRoot": "C:\\specs\\billing-repo",
+    "branch": "spec/billing-refunds",
+    "branchState": "named",
+    "defaultBranch": "main",
+    "path": "specs/billing.md"
+  },
   "workspace.state": {
     "recent": [
       {

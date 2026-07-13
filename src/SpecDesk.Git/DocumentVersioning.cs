@@ -11,6 +11,10 @@ public sealed record CommitResult(bool Committed, string? Sha, DateTimeOffset Wh
 /// <param name="BaseBranch">The published branch it was forked from (and returns to on discard).</param>
 public sealed record EditSession(string Branch, string BaseBranch);
 
+/// <summary>The checked-out branch identity, distinguishing a deliberate detached checkout from a branch
+/// name that could not be read. Read failures are surfaced by the caller catching the thrown exception.</summary>
+public sealed record CurrentBranchInfo(string? Name, bool IsDetached);
+
 /// <summary>Thrown by <see cref="IDocumentVersioning.BeginEdit"/> when the working tree has uncommitted
 /// changes that belong to a branch other than the one being started. A forced checkout resets the whole
 /// working tree, so proceeding would silently discard another document's unsaved autosaved draft; the
@@ -49,6 +53,15 @@ public interface IDocumentVersioning
 
     /// <summary>The friendly name of the currently checked-out branch, or <c>null</c> if unknown.</summary>
     string? CurrentBranch(string repoRoot);
+
+    /// <summary>The current branch with an explicit detached state. Implementations throw when the
+    /// repository cannot be read, so callers can distinguish unavailable from detached.</summary>
+    CurrentBranchInfo DescribeCurrentBranch(string repoRoot);
+
+    /// <summary>The repository's actual default branch. The remote HEAD wins when available;
+    /// <paramref name="preferredBranch"/> is then used only when that local branch exists, followed by
+    /// conventional main/master branches and the current branch. Returns <c>null</c> for a branchless repo.</summary>
+    string? DefaultBranch(string repoRoot, string? preferredBranch);
 
     /// <summary>Create (if absent) and check out the working branch <paramref name="branchName"/>,
     /// forking it from <paramref name="preferredBase"/> when that branch exists (else from whatever

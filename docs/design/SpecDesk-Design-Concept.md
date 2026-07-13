@@ -216,6 +216,12 @@ The most-reused surface (preview, formatted mode, diff, comparison). Rules:
 - **Segmented control** (view switch) — sunken track, active segment a white card with
   `--shadow-card`. `role="radiogroup"` / `aria-checked`. Binary options use a switch.
 - **Inputs / textarea** — `--surface`, `--border-strong`, radius 6; focus ring.
+- **Toolbars** — the global toolbar carries repository / current version / document-path context,
+  document search, notifications, panel controls, and the account menu only. Markdown lifecycle actions,
+  Wrap, Show changes, and the Code / Split / Formatted switch live in the editor view's own wrapping
+  toolbar, so they disappear whenever another central view replaces the editor.
+- **Account menu** — a compact avatar trigger opens a keyboard-navigable `role="menu"` with Settings,
+  Help, appearance, diagnostics, review, connection, and Sign out actions according to availability.
 - **Inline prompt bars** — appear under the toolbar. *Name-a-draft* bar = `--accent-soft`
   (a beginning); *describe-your-changes / version note* bar = `--warn` tint (a checkpoint),
   with a `⌄` expander to a multi-line note. **This is the only place a commit-like idea
@@ -256,8 +262,9 @@ understandable document differences, **never raw markers**.
 
 ## 9. Layout & the collapsible-panel architecture
 
-Single resizable window. Vertically: **toolbar → optional inline prompt bar → content area
-(1–2 panes) → optional docked panel**, with a slim **status bar** at the bottom.
+Single resizable window. Vertically: **global context toolbar → optional inline prompt bar → content area
+(editor toolbar + 1–2 panes, or another central view) → optional docked panel**, with a slim **status bar**
+at the bottom.
 
 The simple core stays simple because everything heavy is a panel you open/close:
 

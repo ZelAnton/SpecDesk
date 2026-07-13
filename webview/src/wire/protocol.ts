@@ -56,6 +56,7 @@ export const Kinds = {
   templates: "templates",
   tree: "tree",
   workspaceState: "workspace.state",
+  workspaceContext: "workspace.context",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -426,6 +427,16 @@ export interface TreeNode {
 export interface TreePayload {
   root: string;
   nodes: TreeNode[];
+}
+
+/** Authoritative repository/version/path context for the open document. The file-tree root is separate. */
+export interface WorkspaceContextPayload {
+  repository: string | null;
+  repositoryRoot: string | null;
+  branch: string | null;
+  branchState: "named" | "detached" | "unavailable";
+  defaultBranch: string | null;
+  path: string;
 }
 
 /** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). `path` is the absolute

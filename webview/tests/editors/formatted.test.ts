@@ -827,6 +827,36 @@ describe("FormattedEditor (jsdom)", () => {
   });
 });
 
+describe("FormattedEditor.findText", () => {
+  it("finds across inline mark boundaries, advances, and wraps without crossing blocks", () => {
+    const ed = mount();
+    const markdown = "hello **world** and [hello](https://example.com) *world*\n\nhello\n\nworld\n";
+    ed.setText(markdown);
+
+    expect(ed.findText("HELLO WORLD")).toBe(true);
+    expect(
+      viewOf(ed).state.doc.textBetween(
+        viewOf(ed).state.selection.from,
+        viewOf(ed).state.selection.to,
+      ),
+    ).toBe("hello world");
+    const first = viewOf(ed).state.selection.from;
+    expect(ed.findText("hello world")).toBe(true);
+    const second = viewOf(ed).state.selection.from;
+    expect(second).toBeGreaterThan(first);
+    expect(ed.findText("hello world")).toBe(true);
+    expect(viewOf(ed).state.selection.from).toBe(first);
+    expect(ed.getText()).toBe(markdown);
+  });
+
+  it("returns false for an empty or absent query", () => {
+    const ed = mount();
+    ed.setText("Alpha beta\n");
+    expect(ed.findText("   ")).toBe(false);
+    expect(ed.findText("missing")).toBe(false);
+  });
+});
+
 // T-071: when the markdown-it source-block split and the ProseMirror doc disagree on top-level count (a
 // parse divergence), the shared block-map (block-map.ts) reports NO entries, so every consumer degrades
 // to a safe no-op — no geometry, no highlight — rather than pairing a source block with the wrong node

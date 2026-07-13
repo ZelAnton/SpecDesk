@@ -83,6 +83,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
 | `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: `{ path, label, isFolder }[]` — `recent` is most-recent-first, `favorites` in the order added; `repositories`: `{ id, name, url }[]`) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |
+| `workspace.context` | `{ repository, repositoryRoot, branch, branchState, defaultBranch, path }` | authoritative context for the open document. Repository and relative path come from its versioning root (never the independently browsed file-tree root); `branchState` (`named` / `detached` / `unavailable`) keeps a deliberate unnamed checkout distinct from a read failure. Nullable repository fields mean the open file is not in a readable versioned repository |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |

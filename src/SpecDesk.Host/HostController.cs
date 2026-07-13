@@ -428,6 +428,7 @@ public sealed partial class HostController : IDisposable
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.Status,
 			new StatusPayload(session.State, Lifecycle.labelOf(session.State), session.Branch)));
+		SendWorkspaceContext();
 	}
 
 	private void SendTransientStatus(string label)

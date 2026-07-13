@@ -34,6 +34,7 @@ import {
   type TreeNode,
   type TreePayload,
   type VersionNoteSuggestedPayload,
+  type WorkspaceContextPayload,
   type WorkspaceItem,
   type WorkspaceStatePayload,
 } from "./protocol.js";
@@ -389,6 +390,43 @@ export function parseTree(value: unknown): TreePayload | null {
     return null;
   }
   return { root: value.root, nodes };
+}
+
+export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload | null {
+  if (
+    !isRecord(value) ||
+    !(value.repository === null || isString(value.repository)) ||
+    !(value.repositoryRoot === null || isString(value.repositoryRoot)) ||
+    !(value.branch === null || isString(value.branch)) ||
+    !(
+      value.branchState === "named" ||
+      value.branchState === "detached" ||
+      value.branchState === "unavailable"
+    ) ||
+    !(value.defaultBranch === null || isString(value.defaultBranch)) ||
+    !isString(value.path)
+  ) {
+    return null;
+  }
+  if (
+    (value.branchState === "named" && !isString(value.branch)) ||
+    (value.branchState !== "named" && value.branch !== null) ||
+    (value.repository === null &&
+      (value.repositoryRoot !== null ||
+        value.branch !== null ||
+        value.branchState !== "unavailable" ||
+        value.defaultBranch !== null))
+  ) {
+    return null;
+  }
+  return {
+    repository: value.repository,
+    repositoryRoot: value.repositoryRoot,
+    branch: value.branch,
+    branchState: value.branchState,
+    defaultBranch: value.defaultBranch,
+    path: value.path,
+  };
 }
 
 function parseWorkspaceItem(value: unknown): WorkspaceItem | null {

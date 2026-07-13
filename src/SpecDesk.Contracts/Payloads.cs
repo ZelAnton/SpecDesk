@@ -62,6 +62,7 @@ public static class MessageKinds
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
+	public const string WorkspaceContext = "workspace.context";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -112,6 +113,19 @@ public sealed record TreeNode(string Name, string Path, bool IsDirectory, IReadO
 /// folder's absolute path (its display name is the last segment); <c>Nodes</c> are its top-level entries.
 /// </summary>
 public sealed record TreePayload(string Root, IReadOnlyList<TreeNode> Nodes);
+
+/// <summary>Authoritative context for the open document. Repository fields come from the document's
+/// versioning root (never the independently browsed file-tree root); <c>Branch</c> is the actual named
+/// checkout, <c>BranchState</c> distinguishes named, detached, and unavailable state,
+/// <c>DefaultBranch</c> is resolved from the configured/remote/local branches, and <c>Path</c> is relative
+/// to that repository root.</summary>
+public sealed record WorkspaceContextPayload(
+	string? Repository,
+	string? RepositoryRoot,
+	string? Branch,
+	string BranchState,
+	string? DefaultBranch,
+	string Path);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);

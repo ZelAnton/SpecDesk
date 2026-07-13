@@ -46,6 +46,8 @@ public sealed class LibGit2DocumentVersioningTests
         {
             Assert.That(_versioning.IsVersioned(_repo), Is.True);
             Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("main"));
+            Assert.That(_versioning.DescribeCurrentBranch(_repo),
+                Is.EqualTo(new CurrentBranchInfo("main", IsDetached: false)));
         });
     }
 
@@ -68,7 +70,24 @@ public sealed class LibGit2DocumentVersioningTests
             Commands.Checkout(repo, tipSha);
         }
 
-        Assert.That(_versioning.CurrentBranch(_repo), Is.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(_versioning.CurrentBranch(_repo), Is.Null);
+            Assert.That(_versioning.DescribeCurrentBranch(_repo),
+                Is.EqualTo(new CurrentBranchInfo(null, IsDetached: true)));
+        });
+    }
+
+    [Test]
+    public void DefaultBranch_FallsBackToMasterWhenConfiguredMainDoesNotExist()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        using (Repository repo = new(_repo))
+        {
+            repo.Branches.Rename("main", "master");
+        }
+
+        Assert.That(_versioning.DefaultBranch(_repo, "main"), Is.EqualTo("master"));
     }
 
     [Test]
