@@ -6,10 +6,18 @@ namespace SpecDesk.Git;
 /// <param name="When">When the attempt completed.</param>
 public sealed record CommitResult(bool Committed, string? Sha, DateTimeOffset When);
 
+/// <summary>One saved version of a selected document, newest first.</summary>
+public sealed record DocumentVersion(
+    string Id, string Note, string Author, DateTimeOffset When, string Summary = "Document updated");
+
 /// <summary>The branches involved in a started edit.</summary>
 /// <param name="Branch">The checked-out working branch.</param>
 /// <param name="BaseBranch">The published branch it was forked from (and returns to on discard).</param>
 public sealed record EditSession(string Branch, string BaseBranch);
+
+/// <summary>The checked-out branch identity, distinguishing a deliberate detached checkout from a branch
+/// name that could not be read. Read failures are surfaced by the caller catching the thrown exception.</summary>
+public sealed record CurrentBranchInfo(string? Name, bool IsDetached);
 
 /// <summary>Thrown by <see cref="IDocumentVersioning.BeginEdit"/> when the working tree has uncommitted
 /// changes that belong to a branch other than the one being started. A forced checkout resets the whole
@@ -43,12 +51,28 @@ public interface IDocumentVersioning
     /// when the repository has no commits yet, or the file is not tracked at HEAD.</summary>
     string? ReadHeadContent(string repoRoot, string repoRelativePath);
 
+    /// <summary>Return the commits that changed the selected document, newest first and bounded.</summary>
+    IReadOnlyList<DocumentVersion> GetDocumentVersions(
+        string repoRoot,
+        string repoRelativePath,
+        int maxCount = 50,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Initialize a new repository at <paramref name="repoRoot"/> (default branch
     /// <c>main</c>) and make an initial commit of everything already present.</summary>
     void Initialize(string repoRoot, string commitMessage);
 
     /// <summary>The friendly name of the currently checked-out branch, or <c>null</c> if unknown.</summary>
     string? CurrentBranch(string repoRoot);
+
+    /// <summary>The current branch with an explicit detached state. Implementations throw when the
+    /// repository cannot be read, so callers can distinguish unavailable from detached.</summary>
+    CurrentBranchInfo DescribeCurrentBranch(string repoRoot);
+
+    /// <summary>The repository's actual default branch. The remote HEAD wins when available;
+    /// <paramref name="preferredBranch"/> is then used only when that local branch exists, followed by
+    /// conventional main/master branches and the current branch. Returns <c>null</c> for a branchless repo.</summary>
+    string? DefaultBranch(string repoRoot, string? preferredBranch);
 
     /// <summary>Create (if absent) and check out the working branch <paramref name="branchName"/>,
     /// forking it from <paramref name="preferredBase"/> when that branch exists (else from whatever

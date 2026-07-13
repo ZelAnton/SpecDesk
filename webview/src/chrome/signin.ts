@@ -4,8 +4,11 @@ import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.j
 /** The host actions the account affordance triggers (each maps to one IPC message), plus the
  *  affordance's own DOM elements (each may be absent from the markup). */
 export interface SignInDeps {
-  /** The "Connect to GitHub" account button. */
+  /** The global account-menu trigger. */
   accountBtn: HTMLButtonElement | null;
+  menu: HTMLElement | null;
+  connectBtn: HTMLButtonElement | null;
+  signOutBtn: HTMLButtonElement | null;
   /** The sign-in code bar and its contents. */
   bar: HTMLElement | null;
   text: HTMLElement | null;
@@ -36,17 +39,22 @@ function atHandle(login: string): string {
  */
 export class SignInController {
   private readonly accountBtn: HTMLButtonElement | null;
+  private readonly menu: HTMLElement | null;
+  private readonly connectBtn: HTMLButtonElement | null;
+  private readonly signOutBtn: HTMLButtonElement | null;
   private readonly bar: HTMLElement | null;
   private readonly text: HTMLElement | null;
   private readonly userCode: HTMLElement | null;
   private readonly openBtn: HTMLButtonElement | null;
   private readonly status: HTMLElement | null;
   private readonly cancelBtn: HTMLButtonElement | null;
-  private signedIn = false;
   private verificationUri = "";
 
   constructor(private readonly deps: SignInDeps) {
     this.accountBtn = deps.accountBtn;
+    this.menu = deps.menu;
+    this.connectBtn = deps.connectBtn;
+    this.signOutBtn = deps.signOutBtn;
     this.bar = deps.bar;
     this.text = deps.text;
     this.userCode = deps.userCode;
@@ -55,11 +63,76 @@ export class SignInController {
     this.cancelBtn = deps.cancelBtn;
 
     this.accountBtn?.addEventListener("click", () => {
-      if (this.signedIn) {
-        this.deps.signOut();
-      } else {
-        this.deps.signIn();
+      this.setMenuOpen(this.menu === null || this.menu.hidden === true, true);
+    });
+    this.accountBtn?.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        this.setMenuOpen(true, true);
       }
+    });
+    this.connectBtn?.addEventListener("click", () => {
+      this.setMenuOpen(false);
+      this.deps.signIn();
+    });
+    this.signOutBtn?.addEventListener("click", () => {
+      this.setMenuOpen(false);
+      this.deps.signOut();
+    });
+    this.menu?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.setMenuOpen(false);
+        this.accountBtn?.focus();
+        return;
+      }
+      if (event.key === "Tab") {
+        this.setMenuOpen(false);
+        return;
+      }
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "ArrowUp" &&
+        event.key !== "Home" &&
+        event.key !== "End"
+      ) {
+        return;
+      }
+      const items = this.menuItems();
+      if (items.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : current < 0
+              ? 0
+              : (current + delta + items.length) % items.length;
+      items[next]?.focus();
+    });
+    this.menu?.addEventListener("click", (event) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="menuitem"], [role="menuitemcheckbox"]')
+      ) {
+        this.setMenuOpen(false);
+      }
+    });
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (
+        !(target instanceof Node) ||
+        this.accountBtn?.contains(target) ||
+        this.menu?.contains(target)
+      ) {
+        return;
+      }
+      this.setMenuOpen(false);
     });
     this.openBtn?.addEventListener("click", () => {
       if (this.verificationUri.length > 0) {
@@ -83,23 +156,25 @@ export class SignInController {
     setText(this.status, "Waiting for you to authorize on GitHub…");
     setText(this.cancelBtn, "Cancel");
     setHidden(this.bar, false);
-    // Hide the account button while the bar is the active affordance (no restart race); the terminal
-    // github.account event restores it.
-    setHidden(this.accountBtn, true);
+    this.setMenuOpen(false);
+
+    // Device-flow authorization is intentionally completed in the user's normal browser. Opening the
+    // GitHub page as soon as the host issues the code makes repository actions a single continuous flow;
+    // the visible button remains as a retry if the OS declines the first launch.
+    this.deps.openUrl(payload.verificationUri);
   }
 
   /** Update the account affordance from the host's connection state. */
   applyAccount(payload: GitHubAccountPayload): void {
-    this.signedIn = payload.signedIn;
-    setHidden(this.accountBtn, !payload.available);
-    setText(
-      this.accountBtn,
-      payload.signedIn
-        ? payload.login && payload.login.length > 0
-          ? `Sign out ${atHandle(payload.login)}`
-          : "Sign out"
-        : "Connect to GitHub",
+    setHidden(this.accountBtn, false);
+    const handle = payload.login && payload.login.length > 0 ? atHandle(payload.login) : "";
+    this.accountBtn?.setAttribute(
+      "aria-label",
+      payload.signedIn && handle ? `Account, signed in as ${handle}` : "Account",
     );
+    setHidden(this.connectBtn, !payload.available || payload.signedIn);
+    setHidden(this.signOutBtn, !payload.available || !payload.signedIn);
+    setText(this.signOutBtn, handle ? `Sign out ${handle}` : "Sign out");
 
     if (payload.signedIn) {
       setHidden(this.bar, true);
@@ -118,5 +193,22 @@ export class SignInController {
     } else {
       setHidden(this.bar, true);
     }
+  }
+
+  private setMenuOpen(open: boolean, focusFirst = false): void {
+    setHidden(this.menu, !open);
+    this.accountBtn?.setAttribute("aria-expanded", String(open));
+    if (open && focusFirst) {
+      this.menuItems()[0]?.focus();
+    }
+  }
+
+  private menuItems(): HTMLButtonElement[] {
+    if (!this.menu) {
+      return [];
+    }
+    return Array.from(
+      this.menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"], [role="menuitemcheckbox"]'),
+    ).filter((item) => !item.hidden && !item.disabled);
   }
 }

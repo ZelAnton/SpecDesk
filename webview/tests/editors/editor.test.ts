@@ -724,3 +724,27 @@ describe("MarkdownEditor.activeFormats (jsdom, T-100)", () => {
     expect(active.has("bullet")).toBe(true);
   });
 });
+
+describe("MarkdownEditor.findText", () => {
+  it("selects the next case-insensitive match and wraps after the last one", () => {
+    const { ed } = mount();
+    ed.setText("Alpha beta alpha\n");
+
+    expect(ed.findText("ALPHA")).toBe(true);
+    expect(viewOf(ed).state.selection.main.from).toBe(0);
+    expect(ed.findText("alpha")).toBe(true);
+    expect(viewOf(ed).state.selection.main.from).toBe(11);
+    expect(ed.findText("alpha")).toBe(true);
+    expect(viewOf(ed).state.selection.main.from).toBe(0);
+  });
+
+  it("leaves the selection alone when the query is empty or absent", () => {
+    const { ed } = mount();
+    ed.setText("Alpha beta\n");
+    const before = viewOf(ed).state.selection.main;
+
+    expect(ed.findText("   ")).toBe(false);
+    expect(ed.findText("missing")).toBe(false);
+    expect(viewOf(ed).state.selection.main).toEqual(before);
+  });
+});

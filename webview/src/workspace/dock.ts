@@ -7,11 +7,9 @@
  * DockCallbacks.onChange} so the owner can persist it; the owner also observes the centre's size to
  * re-measure the editor, so the dock stays free of any editor/sync knowledge.
  *
- * Visibility uses the `hidden` attribute (the app's idiom): the CSS `.dock[hidden]` rule out-specifies the
- * dock's base `display:flex` so a collapsed dock leaves the layout, and its splitter is hidden alongside it
- * (the splitter has no base display, so its `[hidden]` is the plain user-agent rule). The size is an inline
- * width (side rails) or height (bottom) on a `flex:none` box, so the dock occupies exactly its clamped size
- * and the centre flexes into the rest.
+ * A collapsed dock keeps its mode rail visible, so the same active icon that collapsed it can expand it
+ * again. Side rails stay vertical; the collapsed bottom rail becomes a horizontal toolbar along the window
+ * edge and returns to the left side when expanded. Only the main panel and splitter disappear.
  */
 
 import { SegmentedControl, type SegmentedOption } from "../chrome/segmented-control.js";
@@ -62,7 +60,9 @@ export class Dock {
   private size: number;
   private modeId: string;
   private readonly toolBodies = new Map<string, HTMLElement>();
+  private readonly railButtons = new Map<string, HTMLButtonElement>();
   private readonly modeControl: SegmentedControl<string> | null;
+  private readonly railEl: HTMLElement | null;
   private readonly splitter: HTMLElement;
   // The header title element, showing the active mode's label — assigned in buildChrome (always present
   // after construction) and updated on a mode switch.
@@ -76,7 +76,6 @@ export class Dock {
     private readonly edge: DockEdge,
     private readonly tools: readonly PanelTool[],
     initial: DockState,
-    private readonly toggleButton: HTMLButtonElement | null,
     private readonly callbacks: DockCallbacks,
   ) {
     // A persisted mode is honoured only if it still names one of this dock's tools (the tool set can change
@@ -90,6 +89,7 @@ export class Dock {
 
     const built = this.buildChrome();
     this.modeControl = built.modeControl;
+    this.railEl = built.railEl;
     this.splitter = built.splitter;
 
     this.applyOpen();
@@ -98,7 +98,6 @@ export class Dock {
     this.modeControl?.setSelected(this.modeId);
     this.updateTitle();
 
-    this.toggleButton?.addEventListener("click", () => this.toggle());
     this.splitter.addEventListener("pointerdown", (event) => this.onSplitterPointerDown(event));
     this.splitter.addEventListener("keydown", (event) => this.onSplitterKeyDown(event));
   }
@@ -113,7 +112,7 @@ export class Dock {
     return this.isOpen;
   }
 
-  /** Flip open↔collapsed (the toolbar toggle / collapse button), persisting the result. */
+  /** Flip open↔collapsed (the active rail icon / in-panel collapse button), persisting the result. */
   toggle(): void {
     this.setOpen(!this.isOpen);
   }
@@ -124,10 +123,11 @@ export class Dock {
     if (next === this.isOpen) {
       return;
     }
-    // Collapsing hides the dock (and its in-dock collapse button); if focus is inside it, move focus to the
-    // toolbar toggle first so a keyboard user isn't dropped to <body> mid-tab-order.
-    if (!next && this.toggleButton !== null && this.el.contains(document.activeElement)) {
-      this.toggleButton.focus();
+    // Collapsing hides the main panel. If focus is inside it, move focus to the still-visible active mode
+    // icon first so a keyboard user isn't dropped to <body> mid-tab-order.
+    const activeButton = this.railButtons.get(this.modeId);
+    if (!next && activeButton !== undefined && this.el.contains(document.activeElement)) {
+      activeButton.focus();
     }
     this.isOpen = next;
     this.applyOpen();
@@ -145,6 +145,7 @@ export class Dock {
     this.showActiveTool();
     this.modeControl?.setSelected(id);
     this.updateTitle();
+    this.applyOpen();
     this.callbacks.onChange();
   }
 
@@ -171,16 +172,24 @@ export class Dock {
   }
 
   private applyOpen(): void {
-    this.el.hidden = !this.isOpen;
+    this.el.hidden = this.tools.length === 0;
+    this.el.classList.toggle("dock--collapsed", !this.isOpen);
     this.splitter.hidden = !this.isOpen;
-    this.toggleButton?.setAttribute("aria-pressed", String(this.isOpen));
+    this.railEl?.setAttribute(
+      "aria-orientation",
+      this.edge === "bottom" && !this.isOpen ? "horizontal" : "vertical",
+    );
+    for (const [id, button] of this.railButtons) {
+      button.setAttribute("aria-expanded", String(id === this.modeId && this.isOpen));
+    }
+    this.applySize();
   }
 
   private applySize(): void {
     if (this.edge === "bottom") {
-      this.el.style.height = `${this.size}px`;
+      this.el.style.height = this.isOpen ? `${this.size}px` : "";
     } else {
-      this.el.style.width = `${this.size}px`;
+      this.el.style.width = this.isOpen ? `${this.size}px` : "";
     }
     // Expose the live size on the separator so a screen reader announces it (and its bounds, set once in
     // buildSplitter) as the arrow keys / drag change it.
@@ -193,10 +202,15 @@ export class Dock {
     }
   }
 
-  private buildChrome(): { modeControl: SegmentedControl<string> | null; splitter: HTMLElement } {
+  private buildChrome(): {
+    modeControl: SegmentedControl<string> | null;
+    railEl: HTMLElement | null;
+    splitter: HTMLElement;
+  } {
     // Main column: a header (active-mode title + collapse) over the body (the active tool fills it).
     const main = document.createElement("div");
     main.className = "dock-main";
+    main.id = `${this.el.id || `${this.edge}-dock`}-main`;
 
     const header = document.createElement("div");
     header.className = "dock-header";
@@ -228,10 +242,9 @@ export class Dock {
 
     main.append(header, body);
 
-    // The icon rail (mode switcher) is added only when there is more than one tool; a single-tool dock just
-    // shows its title. The rail sits on the dock's OUTER edge (a left rail's rail on the left, a right rail's
-    // on the right, the bottom dock's on the left) so the content stays adjacent to the centre.
-    const rail = this.tools.length >= 2 ? this.buildRail() : null;
+    // Every non-empty dock has a mode rail: besides switching tools, its active icon is the dock's sole
+    // expand/collapse control while the main panel is hidden. The rail sits on the dock's OUTER edge.
+    const rail = this.tools.length > 0 ? this.buildRail() : null;
     if (this.edge === "right") {
       this.el.appendChild(main);
       if (rail !== null) {
@@ -244,7 +257,11 @@ export class Dock {
       this.el.appendChild(main);
     }
 
-    return { modeControl: rail?.control ?? null, splitter: this.buildSplitter() };
+    return {
+      modeControl: rail?.control ?? null,
+      railEl: rail?.el ?? null,
+      splitter: this.buildSplitter(),
+    };
   }
 
   /** A vertical icon rail: one icon button per tool, in an ARIA radiogroup (reusing SegmentedControl's
@@ -268,11 +285,34 @@ export class Dock {
       button.innerHTML = tool.icon;
       button.setAttribute("aria-label", tool.label);
       button.title = tool.label;
+      button.dataset.tool = tool.id;
+      button.setAttribute("aria-controls", `${this.el.id || `${this.edge}-dock`}-main`);
+      this.railButtons.set(tool.id, button);
       rail.appendChild(button);
       return { el: button, value: tool.id };
     });
 
-    return { el: rail, control: new SegmentedControl(options, (id) => this.setMode(id)) };
+    return { el: rail, control: new SegmentedControl(options, (id) => this.activateMode(id)) };
+  }
+
+  /** A rail click selects a different tool and opens it, or toggles the panel when its active icon is
+   * clicked. Switching a mode and opening is one persisted user action rather than two intermediate saves. */
+  private activateMode(id: string): void {
+    if (id === this.modeId) {
+      this.toggle();
+      return;
+    }
+    if (!this.toolBodies.has(id)) {
+      this.modeControl?.setSelected(this.modeId);
+      return;
+    }
+    this.modeId = id;
+    this.isOpen = true;
+    this.showActiveTool();
+    this.modeControl?.setSelected(id);
+    this.updateTitle();
+    this.applyOpen();
+    this.callbacks.onChange();
   }
 
   private buildSplitter(): HTMLElement {

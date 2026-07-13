@@ -4,31 +4,44 @@ using SpecDesk.GitHub;
 
 namespace SpecDesk.Host;
 
-// The GitHub sign-in slice of HostController: the device-flow sign-in / cancel / sign-out and the
-// account-affordance frames sent to the webview.
-// The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
-	// Connect the author's GitHub account: show the one-time code, then poll for authorization on a
-	// background task (it runs for minutes). Cancellable; only one flow at a time.
+	// Serializes flow replacement with user-visible sign-in publications. _sync protects state; this gate
+	// guarantees an older flow can never publish after a newer flow has become current without holding
+	// _sync while calling the transport or resuming repository actions.
+	private readonly object _signInPublishSync = new();
+
 	private void OnGitHubSignIn()
 	{
 		if (_auth is null)
 		{
-			SendCurrentAccount();
+			lock (_signInPublishSync)
+			{
+				lock (_sync)
+				{
+					if (_disposed)
+					{
+						return;
+					}
+				}
+				SendCurrentAccount();
+			}
 			return;
 		}
 
 		CancellationTokenSource cts;
-		lock (_sync)
+		lock (_signInPublishSync)
 		{
-			// Cancel the previous flow but do NOT dispose it here: its still-running task captured that
-			// token and may be about to build a linked source from it, and disposing under it would throw
-			// ObjectDisposedException that escapes as a spurious "Couldn't reach GitHub". Each task disposes
-			// its OWN cts in its finally instead — a cancelled-but-alive token just yields clean cancellation.
-			_signInCts?.Cancel();
-			cts = new CancellationTokenSource();
-			_signInCts = cts;
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return;
+				}
+				_signInCts?.Cancel();
+				cts = new CancellationTokenSource();
+				_signInCts = cts;
+			}
 		}
 
 		CancellationToken token = cts.Token;
@@ -37,47 +50,39 @@ public sealed partial class HostController
 			try
 			{
 				DeviceCodePrompt prompt = await _auth.StartSignInAsync(token);
-				Emit(IpcSerializer.SerializeEvent(
-					MessageKinds.GitHubCode,
-					new GitHubCodePayload(prompt.UserCode, prompt.VerificationUri.ToString())));
+				if (!PublishPromptIfCurrent(cts, prompt))
+				{
+					return;
+				}
 
 				SignInResult result = await _auth.AwaitAuthorizationAsync(prompt, token);
 				if (token.IsCancellationRequested)
 				{
-					// The author dismissed the sign-in. AwaitAuthorizationAsync folds our own cancellation
-					// into TimedOut (it never throws once polling), so check the token here and fall back to
-					// the signed-out affordance rather than showing the "code expired" message. But only if
-					// this is still the current flow: a newer sign-in may have already replaced _signInCts (it
-					// cancels the previous flow's token as part of starting), and this stale flow's fallback
-					// must not close the newer flow's device-code prompt.
-					EmitSignedOutIfStillCurrent(cts);
+					PublishTerminalIfCurrent(cts, signedIn: false, login: null, message: null, resume: false);
 				}
 				else if (result.Outcome == SignInOutcome.Authorized)
 				{
-					SendAccount(true, result.Login, message: null);
+					PublishTerminalIfCurrent(cts, signedIn: true, result.Login, message: null, resume: true);
 				}
 				else
 				{
-					SendAccount(false, login: null, SignInMessage(result.Outcome));
+					PublishTerminalIfCurrent(
+						cts, signedIn: false, login: null, SignInMessage(result.Outcome), resume: false);
 				}
 			}
 			catch (OperationCanceledException) when (token.IsCancellationRequested)
 			{
-				// Cancelled during the up-front device-code request (StartSignInAsync still throws on cancel,
-				// unlike the poll) — fall back to the signed-out affordance, but only if a newer flow hasn't
-				// already replaced this one (see the comment above).
-				EmitSignedOutIfStillCurrent(cts);
+				PublishTerminalIfCurrent(cts, signedIn: false, login: null, message: null, resume: false);
 			}
 			catch (Exception ex)
 			{
-				// The up-front device-code request failed (transport / a GitHub error / a timeout).
 				_logger.LogError(ex, "GitHub sign-in could not start");
-				SendAccount(false, login: null, "Couldn't reach GitHub. Check your connection and try again.");
+				PublishTerminalIfCurrent(
+					cts, signedIn: false, login: null,
+					"Couldn't reach GitHub. Check your connection and try again.", resume: false);
 			}
 			finally
 			{
-				// Dispose this flow's cts now that its token is no longer in use. Only clear the field if it
-				// is still the current flow — a newer sign-in may have replaced it (and owns its own cts).
 				lock (_sync)
 				{
 					if (ReferenceEquals(_signInCts, cts))
@@ -85,47 +90,102 @@ public sealed partial class HostController
 						_signInCts = null;
 					}
 				}
-
 				cts.Dispose();
 			}
 		});
 	}
 
-	private void OnGitHubSignInCancel()
+	private bool PublishPromptIfCurrent(CancellationTokenSource cts, DeviceCodePrompt prompt)
 	{
-		lock (_sync)
+		lock (_signInPublishSync)
 		{
-			_signInCts?.Cancel();
+			lock (_sync)
+			{
+				if (_disposed || !ReferenceEquals(_signInCts, cts))
+				{
+					return false;
+				}
+			}
+
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.GitHubCode,
+				new GitHubCodePayload(prompt.UserCode, prompt.VerificationUri.ToString())));
+			return true;
 		}
 	}
 
-	// The cancelled-flow fallback for OnGitHubSignIn: emit the signed-out affordance only if this flow's
-	// cts is still the current one. A newer sign-in replaces _signInCts before cancelling the previous
-	// token, so a stale flow unwinding after that replacement must stay quiet rather than clobber the
-	// newer flow's device-code prompt with an unrelated "signed out" frame.
-	private void EmitSignedOutIfStillCurrent(CancellationTokenSource cts)
+	private void PublishTerminalIfCurrent(
+		CancellationTokenSource cts,
+		bool signedIn,
+		string? login,
+		string? message,
+		bool resume)
 	{
-		bool stillCurrent;
-		lock (_sync)
+		PendingRepoActions? actions = null;
+		lock (_signInPublishSync)
 		{
-			stillCurrent = ReferenceEquals(_signInCts, cts);
-		}
+			lock (_sync)
+			{
+				if (_disposed || !ReferenceEquals(_signInCts, cts))
+				{
+					return;
+				}
+				actions = TakePendingRepoActions();
+				// Retire this flow atomically with taking its actions. A repository request arriving after
+				// this point either observes the stored authorization or starts a fresh flow; it can never
+				// enqueue behind a terminal flow whose queue was already drained.
+				_signInCts = null;
+			}
 
-		if (stillCurrent)
+			SendAccount(signedIn, login, message);
+			if (resume && actions is not null)
+			{
+				ResumePendingRepoActions(actions);
+			}
+		}
+	}
+
+	private void OnGitHubSignInCancel()
+	{
+		lock (_signInPublishSync)
 		{
+			lock (_sync)
+			{
+				TakePendingRepoActions();
+				_signInCts?.Cancel();
+				_signInCts = null;
+			}
+			// The retired task is deliberately stale and therefore silent. Publish the one terminal frame
+			// here so the webview closes the code prompt and restores the account affordance.
 			SendCurrentAccount();
 		}
 	}
 
 	private void OnGitHubSignOut()
 	{
-		_auth?.SignOut();
-		SendCurrentAccount();
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				TakePendingRepoActions();
+				_signInCts?.Cancel();
+				_signInCts = null;
+			}
+			_auth?.SignOut();
+			SendCurrentAccount();
+		}
 	}
 
-	/// <summary>Emit the account affordance state from the store (signed in / out, or unavailable).</summary>
 	private void SendCurrentAccount()
 	{
+		lock (_sync)
+		{
+			if (_signInCts is not null)
+			{
+				return;
+			}
+		}
+
 		if (_auth is null)
 		{
 			SendAccount(false, login: null, message: null, available: false);
@@ -139,7 +199,6 @@ public sealed partial class HostController
 			MessageKinds.GitHubAccount,
 			new GitHubAccountPayload(available, signedIn, login, message)));
 
-	/// <summary>The author-facing line for a non-authorized sign-in ending (plain words, no OAuth jargon).</summary>
 	private static string SignInMessage(SignInOutcome outcome) => outcome switch
 	{
 		SignInOutcome.Expired or SignInOutcome.TimedOut => "Your sign-in code expired. Connect again to retry.",

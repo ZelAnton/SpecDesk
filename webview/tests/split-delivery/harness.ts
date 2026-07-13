@@ -264,7 +264,7 @@ export function wire(code: string, html: string, css: string): WiredApp {
 
 /** Feed a `doc.loaded` frame (the host's "here is the document") and let the reconcile settle. */
 export async function loadDocument(app: WiredApp, text: string): Promise<void> {
-  app.emit({ kind: "doc.loaded", payload: { path: "spec.md", text, docDir: "" } });
+  app.emit({ kind: "doc.loaded", payload: { path: "spec.md", text, docDir: "", readOnly: false } });
   await flushFrames();
 }
 
@@ -417,16 +417,19 @@ function withBundleLock<T>(body: () => T): T {
 
 /**
  * Run the standard bundle process and gather the built artifact + its manifest. Shelling out to
- * `node scripts/bundle.mjs` is deliberately the same path `npm run bundle` drives, so the gate proves the
- * whole pipeline (esbuild + manifest write), not an in-process re-implementation of it. Build and read
- * happen under the cross-file lock (see {@link withBundleLock}).
+ * `node scripts/bundle.mjs` is deliberately the same path `npm run bundle` drives, so the normal gate proves
+ * the whole pipeline (esbuild + manifest write), not an in-process re-implementation of it. A sandbox that
+ * forbids esbuild child-process spawn may set `SPECDESK_DELIVERY_PREBUILT=1` after building with the native
+ * executable; manifest verification remains mandatory. Build and read happen under the cross-file lock.
  */
 export function buildBundle(): BundleArtifact {
   return withBundleLock(() => {
-    execFileSync(process.execPath, [join(scriptsDir, "bundle.mjs")], {
-      cwd: webviewDir,
-      stdio: "inherit",
-    });
+    if (process.env.SPECDESK_DELIVERY_PREBUILT !== "1") {
+      execFileSync(process.execPath, [join(scriptsDir, "bundle.mjs")], {
+        cwd: webviewDir,
+        stdio: "inherit",
+      });
+    }
     const verification = verifyBundle(webviewDir, wwwrootDir);
     const manifest = readManifest(wwwrootDir);
     const jsBytes = readFileSync(join(wwwrootDir, "webview.js"));

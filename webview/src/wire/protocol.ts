@@ -30,6 +30,8 @@ export const Kinds = {
   githubSignInCancel: "github.signInCancel",
   githubSignOut: "github.signOut",
   chatSend: "chat.send",
+  chatAttachmentPick: "chat.attachment.pick",
+  documentActivityRequest: "document.activity.request",
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
   treeRequest: "tree.request",
@@ -38,6 +40,8 @@ export const Kinds = {
   repoRegister: "repo.register",
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
+  repoClone: "repo.clone",
+  repoBrowse: "repo.browse",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -53,9 +57,12 @@ export const Kinds = {
   githubAccount: "github.account",
   chatDelta: "chat.delta",
   chatDone: "chat.done",
+  chatAttachmentPicked: "chat.attachment.picked",
+  documentActivity: "document.activity",
   templates: "templates",
   tree: "tree",
   workspaceState: "workspace.state",
+  workspaceContext: "workspace.context",
 } as const;
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
@@ -226,6 +233,10 @@ export interface DocLoadedPayload {
   /** Document directory relative to the repo root (forward slashes, "" at root) — for resolving
    *  relative image links to `app://repo/…` in the formatted view (mirrors the native preview). */
   docDir: string;
+  readOnly: boolean;
+  repository?: string;
+  branch?: string;
+  repositoryPath?: string;
 }
 
 /** Payload of `error` (native→webview). */
@@ -364,6 +375,46 @@ export interface GitHubAccountPayload {
 /** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */
 export interface ChatSendPayload {
   text: string;
+  attachments?: ChatAttachment[];
+}
+
+export interface ChatAttachment {
+  kind: "file" | "folder" | "repository";
+  label: string;
+  reference: string;
+}
+
+export interface DocumentVersion {
+  id: string;
+  note: string;
+  author: string;
+  when: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  author: string;
+  body: string;
+  when: string;
+}
+
+export interface DocumentChange {
+  id: string;
+  label: string;
+  note: string;
+  author: string;
+  when: string;
+}
+
+export interface DocumentActivityPayload {
+  document?: string;
+  versions: DocumentVersion[];
+  historyState: "loaded" | "notVersioned" | "unavailable";
+  historyMessage?: string;
+  comments: DocumentComment[];
+  commentsState: "loaded" | "notConnected" | "unavailable";
+  commentsMessage?: string;
+  history: DocumentChange[];
 }
 
 /** Payload of `chat.delta` (native→webview): one streamed chunk of the assistant's reply, appended to
@@ -428,13 +479,26 @@ export interface TreePayload {
   nodes: TreeNode[];
 }
 
-/** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). `path` is the absolute
- *  file/folder path; `label` is the display name (usually the last path segment); `isFolder` distinguishes a
- *  folder from a file. */
+/** Authoritative repository/version/path context for the open document. The file-tree root is separate. */
+export interface WorkspaceContextPayload {
+  repository: string | null;
+  repositoryRoot: string | null;
+  branch: string | null;
+  branchState: "named" | "detached" | "unavailable";
+  defaultBranch: string | null;
+  path: string;
+}
+
+/** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). Local paths are absolute;
+ *  remote paths are repository-relative and paired with `repositoryId` + `branch`; repository items use their
+ *  stable id. */
 export interface WorkspaceItem {
   path: string;
   label: string;
   isFolder: boolean;
+  kind?: "local" | "remote" | "repository";
+  repositoryId?: string;
+  branch?: string;
 }
 
 /** One registered GitHub repository (native→webview, inside {@link WorkspaceStatePayload}). A4 stores the
@@ -444,6 +508,14 @@ export interface RegisteredRepo {
   id: string;
   name: string;
   url: string;
+  defaultBranch: string;
+  clones: RegisteredClone[];
+}
+
+export interface RegisteredClone {
+  id: string;
+  path: string;
+  branches: string[];
 }
 
 /** Payload of `workspace.state` (native→webview): the persisted workspace store — the author's `recent`
@@ -455,11 +527,15 @@ export interface WorkspaceStatePayload {
   repositories: RegisteredRepo[];
 }
 
-/** Payload of `workspace.favorite` (webview→native): toggle whether the file/folder at `path` is a favorite
- *  (`favorite` true adds it, false removes it). */
+/** Payload of `workspace.favorite` (webview→native): toggle a local/remote file or folder, or a registered
+ *  repository (`favorite` true adds it, false removes it). */
 export interface WorkspaceFavoritePayload {
   path: string;
   favorite: boolean;
+  kind?: "local" | "remote" | "repository";
+  repositoryId?: string;
+  branch?: string;
+  isFolder?: boolean;
 }
 
 /** Payload of `repo.register` (webview→native): register a GitHub repository from a URL or spec
@@ -479,4 +555,5 @@ export interface UnregisterRepoPayload {
  *  folder as the workspace, sending a `tree`; an unparseable value comes back as an `error`. */
 export interface RepoOpenPayload {
   url: string;
+  clonePath?: string;
 }

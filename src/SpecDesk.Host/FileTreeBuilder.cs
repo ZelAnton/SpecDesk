@@ -3,10 +3,9 @@ using SpecDesk.Contracts;
 namespace SpecDesk.Host;
 
 /// <summary>
-/// Builds the Markdown file tree of a workspace folder for the left-rail navigator (<c>tree</c> event).
-/// Enumerates directories and Markdown files (<c>.md</c>/<c>.markdown</c>) recursively, skipping noise
-/// (dot-directories such as <c>.git</c>, plus <c>node_modules</c>), and prunes any directory that contains
-/// no Markdown anywhere beneath it — so the tree shows only what an author can actually open.
+/// Builds the file tree of a workspace folder for the left-rail navigator (<c>tree</c> event).
+/// Enumerates directories and files recursively, skipping dot-directories and <c>node_modules</c>, and
+/// prunes empty directories.
 ///
 /// The walk is bounded three ways so a pathological folder can't hang the message thread: it never descends
 /// into a reparse point (a symlink/junction — which would otherwise cycle a tree back onto an ancestor), it
@@ -19,8 +18,7 @@ public static class FileTreeBuilder
 	private const int MaxDepth = 32;
 	private const int MaxNodes = 5000;
 	private const int MaxDirectoriesVisited = 20000;
-
-	private static readonly string[] MarkdownExtensions = [".md", ".markdown"];
+	private const int MaxEntriesExamined = 50000;
 
 	// The two independent budgets for one walk. Nodes is reserved-then-refunded as directories are kept or
 	// pruned (so it bounds the RESULT size); Visits only ever decreases (so it bounds the WORK). Passed by
@@ -29,11 +27,12 @@ public static class FileTreeBuilder
 	{
 		public int Nodes = MaxNodes;
 		public int Visits = MaxDirectoriesVisited;
+		public int Entries = MaxEntriesExamined;
 	}
 
 	/// <summary>
 	/// Build the tree rooted at <paramref name="root"/>. Returns an empty node list when the folder is
-	/// missing, unreadable, or holds no Markdown. Directories sort before files; both alphabetically
+	/// missing, unreadable, or holds no files. Directories sort before files; both alphabetically
 	/// (ordinal-ignore-case), so the order is stable and independent of the filesystem's enumeration order.
 	/// </summary>
 	public static TreePayload Build(string root)
@@ -49,17 +48,42 @@ public static class FileTreeBuilder
 	private static List<TreeNode> BuildChildren(string dir, int depth, Budget budget)
 	{
 		List<TreeNode> result = [];
-		if (depth >= MaxDepth || budget.Nodes <= 0 || budget.Visits <= 0)
+		if (depth >= MaxDepth || budget.Nodes <= 0 || budget.Visits <= 0 || budget.Entries <= 0)
 		{
 			return result;
 		}
 
-		string[] subdirs;
-		string[] files;
+		List<string> subdirs = [];
+		List<string> files = [];
 		try
 		{
-			subdirs = Directory.GetDirectories(dir);
-			files = Directory.GetFiles(dir);
+			foreach (string entry in Directory.EnumerateFileSystemEntries(dir))
+			{
+				if (budget.Entries-- <= 0)
+				{
+					break;
+				}
+				try
+				{
+					FileAttributes attributes = File.GetAttributes(entry);
+					if ((attributes & FileAttributes.ReparsePoint) != 0)
+					{
+						continue;
+					}
+					if ((attributes & FileAttributes.Directory) != 0)
+					{
+						subdirs.Add(entry);
+					}
+					else
+					{
+						files.Add(entry);
+					}
+				}
+				catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+				{
+					// An entry that disappears or becomes unreadable during enumeration is skipped.
+				}
+			}
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
@@ -68,7 +92,7 @@ public static class FileTreeBuilder
 			return result;
 		}
 
-		Array.Sort(subdirs, static (a, b) => string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
+		subdirs.Sort(static (a, b) => string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
 		foreach (string subdir in subdirs)
 		{
 			if (budget.Nodes <= 0 || budget.Visits <= 0)
@@ -86,13 +110,13 @@ public static class FileTreeBuilder
 			}
 
 			// Entering a directory always spends a visit (never refunded — this is what bounds the walk) and
-			// reserves a node slot (refunded below if the directory turns out to hold no Markdown).
+			// reserves a node slot (refunded below if the directory turns out to be empty).
 			budget.Visits -= 1;
 			budget.Nodes -= 1;
 			List<TreeNode> children = BuildChildren(subdir, depth + 1, budget);
 			if (children.Count == 0)
 			{
-				// A directory with no Markdown beneath it is noise for a spec navigator — drop it and give
+				// An empty directory is noise for the navigator — drop it and give
 				// its reserved NODE slot back (the visit stays spent; the walk already happened).
 				budget.Nodes += 1;
 				continue;
@@ -101,17 +125,12 @@ public static class FileTreeBuilder
 			result.Add(new TreeNode(name, subdir, IsDirectory: true, children));
 		}
 
-		Array.Sort(files, static (a, b) => string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
+		files.Sort(static (a, b) => string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
 		foreach (string file in files)
 		{
 			if (budget.Nodes <= 0)
 			{
 				break;
-			}
-
-			if (!IsMarkdown(file))
-			{
-				continue;
 			}
 
 			budget.Nodes -= 1;
@@ -138,17 +157,4 @@ public static class FileTreeBuilder
 	private static bool IsIgnoredDirectory(string name) =>
 		name.StartsWith('.') || string.Equals(name, "node_modules", StringComparison.OrdinalIgnoreCase);
 
-	private static bool IsMarkdown(string file)
-	{
-		string ext = Path.GetExtension(file);
-		foreach (string markdown in MarkdownExtensions)
-		{
-			if (string.Equals(ext, markdown, StringComparison.OrdinalIgnoreCase))
-			{
-				return true;
-			}
-		}
-
-		return false;
-	}
 }

@@ -23,7 +23,6 @@ function editorScrollTop(page: import("@playwright/test").Page): Promise<number>
 }
 
 async function openOutline(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator("#toggle-right-dock").click();
   await page.locator('#right-dock .dock-rail-btn[aria-label="Outline"]').click();
 }
 
@@ -51,7 +50,7 @@ test("clicking an outline heading from the Start screen returns to the editor an
   await openOutline(page);
 
   // Leave the editor for the Start (home) screen — the panes go display:none while the outline stays.
-  await page.locator("#toggle-left-dock").click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigation"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");
 

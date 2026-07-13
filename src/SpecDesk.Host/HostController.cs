@@ -20,6 +20,12 @@ public interface IFileDialogs
 	/// <summary>Prompt for a folder to open as the workspace; <c>null</c> if the user cancelled.</summary>
 	string? PickOpenFolder();
 
+	/// <summary>Prompt for a file to attach without opening it in the editor.</summary>
+	string? PickAttachmentFile() => PickOpenFile();
+
+	/// <summary>Prompt for a folder to attach without changing the workspace.</summary>
+	string? PickAttachmentFolder() => PickOpenFolder();
+
 	/// <summary>Prompt for a save location; <c>null</c> if the user cancelled.</summary>
 	string? PickSaveFile(string? suggestedPath);
 }
@@ -86,6 +92,8 @@ public sealed partial class HostController : IDisposable
 	// Optional — null leaves OnOpenRepo inert (nothing to clone), the same graceful-degradation pattern as the
 	// other injected dependencies. See HostController.Workspace.cs.
 	private readonly IRepositoryCloner? _cloner;
+	private readonly ILocalRepositoryInspector? _repositoryInspector;
+	private readonly IGitHubRepositoryCatalog? _repositoryCatalog;
 	private readonly ILogger<HostController> _logger;
 	private readonly string? _initialDocPath;
 	// Latches the initial-document auto-load to a single attempt. A WebView2 recovery / page reload
@@ -109,6 +117,7 @@ public sealed partial class HostController : IDisposable
 	private readonly PreviewCoordinator _coordinator = new();
 	private readonly LogBridge _logBridge;
 	private readonly TraceBridge _traceBridge;
+	private readonly CancellationTokenSource _lifetimeCts = new();
 
 	// Guards the lifecycle / autosave fields below, which the message thread and the autosave timer
 	// callback both touch. _text/_currentPath/_repoRoot are also published and snapshotted under this
@@ -123,6 +132,7 @@ public sealed partial class HostController : IDisposable
 	// blocks until the push returns — a bounded responsiveness cost on a slow/stalled network, not a
 	// deadlock. The push itself runs off the message thread; only a concurrent repo-gated action contends.
 	private readonly object _repoGate = new();
+	private bool _disposed;
 
 	// The whole draft editing session as one immutable snapshot (see the DraftSession record below),
 	// swapped atomically as a single reference under _sync. Consolidates what were six separate fields
@@ -190,6 +200,7 @@ public sealed partial class HostController : IDisposable
 	private string _text = string.Empty;
 	private string? _currentPath;
 	private string? _repoRoot;
+	private RemoteDocumentContext? _remoteDocument;
 	// The folder opened as the left-rail file navigator's root (a plain disk folder, or a repo the author
 	// opened). Independent of _repoRoot (the versioning root of the OPEN document): the author can browse one
 	// folder's tree while editing a document elsewhere. Guarded by _sync like the other document fields.
@@ -219,7 +230,9 @@ public sealed partial class HostController : IDisposable
 		IChatAgent? chatAgent = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
-		IRepositoryCloner? cloner = null)
+		IRepositoryCloner? cloner = null,
+		ILocalRepositoryInspector? repositoryInspector = null,
+		IGitHubRepositoryCatalog? repositoryCatalog = null)
 	{
 		ArgumentNullException.ThrowIfNull(render);
 		ArgumentNullException.ThrowIfNull(send);
@@ -239,6 +252,8 @@ public sealed partial class HostController : IDisposable
 		_templates = templates;
 		_workspace = workspace;
 		_cloner = cloner;
+		_repositoryInspector = repositoryInspector;
+		_repositoryCatalog = repositoryCatalog;
 		_logger = logger;
 		_initialDocPath = initialDocPath;
 		_autosaveIdle = autosaveIdle ?? DefaultAutosaveIdle;
@@ -253,20 +268,42 @@ public sealed partial class HostController : IDisposable
 	/// <summary>Disposes the pending autosave timer and cancels any in-flight sign-in.</summary>
 	public void Dispose()
 	{
-		lock (_sync)
+		_lifetimeCts.Cancel();
+		lock (_signInPublishSync)
 		{
-			_autosaveTimer?.Dispose();
-			_autosaveTimer = null;
-			// Cancel any in-flight sign-in, but leave disposal to that task's finally — disposing the cts
-			// here while its token is still in flight risks ObjectDisposedException from the running task.
-			_signInCts?.Cancel();
-			_signInCts = null;
-			// Same discipline for an in-flight chat turn — cancel it, let its task dispose the cts.
-			_chatCts?.Cancel();
-			_chatCts = null;
-			// And for an in-flight repository clone (A6) — cancel it, let its task dispose the cts.
-			_cloneCts?.Cancel();
-			_cloneCts = null;
+			lock (_clonePublishSync)
+			{
+				lock (_remotePublishSync)
+				{
+					lock (_sync)
+					{
+						_disposed = true;
+						_autosaveTimer?.Dispose();
+						_autosaveTimer = null;
+						_signInCts?.Cancel();
+						_signInCts = null;
+						TakePendingRepoActions();
+						_chatCts?.Cancel();
+						_chatCts = null;
+						_cloneGeneration++;
+						_cloneCts?.Cancel();
+						_cloneCts = null;
+						_cloneRepoId = null;
+						foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+						{
+							lookup.Cts.Cancel();
+						}
+						_repoMetadataLookups.Clear();
+						_remoteBrowseCts?.Cancel();
+						_remoteBrowseCts = null;
+						_remoteBrowseRepoId = null;
+						_remoteBrowseIntentRepoId = null;
+						_remoteFileCts?.Cancel();
+						_remoteFileCts = null;
+						_remoteFileRepoId = null;
+					}
+				}
+			}
 		}
 	}
 
@@ -301,6 +338,24 @@ public sealed partial class HostController : IDisposable
 			_logger.LogWarning("Dropped a malformed IPC frame ({Length} chars)", json.Length);
 			return;
 		}
+
+		bool mutationGuard = IsRemoteMutation(message.Kind);
+		if (mutationGuard)
+		{
+			Monitor.Enter(_remotePublishSync);
+		}
+		try
+		{
+			bool remote;
+			lock (_sync)
+			{
+				remote = _remoteDocument is not null;
+			}
+			if (remote && mutationGuard)
+			{
+				SendError("This is an online preview. Copy the repository locally before editing or saving.");
+				return;
+			}
 
 		// The webview log channel is high-volume and logs itself; don't echo its routing.
 		if (message.Kind != MessageKinds.Log)
@@ -393,6 +448,12 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.ChatSend:
 				OnChatSend(message);
 				break;
+			case MessageKinds.ChatAttachmentPick:
+				OnChatAttachmentPick(message);
+				break;
+			case MessageKinds.DocumentActivityRequest:
+				OnDocumentActivityRequest(message);
+				break;
 			case MessageKinds.TemplatesRequest:
 				OnRequestTemplates(message);
 				break;
@@ -411,11 +472,35 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.RepoOpen:
 				OnOpenRepo(message);
 				break;
+			case MessageKinds.RepoClone:
+				OnCloneRepo(message);
+				break;
+			case MessageKinds.RepoBrowse:
+				OnBrowseRepo(message);
+				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
 				break;
 		}
+		}
+		finally
+		{
+			if (mutationGuard)
+			{
+				Monitor.Exit(_remotePublishSync);
+			}
+		}
 	}
+
+	private static bool IsRemoteMutation(string kind) => kind is
+		MessageKinds.EditorChanged
+		or MessageKinds.DocSave
+		or MessageKinds.DocEdit
+		or MessageKinds.DocSaveVersion
+		or MessageKinds.DocSendForReview
+		or MessageKinds.DocUpdateReview
+		or MessageKinds.DocDiscard
+		or MessageKinds.ImagePaste;
 
 	private void SendLifecycleStatus()
 	{
@@ -428,6 +513,7 @@ public sealed partial class HostController : IDisposable
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.Status,
 			new StatusPayload(session.State, Lifecycle.labelOf(session.State), session.Branch)));
+		SendWorkspaceContext();
 	}
 
 	private void SendTransientStatus(string label)

@@ -360,6 +360,12 @@ public sealed class GitHubDeviceFlowAuthTests
     }
 
     [Test]
+    public void The_shipped_client_id_is_configured()
+    {
+        Assert.That(GitHubAuthOptions.DefaultClientId, Is.Not.Empty);
+    }
+
+    [Test]
     public async Task WithAccessTokenAsync_runs_the_callback_with_the_stored_token()
     {
         FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"));

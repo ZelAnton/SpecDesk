@@ -30,15 +30,14 @@ const NAV_DESTINATIONS: readonly NavDestination[] = [
   { id: CENTRAL_VIEW_HOME, label: "Start", hint: "Open or pick a spec" },
 ];
 
-/** The DOM the workspace wires. The docks/toggles and the Start view are optional so a reduced test/host
- *  DOM still boots. */
+/** The DOM the workspace wires. The docks and the Start view are optional so a reduced test/host DOM still
+ *  boots. Each dock's persistent mode rail owns expansion/collapse; there are no duplicate toolbar toggles. */
 export interface WorkspaceElements {
   readonly centralFrame: HTMLElement;
   /** The editor central view — wraps the formatting toolbar and the panes (see index.html #editor-view). */
   readonly editorView: HTMLElement;
   readonly homeView: HTMLElement | null;
   readonly docks: Record<DockEdge, HTMLElement | null>;
-  readonly toggles: Record<DockEdge, HTMLButtonElement | null>;
 }
 
 export interface WorkspaceCallbacks {
@@ -75,6 +74,9 @@ export interface WorkspaceHandle {
 export interface WorkspaceTools {
   /** The right rail's AI assistant chat (replaces the "assistant" placeholder). */
   readonly assistant?: PanelTool;
+  readonly versions?: PanelTool;
+  readonly comments?: PanelTool;
+  readonly history?: PanelTool;
   /** The left rail's workspace file navigator (the folder tree). Absent → a placeholder in a reduced DOM. */
   readonly files?: PanelTool;
   /** The left rail's Recent panel (recently-opened files/folders). Absent → a placeholder. */
@@ -173,7 +175,27 @@ export function setupWorkspace(
           icon("assistant"),
           "Tools that act on the active document will appear here, starting with an AI assistant.",
         ),
-      placeholderTool("tools", "Tools", icon("tools"), "More document tools will appear here."),
+      tools.versions ??
+        placeholderTool(
+          "versions",
+          "Versions",
+          icon("versions"),
+          "Saved versions will appear here.",
+        ),
+      tools.comments ??
+        placeholderTool(
+          "comments",
+          "Comments",
+          icon("comment"),
+          "Document comments will appear here.",
+        ),
+      tools.history ??
+        placeholderTool(
+          "history",
+          "Change history",
+          icon("history"),
+          "Saved changes will appear here.",
+        ),
     ],
     bottom: [
       placeholderTool(
@@ -208,7 +230,7 @@ export function setupWorkspace(
     }
     docks.set(
       edge,
-      new Dock(el, edge, toolsByEdge[edge], persisted[edge], elements.toggles[edge], {
+      new Dock(el, edge, toolsByEdge[edge], persisted[edge], {
         onChange: persist,
       }),
     );

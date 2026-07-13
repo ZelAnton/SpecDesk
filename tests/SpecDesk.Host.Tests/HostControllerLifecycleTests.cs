@@ -44,7 +44,11 @@ public sealed class HostControllerLifecycleTests
         }
     }
 
-    private HostController NewController(FakeVersioning versioning, TimeSpan? autosaveIdle = null)
+    private HostController NewController(
+        FakeVersioning versioning,
+        TimeSpan? autosaveIdle = null,
+        WorkspaceStore? workspace = null,
+        string? initialDocPath = null)
     {
         void Send(string json)
         {
@@ -61,8 +65,9 @@ public sealed class HostControllerLifecycleTests
             (_, _, _, _, _) => null,
             versioning,
             NullLogger<HostController>.Instance,
-            _docPath,
-            autosaveIdle);
+            initialDocPath ?? _docPath,
+            autosaveIdle,
+            workspace: workspace);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
         return controller;
     }
@@ -83,6 +88,166 @@ public sealed class HostControllerLifecycleTests
             Assert.That(status!.State, Is.EqualTo("draft"));
             Assert.That(status.Label, Does.Contain("Draft"));
             Assert.That(status.Branch, Does.StartWith("spec/billing-"));
+        });
+    }
+
+    [Test]
+    public void Ready_EmitsAuthoritativeRepositoryContextForTheOpenDocument()
+    {
+        FakeVersioning versioning = new() { Branch = "master", DefaultBranchValue = "master" };
+        using HostController controller = NewController(versioning);
+
+        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
+            ?.GetPayload<WorkspaceContextPayload>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.Repository, Is.EqualTo(Path.GetFileName(_tempDir)));
+            Assert.That(context.RepositoryRoot, Is.EqualTo(_tempDir));
+            Assert.That(context.Branch, Is.EqualTo("master"));
+            Assert.That(context.BranchState, Is.EqualTo("named"));
+            Assert.That(context.DefaultBranch, Is.EqualTo("master"));
+            Assert.That(context.Path, Is.EqualTo("billing.md"));
+        });
+    }
+
+    [Test]
+    public void Ready_WhenHeadIsDetached_ReportsDetachedBranchState()
+    {
+        FakeVersioning versioning = new() { BranchIsDetached = true };
+        using HostController controller = NewController(versioning);
+
+        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
+            ?.GetPayload<WorkspaceContextPayload>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.Repository, Is.Not.Null);
+            Assert.That(context.Branch, Is.Null);
+            Assert.That(context.BranchState, Is.EqualTo("detached"));
+        });
+    }
+
+    [Test]
+    public void Ready_WhenBranchCannotBeRead_ReportsUnavailableBranchState()
+    {
+        FakeVersioning versioning = new() { ThrowOnBranchInfo = true };
+        using HostController controller = NewController(versioning);
+
+        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
+            ?.GetPayload<WorkspaceContextPayload>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.Repository, Is.Not.Null);
+            Assert.That(context.Branch, Is.Null);
+            Assert.That(context.BranchState, Is.EqualTo("unavailable"));
+        });
+    }
+
+    [Test]
+    public void Ready_WhenDocumentHasNoRepository_ReportsUnavailableBranchState()
+    {
+        FakeVersioning versioning = new() { Versioned = false };
+        using HostController controller = NewController(versioning);
+
+        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
+            ?.GetPayload<WorkspaceContextPayload>();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.Repository, Is.Null);
+            Assert.That(context.RepositoryRoot, Is.Null);
+            Assert.That(context.Branch, Is.Null);
+            Assert.That(context.BranchState, Is.EqualTo("unavailable"));
+        });
+    }
+
+    [Test]
+    public void FileInsideVersionedWorkspace_UsesWorkspaceRepoRootRatherThanDocumentFolder()
+    {
+        string docs = Path.Combine(_tempDir, "docs");
+        Directory.CreateDirectory(docs);
+        string guide = Path.Combine(docs, "guide.md");
+        File.WriteAllText(guide, "# Guide");
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.FolderOpen, new FolderOpenPayload(_tempDir)));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocOpen, new DocOpenPayload(guide)));
+
+        WorkspaceContextPayload? context = LatestWorkspaceContext();
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.RepositoryRoot, Is.EqualTo(_tempDir));
+            Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
+        });
+    }
+
+    [Test]
+    public void RestartedController_UsesPersistedCloneRootForInitialNestedDocument()
+    {
+        string cloneRoot = Path.Combine(_tempDir, "managed-clone");
+        string docs = Path.Combine(cloneRoot, "docs");
+        Directory.CreateDirectory(docs);
+        string guide = Path.Combine(docs, "guide.md");
+        File.WriteAllText(guide, "# Guide");
+        string storePath = Path.Combine(_tempDir, "workspace.json");
+        WorkspaceStore firstRun = new(storePath);
+        firstRun.AddRecent(new WorkspaceItem(cloneRoot, "managed-clone", IsFolder: true));
+        firstRun.AddRecent(new WorkspaceItem("\0invalid", "invalid", IsFolder: true));
+
+        FakeVersioning versioning = new();
+        WorkspaceStore restartedStore = new(storePath);
+        using HostController controller = NewController(
+            versioning,
+            workspace: restartedStore,
+            initialDocPath: guide);
+
+        WorkspaceContextPayload? context = LatestWorkspaceContext();
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.RepositoryRoot, Is.EqualTo(cloneRoot));
+            Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
+        });
+    }
+
+    [Test]
+    public void RestartedController_UsesAnyPersistedRegisteredCloneEvenWhenItIsNoLongerRecent()
+    {
+        string cloneRoot = Path.Combine(_tempDir, "managed-clone-2");
+        string docs = Path.Combine(cloneRoot, "docs");
+        Directory.CreateDirectory(docs);
+        string guide = Path.Combine(docs, "guide.md");
+        File.WriteAllText(guide, "# Guide");
+        WorkspaceStore store = new(Path.Combine(_tempDir, "workspace.json"));
+        store.RegisterRepo(new RegisteredRepo(
+            "octo/specs",
+            "octo/specs",
+            "https://github.com/octo/specs",
+            "main",
+            [new RegisteredClone("copy-2", cloneRoot, [])]));
+
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(
+            versioning,
+            workspace: new WorkspaceStore(Path.Combine(_tempDir, "workspace.json")),
+            initialDocPath: guide);
+
+        WorkspaceContextPayload? context = LatestWorkspaceContext();
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.RepositoryRoot, Is.EqualTo(cloneRoot));
+            Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
         });
     }
 
@@ -577,6 +742,23 @@ public sealed class HostControllerLifecycleTests
                 if (message is not null && message.Kind == MessageKinds.Status)
                 {
                     return message.GetPayload<StatusPayload>();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private WorkspaceContextPayload? LatestWorkspaceContext()
+    {
+        lock (_gate)
+        {
+            for (int i = _sent.Count - 1; i >= 0; i--)
+            {
+                IpcMessage? message = IpcSerializer.TryDeserialize(_sent[i]);
+                if (message is not null && message.Kind == MessageKinds.WorkspaceContext)
+                {
+                    return message.GetPayload<WorkspaceContextPayload>();
                 }
             }
         }

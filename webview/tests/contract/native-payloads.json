@@ -2,7 +2,8 @@
   "doc.loaded": {
     "path": "specs/billing.md",
     "text": "# Billing\n\nThe refund window is 30 days.\n",
-    "docDir": "specs"
+    "docDir": "specs",
+    "readOnly": false
   },
   "preview.html": {
     "html": "\u003Ch1\u003EBilling\u003C/h1\u003E",
@@ -112,6 +113,34 @@
   "chat.done": {
     "id": "7"
   },
+  "chat.attachment.picked": {
+    "kind": "file",
+    "label": "billing.md",
+    "reference": "C:\\specs\\billing.md"
+  },
+  "document.activity": {
+    "document": "billing.md",
+    "versions": [
+      {
+        "id": "abc123",
+        "note": "Clarify refunds",
+        "author": "Alex",
+        "when": "1970-01-01T00:00:00\u002B00:00"
+      }
+    ],
+    "historyState": "loaded",
+    "comments": [],
+    "commentsState": "loaded",
+    "history": [
+      {
+        "id": "abc123",
+        "label": "Document updated",
+        "note": "Clarify refunds",
+        "author": "Alex",
+        "when": "1970-01-01T00:00:00\u002B00:00"
+      }
+    ]
+  },
   "templates": {
     "personal": [
       {
@@ -152,26 +181,44 @@
       }
     ]
   },
+  "workspace.context": {
+    "repository": "billing-repo",
+    "repositoryRoot": "C:\\specs\\billing-repo",
+    "branch": "spec/billing-refunds",
+    "branchState": "named",
+    "defaultBranch": "main",
+    "path": "specs/billing.md"
+  },
   "workspace.state": {
     "recent": [
       {
         "path": "C:\\specs\\billing-repo\\specs\\billing.md",
         "label": "billing.md",
-        "isFolder": false
+        "isFolder": false,
+        "kind": "local"
       }
     ],
     "favorites": [
       {
         "path": "C:\\specs\\billing-repo\\specs",
         "label": "specs",
-        "isFolder": true
+        "isFolder": true,
+        "kind": "local"
       }
     ],
     "repositories": [
       {
         "id": "octo/spec-repo",
         "name": "octo/spec-repo",
-        "url": "https://github.com/octo/spec-repo"
+        "url": "https://github.com/octo/spec-repo",
+        "defaultBranch": "main",
+        "clones": [
+          {
+            "id": "octo-specs",
+            "path": "C:\\specs\\octo-specs",
+            "branches": ["review-copy"]
+          }
+        ]
       }
     ]
   }

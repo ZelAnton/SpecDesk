@@ -31,7 +31,6 @@ test.beforeEach(async ({ context }) => {
 });
 
 async function openFilesTool(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator("#toggle-left-dock").click();
   await page.locator('#left-dock .dock-rail-btn[aria-label="Files"]').click();
 }
 
@@ -77,7 +76,7 @@ test("the Start screen opens a file or a folder via the host pickers", async ({ 
   await loadDoc(page, { path: "doc.md", text: "# Doc" });
 
   // Go to the Start screen via the left-rail navigator.
-  await page.locator("#toggle-left-dock").click();
+  await page.locator('#left-dock .dock-rail-btn[aria-checked="true"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
 
   await page.locator("#home-view .home-open", { hasText: "Open a folder" }).click();

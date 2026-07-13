@@ -16,12 +16,10 @@ public sealed record GitHubAuthOptions(string ClientId, IReadOnlyList<string> Sc
     public static string ClientIdEnvironmentVariable { get; } =
         $"{ProductInfo.Name.ToUpperInvariant()}_GITHUB_CLIENT_ID";
 
-    /// <summary>The compiled-in OAuth App client id. Empty until the maintainer registers the app and
-    /// pastes its (public) client id here; an empty id means sign-in is unconfigured. RELEASE CHECKLIST:
-    /// this MUST be set (or supplied via env <see cref="ClientIdEnvironmentVariable"/>) before shipping
-    /// the GitHub round-trip — otherwise the build silently ships with sign-in dark and no error
-    /// anywhere.</summary>
-    public const string DefaultClientId = "";
+    /// <summary>The public client id of SpecDesk's registered GitHub OAuth App. Device flow deliberately
+    /// embeds this non-secret identifier; development and test builds may override it through
+    /// <see cref="ClientIdEnvironmentVariable"/>.</summary>
+    public const string DefaultClientId = "Ov23li5nQZNLvX2PEvZ0";
 
     /// <summary><c>repo</c> (push + open PR), <c>read:user</c> and <c>user:email</c> (identify the
     /// signed-in author). Team reviewers may add <c>read:org</c> in a later stage.</summary>

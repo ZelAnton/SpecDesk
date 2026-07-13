@@ -13,6 +13,14 @@
   --surface: #fff;
   --surface-raised: #fafbfc;
   --surface-sunken: #eceef1;
+  --panel: #f1f3f5;
+  --panel-header: #e4e7eb;
+  --mode-rail: #343a42;
+  --mode-rail-hover: #464e58;
+  --mode-rail-active: #245488;
+  --mode-rail-border: #262b31;
+  --mode-rail-text: #dfe3e8;
+  --mode-rail-text-strong: #fff;
   --border: #e6e9ec;
   --border-strong: #dce0e4;
   --text-strong: #1c1f23;
@@ -93,6 +101,14 @@
   --surface: #fff;
   --surface-raised: #fcfbf7;
   --surface-sunken: #f3efe6;
+  --panel: #f3f0e9;
+  --panel-header: #e7e3da;
+  --mode-rail: #3c3a35;
+  --mode-rail-hover: #504d46;
+  --mode-rail-active: #245488;
+  --mode-rail-border: #2e2c28;
+  --mode-rail-text: #e8e4dc;
+  --mode-rail-text-strong: #fff;
   --border: #efece4;
   --border-strong: #e4e1d8;
   --text-strong: #23211c;
@@ -116,6 +132,14 @@
   --surface: #1c1f24;
   --surface-raised: #22262c;
   --surface-sunken: #2a2f36;
+  --panel: #20242a;
+  --panel-header: #292e35;
+  --mode-rail: #111419;
+  --mode-rail-hover: #2b3139;
+  --mode-rail-active: #315f8c;
+  --mode-rail-border: #343a43;
+  --mode-rail-text: #c9cfd7;
+  --mode-rail-text-strong: #fff;
   --border: #2c313a;
   --border-strong: #3a404a;
   --text-strong: #ecedef;
@@ -240,14 +264,15 @@ button {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   padding: 0.5rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface-raised);
 }
 
-/* Secondary button is the toolbar default: surface fill, strong border, small radius. */
-#toolbar button {
+/* Secondary button is the toolbar/editor-action default: surface fill, strong border, small radius. */
+#toolbar button,
+#editor-actions > button {
   height: 30px;
   padding: 0 0.7rem;
   font: inherit;
@@ -259,8 +284,117 @@ button {
   transition: background var(--dur-fast) var(--ease);
 }
 
-#toolbar button:hover {
+#toolbar button:hover,
+#editor-actions > button:hover {
   background: var(--surface-sunken);
+}
+
+#repository-context {
+  flex: 1 1 18rem;
+  min-width: 8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+  font: 500 13px var(--font-ui);
+  color: var(--text-muted);
+}
+
+#repository-context > span:not(.context-separator) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#current-repository {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.context-separator {
+  flex: none;
+  color: var(--text-faint);
+}
+
+#toolbar-search {
+  flex: 1 1 12rem;
+  min-width: 9rem;
+  max-width: 24rem;
+  height: 30px;
+  padding: 0 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 13px var(--font-ui);
+}
+
+#toolbar .toolbar-icon {
+  flex: none;
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#account-control {
+  position: relative;
+  flex: none;
+}
+
+#toolbar #github-btn {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  border-radius: 50%;
+}
+
+#toolbar #github-btn:hover {
+  background: var(--accent-hover);
+}
+
+#account-menu:not([hidden]) {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  min-width: 13rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.35rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+#account-menu button {
+  width: 100%;
+  height: 30px;
+  padding: 0 0.65rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
+  cursor: pointer;
+}
+
+#account-menu button:hover,
+#account-menu button:focus-visible {
+  background: var(--surface-sunken);
+}
+
+.account-menu-separator {
+  height: 1px;
+  margin: 0.25rem 0.35rem;
+  border: 0;
+  background: var(--border);
 }
 
 /* "Show changes" is a toggle whose label doesn't change, so its active (reviewing) state needs a
@@ -287,6 +421,8 @@ button {
   background: transparent;
   border: none;
   border-radius: var(--r-sm);
+  font: inherit;
+  cursor: pointer;
 }
 
 #view-modes button:hover {
@@ -643,14 +779,41 @@ button {
    only the editor width and hides with the editor on the Start view. Scoped to :not([hidden]) for the same
    reason as the inline bars. A quiet row: ghost buttons that tint on hover and fill with the accent-soft
    wash when active (the pressed state). */
+#editor-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+#editor-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.375rem 0.75rem;
+}
+
 #format-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
   padding: 0.375rem 0.75rem;
-  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border);
   background: var(--surface);
+}
+
+@media (max-width: 900px) {
+  #format-bar:not([hidden]) {
+    flex-basis: 100%;
+    border-top: 1px solid var(--border);
+    border-left: none;
+  }
 }
 
 #format-bar button {
@@ -771,19 +934,30 @@ button {
    A collapsible left/right rail or the full-width bottom dock: a vertical icon rail (the mode switcher) on
    the dock's OUTER edge, beside a main column — a header (the active mode's title + collapse) over a body
    that shows the active tool. flex:none + an inline width (rails) / height (bottom) set by dock.ts makes
-   each occupy exactly its size while the centre flexes into the rest. `.dock[hidden]` (0,2,0) out-specifies
-   the base `display:flex` (0,1,0) so a collapsed dock truly leaves the layout. */
+   each occupy exactly its size while the centre flexes into the rest. A collapsed dock keeps only its rail
+   visible; `.dock[hidden]` is reserved for a dock with no tools at all. */
 .dock {
   flex: none;
   display: flex;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-raised);
+  background: var(--panel);
   overflow: hidden;
 }
 
 .dock[hidden] {
   display: none;
+}
+
+/* Collapsing preserves the mode rail as the panel's only toggle. Side rails shrink to the icon strip;
+   the bottom edge becomes a horizontal toolbar and returns to its left-hand vertical rail when opened. */
+.dock-left.dock--collapsed,
+.dock-right.dock--collapsed {
+  width: 44px;
+}
+
+.dock-bottom.dock--collapsed {
+  height: 44px;
 }
 
 .dock-left {
@@ -811,15 +985,26 @@ button {
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
+  background: var(--mode-rail);
 }
 
 .dock-left .dock-rail,
 .dock-bottom .dock-rail {
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--mode-rail-border);
 }
 
 .dock-right .dock-rail {
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--mode-rail-border);
+}
+
+.dock-bottom.dock--collapsed .dock-rail {
+  width: 100%;
+  height: 44px;
+  flex-direction: row;
+  padding: 0 0.4rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-right: 0;
 }
 
 .dock-rail-btn {
@@ -829,7 +1014,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
+  color: var(--mode-rail-text);
   background: transparent;
   border: none;
   border-radius: var(--r-sm);
@@ -837,13 +1022,22 @@ button {
 }
 
 .dock-rail-btn:hover {
-  color: var(--text);
-  background: var(--surface-sunken);
+  color: var(--mode-rail-text-strong);
+  background: var(--mode-rail-hover);
 }
 
 .dock-rail-btn[aria-checked="true"] {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--mode-rail-text-strong);
+  background: var(--mode-rail-active);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.dock-right .dock-rail-btn[aria-checked="true"] {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
+.dock-bottom.dock--collapsed .dock-rail-btn[aria-checked="true"] {
+  box-shadow: inset 0 -3px 0 var(--accent);
 }
 
 .dock-rail-btn svg {
@@ -868,6 +1062,10 @@ button {
   flex-direction: column;
 }
 
+.dock--collapsed .dock-main {
+  display: none;
+}
+
 .dock-header {
   flex: none;
   display: flex;
@@ -875,6 +1073,7 @@ button {
   gap: 0.5rem;
   padding: 0.5rem 0.6rem;
   border-bottom: 1px solid var(--border);
+  background: var(--panel-header);
 }
 
 /* The header title = the active mode's label, an uppercase section label (§7). */
@@ -884,10 +1083,9 @@ button {
   font: 600 11px var(--font-ui);
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  /* --text-muted, the app's legible muted-on-surface label colour (as #status): AA on --surface-raised in
-     light/dark, marginally under in warm at the token level. Not the mockups' --text-faint, which is far
-     below AA here (~2.6:1). */
-  color: var(--text-muted);
+  /* This is 11px text, so it uses --text rather than the quieter --text-muted: every theme keeps the
+     uppercase label above WCAG AA against the deliberately stronger panel-header surface. */
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -921,6 +1119,7 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--panel);
 }
 
 .dock-tool {
@@ -976,6 +1175,20 @@ button {
 /* Off-screen polite live region: announces the completed assistant reply to screen readers without
    showing anything (the visible transcript is the sighted channel). */
 .chat-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Generic visually-hidden text: accessible names and polite announcements without visible chrome. */
+.sr-only {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1068,7 +1281,7 @@ button {
   color: var(--text-muted);
 }
 
-/* Composer: template-picker toggle, the growing input, and Send. */
+/* Composer: template-picker toggle, the multi-line input, and Send. */
 .chat-composer {
   flex: none;
   display: flex;
@@ -1095,6 +1308,99 @@ button {
   cursor: pointer;
 }
 
+.chat-attach-toggle {
+  flex: none;
+  height: 30px;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font: 500 12px / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.chat-attach-toggle:hover:not(:disabled),
+.chat-attach-item:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.chat-attach-menu {
+  flex: none;
+  margin: 0 0.6rem 0.4rem;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.chat-attach-menu[hidden],
+.chat-attachments[hidden] {
+  display: none;
+}
+
+.chat-attach-item {
+  width: 100%;
+  display: block;
+  margin: 0 0 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-attach-item:disabled {
+  color: var(--text-subtle);
+  cursor: default;
+}
+
+.chat-attach-heading {
+  padding: 0.35rem 0.5rem 0.2rem;
+  color: var(--text-muted);
+  font: 600 11px / 1.3 var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.chat-attachments {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding: 0.4rem 0.6rem 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0.25rem 0.35rem 0.25rem 0.5rem;
+  border-radius: var(--r-pill);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: 12px / 1.2 var(--font-ui);
+}
+
+.chat-attachment-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 .chat-templates-toggle:hover:not(:disabled) {
   color: var(--accent);
   border-color: var(--accent-soft-border);
@@ -1102,9 +1408,10 @@ button {
 }
 
 .chat-input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  resize: none;
+  min-height: 4.5rem;
+  resize: vertical;
   max-height: 8rem;
   padding: 0.4rem 0.55rem;
   border: 1px solid var(--border-strong);
@@ -1112,6 +1419,19 @@ button {
   background: var(--surface);
   color: var(--text);
   font: 13px / 1.5 var(--font-ui);
+}
+
+.chat-input-stack {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.chat-input-hint {
+  color: var(--text-subtle);
+  font: 11px / 1.3 var(--font-ui);
 }
 
 .chat-send {
@@ -1131,9 +1451,56 @@ button {
 
 .chat-send:disabled,
 .chat-templates-toggle:disabled,
+.chat-attach-toggle:disabled,
 .chat-input:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+.document-activity {
+  height: 100%;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.document-activity-name {
+  margin: 0 0 0.65rem;
+  color: var(--text-muted);
+  font: 500 12px / 1.4 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.document-activity-empty {
+  margin: 1rem 0;
+  color: var(--text-muted);
+  font: 13px / 1.5 var(--font-ui);
+}
+
+.document-activity-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.document-activity-item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+.document-activity-item strong {
+  color: var(--text);
+  font: 600 13px / 1.4 var(--font-ui);
+}
+
+.document-activity-item span {
+  color: var(--text-muted);
+  font: 11px / 1.4 var(--font-ui);
 }
 
 /* Splitters (design §9): a 1px hairline with a wider invisible grab zone (::before) that lights up
@@ -1211,24 +1578,6 @@ button {
     outline: 2px solid;
     outline-offset: -2px;
   }
-}
-
-/* Toolbar panel toggles: compact square icon buttons; the accent wash marks the open (pressed) state,
-   matching the "Show changes" toggle. Scoped under #toolbar to win over the base `#toolbar button` rule. */
-#toolbar .dock-toggle {
-  width: 30px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 15px;
-  line-height: 1;
-}
-
-#toolbar .dock-toggle[aria-pressed="true"] {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-soft-border);
 }
 
 /* ---- Navigator (the left rail's navigation tool; workspace/tools/navigator.ts) ----
@@ -1390,6 +1739,22 @@ button {
   cursor: pointer;
 }
 
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.file-tree-row > .file-tree-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.file-tree-row > .file-tree-star {
+  margin-right: 0.25rem;
+}
+
 .file-tree-item:hover {
   background: var(--surface-sunken);
 }
@@ -1538,6 +1903,22 @@ button {
   text-overflow: ellipsis;
 }
 
+.workspace-item-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workspace-item-context {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .workspace-star {
   display: inline-flex;
   align-items: center;
@@ -1634,6 +2015,13 @@ button {
 
 .repo-row {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.1rem;
+}
+
+.repo-row-header {
+  display: flex;
   align-items: center;
   gap: 0.1rem;
 }
@@ -1656,6 +2044,43 @@ button {
 
 .repo-open:hover {
   background: var(--surface-sunken);
+}
+
+.repo-clone-action {
+  padding: 0.25rem 0.4rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font: 11px var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-clones,
+.repo-branches {
+  margin: 0 0 0 1rem;
+  padding: 0 0 0 0.65rem;
+  list-style: none;
+  border-left: 1px solid var(--border);
+}
+
+.repo-clone-open {
+  max-width: 100%;
+  padding: 0.2rem 0.35rem;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  font: 12px var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.repo-branches li {
+  padding: 0.15rem 0.35rem;
+  color: var(--text-muted);
+  font: 11px var(--font-ui);
 }
 
 .repo-remove {

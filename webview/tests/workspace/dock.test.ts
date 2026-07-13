@@ -30,17 +30,15 @@ function harness(options: HarnessOptions = {}) {
   if (dockEl === null) {
     throw new Error("no #dock");
   }
-  const toggle = document.createElement("button");
-  document.body.appendChild(toggle);
   const onChange = vi.fn();
   const tools = options.tools ?? [tool("a", "Alpha"), tool("b", "Bravo")];
   const initial = options.initial ?? { open: false, size: 260, mode: "a" };
-  const dock = new Dock(dockEl, options.edge ?? "left", tools, initial, toggle, { onChange });
+  const dock = new Dock(dockEl, options.edge ?? "left", tools, initial, { onChange });
   const splitter = document.querySelector<HTMLElement>(".dock-splitter");
   if (splitter === null) {
     throw new Error("no splitter");
   }
-  return { dockEl, toggle, onChange, dock, splitter };
+  return { dockEl, onChange, dock, splitter };
 }
 
 function pointer(
@@ -90,60 +88,62 @@ describe("Dock chrome", () => {
     expect(bottom.splitter.getAttribute("aria-orientation")).toBe("horizontal");
   });
 
-  it("renders a single-tool dock with a header title and no rail", () => {
+  it("renders a single-tool dock with a rail so its panel can be collapsed and reopened", () => {
     const { dockEl } = harness({
       tools: [tool("only", "Solo")],
       initial: { open: true, size: 260, mode: "only" },
     });
-    expect(dockEl.querySelector(".dock-rail")).toBeNull();
+    expect(dockEl.querySelectorAll(".dock-rail-btn")).toHaveLength(1);
     expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Solo");
     expect(dockEl.hidden).toBe(false);
   });
 });
 
 describe("Dock open/collapse", () => {
-  it("applies the initial collapsed state (dock + splitter hidden, toggle not pressed)", () => {
-    const { dockEl, toggle, splitter } = harness({
+  it("applies the initial collapsed state as a visible rail with a hidden splitter", () => {
+    const { dockEl, splitter } = harness({
       initial: { open: false, size: 260, mode: "a" },
     });
-    expect(dockEl.hidden).toBe(true);
+    expect(dockEl.hidden).toBe(false);
+    expect(dockEl.classList.contains("dock--collapsed")).toBe(true);
     expect(splitter.hidden).toBe(true);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(dockEl.querySelector('[data-tool="a"]')?.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("applies the initial open state and clamps the size", () => {
-    const { dockEl, toggle, splitter } = harness({
+    const { dockEl, splitter } = harness({
       edge: "left",
       initial: { open: true, size: 99999, mode: "a" },
     });
     expect(dockEl.hidden).toBe(false);
     expect(splitter.hidden).toBe(false);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(dockEl.querySelector('[data-tool="a"]')?.getAttribute("aria-expanded")).toBe("true");
     expect(dockEl.style.width).toBe(`${DOCK_SIZE_BOUNDS.left.max}px`);
   });
 
-  it("toggle opens then collapses, persisting each change and updating aria-pressed + splitter", () => {
-    const { dockEl, toggle, onChange, splitter, dock } = harness();
+  it("toggle opens then collapses, persisting each change and updating the rail + splitter", () => {
+    const { dockEl, onChange, splitter, dock } = harness();
     dock.toggle();
     expect(dock.open).toBe(true);
     expect(dockEl.hidden).toBe(false);
     expect(splitter.hidden).toBe(false);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(dockEl.querySelector('[data-tool="a"]')?.getAttribute("aria-expanded")).toBe("true");
     dock.toggle();
     expect(dock.open).toBe(false);
-    expect(dockEl.hidden).toBe(true);
+    expect(dockEl.classList.contains("dock--collapsed")).toBe(true);
     expect(splitter.hidden).toBe(true);
     expect(onChange).toHaveBeenCalledTimes(2);
   });
 
-  it("the toolbar toggle button and the collapse button drive open/close", () => {
-    const { dockEl, toggle, dock } = harness();
-    toggle.click();
+  it("the active rail icon and the in-panel collapse button drive open/close", () => {
+    const { dockEl, dock } = harness();
+    const active = dockEl.querySelector<HTMLButtonElement>('[data-tool="a"]');
+    active?.click();
     expect(dock.open).toBe(true);
     const collapse = dockEl.querySelector<HTMLButtonElement>(".dock-collapse");
     collapse?.click();
     expect(dock.open).toBe(false);
-    expect(dockEl.hidden).toBe(true);
+    expect(dockEl.classList.contains("dock--collapsed")).toBe(true);
   });
 
   it("a tool-less dock cannot be opened", () => {
@@ -170,6 +170,31 @@ describe("Dock mode switching", () => {
     expect(bButton?.getAttribute("aria-checked")).toBe("true");
     expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Bravo");
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking the active mode toggles the panel, while an inactive mode selects and opens it", () => {
+    const { dockEl, dock, onChange } = harness({
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    const [aButton, bButton] = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn");
+    aButton?.click();
+    expect(dock.open).toBe(false);
+    expect(aButton?.getAttribute("aria-expanded")).toBe("false");
+    bButton?.click();
+    expect(dock.open).toBe(true);
+    expect(bButton?.getAttribute("aria-checked")).toBe("true");
+    expect(bButton?.getAttribute("aria-expanded")).toBe("true");
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps aria-expanded on the current mode when a caller reveals another tool", () => {
+    const { dockEl, dock } = harness({
+      initial: { open: true, size: 260, mode: "a" },
+    });
+    dock.setMode("b");
+    const [aButton, bButton] = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn");
+    expect(aButton?.getAttribute("aria-expanded")).toBe("false");
+    expect(bButton?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("setMode ignores an unknown id without persisting and keeps the rail in sync", () => {
@@ -215,6 +240,17 @@ describe("Dock resize", () => {
     expect(bottom.dockEl.style.height).toBe("216px");
     key(bottom.splitter, "ArrowDown");
     expect(bottom.dockEl.style.height).toBe("200px");
+  });
+
+  it("announces the collapsed bottom toolbar as horizontal and the expanded rail as vertical", () => {
+    const { dockEl, dock } = harness({
+      edge: "bottom",
+      initial: { open: false, size: 200, mode: "a" },
+    });
+    const rail = dockEl.querySelector(".dock-rail");
+    expect(rail?.getAttribute("aria-orientation")).toBe("horizontal");
+    dock.toggle();
+    expect(rail?.getAttribute("aria-orientation")).toBe("vertical");
   });
 
   it("a pointer drag resizes live and persists once on release (per edge)", () => {
@@ -282,8 +318,8 @@ describe("Dock resize", () => {
     const tools = [tool("a", "Alpha"), tool("b", "Bravo")];
     const noop = { onChange: () => {} };
     // Constructed for their side effect: each Dock wires its splitter into the DOM (the drag targets below).
-    new Dock(leftEl, "left", tools, { open: true, size: 260, mode: "a" }, null, noop);
-    new Dock(rightEl, "right", tools, { open: true, size: 300, mode: "a" }, null, noop);
+    new Dock(leftEl, "left", tools, { open: true, size: 260, mode: "a" }, noop);
+    new Dock(rightEl, "right", tools, { open: true, size: 300, mode: "a" }, noop);
     const leftSplitter = leftEl.nextElementSibling as HTMLElement;
     const rightSplitter = rightEl.previousElementSibling as HTMLElement;
 
@@ -323,8 +359,8 @@ describe("Dock accessibility", () => {
     expect(dockEl.querySelector(".dock-rail")?.getAttribute("aria-label")).toBe("left panel mode");
   });
 
-  it("moves focus to the toolbar toggle when collapsing from the in-dock control", () => {
-    const { dockEl, toggle } = harness({
+  it("moves focus to the active rail icon when collapsing from the in-dock control", () => {
+    const { dockEl } = harness({
       edge: "left",
       initial: { open: true, size: 260, mode: "a" },
     });
@@ -332,7 +368,7 @@ describe("Dock accessibility", () => {
     collapse?.focus();
     expect(document.activeElement).toBe(collapse);
     collapse?.click();
-    // Focus landed on the toolbar toggle, not <body> (the collapse button is now inside a hidden subtree).
-    expect(document.activeElement).toBe(toggle);
+    // Focus landed on the persistent rail icon, not <body> (the collapse button is now hidden).
+    expect(document.activeElement).toBe(dockEl.querySelector<HTMLButtonElement>('[data-tool="a"]'));
   });
 });

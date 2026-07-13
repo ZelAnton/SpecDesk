@@ -2,8 +2,7 @@ namespace SpecDesk.GitHub.Tests;
 
 // Manual, opt-in verification of the REAL GitHub device flow end to end — this is how the auth-model risk
 // is retired without a separate console app. Never runs in CI ([Explicit] + the LiveGitHub category is
-// filtered out). To run it: register a GitHub OAuth App, then
-//   SET SPECDESK_GITHUB_CLIENT_ID=<its public client id>
+// filtered out). To run it:
 //   dotnet test --filter Category=LiveGitHub
 // Follow the printed URL + code to authorize; the test asserts a real login comes back.
 [TestFixture]
@@ -14,10 +13,14 @@ public sealed class LiveDeviceFlowTests
     [Test]
     public async Task Real_device_flow_signs_in_and_returns_the_login()
     {
-        string? clientId = Environment.GetEnvironmentVariable("SPECDESK_GITHUB_CLIENT_ID");
+        string? clientId = Environment.GetEnvironmentVariable(GitHubAuthOptions.ClientIdEnvironmentVariable);
         if (string.IsNullOrEmpty(clientId))
         {
-            Assert.Ignore("Set SPECDESK_GITHUB_CLIENT_ID (a registered OAuth App's client id) to run the live device flow.");
+            clientId = GitHubAuthOptions.DefaultClientId;
+        }
+        if (string.IsNullOrEmpty(clientId))
+        {
+            Assert.Ignore("Configure SpecDesk's GitHub OAuth App client id to run the live device flow.");
         }
 
         string authDir = Path.Combine(Path.GetTempPath(), "specdesk-gh-live-" + Guid.NewGuid().ToString("N"));

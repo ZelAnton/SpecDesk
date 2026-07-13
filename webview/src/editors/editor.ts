@@ -1198,6 +1198,39 @@ export class MarkdownEditor {
     this.view.focus();
   }
 
+  /** Find the next case-insensitive text match, select it, and reveal it in the source editor. */
+  findText(query: string): boolean {
+    const needle = query.trim();
+    if (needle.length === 0) {
+      return false;
+    }
+    const text = this.view.state.doc.toString();
+    const haystack = text.toLocaleLowerCase();
+    const normalizedNeedle = needle.toLocaleLowerCase();
+    const from = this.view.state.selection.main.to;
+    let match = haystack.indexOf(normalizedNeedle, from);
+    if (match < 0 && from > 0) {
+      match = haystack.indexOf(normalizedNeedle);
+    }
+    if (match < 0) {
+      return false;
+    }
+    const selection = { anchor: match, head: match + needle.length };
+    if (
+      typeof window !== "undefined" &&
+      typeof window.Range.prototype.getClientRects === "function"
+    ) {
+      this.view.dispatch({
+        selection,
+        effects: EditorView.scrollIntoView(match, { y: "center" }),
+      });
+    } else {
+      this.view.dispatch({ selection });
+    }
+    this.view.focus();
+    return true;
+  }
+
   /** Toggle soft line wrapping. Off = long lines stay on one row (horizontal scroll). */
   setLineWrapping(enabled: boolean): void {
     this.view.dispatch({

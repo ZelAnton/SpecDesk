@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { EditorState } from "prosemirror-state";
 import { describe, expect, it } from "vitest";
 import indexHtml from "../../index.html?raw";
@@ -8,6 +10,7 @@ import { activeFormats, commandFor } from "../../src/editors/pm-commands.js";
 import { parser, schema } from "../../src/editors/pm-markdown.js";
 
 const IDS = FORMAT_REGISTRY.map((command) => command.id);
+const styles = readFileSync(join("styles.css"), "utf8");
 
 describe("format registry is the single source of truth", () => {
   it("derives isFormatCommand (and the FormatCommand union) from the registry entries", () => {
@@ -97,5 +100,66 @@ describe("the toolbar buttons stay in lockstep with the registry", () => {
       expect(button.getAttribute("title")).toBe(label);
       expect(button.getAttribute("aria-label")).toBe(label);
     }
+  });
+});
+
+describe("the shipped workspace chrome", () => {
+  const html = new DOMParser().parseFromString(indexHtml, "text/html");
+  const primary = html.querySelector("#toolbar");
+  const editor = html.querySelector("#editor-toolbar");
+
+  it("keeps workspace context in the primary toolbar and Markdown actions in the editor toolbar", () => {
+    expect(primary).not.toBeNull();
+    expect(editor).not.toBeNull();
+
+    for (const id of [
+      "current-repository",
+      "current-branch",
+      "current-path",
+      "toolbar-search",
+      "notifications-btn",
+      "github-btn",
+    ]) {
+      expect(primary?.querySelector(`#${id}`), id).not.toBeNull();
+      expect(editor?.querySelector(`#${id}`), id).toBeNull();
+    }
+
+    for (const id of [
+      "edit-btn",
+      "save-version-btn",
+      "compare-btn",
+      "discard-btn",
+      "wrap-btn",
+      "mode-code",
+      "mode-split",
+      "mode-formatted",
+      "format-bar",
+    ]) {
+      expect(editor?.querySelector(`#${id}`), id).not.toBeNull();
+      expect(primary?.querySelector(`#${id}`), id).toBeNull();
+    }
+  });
+
+  it("defines distinct neutral roles for rails, panels, and panel headers in every theme", () => {
+    const rails = Array.from(styles.matchAll(/--mode-rail:\s*([^;]+);/g), (match) =>
+      (match[1] ?? "").trim(),
+    );
+    const panels = Array.from(styles.matchAll(/--panel:\s*([^;]+);/g), (match) =>
+      (match[1] ?? "").trim(),
+    );
+    const headers = Array.from(styles.matchAll(/--panel-header:\s*([^;]+);/g), (match) =>
+      (match[1] ?? "").trim(),
+    );
+
+    expect(rails).toHaveLength(3);
+    expect(panels).toHaveLength(3);
+    expect(headers).toHaveLength(3);
+    for (let index = 0; index < rails.length; index += 1) {
+      expect(new Set([rails[index], panels[index], headers[index]])).toHaveLength(3);
+    }
+
+    expect(styles).toMatch(/\.dock-rail\s*\{[^}]*background:\s*var\(--mode-rail\)/s);
+    expect(styles).toMatch(/\.dock\s*\{[^}]*background:\s*var\(--panel\)/s);
+    expect(styles).toMatch(/\.dock-header\s*\{[^}]*background:\s*var\(--panel-header\)/s);
   });
 });

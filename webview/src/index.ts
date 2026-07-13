@@ -23,10 +23,12 @@ import { log } from "./util/log.js";
 import { installDiagnostics, trace } from "./util/trace.js";
 import {
   parseBranchNameSuggested,
+  parseChatAttachment,
   parseChatDelta,
   parseChatDone,
   parseDiffResult,
   parseDocLoaded,
+  parseDocumentActivity,
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
@@ -38,13 +40,21 @@ import {
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWorkspaceContext,
   parseWorkspaceState,
 } from "./wire/decoders.js";
 import { ipc, postReady } from "./wire/ipc.js";
-import { isReviewState, Kinds, type WorkspaceItem } from "./wire/protocol.js";
+import {
+  type DocumentActivityPayload,
+  isReviewState,
+  Kinds,
+  type WorkspaceItem,
+} from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
+import { remoteWirePath } from "./workspace/remote-path.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
+import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
@@ -110,6 +120,12 @@ function wire(): void {
   const previewEl = document.querySelector<HTMLElement>("#preview");
   const formattedEl = document.querySelector<HTMLElement>("#formatted");
   const statusEl = document.querySelector<HTMLElement>("#status");
+  const currentRepositoryEl = document.querySelector<HTMLElement>("#current-repository");
+  const currentBranchEl = document.querySelector<HTMLElement>("#current-branch");
+  const currentPathEl = document.querySelector<HTMLElement>("#current-path");
+  const toolbarSearch = document.querySelector<HTMLInputElement>("#toolbar-search");
+  const notificationsBtn = document.querySelector<HTMLButtonElement>("#notifications-btn");
+  const toolbarAnnouncer = document.querySelector<HTMLElement>("#toolbar-announcer");
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
   const saveVersionBtn = document.querySelector<HTMLButtonElement>("#save-version-btn");
@@ -122,17 +138,14 @@ function wire(): void {
   const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
   const reviewsBtn = document.querySelector<HTMLButtonElement>("#reviews-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
-  // The collapsible-panel workspace (design §9): the central-frame host and the three docks with their
-  // toolbar toggles. All optional — the jsdom index.ts tests mount only the editor panes.
+  // The collapsible-panel workspace (design §9): the central-frame host and the three persistent mode rails.
+  // All optional — the jsdom index.ts tests mount only the editor panes.
   const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
   const editorViewEl = document.querySelector<HTMLElement>("#editor-view");
   const homeViewEl = document.querySelector<HTMLElement>("#home-view");
   const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
   const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
   const bottomDockEl = document.querySelector<HTMLElement>("#bottom-dock");
-  const leftToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-left-dock");
-  const rightToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-right-dock");
-  const bottomToggleBtn = document.querySelector<HTMLButtonElement>("#toggle-bottom-dock");
   const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
@@ -164,6 +177,11 @@ function wire(): void {
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const accountMenu = document.querySelector<HTMLElement>("#account-menu");
+  const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
+  const accountSignOutBtn = document.querySelector<HTMLButtonElement>("#account-signout");
+  const accountSettingsBtn = document.querySelector<HTMLButtonElement>("#account-settings");
+  const accountHelpBtn = document.querySelector<HTMLButtonElement>("#account-help");
   const githubSigninBar = document.querySelector<HTMLElement>("#github-signin-bar");
   const githubSigninText = document.querySelector<HTMLElement>("#github-signin-text");
   const githubUserCode = document.querySelector<HTMLElement>("#github-user-code");
@@ -241,6 +259,9 @@ function wire(): void {
   const updateOutline = (text: string): void => outline?.setItems(parseOutline(text));
   // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
   let fileTree: FileTree | undefined;
+  let assistantChat: AssistantChat | undefined;
+  let activityPanels: DocumentActivityPanel[] = [];
+  let invalidateActivityRequests = (): void => {};
   // The Start screen handle, assigned in wireWorkspace; index.ts drives its "Opening…" busy state on a repo
   // open and clears it on the next tree/error. Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
@@ -251,6 +272,12 @@ function wire(): void {
   // Armed for a repo open (a slow clone) so the "Opening…" note clears on the resulting tree/error. A folder
   // open reveals Files immediately and needs no note; a plain file open never arms this.
   let pendingRepoOpen = false;
+  const setContext = (element: HTMLElement | null, text: string): void => {
+    if (element) {
+      element.textContent = text;
+      element.title = text;
+    }
+  };
 
   // Show a plain (non-lifecycle) message in the status area — a document path, a host error, or a
   // "can't do that yet" notice — clearing the lifecycle dot's state colour (the next status re-colours it).
@@ -268,9 +295,10 @@ function wire(): void {
     kind: string,
     parse: (payload: unknown) => T | null,
     fallback: T,
+    payload?: unknown,
   ): Promise<T> {
     try {
-      const reply = await ipc.request(kind);
+      const reply = await ipc.request(kind, payload);
       return parse(reply.payload) ?? fallback;
     } catch (error) {
       log.warn(`Could not fetch a suggestion (${kind})`, String(error));
@@ -693,6 +721,7 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(text);
+        lifecycleChrome.setDocumentReadOnly(payload.readOnly);
         // Refresh the outline for the freshly loaded document.
         updateOutline(text);
         // Keep the left-rail file navigator relevant: highlight the freshly opened document, and ask for the
@@ -700,7 +729,11 @@ function wire(): void {
         // loaded document's own folder. A `tree` event comes back and feeds the navigator (its collapse state
         // is preserved across the re-render, and the highlight lands when the tree containing it arrives).
         fileTree?.setActiveFile(payload.path);
-        ipc.send(Kinds.treeRequest);
+        invalidateActivityRequests();
+        for (const panel of activityPanels) void panel.refresh();
+        if (!payload.readOnly) {
+          ipc.send(Kinds.treeRequest);
+        }
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
@@ -721,7 +754,9 @@ function wire(): void {
         syncReviewPolling();
         lifecycleChrome.setLifecycle("published");
         // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
-        showPlainStatus(payload.path);
+        showPlainStatus(
+          payload.readOnly && payload.repositoryPath ? payload.repositoryPath : payload.path,
+        );
         dialogs.closeAll();
         // If we just returned from a non-editor central view, move focus into the freshly shown editing
         // surface so a keyboard user isn't left on the now-hidden Start screen (and lands ready to edit).
@@ -803,6 +838,10 @@ function wire(): void {
       if (editing) {
         formatToolbar.refresh();
       }
+      if (payload.label === "Version saved") {
+        invalidateActivityRequests();
+        for (const panel of activityPanels) void panel.refresh();
+      }
       if (!editing) {
         // Leaving editing (e.g. Discard) — close the draft-only prompts (version note, send-for-review) so a
         // stale confirm can't fire against the now-published doc. NOT the "name this draft" prompt, which is
@@ -824,6 +863,30 @@ function wire(): void {
         }
       }
     });
+
+    ipc.on(Kinds.workspaceContext, (message) => {
+      const payload = parseWorkspaceContext(message.payload);
+      if (!payload) {
+        return;
+      }
+      setContext(currentRepositoryEl, payload.repository ?? "No repository");
+      if (currentRepositoryEl && payload.repositoryRoot) {
+        currentRepositoryEl.title = payload.repositoryRoot;
+      }
+      const branch =
+        payload.repository === null
+          ? "No version"
+          : payload.branchState === "detached"
+            ? "Unnamed version"
+            : payload.branchState === "unavailable"
+              ? "Version unavailable"
+              : (payload.branch ?? "Version unavailable");
+      setContext(currentBranchEl, branch);
+      if (currentBranchEl && payload.defaultBranch) {
+        currentBranchEl.title = `${branch} (default: ${payload.defaultBranch})`;
+      }
+      setContext(currentPathEl, payload.path.length > 0 ? payload.path : "No document");
+    });
   }
 
   // Wiring group 3 — GitHub: the "Connect to GitHub" affordance + sign-in code bar, the "My reviews"
@@ -844,6 +907,9 @@ function wire(): void {
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
       accountBtn: githubBtn,
+      menu: accountMenu,
+      connectBtn: accountConnectBtn,
+      signOutBtn: accountSignOutBtn,
       bar: githubSigninBar,
       text: githubSigninText,
       userCode: githubUserCode,
@@ -854,6 +920,23 @@ function wire(): void {
       cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
       signOut: () => ipc.send(Kinds.githubSignOut),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+    });
+
+    accountSettingsBtn?.addEventListener("click", () => {
+      if (accountMenu) {
+        accountMenu.hidden = true;
+      }
+      githubBtn?.setAttribute("aria-expanded", "false");
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = "Settings are not available yet.";
+      }
+    });
+    accountHelpBtn?.addEventListener("click", () => {
+      if (accountMenu) {
+        accountMenu.hidden = true;
+      }
+      githubBtn?.setAttribute("aria-expanded", "false");
+      ipc.send(Kinds.linkOpen, { url: "https://github.com/ZelAnton/SpecDesk#readme" });
     });
 
     // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
@@ -985,6 +1068,31 @@ function wire(): void {
       wrapBtn.setAttribute("aria-pressed", String(wrap));
     });
 
+    toolbarSearch?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+      event.preventDefault();
+      const query = toolbarSearch.value.trim();
+      if (query.length === 0) {
+        if (toolbarAnnouncer) {
+          toolbarAnnouncer.textContent = "Enter text to search the current document.";
+        }
+        return;
+      }
+      centralFrame?.show(CENTRAL_VIEW_EDITOR);
+      const found = mode === "formatted" ? formatted.findText(query) : editor.findText(query);
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = found ? `Found ${query}.` : `${query} was not found.`;
+      }
+    });
+
+    notificationsBtn?.addEventListener("click", () => {
+      if (toolbarAnnouncer) {
+        toolbarAnnouncer.textContent = "You have no new notifications.";
+      }
+    });
+
     exportLogBtn?.addEventListener("click", () => {
       // Dump the diagnostic trace ring FIRST (the host persists it and appends its tail to the export),
       // then export the log — OnMessage processes the two frames in order, so the export sees this dump.
@@ -1002,8 +1110,8 @@ function wire(): void {
         document.documentElement.removeAttribute("data-theme");
       }
       if (themeBtn) {
-        themeBtn.setAttribute("aria-pressed", String(dark));
-        themeBtn.textContent = dark ? "Light" : "Dark";
+        themeBtn.setAttribute("aria-checked", String(dark));
+        themeBtn.textContent = "Dark theme";
       }
     }
     applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -1073,22 +1181,49 @@ function wire(): void {
     // The AI assistant chat (design §10.5), the real right-rail tool. It owns its DOM and streaming state;
     // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
     // feeds the streamed reply back in through appendDelta / endTurn (mirroring ReviewsPanel / SignIn).
-    const assistantChat = new AssistantChat({
-      sendMessage: (text) => ipc.send(Kinds.chatSend, { text }),
+    const chat = new AssistantChat({
+      sendMessage: (text, attachments) => ipc.send(Kinds.chatSend, { text, attachments }),
       requestTemplates: () =>
         requestSuggestion(Kinds.templatesRequest, parseTemplates, { personal: [], remote: [] }),
+      pickAttachment: (kind) =>
+        requestSuggestion(Kinds.chatAttachmentPick, parseChatAttachment, null, { kind }),
     });
+    assistantChat = chat;
+    let pendingActivity: Promise<DocumentActivityPayload> | null = null;
+    invalidateActivityRequests = () => {
+      pendingActivity = null;
+    };
+    const requestActivity = (): Promise<DocumentActivityPayload> => {
+      if (pendingActivity) return pendingActivity;
+      const request = requestSuggestion(Kinds.documentActivityRequest, parseDocumentActivity, {
+        versions: [],
+        historyState: "unavailable",
+        historyMessage: "Could not load saved history. Try again.",
+        comments: [],
+        commentsState: "unavailable",
+        commentsMessage: "Could not load comments. Try again.",
+        history: [],
+      }).finally(() => {
+        if (pendingActivity === request) pendingActivity = null;
+      });
+      pendingActivity = request;
+      return request;
+    };
+    const versions = new DocumentActivityPanel("versions", "Versions", requestActivity);
+    const comments = new DocumentActivityPanel("comments", "Comments", requestActivity);
+    const history = new DocumentActivityPanel("history", "Change history", requestActivity);
+    activityPanels = [versions, comments, history];
     // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
     // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
     ipc.on(Kinds.chatDelta, (message) => {
       const payload = parseChatDelta(message.payload);
       if (payload) {
-        assistantChat.appendDelta(payload.text);
+        chat.appendDelta(payload.text);
       }
     });
     ipc.on(Kinds.chatDone, (message) => {
       if (parseChatDone(message.payload)) {
-        assistantChat.endTurn();
+        chat.endTurn();
       }
     });
 
@@ -1098,6 +1233,8 @@ function wire(): void {
     const files = new FileTree({
       onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
       onOpenFolder: () => openFolder(),
+      onToggleFavorite: (item, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     });
     fileTree = files;
 
@@ -1105,6 +1242,25 @@ function wire(): void {
     // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
     // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
     const openWorkspaceItem = (item: WorkspaceItem): void => {
+      if (item.kind === "repository") {
+        if (item.repositoryId) {
+          ipc.send(Kinds.repoBrowse, { id: item.repositoryId });
+        }
+        return;
+      }
+      if (item.kind === "remote") {
+        if (item.repositoryId && item.branch) {
+          const path = remoteWirePath(item.repositoryId, item.branch, item.path);
+          if (item.isFolder) {
+            files.setActiveFile(path);
+            revealWorkspaceFiles();
+            ipc.send(Kinds.repoBrowse, { id: item.repositoryId, branch: item.branch });
+          } else {
+            ipc.send(Kinds.docOpen, { path });
+          }
+        }
+        return;
+      }
       if (item.isFolder) {
         openFolder(item.path);
       } else {
@@ -1116,7 +1272,7 @@ function wire(): void {
     const listCallbacks: WorkspaceListCallbacks = {
       onOpen: openWorkspaceItem,
       onToggleFavorite: (item, favorite) =>
-        ipc.send(Kinds.workspaceFavorite, { path: item.path, favorite }),
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     };
     const recent = recentPanel(listCallbacks);
     const favorites = favoritesPanel(listCallbacks);
@@ -1125,7 +1281,17 @@ function wire(): void {
     const repositories = new RepositoriesPanel({
       onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
-      onOpenRepo: (repo) => openRepo(repo.url),
+      onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
+      onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
+      onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
+      onToggleFavorite: (repo, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, {
+          path: repo.id,
+          repositoryId: repo.id,
+          kind: "repository",
+          isFolder: true,
+          favorite,
+        }),
     });
 
     const workspace = setupWorkspace(
@@ -1134,7 +1300,6 @@ function wire(): void {
         editorView: editorViewEl,
         homeView: homeViewEl,
         docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
-        toggles: { left: leftToggleBtn, right: rightToggleBtn, bottom: bottomToggleBtn },
       },
       browserDockStore(),
       {
@@ -1154,7 +1319,7 @@ function wire(): void {
         onOpenRepo: (url) => openRepo(url),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: assistantChat, files, recent, favorites, repositories },
+      { assistant: chat, versions, comments, history, files, recent, favorites, repositories },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;
@@ -1188,7 +1353,9 @@ function wire(): void {
       if (payload) {
         recent.setState(payload);
         favorites.setState(payload);
+        files.setFavorites(payload.favorites);
         repositories.setState(payload);
+        assistantChat?.setRepositories(payload.repositories);
         home?.setRecents(payload.recent);
       }
     });

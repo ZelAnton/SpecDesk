@@ -21,6 +21,12 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// reports <c>null</c>, never libgit2's own "(no branch)" placeholder, for that case).</summary>
     public string? Branch { get; set; } = "main";
 
+    public bool BranchIsDetached { get; set; }
+
+    public bool ThrowOnBranchInfo { get; set; }
+
+    public string? DefaultBranchValue { get; set; } = "main";
+
     public int BeginEditCalls { get; private set; }
 
     public int SaveVersionCalls { get; private set; }
@@ -89,9 +95,36 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// checkout" refusal path.</summary>
     public string? DirtyBranchToThrow { get; set; }
 
-    public bool IsVersioned(string repoRoot) => Versioned;
+    public int IsVersionedCalls { get; private set; }
+
+    public bool IsVersioned(string repoRoot)
+    {
+        IsVersionedCalls++;
+        return Versioned;
+    }
 
     public string? ReadHeadContent(string repoRoot, string repoRelativePath) => HeadContent;
+
+    public IReadOnlyList<DocumentVersion> DocumentVersions { get; set; } = [];
+
+    public bool ThrowOnGetDocumentVersions { get; set; }
+
+    public int GetDocumentVersionsCalls { get; private set; }
+
+    public IReadOnlyList<DocumentVersion> GetDocumentVersions(
+        string repoRoot,
+        string repoRelativePath,
+        int maxCount = 50,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        GetDocumentVersionsCalls++;
+        if (ThrowOnGetDocumentVersions)
+        {
+            throw new InvalidOperationException("history read boom");
+        }
+        return DocumentVersions.Take(maxCount).ToList();
+    }
 
     public void Initialize(string repoRoot, string commitMessage)
     {
@@ -106,6 +139,17 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     }
 
     public string? CurrentBranch(string repoRoot) => Branch;
+
+    public CurrentBranchInfo DescribeCurrentBranch(string repoRoot)
+    {
+        if (ThrowOnBranchInfo)
+        {
+            throw new InvalidOperationException("Repository branch unavailable.");
+        }
+        return new CurrentBranchInfo(BranchIsDetached ? null : Branch, BranchIsDetached);
+    }
+
+    public string? DefaultBranch(string repoRoot, string? preferredBranch) => DefaultBranchValue;
 
     public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
     {

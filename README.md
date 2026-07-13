@@ -4,6 +4,12 @@ Author and review GitHub-hosted Markdown specs from the desktop — automated gi
 diffs, inline comments, and AI assist. SpecDesk lets non-technical authors edit Markdown specs
 stored in GitHub without ever touching git, branches, or pull requests directly.
 
+The assistant's right-panel composer supports multi-line prompts: press Enter for a new line and
+Ctrl+Enter (Cmd+Enter on macOS) to send.
+Use **Attach** beside the composer to include the open file, current folder, or a registered repository
+as context for the next message; attachments can be removed before sending.
+The right panel also exposes the selected document's saved versions, comments, and change history.
+
 > **Working title.** `SpecDesk` is a placeholder name; rename before any registry/namespace work.
 
 ## Documentation
@@ -44,3 +50,29 @@ cd webview && npm install && npm run build   # build the webview bundle
 ```
 
 Requires .NET SDK 10 and Node 24.
+
+## Workspace panels
+
+The left, right, and bottom mode rails stay available around the document. Choose a mode icon to open its
+panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
+bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
+
+## GitHub access
+
+SpecDesk uses GitHub's device authorization flow and stores the resulting token with Windows DPAPI. The
+public client id of SpecDesk's registered GitHub OAuth App is built in, so no account configuration is needed
+before connecting. Development and test builds can override it with `SPECDESK_GITHUB_CLIENT_ID`. No client
+secret is used or stored. When a disconnected user adds or opens a repository, SpecDesk opens GitHub's
+standard authorization page in the system browser and resumes the action after authorization.
+
+Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
+groups any number of managed local copies beneath each repository and shows only non-default branches under
+each copy. **Copy locally** creates another copy in SpecDesk's managed repositories folder.
+
+Selecting the repository itself browses its files directly from GitHub, so a local copy is optional. Online
+files open as read-only previews; select **Copy locally** before editing. Local repository trees show all files
+(large and binary files are listed but rejected with a plain preview message).
+
+Use the star beside a registered repository, folder, or file to keep it in **Favorites**. Favorites remember
+the exact online branch and path, so reopening an online folder restores that branch's tree even after an app
+restart. Removing a registered repository also removes its repository, folder, and file favorites.

@@ -20,7 +20,7 @@ test.beforeEach(async ({ context }) => {
 
 /** Open the left dock and switch the central frame to the Start screen via the navigator. */
 async function goToStart(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator("#toggle-left-dock").click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigation"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
   await expect(page.locator("#home-view")).toBeVisible();
 }
@@ -58,8 +58,8 @@ test("opening a folder reveals the Files panel even when the left dock was colla
 
   // Collapse the left dock: opening a folder must re-open it and show the tree (the known-gap fix, where
   // opening a folder gave no visible feedback while the dock was collapsed).
-  await page.locator("#toggle-left-dock").click();
-  await expect(page.locator("#left-dock")).toBeHidden();
+  await page.locator('#left-dock .dock-rail-btn[aria-checked="true"]').click();
+  await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
 
   await page.locator("#home-view .home-open", { hasText: "Open a folder" }).click();
   expect((await sentFrames(page)).some((f) => f.kind === "folder.open")).toBe(true);
@@ -76,9 +76,9 @@ test("a tree from a plain document load does NOT reveal the Files panel", async 
   // Load a document (which makes the app request its folder's tree) — with the left dock collapsed and no
   // folder/repo open initiated, the arriving tree must NOT force the Files panel open.
   await loadDoc(page, { path: "C:\\specs\\repo\\doc.md", text: "# Doc" });
-  await expect(page.locator("#left-dock")).toBeHidden();
+  await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
   await emit(page, TREE);
-  await expect(page.locator("#left-dock")).toBeHidden();
+  await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
 });
 
 test("clicking a repository in the Repositories panel clones-and-opens it", async ({ page }) => {
@@ -95,7 +95,6 @@ test("clicking a repository in the Repositories panel clones-and-opens it", asyn
   await waitForSent(page, "ready");
   await emit(page, STATE);
 
-  await page.locator("#toggle-left-dock").click();
   await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
   await page.locator('#left-dock [data-tool="repositories"] .repo-open').click();
 

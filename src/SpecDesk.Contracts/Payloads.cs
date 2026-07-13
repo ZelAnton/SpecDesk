@@ -35,6 +35,8 @@ public static class MessageKinds
 	public const string GitHubSignInCancel = "github.signInCancel";
 	public const string GitHubSignOut = "github.signOut";
 	public const string ChatSend = "chat.send";
+	public const string ChatAttachmentPick = "chat.attachment.pick";
+	public const string DocumentActivityRequest = "document.activity.request";
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
@@ -43,6 +45,8 @@ public static class MessageKinds
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
+	public const string RepoClone = "repo.clone";
+	public const string RepoBrowse = "repo.browse";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -59,9 +63,12 @@ public static class MessageKinds
 	public const string GitHubAccount = "github.account";
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
+	public const string ChatAttachmentPicked = "chat.attachment.picked";
+	public const string DocumentActivity = "document.activity";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
+	public const string WorkspaceContext = "workspace.context";
 }
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
@@ -77,9 +84,17 @@ public sealed record PreviewPayload(string Html, IReadOnlyList<LineSpan> LineMap
 /// Payload of <c>doc.loaded</c> (native→webview): a file opened from disk. <c>DocDir</c> is the
 /// document's directory relative to the repo root (forward slashes, "" at root) — the webview uses
 /// it to resolve relative image links to <c>app://repo/…</c> in the formatted (WYSIWYG) view, the
-/// same rewrite the native preview renderer applies.
+/// same rewrite the native preview renderer applies. <c>ReadOnly</c> marks an online preview that is not
+/// backed by a writable local copy.
 /// </summary>
-public sealed record DocLoadedPayload(string Path, string Text, string DocDir);
+public sealed record DocLoadedPayload(
+	string Path,
+	string Text,
+	string DocDir,
+	bool ReadOnly = false,
+	string? Repository = null,
+	string? Branch = null,
+	string? RepositoryPath = null);
 
 /// <summary>
 /// Payload of <c>doc.open</c> (webview→native). <c>Path</c> opens that specific file directly (the Start
@@ -112,6 +127,19 @@ public sealed record TreeNode(string Name, string Path, bool IsDirectory, IReadO
 /// folder's absolute path (its display name is the last segment); <c>Nodes</c> are its top-level entries.
 /// </summary>
 public sealed record TreePayload(string Root, IReadOnlyList<TreeNode> Nodes);
+
+/// <summary>Authoritative context for the open document. Repository fields come from the document's
+/// versioning root (never the independently browsed file-tree root); <c>Branch</c> is the actual named
+/// checkout, <c>BranchState</c> distinguishes named, detached, and unavailable state,
+/// <c>DefaultBranch</c> is resolved from the configured/remote/local branches, and <c>Path</c> is relative
+/// to that repository root.</summary>
+public sealed record WorkspaceContextPayload(
+	string? Repository,
+	string? RepositoryRoot,
+	string? Branch,
+	string BranchState,
+	string? DefaultBranch,
+	string Path);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);
@@ -325,7 +353,35 @@ public sealed record GitHubAccountPayload(bool Available, bool SignedIn, string?
 /// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
 /// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>
 /// chunks followed by a terminal <see cref="ChatDonePayload"/>.</summary>
-public sealed record ChatSendPayload(string Text);
+public sealed record ChatSendPayload(string Text, IReadOnlyList<ChatAttachmentPayload>? Attachments = null);
+
+/// <summary>A file, folder, or registered repository selected as context for one assistant turn.</summary>
+public sealed record ChatAttachmentPayload(string Kind, string Label, string Reference);
+
+/// <summary>Payload of <c>chat.attachment.pick</c>: the native picker category, file or folder.</summary>
+public sealed record ChatAttachmentPickPayload(string Kind);
+
+/// <summary>One saved version shown for the selected document.</summary>
+public sealed record DocumentVersionPayload(string Id, string Note, string Author, DateTimeOffset When);
+
+/// <summary>One comment thread summary. The list is empty until comment sync is available for the document.</summary>
+public sealed record DocumentCommentPayload(
+	string Id, string Author, string Body, DateTimeOffset When);
+
+/// <summary>One actual change-history event derived from a saved document version.</summary>
+public sealed record DocumentChangePayload(
+	string Id, string Label, string Note, string Author, DateTimeOffset When);
+
+/// <summary>Versions, comments, and change history for the currently selected document.</summary>
+public sealed record DocumentActivityPayload(
+	string? Document,
+	IReadOnlyList<DocumentVersionPayload> Versions,
+	string HistoryState,
+	string? HistoryMessage,
+	IReadOnlyList<DocumentCommentPayload> Comments,
+	string CommentsState,
+	string? CommentsMessage,
+	IReadOnlyList<DocumentChangePayload> History);
 
 /// <summary>Payload of <c>chat.delta</c> (native→webview): one streamed chunk of the assistant's reply.
 /// Chunks arrive in order and are appended to the in-progress assistant message until <c>chat.done</c>.
@@ -351,16 +407,32 @@ public sealed record TemplatesPayload(
 	IReadOnlyList<PromptTemplate> Remote);
 
 /// <summary>One recently-opened or favorited entry (native→webview, inside <see cref="WorkspaceStatePayload"/>).
-/// <paramref name="Path"/> is the absolute file/folder path (opened via <c>doc.open</c>/<c>folder.open</c> when
-/// chosen); <paramref name="Label"/> is the display name (usually the last path segment); <paramref name="IsFolder"/>
-/// distinguishes a folder from a file.</summary>
-public sealed record WorkspaceItem(string Path, string Label, bool IsFolder);
+/// Local items use an absolute <paramref name="Path"/>; remote items use a repository-relative path plus their
+/// <paramref name="RepositoryId"/> and <paramref name="Branch"/>; repository items use their stable id.
+/// <paramref name="Label"/> is the display name and <paramref name="IsFolder"/> distinguishes containers.</summary>
+public sealed record WorkspaceItem(
+	string Path,
+	string Label,
+	bool IsFolder,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null);
 
 /// <summary>One registered GitHub repository the author works with (native→webview, inside
 /// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
 /// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
 /// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
-public sealed record RegisteredRepo(string Id, string Name, string Url);
+public sealed record RegisteredClone(
+	string Id,
+	string Path,
+	IReadOnlyList<string> Branches);
+
+public sealed record RegisteredRepo(
+	string Id,
+	string Name,
+	string Url,
+	string DefaultBranch,
+	IReadOnlyList<RegisteredClone> Clones);
 
 /// <summary>Payload of <c>workspace.state</c> (native→webview): the persisted workspace store — the author's
 /// <paramref name="Recent"/> items (most-recent first), their <paramref name="Favorites"/>, and the
@@ -370,9 +442,15 @@ public sealed record WorkspaceStatePayload(
 	IReadOnlyList<WorkspaceItem> Favorites,
 	IReadOnlyList<RegisteredRepo> Repositories);
 
-/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle whether the file/folder at
-/// <paramref name="Path"/> is a favorite (<paramref name="Favorite"/> true adds it, false removes it).</summary>
-public sealed record WorkspaceFavoritePayload(string Path, bool Favorite);
+/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle a local or remote file/folder, or a
+/// registered repository. <paramref name="Favorite"/> true adds it and false removes it.</summary>
+public sealed record WorkspaceFavoritePayload(
+	string Path,
+	bool Favorite,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null,
+	bool? IsFolder = null);
 
 /// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
 /// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).
@@ -387,4 +465,9 @@ public sealed record UnregisterRepoPayload(string Id);
 /// name="Url"/> (an <c>owner/name</c> or a GitHub URL). The host clones it into a managed local folder — or
 /// reuses the clone if it is already there — and opens that folder as the workspace, emitting a <c>tree</c>;
 /// an unparseable value is reported as an <c>error</c>.</summary>
-public sealed record RepoOpenPayload(string Url);
+public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
+
+/// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
+public sealed record RepoClonePayload(string Id);
+
+public sealed record RepoBrowsePayload(string Id, string? Branch = null);

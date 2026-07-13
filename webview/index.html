@@ -12,44 +12,30 @@
          pane visible in the current mode. -->
     <a class="skip-link" href="#editor">Skip to editor</a>
     <div id="toolbar">
-      <!-- Collapsible-panel toggles (design concept §9): open/collapse the left rail, bottom dock, and
-           right rail. aria-pressed reflects the open state; the glyph shows which edge each controls. -->
-      <button id="toggle-left-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="left-dock" aria-label="Toggle left panel" title="Toggle left panel">◧</button>
-      <button id="open-btn" type="button">Open…</button>
-      <button id="edit-btn" type="button">Edit</button>
-      <button id="save-version-btn" type="button" hidden>Save version</button>
-      <button id="send-for-review-btn" type="button" hidden>Send for review</button>
-      <button id="update-review-btn" type="button" hidden>Update review</button>
-      <button id="discard-btn" type="button" hidden>Discard</button>
-      <button id="save-btn" type="button">Save</button>
-      <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
-      <!-- A button-based radiogroup (segmented control): the WAI-ARIA radio keyboard pattern (roving
-           tabindex + arrow keys) is implemented in segmented-control.ts. Native <input type="radio">
-           does not fit the segmented-control visual, so useSemanticElements is suppressed per button.
-           aria-checked/tabindex below are inert placeholders (all unchecked, no tab stop) — index.ts
-           derives the real selection from #panes[data-mode] (the single declared source of truth for
-           the starting mode, right below) and reflects it here via SegmentedControl.setSelected on
-           startup, the same path a user click/arrow-key uses, so this markup never has to be kept in
-           sync with the starting mode by hand. -->
-      <span id="view-modes" role="radiogroup" aria-label="View mode">
-        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
-        <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
-        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
-        <button id="mode-split" type="button" role="radio" aria-checked="false" tabindex="-1">Split</button>
-        <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
-        <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
-      </span>
-      <button id="compare-btn" type="button" aria-pressed="false" title="Highlight changes against the last saved version">Show changes</button>
-      <button id="export-log-btn" type="button">Export log…</button>
-      <button id="theme-btn" type="button" aria-pressed="false" title="Toggle dark theme">Dark</button>
-      <!-- Account affordance (PoC-5): "Connect to GitHub" / "Sign out @handle". Hidden until the host
-           reports sign-in is configured (github.account with available=true). -->
-      <button id="github-btn" type="button" hidden>Connect to GitHub</button>
-      <!-- Browse your open reviews (PoC-5). Shown once a GitHub account is connected. -->
-      <button id="reviews-btn" type="button" hidden>My reviews</button>
-      <button id="toggle-bottom-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="bottom-dock" aria-label="Toggle bottom panel" title="Toggle bottom panel">⬓</button>
-      <button id="toggle-right-dock" class="dock-toggle" type="button" aria-pressed="false" aria-controls="right-dock" aria-label="Toggle right panel" title="Toggle right panel">◨</button>
-      <span id="status" aria-live="polite">(no document)</span>
+      <nav id="repository-context" aria-label="Current document location">
+        <span id="current-repository" title="No repository">No repository</span>
+        <span class="context-separator" aria-hidden="true">/</span>
+        <span id="current-branch" title="Main version">Main version</span>
+        <span class="context-separator" aria-hidden="true">/</span>
+        <span id="current-path" title="No document">No document</span>
+      </nav>
+      <label class="sr-only" for="toolbar-search">Search</label>
+      <input id="toolbar-search" type="search" autocomplete="off" placeholder="Search" />
+      <button id="notifications-btn" class="toolbar-icon" type="button" aria-label="Notifications, none" title="Notifications">♢</button>
+      <div id="account-control">
+        <button id="github-btn" class="toolbar-icon" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" aria-label="Account">●</button>
+        <div id="account-menu" role="menu" aria-label="Account" hidden>
+          <button id="account-settings" type="button" role="menuitem">Settings</button>
+          <button id="reviews-btn" type="button" role="menuitem" hidden>My reviews</button>
+          <button id="theme-btn" type="button" role="menuitemcheckbox" aria-checked="false">Dark theme</button>
+          <button id="export-log-btn" type="button" role="menuitem">Export diagnostic log…</button>
+          <button id="account-help" type="button" role="menuitem">Help</button>
+          <hr class="account-menu-separator" />
+          <button id="account-connect" type="button" role="menuitem" hidden>Connect to GitHub</button>
+          <button id="account-signout" type="button" role="menuitem" hidden>Sign out</button>
+        </div>
+      </div>
+      <span id="toolbar-announcer" class="sr-only" aria-live="polite"></span>
     </div>
     <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
          name; the author may keep or change it before starting to edit. -->
@@ -134,9 +120,32 @@
                full-width row above the panels) over the panes. central-view(-active) mark it as the active
                primary central view (see workspace/central-frame.ts); index.ts registers it under "editor". -->
           <div id="editor-view" class="central-view central-view--active">
-            <!-- Formatting toolbar (PoC-12): shown while editing. Buttons apply to the focused pane —
-                 ProseMirror commands in Formatted, Markdown text transforms in Code/Split. -->
-            <div id="format-bar" hidden>
+            <div id="editor-toolbar" role="toolbar" aria-label="Markdown editor controls">
+              <div id="editor-actions">
+                <button id="open-btn" type="button">Open…</button>
+                <button id="edit-btn" type="button">Edit</button>
+                <button id="save-version-btn" type="button" hidden>Save version</button>
+                <button id="send-for-review-btn" type="button" hidden>Send for review</button>
+                <button id="update-review-btn" type="button" hidden>Update review</button>
+                <button id="discard-btn" type="button" hidden>Discard</button>
+                <button id="save-btn" type="button">Save</button>
+                <button id="compare-btn" type="button" aria-pressed="false" title="Highlight changes against the last saved version">Show changes</button>
+                <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
+                <!-- A button-based radiogroup (segmented control): index.ts implements the WAI-ARIA
+                     roving-tabindex and arrow-key pattern and derives the initial selection from #panes. -->
+                <span id="view-modes" role="radiogroup" aria-label="View mode">
+                  <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+                  <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
+                  <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+                  <button id="mode-split" type="button" role="radio" aria-checked="false" tabindex="-1">Split</button>
+                  <!-- biome-ignore lint/a11y/useSemanticElements: button-based radiogroup, see above -->
+                  <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
+                </span>
+                <span id="status" aria-live="polite">(no document)</span>
+              </div>
+              <!-- Formatting controls appear while editing. They route to ProseMirror in Formatted and
+                   Markdown text transforms in Code/Split. -->
+              <div id="format-bar" hidden>
               <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold (Ctrl+B)">B</button>
               <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic (Ctrl+I)">I</button>
               <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough (Ctrl+Shift+X)">S</button>
@@ -148,6 +157,7 @@
               <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list (Ctrl+Shift+7)" aria-label="Numbered list (Ctrl+Shift+7)">1. List</button>
               <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote (Ctrl+Shift+&gt;)" aria-label="Quote (Ctrl+Shift+&gt;)">«»</button>
               <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block (Ctrl+Shift+E)" aria-label="Code block (Ctrl+Shift+E)">&lt;/&gt;</button>
+              </div>
             </div>
             <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads
                  it back into its `mode` variable at startup (see the comment there) instead of repeating the

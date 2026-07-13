@@ -14,7 +14,7 @@ import { baseKeymap } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
 import type { Node as PmNode, ResolvedPos } from "prosemirror-model";
-import { EditorState, Plugin, PluginKey, type Transaction } from "prosemirror-state";
+import { EditorState, Plugin, PluginKey, TextSelection, type Transaction } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { applyWordDiff, diffLabel } from "../review/diff-decoration.js";
 import type { DiffMark } from "../review/diff-marks.js";
@@ -954,6 +954,62 @@ export class FormattedEditor {
   /** Move keyboard focus into the formatted editor (used by the skip-to-editor link). */
   focus(): void {
     this.view.focus();
+  }
+
+  /** Find the next case-insensitive text match, select it, and reveal it without leaving Formatted mode. */
+  findText(query: string): boolean {
+    const needle = query.trim().toLocaleLowerCase();
+    if (needle.length === 0) {
+      return false;
+    }
+    const matches: Array<{ from: number; to: number }> = [];
+    this.view.state.doc.descendants((node, pos) => {
+      if (!node.isTextblock) {
+        return true;
+      }
+      let text = "";
+      const positions: number[] = [];
+      node.descendants((child, childPos) => {
+        if (!child.isText || !child.text) {
+          return;
+        }
+        text += child.text;
+        for (let i = 0; i < child.text.length; i++) {
+          positions.push(pos + 1 + childPos + i);
+        }
+      });
+      const searchable = text.toLocaleLowerCase();
+      let offset = searchable.indexOf(needle);
+      while (offset >= 0) {
+        const from = positions[offset];
+        const last = positions[offset + needle.length - 1];
+        if (from !== undefined && last !== undefined) {
+          matches.push({ from, to: last + 1 });
+        }
+        offset = searchable.indexOf(needle, offset + Math.max(needle.length, 1));
+      }
+      return false;
+    });
+    if (matches.length === 0) {
+      return false;
+    }
+    const current = this.view.state.selection.to;
+    const match = matches.find((candidate) => candidate.from >= current) ?? matches[0];
+    if (!match) {
+      return false;
+    }
+    let transaction = this.view.state.tr.setSelection(
+      TextSelection.create(this.view.state.doc, match.from, match.to),
+    );
+    if (
+      typeof window !== "undefined" &&
+      typeof window.Range.prototype.getClientRects === "function"
+    ) {
+      transaction = transaction.scrollIntoView();
+    }
+    this.view.dispatch(transaction);
+    this.view.focus();
+    return true;
   }
 
   /** Inner width of the pane (its wrapping width) — for height-sync diagnostics. */

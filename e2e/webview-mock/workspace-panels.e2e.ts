@@ -21,12 +21,8 @@ test.beforeEach(async ({ context }) => {
   await installMockHost(context);
 });
 
-/** Open the left dock (collapsed by default) and switch it to the tool named by its rail button. */
+/** Select a left-rail mode; choosing an inactive mode opens its panel in the same action. */
 async function openPanel(page: import("@playwright/test").Page, label: string): Promise<void> {
-  const dockOpen = await page.locator("#left-dock").evaluate((el) => !(el as HTMLElement).hidden);
-  if (!dockOpen) {
-    await page.locator("#toggle-left-dock").click();
-  }
   await page.locator(`#left-dock .dock-rail-btn[aria-label="${label}"]`).click();
 }
 

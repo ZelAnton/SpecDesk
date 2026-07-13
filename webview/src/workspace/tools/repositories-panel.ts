@@ -11,7 +11,7 @@
  * "Remove", not clone/branch/remote.
  */
 
-import type { RegisteredRepo, WorkspaceStatePayload } from "../../wire/protocol.js";
+import type { RegisteredRepo, WorkspaceItem, WorkspaceStatePayload } from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -21,7 +21,10 @@ export interface RepositoriesCallbacks {
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
-  onOpenRepo(repo: RegisteredRepo): void;
+  onBrowseRepo(repo: RegisteredRepo): void;
+  onOpenClone(repo: RegisteredRepo, clonePath: string): void;
+  onClone(repo: RegisteredRepo): void;
+  onToggleFavorite?(repo: RegisteredRepo, favorite: boolean): void;
 }
 
 export class RepositoriesPanel implements PanelTool {
@@ -33,6 +36,7 @@ export class RepositoriesPanel implements PanelTool {
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
+  private favorites: readonly WorkspaceItem[] = [];
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -80,6 +84,7 @@ export class RepositoriesPanel implements PanelTool {
   /** Replace the repository list with the host's latest workspace state. */
   setState(state: WorkspaceStatePayload): void {
     this.repos = state.repositories;
+    this.favorites = state.favorites;
     this.render();
   }
 
@@ -127,7 +132,7 @@ export class RepositoriesPanel implements PanelTool {
     open.className = "repo-open";
     open.title = repo.url;
     open.textContent = repo.name;
-    open.addEventListener("click", () => this.callbacks.onOpenRepo(repo));
+    open.addEventListener("click", () => this.callbacks.onBrowseRepo(repo));
 
     // The trailing remove control (an ×, like the dock's collapse button); the aria-label carries the
     // accessible name so a screen reader announces which repository it removes.
@@ -140,7 +145,61 @@ export class RepositoriesPanel implements PanelTool {
     remove.title = "Remove repository";
     remove.addEventListener("click", () => this.callbacks.onUnregister(repo.id));
 
-    li.append(open, remove);
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "repo-clone-action";
+    copy.textContent = "Copy locally";
+    copy.setAttribute("aria-label", `Copy repository ${repo.name} locally`);
+    copy.addEventListener("click", () => this.callbacks.onClone(repo));
+
+    const favored = this.favorites.some(
+      (item) =>
+        item.kind === "repository" && item.repositoryId?.toLowerCase() === repo.id.toLowerCase(),
+    );
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "workspace-star repo-star";
+    star.dataset.id = `favorite:${repo.id}`;
+    star.classList.toggle("is-favorite", favored);
+    star.setAttribute("aria-label", `Favorite repository ${repo.name}`);
+    star.setAttribute("aria-pressed", String(favored));
+    star.title = favored ? "Remove from favorites" : "Add to favorites";
+    star.innerHTML = icon("favorites");
+    star.addEventListener("click", () => this.callbacks.onToggleFavorite?.(repo, !favored));
+
+    const header = document.createElement("div");
+    header.className = "repo-row-header";
+    header.append(open, copy, star, remove);
+    li.append(header);
+
+    if (repo.clones.length > 0) {
+      const clones = document.createElement("ul");
+      clones.className = "repo-clones";
+      for (const clone of repo.clones) {
+        const cloneRow = document.createElement("li");
+        cloneRow.className = "repo-clone";
+        const cloneButton = document.createElement("button");
+        cloneButton.type = "button";
+        cloneButton.className = "repo-clone-open";
+        cloneButton.textContent = clone.id;
+        cloneButton.title = clone.path;
+        cloneButton.addEventListener("click", () => this.callbacks.onOpenClone(repo, clone.path));
+        cloneRow.append(cloneButton);
+
+        if (clone.branches.length > 0) {
+          const branches = document.createElement("ul");
+          branches.className = "repo-branches";
+          for (const branch of clone.branches) {
+            const branchRow = document.createElement("li");
+            branchRow.textContent = branch;
+            branches.append(branchRow);
+          }
+          cloneRow.append(branches);
+        }
+        clones.append(cloneRow);
+      }
+      li.append(clones);
+    }
     return li;
   }
 

@@ -85,7 +85,8 @@ function installMatchMediaStub(): void {
 // omits it, exactly mirroring index.html's real fallback when the radiogroup chrome is absent.
 function setupDom(panesMarkup = ""): void {
   document.body.innerHTML = `
-    <div id="editor"></div>
+		<span id="status"></span>
+		<div id="editor"></div>
     <div id="preview"></div>
     <div id="formatted"></div>
     <button id="compare-btn" type="button" aria-pressed="false"></button>
@@ -730,7 +731,7 @@ describe("index.ts: doc.loaded hydration is silent (T-069, jsdom)", () => {
 
     bridge.emit({
       kind: Kinds.docLoaded,
-      payload: { path: "docs/spec.md", text: "# Hello\n", docDir: "docs" },
+      payload: { path: "docs/spec.md", text: "# Hello\n", docDir: "docs", readOnly: false },
     });
 
     // Past the 120ms debounce the (non-silent, pre-fix) source-editor onChange would have fired.
@@ -742,6 +743,26 @@ describe("index.ts: doc.loaded hydration is silent (T-069, jsdom)", () => {
     // degrade what the author actually sees.
     expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Hello");
     expect(document.querySelector("#formatted")?.textContent).toContain("Hello");
+  });
+
+  it("shows a plain repository path for a remote preview, never its internal capability URI", async () => {
+    const bridge = await mountApp();
+
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: {
+        path: "github://octo/specs/main/docs%2Fguide.md",
+        text: "# Guide\n",
+        docDir: "",
+        readOnly: true,
+        repository: "octo/specs",
+        branch: "main",
+        repositoryPath: "docs/guide.md",
+      },
+    });
+
+    expect(document.querySelector("#status")?.textContent).toBe("docs/guide.md");
+    expect(document.body.textContent).not.toContain("github://");
   });
 });
 
@@ -782,7 +803,7 @@ describe("index.ts: doc.loaded drops a stale image-insert marker (R-01, jsdom)",
     // The author switches to a different document while that paste round-trip is still in flight.
     bridge.emit({
       kind: Kinds.docLoaded,
-      payload: { path: "docs/other.md", text: "# Other doc\n", docDir: "docs" },
+      payload: { path: "docs/other.md", text: "# Other doc\n", docDir: "docs", readOnly: false },
     });
     expect(document.querySelector("#editor .cm-content")?.textContent).toBe("# Other doc");
 
@@ -816,7 +837,7 @@ describe("index.ts: doc.loaded resets both panes' scroll (T-087, jsdom)", () => 
 
     bridge.emit({
       kind: Kinds.docLoaded,
-      payload: { path: "docs/first.md", text: "# First\n", docDir: "docs" },
+      payload: { path: "docs/first.md", text: "# First\n", docDir: "docs", readOnly: false },
     });
 
     const scroller = document.querySelector<HTMLElement>("#editor .cm-scroller");
@@ -830,7 +851,12 @@ describe("index.ts: doc.loaded resets both panes' scroll (T-087, jsdom)", () => 
 
     bridge.emit({
       kind: Kinds.docLoaded,
-      payload: { path: "docs/second.md", text: "# Second\n\nBody text.\n", docDir: "docs" },
+      payload: {
+        path: "docs/second.md",
+        text: "# Second\n\nBody text.\n",
+        docDir: "docs",
+        readOnly: false,
+      },
     });
 
     expect((scroller as HTMLElement).scrollTop).toBe(0);

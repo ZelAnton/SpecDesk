@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Repositories, folders, and files can now be starred as favorites and reopened later, including exact online
+  branches and paths for repositories that have not been copied locally.
+- Selecting a registered repository now browses its complete folder/file tree directly from GitHub even
+  without a local copy; selecting a text file opens a read-only preview, while local trees now include all files.
+- Registered repositories now show their managed local copies and each copy's non-default working branches;
+  you can create more than one local copy, and SpecDesk remembers the repository's actual default branch.
+- Adding or opening a GitHub repository while disconnected now starts sign-in with SpecDesk's built-in
+  public OAuth identity, opens GitHub's authorization page in your normal browser, and continues the
+  requested action after access is granted.
+- The right panel now includes Versions, Comments, and Change history for the selected document. Versions
+  and history come from the document's saved repository history; Comments lists the selected file's inline
+  GitHub review comments when connected and shows an honest empty state otherwise.
+- The assistant now has an Attach menu for the open file, current folder, and registered repositories;
+  selected context appears as removable chips and is sent with the next message.
+- The assistant message box is now visibly multi-line: Enter writes a new line, Ctrl+Enter (or Cmd+Enter)
+  sends, and the box can be resized vertically for longer prompts.
 - You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub
   repo") or by clicking one in the Repositories list. SpecDesk copies it into a local folder and opens it as
   your workspace. Opening a folder or a repository now also reveals the file navigator (and opens the left
@@ -27,9 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no account or API key configured; a real AI provider can be connected later behind the same seam. Nothing
   in the document is ever changed without your confirmation.
 - Collapsible side and bottom panels around the editor: a left rail, a right rail, and a full-width bottom
-  dock, each opened/collapsed from a toolbar toggle (or an in-panel collapse control) and resizable by
-  dragging its edge (or with the arrow keys when the divider is focused). Each panel switches between modes
-  from a vertical icon rail on its edge (which scales to many modes), and its header names the active one.
+  dock. Click the active mode icon to collapse or expand its panel; choosing another icon opens that mode.
+  Collapsed side rails keep their vertical icons visible, while the collapsed bottom panel becomes a
+  horizontal toolbar. Panels remain resizable by dragging their edge (or with the arrow keys when the divider
+  is focused), and each header names the active mode.
   Whether each panel is open, its size, and its active mode are remembered across restarts. Most tools
   inside are placeholders for now, and the editing area re-measures as the panels open, close, or resize so
   the split view stays aligned.
@@ -95,6 +112,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- Markdown actions, wrapping, change highlighting, and the Code / Split / Formatted switch now live directly
+  above the editor. The global toolbar now shows the current repository, version line, document path, working
+  document search, notifications, and an accessible account menu with Settings, Help, and Sign out.
+- Side panels now use a clearer grey hierarchy: dark mode rails, light panel bodies, and slightly stronger
+  headers keep tools visually separate from the document in both light and dark themes.
 - Split scroll synchronization is now driven by a single coordinator over one line↔px map instead of three
   mutually-suppressing mechanisms. The former per-frame line-based scroll-sync (with its `ScrollSync` driver
   lock), the caret reveal, and the mode-switch restore shared a web of timing heuristics (`suppress`/`drive`/
