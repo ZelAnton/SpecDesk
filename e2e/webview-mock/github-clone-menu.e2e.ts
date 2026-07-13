@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { emit, installMockHost, sentFrames, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -10,8 +11,7 @@ test.beforeEach(async ({ context }) => {
 test("Clone menu offers managed and chosen-folder destinations", async ({ page }, testInfo) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
-  await page.locator("#toggle-left-dock").click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await openDockTool(page, "left", "Repositories");
 
   await page.locator(".repo-register-input").fill("outside/public-specs");
   await waitForSent(page, "repo.cloneDestination.request");

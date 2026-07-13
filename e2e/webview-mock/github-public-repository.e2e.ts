@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { emit, installMockHost, sentFrames, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -14,8 +15,7 @@ test("a public owner/repository outside suggestions remains available", async ({
     kind: "github.repositories",
     payload: { repositories: [{ fullName: "acme/specs" }] },
   });
-  await page.locator("#toggle-left-dock").click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await openDockTool(page, "left", "Repositories");
 
   const input = page.locator(".repo-register-input");
   await input.fill("outside/public-specs");

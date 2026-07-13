@@ -1,4 +1,5 @@
 import { test, expect } from "../lib/fixtures";
+import { openDockTool } from "../lib/dock";
 import { emit, loadDoc, waitForSent } from "../lib/mock-host";
 import { BASE_URL } from "../lib/serve-bundle";
 
@@ -52,7 +53,6 @@ test("right-panel modes follow named, detached, and review context", async ({ pa
     "Comments",
     "Change history",
   ]);
-  await page.locator("#toggle-right-dock").click();
-  await page.locator('#right-dock .dock-rail-btn[aria-label="Comments"]').click();
+  await openDockTool(page, "right", "Comments");
   await expect(page.locator("#right-dock .dock-title")).toHaveText("Comments");
 });

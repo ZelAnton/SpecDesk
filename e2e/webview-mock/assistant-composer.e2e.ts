@@ -1,4 +1,5 @@
 import { expect, test } from "../lib/fixtures";
+import { openDockTool } from "../lib/dock";
 import { emit, waitForSent } from "../lib/mock-host";
 import { BASE_URL } from "../lib/serve-bundle";
 
@@ -11,8 +12,7 @@ test("Copilot composer keeps prompt, actions, and GitHub state in one card", asy
   });
 
   const rightDock = page.locator("#right-dock");
-  if (!(await rightDock.isVisible())) await page.locator("#toggle-right-dock").click();
-  await rightDock.locator('.dock-rail-btn[aria-label="Assistant"]').click();
+  await openDockTool(page, "right", "Assistant");
 
   const surface = rightDock.locator(".chat-composer-surface");
   await expect(surface).toBeVisible();

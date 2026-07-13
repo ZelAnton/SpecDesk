@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { emit, installMockHost, sentFrames, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -22,8 +23,7 @@ test("repository autocomplete matches by repo name and keeps selection non-mutat
     },
   });
 
-  await page.locator("#toggle-left-dock").click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await openDockTool(page, "left", "Repositories");
   const input = page.locator(".repo-register-input");
   await input.fill("spec");
   await expect(page.locator('[role="option"]')).toHaveText(["acme/specifications"]);

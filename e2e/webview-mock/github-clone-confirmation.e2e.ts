@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { emit, installMockHost, sentFrames, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -16,8 +17,7 @@ test.beforeEach(async ({ context, page }) => {
 test("clone requires Yes and can persist Do not show again", async ({ page }, testInfo) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
-  await page.locator("#toggle-left-dock").click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await openDockTool(page, "left", "Repositories");
   const input = page.locator(".repo-register-input");
   await input.fill("outside/public-specs");
   await waitForSent(page, "repo.cloneDestination.request");
@@ -57,8 +57,7 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
 
   await page.reload();
   await waitForSent(page, "ready");
-  await page.locator("#toggle-left-dock").click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await openDockTool(page, "left", "Repositories");
   const reloadedInput = page.locator(".repo-register-input");
   await reloadedInput.fill("outside/second-specs");
   await waitForSent(page, "repo.description.request");
