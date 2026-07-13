@@ -312,6 +312,39 @@ public sealed class GitHubReviewTests
         return await client.ListReviewRequestsAsync("gho_token");
     }
 
+    private static async Task<IReadOnlyList<ReviewSummary>> ListPullRequests(
+        ScriptedHttpMessageHandler handler)
+    {
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+        return await client.ListPullRequestsAsync("gho_token");
+    }
+
+    [Test]
+    public async Task ListPullRequestsAsync_combines_author_and_involves_and_keeps_author_role()
+    {
+        const string authored =
+            """{"items":[{"number":1,"title":"Mine","html_url":"https://github.com/o/r/pull/1","repository_url":"https://api.github.com/repos/o/r","updated_at":"2026-07-01T00:00:00Z"}]}""";
+        const string involved =
+            """{"items":[{"number":1,"title":"Duplicate","html_url":"https://github.com/o/r/pull/1","repository_url":"https://api.github.com/repos/o/r","updated_at":"2026-07-01T00:00:00Z"},{"number":2,"title":"Joined","html_url":"https://github.com/o/x/pull/2","repository_url":"https://api.github.com/repos/o/x","updated_at":"2026-07-02T00:00:00Z"}]}""";
+        using ScriptedHttpMessageHandler handler = new(
+            (HttpStatusCode.OK, authored), (HttpStatusCode.OK, involved));
+
+        IReadOnlyList<ReviewSummary> requests = await ListPullRequests(handler);
+
+        Assert.That(requests, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(requests.Single(item => item.Number == 1).Role, Is.EqualTo(ReviewRole.Author));
+            Assert.That(requests[0].Title, Is.EqualTo("Joined"));
+            Assert.That(handler.Requests[0].OriginalString, Does.Contain("author%3A%40me"));
+            Assert.That(handler.Requests[1].OriginalString, Does.Contain("involves%3A%40me"));
+            Assert.That(
+                handler.Requests.All(uri => uri.OriginalString.Contains("is%3Aopen", StringComparison.Ordinal)),
+                Is.True);
+        });
+    }
+
     [Test]
     public async Task ListReviewRequestsAsync_includes_known_teams_encodes_queries_and_deduplicates()
     {

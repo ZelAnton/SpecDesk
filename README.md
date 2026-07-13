@@ -60,6 +60,8 @@ On the Start screen, `Open Repository` reveals the Repositories panel, where rep
 opened; the Start screen itself does not ask for a repository address.
 The left-panel Review mode shows open review requests assigned to the connected account, including requests
 for GitHub teams whose membership is visible to SpecDesk.
+Pull Requests shows the connected user's active work: open requests they authored or otherwise participated
+in. Closed and merged requests are intentionally excluded from this working list.
 
 The notification icon switches the main workspace to a Notifications list. The current list is a
 placeholder for future review-request and mention events.

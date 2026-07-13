@@ -141,6 +141,24 @@ internal sealed class FakeGitHubReview : IGitHubReview
         return Task.FromResult(ReviewRequestsValue);
     }
 
+    public IReadOnlyList<ReviewSummary> PullRequestsValue { get; set; } = [];
+
+    public bool ThrowOnListPullRequests { get; set; }
+
+    public int ListPullRequestsCalls { get; private set; }
+
+    public Task<IReadOnlyList<ReviewSummary>> ListPullRequestsAsync(
+        string accessToken, CancellationToken cancellationToken = default)
+    {
+        ListPullRequestsCalls++;
+        if (ThrowOnListPullRequests)
+        {
+            throw new HttpRequestException("boom");
+        }
+
+        return Task.FromResult(PullRequestsValue);
+    }
+
     public IReadOnlyList<ReviewComment> CommentsValue { get; set; } = [];
 
     public int ListReviewCommentsCalls { get; private set; }

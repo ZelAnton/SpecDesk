@@ -201,7 +201,8 @@ public sealed record PrListItemPayload(
     int Number, string Title, string Url, string Repo, string Role, string Status, string Label);
 
 /// <summary>Optional scope for <c>pr.list.request</c>. Absent preserves the legacy combined list;
-/// <c>reviewRequests</c> selects only work waiting on the signed-in reviewer.</summary>
+/// <c>reviewRequests</c> selects only work waiting on the signed-in reviewer; <c>pullRequests</c> selects
+/// open requests the user authored or otherwise participated in.</summary>
 public sealed record PrListRequestPayload(string? Scope);
 
 /// <summary>Payload of <c>pr.list</c> (native→webview, correlated to <c>pr.list.request</c> by id): the open

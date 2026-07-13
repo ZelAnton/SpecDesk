@@ -89,6 +89,8 @@ export interface WorkspaceTools {
   readonly repositories?: PanelTool;
   /** Review requests assigned directly or through a known GitHub team. */
   readonly reviews?: PanelTool;
+  /** Open pull requests authored by or otherwise involving the signed-in user. */
+  readonly pullRequests?: PanelTool;
 }
 
 /**
@@ -181,6 +183,13 @@ export function setupWorkspace(
           "Review",
           icon("review"),
           "Reviews waiting for you will appear here.",
+        ),
+      tools.pullRequests ??
+        placeholderTool(
+          "pullRequests",
+          "Pull Requests",
+          icon("pullRequests"),
+          "Open pull requests involving you will appear here.",
         ),
     ],
     right: [

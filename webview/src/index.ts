@@ -58,6 +58,7 @@ import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
+import { PullRequestsPanel } from "./workspace/tools/pull-requests-panel.js";
 import { RepositoriesPanel } from "./workspace/tools/repositories-panel.js";
 import { ReviewRequestsPanel } from "./workspace/tools/review-requests-panel.js";
 import {
@@ -269,6 +270,7 @@ function wire(): void {
   let home: HomeView | undefined;
   // The left Review mode is created with the workspace, then receives account state from wireGitHub.
   let reviewRequestsPanel: ReviewRequestsPanel | undefined;
+  let pullRequestsPanel: PullRequestsPanel | undefined;
   // Reveals the Files navigator (opens the left dock + switches to it). Assigned once the workspace wires;
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
@@ -972,6 +974,7 @@ function wire(): void {
           reviewsPanel.close();
         }
         reviewRequestsPanel?.setSignedIn(payload.signedIn);
+        pullRequestsPanel?.setSignedIn(payload.signedIn);
       }
     });
   }
@@ -1293,6 +1296,20 @@ function wire(): void {
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
     });
     reviewRequestsPanel = reviewRequests;
+    const pullRequests = new PullRequestsPanel({
+      request: () =>
+        requestSuggestion(
+          Kinds.prListRequest,
+          parsePrList,
+          {
+            items: [],
+            error: "Couldn't load pull requests. Check your connection and try again.",
+          },
+          { scope: "pullRequests" },
+        ),
+      openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+    });
+    pullRequestsPanel = pullRequests;
 
     const workspace = setupWorkspace(
       {
@@ -1329,6 +1346,7 @@ function wire(): void {
         favorites,
         repositories,
         reviews: reviewRequests,
+        pullRequests,
       },
     );
     centralFrame = workspace.centralFrame;

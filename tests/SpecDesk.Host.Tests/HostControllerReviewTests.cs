@@ -1062,6 +1062,39 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    [Test]
+    public void ListPullRequests_uses_the_scoped_request_and_returns_both_relationships()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new()
+        {
+            PullRequestsValue =
+            [
+                new ReviewSummary(
+                    1, "Mine", "https://github.com/o/r/pull/1", "o/r",
+                    ReviewRole.Author, ReviewDecision.InReview),
+                new ReviewSummary(
+                    2, "Joined", "https://github.com/o/x/pull/2", "o/x",
+                    ReviewRole.Reviewer, ReviewDecision.InReview),
+            ],
+        };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.PrListRequest, new PrListRequestPayload("pullRequests"), id: "pull-list"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+        PrListPayload? payload = reply?.GetPayload<PrListPayload>();
+        Assert.That(payload, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.Id, Is.EqualTo("pull-list"));
+            Assert.That(review.ListPullRequestsCalls, Is.EqualTo(1));
+            Assert.That(payload!.Items.Select(item => item.Role), Is.EqualTo(new[] { "author", "reviewer" }));
+        });
+    }
+
     private bool WaitForStatusState(string state) => WaitUntil(() => LatestStatus()?.State == state);
 
     private static bool WaitUntil(Func<bool> condition)

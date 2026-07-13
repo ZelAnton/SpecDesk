@@ -7,11 +7,35 @@ export interface ReviewRequestsCallbacks {
   openUrl(url: string): void;
 }
 
+export interface RemoteReviewListConfig {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: string;
+  readonly ariaLabel: string;
+  readonly authMessage: string;
+  readonly loadingMessage: string;
+  readonly emptyMessage: string;
+  readonly errorMessage: string;
+  readonly accepts: (item: PrListItemPayload) => boolean;
+}
+
+const REVIEW_REQUESTS_CONFIG: RemoteReviewListConfig = {
+  id: "reviews",
+  label: "Review",
+  icon: icon("review"),
+  ariaLabel: "Reviews waiting for you",
+  authMessage: "Connect a GitHub account to see review requests.",
+  loadingMessage: "Loading review requests…",
+  emptyMessage: "No open reviews are waiting for you.",
+  errorMessage: "Couldn't load review requests. Try again.",
+  accepts: (item) => item.role === "reviewer",
+};
+
 /** The left-rail Review mode: open review requests assigned directly or through a known team. */
 export class ReviewRequestsPanel implements PanelTool {
-  readonly id = "reviews";
-  readonly label = "Review";
-  readonly icon = icon("review");
+  readonly id: string;
+  readonly label: string;
+  readonly icon: string;
 
   private root: HTMLElement | null = null;
   private status: HTMLElement | null = null;
@@ -20,7 +44,14 @@ export class ReviewRequestsPanel implements PanelTool {
   private signedIn = false;
   private generation = 0;
 
-  constructor(private readonly callbacks: ReviewRequestsCallbacks) {}
+  constructor(
+    private readonly callbacks: ReviewRequestsCallbacks,
+    private readonly config: RemoteReviewListConfig = REVIEW_REQUESTS_CONFIG,
+  ) {
+    this.id = config.id;
+    this.label = config.label;
+    this.icon = config.icon;
+  }
 
   mount(body: HTMLElement): void {
     const root = document.createElement("div");
@@ -41,7 +72,7 @@ export class ReviewRequestsPanel implements PanelTool {
 
     const list = document.createElement("ul");
     list.className = "remote-review-items";
-    list.setAttribute("aria-label", "Reviews waiting for you");
+    list.setAttribute("aria-label", this.config.ariaLabel);
 
     root.append(toolbar, status, list);
     body.appendChild(root);
@@ -81,7 +112,7 @@ export class ReviewRequestsPanel implements PanelTool {
       return;
     }
     const request = ++this.generation;
-    this.setState("loading", "Loading review requests…");
+    this.setState("loading", this.config.loadingMessage);
     this.list?.replaceChildren();
     try {
       const payload = await this.callbacks.request();
@@ -91,14 +122,14 @@ export class ReviewRequestsPanel implements PanelTool {
       this.render(payload);
     } catch {
       if (request === this.generation && this.active) {
-        this.setState("error", "Couldn't load review requests. Try again.");
+        this.setState("error", this.config.errorMessage);
       }
     }
   }
 
   private showAuthState(): void {
     this.list?.replaceChildren();
-    this.setState("auth", "Connect a GitHub account to see review requests.");
+    this.setState("auth", this.config.authMessage);
   }
 
   private render(payload: PrListPayload): void {
@@ -107,9 +138,9 @@ export class ReviewRequestsPanel implements PanelTool {
       this.setState("error", payload.error);
       return;
     }
-    const items = payload.items.filter((item) => item.role === "reviewer");
+    const items = payload.items.filter(this.config.accepts);
     if (items.length === 0) {
-      this.setState("empty", "No open reviews are waiting for you.");
+      this.setState("empty", this.config.emptyMessage);
       return;
     }
     this.setState("ready", "");

@@ -117,6 +117,11 @@ public interface IGitHubReview
     Task<IReadOnlyList<ReviewSummary>> ListReviewRequestsAsync(
         string accessToken, CancellationToken cancellationToken = default);
 
+    /// <summary>The signed-in user's open pull requests: authored first, plus any other open request they
+    /// participate in. Closed and merged requests are intentionally outside this active-work list.</summary>
+    Task<IReadOnlyList<ReviewSummary>> ListPullRequestsAsync(
+        string accessToken, CancellationToken cancellationToken = default);
+
     /// <summary>Return at most 100 inline comments from the first API page of a review.</summary>
     Task<IReadOnlyList<ReviewComment>> ListReviewCommentsAsync(
         string accessToken,
@@ -425,17 +430,40 @@ public sealed class GitHubReviewClient : IGitHubReview
             new(StringComparer.OrdinalIgnoreCase);
 
         await CollectRestSearchAsync(
-            accessToken, "is:pr is:open review-requested:@me sort:updated-desc", byUrl, timeout.Token);
+            accessToken, "is:pr is:open review-requested:@me sort:updated-desc", ReviewRole.Reviewer, byUrl,
+            timeout.Token);
 
         // Team membership can be unavailable without `read:org`. Direct requests remain useful in that
         // case; search only the memberships GitHub actually disclosed instead of failing the whole panel.
         foreach (string team in await ListViewerTeamsBestEffortAsync(accessToken, timeout.Token))
         {
             await CollectRestSearchAsync(
-                accessToken, $"is:pr is:open team-review-requested:{team} sort:updated-desc", byUrl,
-                timeout.Token);
+                accessToken, $"is:pr is:open team-review-requested:{team} sort:updated-desc",
+                ReviewRole.Reviewer, byUrl, timeout.Token);
         }
 
+        return
+        [
+            .. byUrl.Values
+                .OrderByDescending(item => item.UpdatedAt, StringComparer.Ordinal)
+                .Select(item => item.Summary),
+        ];
+    }
+
+    public async Task<IReadOnlyList<ReviewSummary>> ListPullRequestsAsync(
+        string accessToken, CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl =
+            new(StringComparer.OrdinalIgnoreCase);
+        await CollectRestSearchAsync(
+            accessToken, "is:pr is:open author:@me sort:updated-desc", ReviewRole.Author, byUrl,
+            timeout.Token);
+        // `involves` includes authored items, mentions, assignments, comments, and reviews. Authored results
+        // were collected first, so dedupe preserves their more specific role.
+        await CollectRestSearchAsync(
+            accessToken, "is:pr is:open involves:@me sort:updated-desc", ReviewRole.Reviewer, byUrl,
+            timeout.Token);
         return
         [
             .. byUrl.Values
@@ -447,6 +475,7 @@ public sealed class GitHubReviewClient : IGitHubReview
     private async Task CollectRestSearchAsync(
         string accessToken,
         string query,
+        ReviewRole role,
         Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl,
         CancellationToken cancellationToken)
     {
@@ -484,7 +513,7 @@ public sealed class GitHubReviewClient : IGitHubReview
                 byUrl[url] = (
                     new ReviewSummary(
                         GitHubHttp.NumberOf(item, "number"), GitHubHttp.StringOf(item, "title"), url, repo,
-                        ReviewRole.Reviewer, ReviewDecision.InReview),
+                        role, ReviewDecision.InReview),
                     GitHubHttp.StringOf(item, "updated_at"));
             }
 

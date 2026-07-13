@@ -394,6 +394,11 @@ public sealed partial class HostController
 			OnListReviewRequests(message);
 			return;
 		}
+		if (message.GetPayload<PrListRequestPayload>()?.Scope == "pullRequests")
+		{
+			OnListPullRequests(message);
+			return;
+		}
 
 		const string connectFirst = "Connect a GitHub account to see your reviews.";
 		string? id = message.Id;
@@ -476,6 +481,47 @@ public sealed partial class HostController
 				_logger.LogWarning(ex, "Could not list review requests");
 				payload = new PrListPayload(
 					[], "Couldn't load review requests. Check your connection and try again.");
+			}
+
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
+		});
+	}
+
+	private void OnListPullRequests(IpcMessage message)
+	{
+		const string connectFirst = "Connect a GitHub account to see pull requests.";
+		string? id = message.Id;
+		IGitHubAuth? auth = _auth;
+		IGitHubReview? review = _review;
+		if (auth is null || review is null)
+		{
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
+			return;
+		}
+
+		_ = Task.Run(async () =>
+		{
+			using CancellationTokenSource timeout = new();
+			timeout.CancelAfter(PrListTimeout);
+			PrListPayload payload;
+			try
+			{
+				if (!auth.IsSignedIn())
+				{
+					payload = new PrListPayload([], connectFirst);
+				}
+				else
+				{
+					IReadOnlyList<ReviewSummary> requests = await auth.WithAccessTokenAsync(
+						(token, ct) => review.ListPullRequestsAsync(token, ct), timeout.Token);
+					payload = new PrListPayload([.. requests.Select(ToListItem)], null);
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Could not list pull requests");
+				payload = new PrListPayload(
+					[], "Couldn't load pull requests. Check your connection and try again.");
 			}
 
 			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The left-panel Pull Requests mode now lists open requests you authored or participated in, combining and
+  deduplicating both relationships while keeping closed and merged work out of the active queue.
 - The left-panel Review mode now lists open reviews assigned to you directly or through a visible GitHub
   team, with refresh, connection, loading, empty, and error states.
 - Clicking the notification icon now opens a dedicated Notifications list in the main workspace; the
