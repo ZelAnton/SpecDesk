@@ -13,8 +13,9 @@ const REPO: RegisteredRepo = {
 const STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [REPO] };
 
 function ready() {
-  const onCloneManaged = vi.fn<(url: string) => void>();
+  const onCloneManaged = vi.fn<(url: string, destinationPath: string) => void>();
   const onCloneToFolder = vi.fn<(url: string) => void>();
+  const onDestinationRequest = vi.fn<(url: string, requestId: number) => void>();
   const onUnregister = vi.fn<(id: string) => void>();
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
@@ -23,6 +24,7 @@ function ready() {
   const panel = new RepositoriesPanel({
     onCloneManaged,
     onCloneToFolder,
+    onDestinationRequest,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
@@ -44,6 +46,7 @@ function ready() {
     add,
     onCloneManaged,
     onCloneToFolder,
+    onDestinationRequest,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
@@ -63,11 +66,16 @@ describe("RepositoriesPanel", () => {
   });
 
   it("clones the typed repo to managed storage and clears the field", () => {
-    const { body, input, add, onCloneManaged } = ready();
+    const { panel, body, input, add, onCloneManaged } = ready();
     input.value = "  owner/name  ";
+    panel.setManagedDestination({
+      url: "owner/name",
+      requestId: 0,
+      path: "C:\\managed\\owner_name",
+    });
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
-    expect(onCloneManaged).toHaveBeenCalledWith("owner/name");
+    expect(onCloneManaged).toHaveBeenCalledWith("owner/name", "C:\\managed\\owner_name");
     expect(input.value).toBe(""); // cleared for the next entry
   });
 
@@ -117,9 +125,15 @@ describe("RepositoriesPanel", () => {
     expect(onCloneToFolder).not.toHaveBeenCalled();
 
     input.value = "outside/public";
+    input.dispatchEvent(new Event("input"));
+    panel.setManagedDestination({
+      url: "outside/public",
+      requestId: 3,
+      path: "C:\\managed\\outside_public",
+    });
     body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
-    expect(onCloneManaged).toHaveBeenCalledWith("outside/public");
+    expect(onCloneManaged).toHaveBeenCalledWith("outside/public", "C:\\managed\\outside_public");
   });
 
   it("identifies a valid public owner/repository outside the connected account list", () => {
@@ -132,14 +146,27 @@ describe("RepositoriesPanel", () => {
     expect(body.querySelector<HTMLElement>(".repo-public-hint")?.textContent).toContain(
       "you can still use a public",
     );
+    panel.setManagedDestination({
+      url: "outside/public-specs",
+      requestId: 1,
+      path: "C:\\managed\\outside_public-specs",
+    });
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
-    expect(onCloneManaged).toHaveBeenCalledWith("outside/public-specs");
+    expect(onCloneManaged).toHaveBeenCalledWith(
+      "outside/public-specs",
+      "C:\\managed\\outside_public-specs",
+    );
   });
 
   it("offers both clone destinations and suppresses double submission", () => {
-    const { body, input, add, onCloneManaged, onCloneToFolder } = ready();
+    const { panel, body, input, add, onCloneManaged, onCloneToFolder } = ready();
     input.value = "owner/managed";
+    panel.setManagedDestination({
+      url: "owner/managed",
+      requestId: 0,
+      path: "C:\\managed\\owner_managed",
+    });
     add.click();
     const actions = body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
     expect([...actions].map((action) => action.textContent)).toEqual([
@@ -157,6 +184,31 @@ describe("RepositoriesPanel", () => {
     actions[1]?.click();
     expect(onCloneToFolder).toHaveBeenCalledTimes(1);
     expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder");
+  });
+
+  it("shows the exact managed destination and ignores stale destination responses", () => {
+    const { panel, body, input } = ready();
+    input.value = "owner/first";
+    input.dispatchEvent(new Event("input"));
+    input.value = "owner/current";
+    input.dispatchEvent(new Event("input"));
+
+    panel.setManagedDestination({
+      url: "owner/first",
+      requestId: 1,
+      path: "C:\\managed\\owner_first",
+    });
+    expect(body.querySelector(".repo-managed-destination")?.textContent).toContain("checking");
+
+    panel.setManagedDestination({
+      url: "owner/current",
+      requestId: 2,
+      path: "C:\\managed\\owner_current",
+    });
+    const destination = body.querySelector<HTMLElement>(".repo-managed-destination");
+    expect(destination?.textContent).toBe("Managed destination: C:\\managed\\owner_current");
+    expect(destination?.title).toBe("C:\\managed\\owner_current");
+    expect(body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.disabled).toBe(false);
   });
 
   it("does not claim that an unverified owner/repository is public", () => {

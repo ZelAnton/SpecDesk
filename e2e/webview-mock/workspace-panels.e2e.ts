@@ -86,10 +86,23 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   // The clone menu sends `repo.cloneManaged` with the typed value (done first: opening a repo below reveals
   // the Files navigator and switches the left dock away from Repositories).
   await repos.locator(".repo-register-input").fill("owner/name");
+  await waitForSent(page, "repo.cloneDestination.request");
+  const destinationRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.cloneDestination.request",
+  );
+  await emit(page, {
+    kind: "repo.cloneDestination",
+    payload: {
+      url: "owner/name",
+      requestId: (destinationRequest?.payload as { requestId: number }).requestId,
+      path: "C:\\SpecDesk\\repos\\owner_name",
+    },
+  });
   await repos.locator(".repo-register-add").click();
   await repos.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
   expect((await sentFrames(page)).find((f) => f.kind === "repo.cloneManaged")?.payload).toMatchObject({
     url: "owner/name",
+    destinationPath: "C:\\SpecDesk\\repos\\owner_name",
   });
 
   // A6: clicking a repo clones it into a managed folder and opens it — sends `repo.open`.

@@ -60,7 +60,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `workspace.favorite` | `{ path, favorite }` | add (`favorite` true) or remove (false) a file/folder from favorites; host re-emits `workspace.state` |
 | `repo.register` | `{ url }` | register a GitHub repo from a URL/spec (`https://github.com/owner/name(.git)`, `owner/name`, or `git@github.com:owner/name(.git)`); the host parses/normalizes it and re-emits `workspace.state`, or emits `error` if it isn't a repo. A4 stores the entry only — no clone yet |
 | `repo.cloneToFolder` | `{ url }` | choose a parent folder and clone the GitHub repository into a new, non-colliding child folder |
-| `repo.cloneManaged` | `{ url }` | create a new copy of the GitHub repository in SpecDesk-managed storage |
+| `repo.cloneManaged` | `{ url, destinationPath }` | create a new copy at the managed path the author reviewed |
+| `repo.cloneDestination.request` | `{ url, requestId }` | resolve the exact managed destination before enabling Clone |
 | `repo.unregister` | `{ id }` | remove a registered repo by its `owner/name` id; host re-emits `workspace.state` |
 | `repo.open` | `{ url }` | open a GitHub repo (`owner/name` or a GitHub URL): clone it into a managed local folder under the app data root (or reuse an existing clone) and open that folder as the workspace — a `tree` follows; an unparseable value comes back as `error`. Registers the repo too (re-emits `workspace.state`) |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
@@ -95,6 +96,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |
 | `github.account` | `{ available, signedIn, login?, message?, organizations? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` is the authorized organization-login list after it loads; `message` is a transient/failed sign-in line) |
 | `github.repositories` | `{ repositories: { fullName, description? }[] }` | case-insensitively de-duplicated repositories available to the connected account for owner/name autocomplete |
+| `repo.cloneDestination` | `{ url, requestId, path? }` | exact managed clone path; `requestId` lets the webview ignore a stale response |
 | `confirm.request` | `{ id, action, summary }` | ask the author to confirm a mutating action |
 
 ## Ordering & correctness rules

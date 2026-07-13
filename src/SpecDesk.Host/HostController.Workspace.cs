@@ -290,13 +290,49 @@ public sealed partial class HostController
 			SendError("That doesn't look like a GitHub repository.");
 			return;
 		}
+		string repoId = $"{owner}/{name}";
+		string destination = NextClonePath(
+			owner,
+			name,
+			_workspace?.FindRepo(repoId)?.Clones ?? []);
+		if (!string.IsNullOrWhiteSpace(payload.DestinationPath)
+			&& !SameFullPath(payload.DestinationPath, destination))
+		{
+			SendError("The managed destination changed. Review the new path and try again.");
+			return;
+		}
 		if (_cloner is null
-			|| !EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Clone, owner, name)))
+			|| !EnsureGitHubAccess(new PendingRepoAction(
+				PendingRepoActionKind.Clone,
+				owner,
+				name,
+				LocalDestination: destination)))
 		{
 			return;
 		}
 
-		OpenRepoCore(owner, name, forceNewClone: true);
+		OpenRepoCore(owner, name, forceNewClone: true, requestedDestination: destination);
+	}
+
+	private void OnCloneDestinationRequest(IpcMessage message)
+	{
+		RepoCloneDestinationRequestPayload? payload = SafeGetPayload<RepoCloneDestinationRequestPayload>(message);
+		if (payload is null)
+		{
+			return;
+		}
+		string? destination = null;
+		if (TryParseGitHubRepo(payload.Url, out string owner, out string name))
+		{
+			string repoId = $"{owner}/{name}";
+			destination = NextClonePath(
+				owner,
+				name,
+				_workspace?.FindRepo(repoId)?.Clones ?? []);
+		}
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoCloneDestination,
+			new RepoCloneDestinationPayload(payload.Url, payload.RequestId, destination)));
 	}
 
 	private void OnCloneRepoToFolder(IpcMessage message)
@@ -826,7 +862,7 @@ public sealed partial class HostController
 		{
 			string folder = suffix == 1 ? stem : $"{stem}-{suffix}";
 			string candidate = Path.GetFullPath(Path.Combine(AppPaths.Repos, folder));
-			if (!known.Contains(candidate) && !Directory.Exists(candidate))
+			if (!known.Contains(candidate) && !Directory.Exists(candidate) && !File.Exists(candidate))
 			{
 				return candidate;
 			}

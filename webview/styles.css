@@ -2072,6 +2072,16 @@ button {
   font: 12px / 1.35 var(--font-ui);
 }
 
+.repo-managed-destination {
+  flex-basis: 100%;
+  padding: 0.15rem 0.1rem 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 12px / 1.35 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .repo-register-input {
   flex: 1;
   min-width: 0;

@@ -43,6 +43,7 @@ export const Kinds = {
   repoClone: "repo.clone",
   repoCloneManaged: "repo.cloneManaged",
   repoCloneToFolder: "repo.cloneToFolder",
+  repoCloneDestinationRequest: "repo.cloneDestination.request",
   repoBrowse: "repo.browse",
   // native → webview
   docLoaded: "doc.loaded",
@@ -65,6 +66,7 @@ export const Kinds = {
   templates: "templates",
   tree: "tree",
   workspaceState: "workspace.state",
+  repoCloneDestination: "repo.cloneDestination",
   workspaceContext: "workspace.context",
 } as const;
 
@@ -574,4 +576,10 @@ export interface RepoOpenPayload {
 
 export interface RepoCloneToFolderPayload {
   url: string;
+}
+
+export interface RepoCloneDestinationPayload {
+  url: string;
+  requestId: number;
+  path?: string;
 }

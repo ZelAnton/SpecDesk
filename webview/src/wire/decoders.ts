@@ -34,6 +34,7 @@ import {
   type PromptTemplate,
   type PrSuggestedPayload,
   type RegisteredRepo,
+  type RepoCloneDestinationPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -298,6 +299,18 @@ export function parseGitHubRepositories(value: unknown): GitHubRepositoriesPaylo
   }
   const repositories = parseArray(value.repositories, parseGitHubRepositoryOption);
   return repositories === null ? null : { repositories };
+}
+
+export function parseRepoCloneDestination(value: unknown): RepoCloneDestinationPayload | null {
+  if (!isRecord(value) || !isString(value.url) || !isNumber(value.requestId)) {
+    return null;
+  }
+  if (value.path !== undefined && !isString(value.path)) {
+    return null;
+  }
+  return value.path === undefined
+    ? { url: value.url, requestId: value.requestId }
+    : { url: value.url, requestId: value.requestId, path: value.path };
 }
 
 export function parseImageInserted(value: unknown): ImageInsertedPayload | null {

@@ -19,11 +19,24 @@ test("a public owner/repository outside suggestions remains available", async ({
 
   const input = page.locator(".repo-register-input");
   await input.fill("outside/public-specs");
+  await waitForSent(page, "repo.cloneDestination.request");
+  const destinationRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.cloneDestination.request",
+  );
+  await emit(page, {
+    kind: "repo.cloneDestination",
+    payload: {
+      url: "outside/public-specs",
+      requestId: (destinationRequest?.payload as { requestId: number }).requestId,
+      path: "C:\\SpecDesk\\repos\\outside_public-specs",
+    },
+  });
   await expect(page.locator(".repo-public-hint")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("public-repository.png"), fullPage: true });
   await page.locator(".repo-register-add").click();
   await page.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
   expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneManaged")?.payload).toEqual({
     url: "outside/public-specs",
+    destinationPath: "C:\\SpecDesk\\repos\\outside_public-specs",
   });
 });

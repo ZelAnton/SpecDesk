@@ -40,6 +40,8 @@
   "ready",
   "repo.browse",
   "repo.clone",
+  "repo.cloneDestination",
+  "repo.cloneDestination.request",
   "repo.cloneManaged",
   "repo.cloneToFolder",
   "repo.open",

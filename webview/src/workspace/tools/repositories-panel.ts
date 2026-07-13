@@ -14,6 +14,7 @@
 import type {
   GitHubRepositoryOptionPayload,
   RegisteredRepo,
+  RepoCloneDestinationPayload,
   WorkspaceItem,
   WorkspaceStatePayload,
 } from "../../wire/protocol.js";
@@ -22,9 +23,11 @@ import type { PanelTool } from "../panel-tool.js";
 
 export interface RepositoriesCallbacks {
   /** Clone into SpecDesk-managed storage. */
-  onCloneManaged(url: string): void;
+  onCloneManaged(url: string, destinationPath: string): void;
   /** Ask the host for a parent folder, then clone there. */
   onCloneToFolder(url: string): void;
+  /** Resolve the exact managed path shown before Clone is allowed. */
+  onDestinationRequest(url: string, requestId: number): void;
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
@@ -46,6 +49,8 @@ export class RepositoriesPanel implements PanelTool {
   private publicHintEl: HTMLElement | null = null;
   private cloneMenuEl: HTMLElement | null = null;
   private cloneToggleEl: HTMLButtonElement | null = null;
+  private managedActionEl: HTMLButtonElement | null = null;
+  private destinationEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
@@ -54,6 +59,9 @@ export class RepositoriesPanel implements PanelTool {
   private filteredSuggestions: readonly GitHubRepositoryOptionPayload[] = [];
   private activeSuggestion = -1;
   private cloneActionPending = false;
+  private destinationRequestId = 0;
+  private destinationTimer: number | null = null;
+  private managedDestination: string | null = null;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -84,6 +92,7 @@ export class RepositoriesPanel implements PanelTool {
     input.addEventListener("input", () => {
       this.cloneActionPending = false;
       this.updateSuggestions();
+      this.scheduleDestination();
     });
     input.addEventListener("keydown", (event) => this.onSuggestionKeydown(event));
     input.addEventListener("blur", () => this.closeSuggestions());
@@ -111,7 +120,8 @@ export class RepositoriesPanel implements PanelTool {
     managed.className = "repo-clone-menu-action";
     managed.setAttribute("role", "menuitem");
     managed.textContent = "Clone…";
-    managed.addEventListener("click", () => this.runClone(this.callbacks.onCloneManaged));
+    managed.disabled = true;
+    managed.addEventListener("click", () => this.runManagedClone());
     const toFolder = document.createElement("button");
     toFolder.type = "button";
     toFolder.className = "repo-clone-menu-action";
@@ -121,7 +131,12 @@ export class RepositoriesPanel implements PanelTool {
     cloneMenu.append(managed, toFolder);
     cloneToggle.addEventListener("click", () => this.toggleCloneMenu());
 
-    form.append(input, cloneToggle, suggestions, cloneMenu, publicHint);
+    const destination = document.createElement("output");
+    destination.className = "repo-managed-destination";
+    destination.setAttribute("role", "status");
+    destination.hidden = true;
+
+    form.append(input, cloneToggle, suggestions, cloneMenu, publicHint, destination);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.openCloneMenu();
@@ -142,6 +157,8 @@ export class RepositoriesPanel implements PanelTool {
     this.publicHintEl = publicHint;
     this.cloneMenuEl = cloneMenu;
     this.cloneToggleEl = cloneToggle;
+    this.managedActionEl = managed;
+    this.destinationEl = destination;
     this.emptyEl = empty;
     this.listEl = list;
     this.render();
@@ -169,6 +186,26 @@ export class RepositoriesPanel implements PanelTool {
     this.updateSuggestions();
   }
 
+  setManagedDestination(payload: RepoCloneDestinationPayload): void {
+    if (
+      payload.requestId !== this.destinationRequestId ||
+      this.input?.value.trim() !== payload.url
+    ) {
+      return;
+    }
+    this.managedDestination = payload.path ?? null;
+    if (this.destinationEl !== null) {
+      this.destinationEl.hidden = false;
+      this.destinationEl.textContent = payload.path
+        ? `Managed destination: ${payload.path}`
+        : "Managed destination unavailable for this entry.";
+      this.destinationEl.title = payload.path ?? "";
+    }
+    if (this.managedActionEl !== null) {
+      this.managedActionEl.disabled = payload.path === undefined;
+    }
+  }
+
   private runClone(action: (url: string) => void): void {
     if (this.input === null) {
       return;
@@ -181,9 +218,47 @@ export class RepositoriesPanel implements PanelTool {
     // the list) or emits an `error` the app surfaces — either way the field is ready for the next entry.
     this.input.value = "";
     this.closeSuggestions();
+    this.scheduleDestination();
     this.closeCloneMenu();
     this.cloneActionPending = true;
     action(url);
+  }
+
+  private runManagedClone(): void {
+    const destination = this.managedDestination;
+    if (destination === null) {
+      return;
+    }
+    this.runClone((url) => this.callbacks.onCloneManaged(url, destination));
+  }
+
+  private scheduleDestination(): void {
+    if (this.destinationTimer !== null) {
+      window.clearTimeout(this.destinationTimer);
+      this.destinationTimer = null;
+    }
+    this.destinationRequestId++;
+    this.managedDestination = null;
+    if (this.managedActionEl !== null) {
+      this.managedActionEl.disabled = true;
+    }
+    const url = this.input?.value.trim() ?? "";
+    if (url === "") {
+      if (this.destinationEl !== null) {
+        this.destinationEl.hidden = true;
+      }
+      return;
+    }
+    if (this.destinationEl !== null) {
+      this.destinationEl.hidden = false;
+      this.destinationEl.textContent = "Managed destination: checking…";
+      this.destinationEl.title = "";
+    }
+    const requestId = this.destinationRequestId;
+    this.destinationTimer = window.setTimeout(() => {
+      this.destinationTimer = null;
+      this.callbacks.onDestinationRequest(url, requestId);
+    }, 120);
   }
 
   private toggleCloneMenu(): void {
@@ -289,6 +364,7 @@ export class RepositoriesPanel implements PanelTool {
     }
     this.input.value = suggestion.fullName;
     this.closeSuggestions();
+    this.scheduleDestination();
   }
 
   private closeSuggestions(): void {

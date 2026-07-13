@@ -24,6 +24,7 @@ import {
   parsePreview,
   parsePrList,
   parsePrSuggested,
+  parseRepoCloneDestination,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -168,6 +169,16 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     ]);
     expect(payload?.repositories[1]?.description).toBeUndefined();
     expect(parseGitHubRepositories({ repositories: [{ fullName: 7 }] })).toBeNull();
+  });
+
+  it("repo.cloneDestination", () => {
+    const payload = parseRepoCloneDestination(fixture["repo.cloneDestination"]);
+    expect(payload).toEqual({
+      url: "acme/specs",
+      requestId: 7,
+      path: "C:\\SpecDesk\\repos\\acme_specs",
+    });
+    expect(parseRepoCloneDestination({ url: "acme/specs", requestId: "7" })).toBeNull();
   });
 
   it("chat.delta", () => {

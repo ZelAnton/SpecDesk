@@ -486,6 +486,9 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.RepoCloneToFolder:
 				OnCloneRepoToFolder(message);
 				break;
+			case MessageKinds.RepoCloneDestinationRequest:
+				OnCloneDestinationRequest(message);
+				break;
 			case MessageKinds.RepoBrowse:
 				OnBrowseRepo(message);
 				break;

@@ -77,6 +77,8 @@ public sealed class ContractFixtureTests
 			new GitHubRepositoryOptionPayload("acme/specs", "Product specifications"),
 			new GitHubRepositoryOptionPayload("octocat/notes", null),
 		])),
+		(MessageKinds.RepoCloneDestination, new RepoCloneDestinationPayload(
+			"acme/specs", 7, @"C:\SpecDesk\repos\acme_specs")),
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
 		(MessageKinds.ChatDelta, new ChatDeltaPayload("Here is a summary of the change: ")),
 		(MessageKinds.ChatDone, new ChatDonePayload("7")),

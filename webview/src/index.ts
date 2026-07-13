@@ -37,6 +37,7 @@ import {
   parsePreview,
   parsePrList,
   parsePrSuggested,
+  parseRepoCloneDestination,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -1271,8 +1272,11 @@ function wire(): void {
     // The Repositories panel: register from an owner/name or URL, remove by id, and open a repo — the host
     // clones it into a managed folder and opens it as the workspace (A6). The primary click clones-and-opens.
     const repositories = new RepositoriesPanel({
-      onCloneManaged: (url) => ipc.send(Kinds.repoCloneManaged, { url }),
+      onCloneManaged: (url, destinationPath) =>
+        ipc.send(Kinds.repoCloneManaged, { url, destinationPath }),
       onCloneToFolder: (url) => ipc.send(Kinds.repoCloneToFolder, { url }),
+      onDestinationRequest: (url, requestId) =>
+        ipc.send(Kinds.repoCloneDestinationRequest, { url, requestId }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
       onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
@@ -1318,6 +1322,12 @@ function wire(): void {
       const payload = parseGitHubRepositories(message.payload);
       if (payload) {
         repositories.setSuggestions(payload.repositories);
+      }
+    });
+    ipc.on(Kinds.repoCloneDestination, (message) => {
+      const payload = parseRepoCloneDestination(message.payload);
+      if (payload) {
+        repositories.setManagedDestination(payload);
       }
     });
 

@@ -122,6 +122,11 @@
       }
     ]
   },
+  "repo.cloneDestination": {
+    "url": "acme/specs",
+    "requestId": 7,
+    "path": "C:\\SpecDesk\\repos\\acme_specs"
+  },
   "chat.delta": {
     "text": "Here is a summary of the change: "
   },
