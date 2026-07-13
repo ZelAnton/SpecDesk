@@ -114,6 +114,32 @@ describe("RepositoriesPanel", () => {
     expect(onRegister).toHaveBeenCalledWith("outside/public");
   });
 
+  it("identifies a valid public owner/repository outside the connected account list", () => {
+    const { panel, body, input, add, onRegister } = ready();
+    panel.setSuggestions([{ fullName: "acme/specs" }]);
+    input.value = "outside/public-specs";
+    input.dispatchEvent(new Event("input"));
+
+    expect(body.querySelector<HTMLElement>(".repo-public-hint")?.hidden).toBe(false);
+    expect(body.querySelector<HTMLElement>(".repo-public-hint")?.textContent).toContain(
+      "you can still use a public",
+    );
+    add.click();
+    expect(onRegister).toHaveBeenCalledWith("outside/public-specs");
+  });
+
+  it("does not claim that an unverified owner/repository is public", () => {
+    const { panel, body, input } = ready();
+    panel.setSuggestions([]);
+    input.value = "unknown/maybe-private";
+    input.dispatchEvent(new Event("input"));
+
+    const hint = body.querySelector<HTMLElement>(".repo-public-hint");
+    expect(hint?.hidden).toBe(false);
+    expect(hint?.textContent).toContain("Not in your suggestions");
+    expect(hint?.textContent?.startsWith("Public repository")).toBe(false);
+  });
+
   it("renders repo rows: clicking opens the repo, the trailing × removes it", () => {
     const { panel, body, onUnregister, onBrowseRepo } = ready();
     panel.setState(STATE);

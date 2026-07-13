@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - GitHub repository entry now suggests accessible personal and organization repositories by name.
+- Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
 - The main toolbar can connect or disconnect GitHub, and the bottom status bar now shows the connected
   username and organizations available to that authorization.
 - The left-panel Pull Requests mode now lists open requests you authored or participated in, combining and

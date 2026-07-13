@@ -41,6 +41,7 @@ export class RepositoriesPanel implements PanelTool {
 
   private input: HTMLInputElement | null = null;
   private suggestionsEl: HTMLUListElement | null = null;
+  private publicHintEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
@@ -79,12 +80,19 @@ export class RepositoriesPanel implements PanelTool {
     input.addEventListener("keydown", (event) => this.onSuggestionKeydown(event));
     input.addEventListener("blur", () => this.closeSuggestions());
 
+    const publicHint = document.createElement("span");
+    publicHint.className = "repo-public-hint";
+    publicHint.setAttribute("role", "status");
+    publicHint.textContent =
+      "Not in your suggestions — you can still use a public owner/repository.";
+    publicHint.hidden = true;
+
     const add = document.createElement("button");
     add.type = "submit";
     add.className = "repo-register-add";
     add.textContent = "Add";
 
-    form.append(input, add, suggestions);
+    form.append(input, add, suggestions, publicHint);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.submit();
@@ -102,6 +110,7 @@ export class RepositoriesPanel implements PanelTool {
     body.appendChild(root);
     this.input = input;
     this.suggestionsEl = suggestions;
+    this.publicHintEl = publicHint;
     this.emptyEl = empty;
     this.listEl = list;
     this.render();
@@ -160,6 +169,10 @@ export class RepositoriesPanel implements PanelTool {
         return fullName.includes(query) || repoName.includes(query);
       })
       .slice(0, 8);
+    this.publicHintEl?.toggleAttribute(
+      "hidden",
+      this.filteredSuggestions.length > 0 || !isOwnerRepository(query),
+    );
     this.activeSuggestion = this.filteredSuggestions.length > 0 ? 0 : -1;
     this.renderSuggestions();
   }
@@ -228,6 +241,9 @@ export class RepositoriesPanel implements PanelTool {
     if (this.suggestionsEl !== null) {
       this.suggestionsEl.hidden = true;
       this.suggestionsEl.replaceChildren();
+    }
+    if (this.publicHintEl !== null) {
+      this.publicHintEl.hidden = true;
     }
     this.input?.setAttribute("aria-expanded", "false");
     this.input?.removeAttribute("aria-activedescendant");
@@ -363,4 +379,8 @@ export class RepositoriesPanel implements PanelTool {
     }
     buttons[0]?.focus();
   }
+}
+
+function isOwnerRepository(value: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/[a-z0-9._-]+$/i.test(value);
 }
