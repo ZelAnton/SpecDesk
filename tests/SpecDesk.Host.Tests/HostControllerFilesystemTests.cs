@@ -6,7 +6,7 @@ namespace SpecDesk.Host.Tests;
 
 /// <summary>
 /// The filesystem foundation for the Start screen and the folder navigator: opening a specific file by
-/// path (vs. the dialog fallback), opening a folder as the workspace, and serving its Markdown file tree.
+/// path (vs. the dialog fallback), opening a folder as the workspace, and serving its file tree.
 /// </summary>
 [TestFixture]
 public sealed class HostControllerFilesystemTests
@@ -127,6 +127,33 @@ public sealed class HostControllerFilesystemTests
 	}
 
 	[Test]
+	public void DocOpen_WithAFileOverThePreviewLimit_EmitsAnErrorWithoutLoadingIt()
+	{
+		using HostController controller = NewController();
+		string file = Path.Combine(_root, "large.txt");
+		File.WriteAllBytes(file, new byte[(4 * 1024 * 1024) + 1]);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(file)));
+
+		Assert.That(Find(MessageKinds.DocLoaded), Is.Null);
+		Assert.That(Find(MessageKinds.Error), Is.Not.Null);
+	}
+
+	[TestCase(new byte[] { 0x41, 0x00, 0x42 })]
+	[TestCase(new byte[] { 0xC3, 0x28 })]
+	public void DocOpen_WithBinaryOrInvalidUtf8_EmitsAnErrorWithoutLoadingIt(byte[] content)
+	{
+		using HostController controller = NewController();
+		string file = Path.Combine(_root, "binary.dat");
+		File.WriteAllBytes(file, content);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(file)));
+
+		Assert.That(Find(MessageKinds.DocLoaded), Is.Null);
+		Assert.That(Find(MessageKinds.Error), Is.Not.Null);
+	}
+
+	[Test]
 	public void DocOpen_WithoutAPath_FallsBackToTheOpenDialog()
 	{
 		using HostController controller = NewController();
@@ -139,7 +166,7 @@ public sealed class HostControllerFilesystemTests
 	}
 
 	[Test]
-	public void FolderOpen_WithAnExplicitPath_EmitsTheMarkdownTreeAndHidesNoise()
+	public void FolderOpen_WithAnExplicitPath_EmitsTheFileTreeAndHidesIgnoredDirectories()
 	{
 		using HostController controller = NewController();
 		// A decoy the folder picker would return — the explicit path must win over it.
@@ -150,8 +177,8 @@ public sealed class HostControllerFilesystemTests
 		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree, Is.Not.Null);
 		Assert.That(tree!.Root, Is.EqualTo(Path.GetFullPath(_root)));
-		// Directories sort before files: [specs/, README.md]. notes.txt and .git are excluded.
-		string[] topLevel = ["specs", "README.md"];
+		// Directories sort before files. Files of every type are visible; .git remains excluded.
+		string[] topLevel = ["specs", "notes.txt", "README.md"];
 		string[] specsChildren = ["billing.md"];
 		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(topLevel));
 		TreeNode specs = tree.Nodes[0];

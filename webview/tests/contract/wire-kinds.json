@@ -37,6 +37,8 @@
   "pr.suggested.request",
   "preview.html",
   "ready",
+  "repo.browse",
+  "repo.clone",
   "repo.open",
   "repo.register",
   "repo.unregister",

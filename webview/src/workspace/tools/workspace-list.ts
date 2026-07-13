@@ -39,9 +39,9 @@ export interface WorkspaceListConfig {
 /** The starting state before the host's first `workspace.state` arrives (renders the empty hint). */
 const EMPTY_STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [] };
 
-/** The focused row control captured before a rebuild: the item's `path` and which button (open / star). */
+/** The focused row control captured before a rebuild: typed stable identity plus button (open / star). */
 interface FocusRef {
-  path: string;
+  key: string;
   control: string;
 }
 
@@ -112,6 +112,8 @@ export class WorkspaceListPanel implements PanelTool {
   private buildRow(item: WorkspaceItem): HTMLLIElement {
     const li = document.createElement("li");
     li.className = "workspace-list-row";
+    const itemKey = workspaceItemKey(item);
+    const context = workspaceItemContext(item);
 
     // The open button: a leading folder/file affordance (decorative) beside the label; the full path is
     // the tooltip and the label is the accessible name. A folder opens the workspace, a file opens the doc.
@@ -119,20 +121,35 @@ export class WorkspaceListPanel implements PanelTool {
     open.type = "button";
     open.className = "workspace-open";
     open.dataset.path = item.path;
+    open.dataset.itemKey = itemKey;
     open.dataset.control = "open";
-    open.title = item.path;
+    open.title = context.tooltip;
+    open.setAttribute("aria-label", context.accessibleName);
 
     const affordance = document.createElement("span");
     affordance.className = "workspace-item-icon";
+    affordance.dataset.kind = item.kind ?? "local";
     affordance.setAttribute("aria-hidden", "true");
     // Trusted in-repo markup (workspace/icons.ts) — never interpolated with host input.
-    affordance.innerHTML = icon(item.isFolder ? "files" : "file");
+    affordance.innerHTML = icon(
+      item.kind === "repository" ? "repositories" : item.isFolder ? "files" : "file",
+    );
 
+    const text = document.createElement("span");
+    text.className = "workspace-item-text";
     const label = document.createElement("span");
     label.className = "workspace-item-label";
     label.textContent = item.label;
 
-    open.append(affordance, label);
+    text.append(label);
+    if (context.secondary !== null) {
+      const secondary = document.createElement("span");
+      secondary.className = "workspace-item-context";
+      secondary.textContent = context.secondary;
+      text.append(secondary);
+    }
+
+    open.append(affordance, text);
     open.addEventListener("click", () => this.callbacks.onOpen(item));
 
     // The trailing star: pressed (filled) when the item is a favorite, and its click flips that — for the
@@ -143,12 +160,13 @@ export class WorkspaceListPanel implements PanelTool {
     star.className = "workspace-star";
     star.classList.toggle("is-favorite", favored);
     star.dataset.path = item.path;
+    star.dataset.itemKey = itemKey;
     star.dataset.control = "star";
     star.setAttribute("aria-pressed", String(favored));
     // A toggle button keeps a STABLE accessible name and lets aria-pressed carry the on/off state (a name
     // that flips to "Remove from favorites" while also pressed reads contradictorily to a screen reader);
     // the mouse tooltip still shows the concrete action.
-    star.setAttribute("aria-label", "Favorite");
+    star.setAttribute("aria-label", `Favorite ${context.accessibleName}`);
     star.title = favored ? "Remove from favorites" : "Add to favorites";
     star.innerHTML = icon("favorites");
     star.addEventListener("click", () => this.callbacks.onToggleFavorite(item, !favored));
@@ -163,10 +181,10 @@ export class WorkspaceListPanel implements PanelTool {
     if (
       active instanceof HTMLElement &&
       this.listEl?.contains(active) &&
-      active.dataset.path !== undefined &&
+      active.dataset.itemKey !== undefined &&
       active.dataset.control !== undefined
     ) {
-      return { path: active.dataset.path, control: active.dataset.control };
+      return { key: active.dataset.itemKey, control: active.dataset.control };
     }
     return null;
   }
@@ -179,15 +197,55 @@ export class WorkspaceListPanel implements PanelTool {
     if (ref === null || this.listEl === null) {
       return;
     }
-    const buttons = this.listEl.querySelectorAll<HTMLElement>("button[data-path]");
+    const buttons = this.listEl.querySelectorAll<HTMLElement>("button[data-item-key]");
     for (const el of buttons) {
-      if (el.dataset.path === ref.path && el.dataset.control === ref.control) {
+      if (el.dataset.itemKey === ref.key && el.dataset.control === ref.control) {
         el.focus();
         return;
       }
     }
     buttons[0]?.focus();
   }
+}
+
+function workspaceItemKey(item: WorkspaceItem): string {
+  const kind = item.kind ?? "local";
+  if (kind === "remote") {
+    return `remote:${item.repositoryId?.toLowerCase() ?? ""}:${item.branch ?? ""}:${item.path}`;
+  }
+  if (kind === "repository") {
+    return `repository:${(item.repositoryId ?? item.path).toLowerCase()}`;
+  }
+  return `local:${item.path.toLowerCase()}`;
+}
+
+function workspaceItemContext(item: WorkspaceItem): {
+  tooltip: string;
+  accessibleName: string;
+  secondary: string | null;
+} {
+  if (item.kind === "remote") {
+    const repository = item.repositoryId ?? "Unknown repository";
+    const branch = item.branch ?? "Unknown version";
+    return {
+      tooltip: `${repository} · ${branch} · ${item.path}`,
+      accessibleName: `${item.label}, ${item.isFolder ? "folder" : "file"} in ${repository}, version ${branch}, path ${item.path}`,
+      secondary: `${repository} · ${branch}`,
+    };
+  }
+  if (item.kind === "repository") {
+    const repository = item.repositoryId ?? item.path;
+    return {
+      tooltip: `Repository ${repository}`,
+      accessibleName: `Repository ${repository}`,
+      secondary: "Repository",
+    };
+  }
+  return {
+    tooltip: item.path,
+    accessibleName: `${item.label}, ${item.isFolder ? "folder" : "file"}, ${item.path}`,
+    secondary: null,
+  };
 }
 
 /** Case-insensitive path identity — the same file/folder can reach the store under different casing on
@@ -220,7 +278,7 @@ export function favoritesPanel(callbacks: WorkspaceListCallbacks): WorkspaceList
       id: "favorites",
       label: "Favorites",
       icon: icon("favorites"),
-      emptyHint: "Star a file or folder to keep it here.",
+      emptyHint: "Star a repository, file, or folder to keep it here.",
       items: (state) => state.favorites,
       isFavorite: () => true,
     },

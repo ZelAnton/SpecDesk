@@ -157,6 +157,11 @@ export class SignInController {
     setText(this.cancelBtn, "Cancel");
     setHidden(this.bar, false);
     this.setMenuOpen(false);
+
+    // Device-flow authorization is intentionally completed in the user's normal browser. Opening the
+    // GitHub page as soon as the host issues the code makes repository actions a single continuous flow;
+    // the visible button remains as a retry if the OS declines the first launch.
+    this.deps.openUrl(payload.verificationUri);
   }
 
   /** Update the account affordance from the host's connection state. */

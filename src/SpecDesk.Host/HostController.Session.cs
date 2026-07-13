@@ -5,6 +5,7 @@ using SpecDesk.Core;
 using SpecDesk.Git;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
+using System.Text;
 // LibGit2Sharp is referenced only for its exception type; do not bring the whole namespace in (it
 // defines a LogLevel that collides with Microsoft.Extensions.Logging.LogLevel).
 using LibGit2SharpException = LibGit2Sharp.LibGit2SharpException;
@@ -16,6 +17,7 @@ namespace SpecDesk.Host;
 // The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	private const int MaxPreviewBytes = 4 * 1024 * 1024;
 	private void OnReady()
 	{
 		// Only the first "ready" may auto-load the initial document — see _initialDocLoadAttempted.
@@ -35,6 +37,14 @@ public sealed partial class HostController
 
 	private void OnEditorChanged(IpcMessage message)
 	{
+		lock (_sync)
+		{
+			if (_remoteDocument is not null)
+			{
+				return;
+			}
+		}
+
 		EditorChangedPayload? payload = SafeGetPayload<EditorChangedPayload>(message);
 		if (payload is null)
 		{
@@ -136,7 +146,15 @@ public sealed partial class HostController
 			: _dialogs.PickOpenFile();
 		if (path is not null)
 		{
-			LoadFile(path);
+			if (TryParseRemotePath(path, out string owner, out string name, out string branch, out string remotePath))
+			{
+				LoadRemoteFile(owner, name, branch, remotePath, path);
+			}
+			else
+			{
+				InvalidateRemoteNavigation(browse: true, file: true);
+				LoadFile(path);
+			}
 		}
 	}
 
@@ -169,6 +187,7 @@ public sealed partial class HostController
 	// document — the author can browse one folder while editing a document elsewhere.
 	private void OpenWorkspaceFolder(string root)
 	{
+		InvalidateRemoteNavigation(browse: true, file: true);
 		lock (_sync)
 		{
 			_workspaceRoot = root;
@@ -185,6 +204,7 @@ public sealed partial class HostController
 	// folder" still shows something useful (the folder the open document lives in).
 	private void OnTreeRequest(IpcMessage message)
 	{
+		InvalidateRemoteNavigation(browse: true, file: false);
 		TreeRequestPayload? payload = SafeGetPayload<TreeRequestPayload>(message);
 		string? root;
 		if (!string.IsNullOrWhiteSpace(payload?.Path))
@@ -727,10 +747,11 @@ public sealed partial class HostController
 		string text;
 		try
 		{
-			text = File.ReadAllText(path);
+			text = ReadBoundedUtf8File(path);
 		}
 		catch (Exception ex) when (
-			ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+			ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException
+				or InvalidDataException)
 		{
 			// ArgumentException/NotSupportedException cover a malformed path (an embedded null, invalid
 			// syntax): `doc.open {path}` now carries a webview-supplied path (a tree click / Start "open a
@@ -766,6 +787,7 @@ public sealed partial class HostController
 			_text = text;
 			_currentPath = path;
 			_repoRoot = repoRoot;
+			_remoteDocument = null;
 			// Detected from the RAW content just read, before anything normalizes it — see the
 			// _lineEnding field comment.
 			_lineEnding = DetectLineEnding(text);
@@ -808,6 +830,38 @@ public sealed partial class HostController
 		if (state != Lifecycle.stateName(Lifecycle.State.Published))
 		{
 			SendLifecycleStatus();
+		}
+	}
+
+	private static string ReadBoundedUtf8File(string path)
+	{
+		using FileStream stream = new(
+			path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
+			bufferSize: 64 * 1024, FileOptions.SequentialScan);
+		byte[] buffer = new byte[MaxPreviewBytes + 1];
+		int length = 0;
+		while (length < buffer.Length)
+		{
+			int read = stream.Read(buffer, length, buffer.Length - length);
+			if (read == 0)
+			{
+				break;
+			}
+			length += read;
+		}
+		if (length > MaxPreviewBytes || buffer.AsSpan(0, length).IndexOf((byte)0) >= 0)
+		{
+			throw new InvalidDataException("File is too large or is not text.");
+		}
+
+		int offset = length >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF ? 3 : 0;
+		try
+		{
+			return new UTF8Encoding(false, true).GetString(buffer, offset, length - offset);
+		}
+		catch (DecoderFallbackException ex)
+		{
+			throw new InvalidDataException("File is not valid UTF-8 text.", ex);
 		}
 	}
 
@@ -1026,10 +1080,27 @@ public sealed partial class HostController
 	{
 		string? path;
 		string? repoRoot;
+		RemoteDocumentContext? remoteDocument;
 		lock (_sync)
 		{
 			path = _currentPath;
 			repoRoot = _repoRoot;
+			remoteDocument = _remoteDocument;
+		}
+
+		if (remoteDocument is not null)
+		{
+			string id = $"{remoteDocument.Owner}/{remoteDocument.Name}";
+			string? remoteDefaultBranch = _workspace?.FindRepo(id)?.DefaultBranch;
+			SendWorkspaceContext(
+				new WorkspaceContextPayload(
+					id,
+					null,
+					remoteDocument.Branch,
+					"named",
+					string.IsNullOrWhiteSpace(remoteDefaultBranch) ? null : remoteDefaultBranch,
+					remoteDocument.Path));
+			return;
 		}
 
 		if (path is null || repoRoot is null || !IsRepoVersioned(repoRoot))
@@ -1187,10 +1258,8 @@ public sealed partial class HostController
 		return ResolveRepoRoot(docPath);
 	}
 
-	/// <summary>Find the longest persisted versioned root that contains the document. Recent folder roots
-	/// cover user-selected clones, while registered repositories map to the current managed-clone location;
-	/// the repository tree model can add its explicit clone paths to this candidate list when multi-clone
-	/// descriptors land.</summary>
+	/// <summary>Find the longest persisted versioned root that contains the document. Recent folder roots,
+	/// every explicit registered clone, and the legacy managed-clone location are all candidates.</summary>
 	private string? ResolvePersistedRepoRoot(string docPath)
 	{
 		WorkspaceStatePayload? state = _workspace?.State();
@@ -1202,6 +1271,7 @@ public sealed partial class HostController
 		List<string> candidates = [.. state.Recent.Where(item => item.IsFolder).Select(item => item.Path)];
 		foreach (RegisteredRepo repo in state.Repositories)
 		{
+			candidates.AddRange(repo.Clones.Select(clone => clone.Path));
 			if (TryParseGitHubRepo(repo.Id, out string owner, out string name))
 			{
 				candidates.Add(Path.Combine(AppPaths.Repos, $"{owner}_{name}"));

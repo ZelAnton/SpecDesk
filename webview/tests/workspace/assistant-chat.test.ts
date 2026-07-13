@@ -158,7 +158,13 @@ describe("AssistantChat", () => {
   it("picks a file and folder without opening them, exposes repositories, and sends structured state", async () => {
     const { chat, body, input, sendBtn, sendMessage } = harness();
     chat.setRepositories([
-      { id: "octo/specs", name: "octo/specs", url: "https://github.com/octo/specs" },
+      {
+        id: "octo/specs",
+        name: "octo/specs",
+        url: "https://github.com/octo/specs",
+        defaultBranch: "main",
+        clones: [],
+      },
     ]);
 
     const attach = body.querySelector<HTMLButtonElement>(".chat-attach-toggle");
@@ -201,7 +207,13 @@ describe("AssistantChat", () => {
   it("supports Arrow/Home/End navigation and closes on Escape", () => {
     const { chat, body } = harness();
     chat.setRepositories([
-      { id: "octo/specs", name: "octo/specs", url: "https://github.com/octo/specs" },
+      {
+        id: "octo/specs",
+        name: "octo/specs",
+        url: "https://github.com/octo/specs",
+        defaultBranch: "main",
+        clones: [],
+      },
     ]);
     const attach = body.querySelector<HTMLButtonElement>(".chat-attach-toggle");
     attach?.click();

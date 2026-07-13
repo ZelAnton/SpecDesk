@@ -13,11 +13,13 @@ public sealed partial class HostController
 		string? path;
 		string? repoRoot;
 		string? branch;
+		RemoteDocumentContext? remoteDocument;
 		lock (_sync)
 		{
 			path = _currentPath;
 			repoRoot = _repoRoot;
-			branch = _session.Branch;
+			remoteDocument = _remoteDocument;
+			branch = remoteDocument?.Branch ?? _session.Branch;
 		}
 		string? id = message.Id;
 		CancellationToken lifetimeToken = _lifetimeCts.Token;
@@ -34,15 +36,22 @@ public sealed partial class HostController
 			string? historyMessage = null;
 			string commentsState = "loaded";
 			string? commentsMessage = null;
-			string? relative = path is not null && repoRoot is not null
-				? Path.GetRelativePath(repoRoot, path).Replace('\\', '/')
-				: null;
+			string? relative = remoteDocument?.Path
+				?? (path is not null && repoRoot is not null
+					? Path.GetRelativePath(repoRoot, path).Replace('\\', '/')
+					: null);
 			GitHubRepo? githubRepo = null;
 			bool? repositoryVersioned = null;
 			try
 			{
 				token.ThrowIfCancellationRequested();
-				if (relative is not null && repoRoot is not null)
+				if (remoteDocument is not null)
+				{
+					repositoryVersioned = false;
+					historyState = "notVersioned";
+					historyMessage = "Saved versions are available after you copy this repository locally.";
+				}
+				else if (relative is not null && repoRoot is not null)
 				{
 					IReadOnlyList<SpecDesk.Git.DocumentVersion> stored;
 					lock (_repoGate)
@@ -88,7 +97,11 @@ public sealed partial class HostController
 			IGitHubAuth? auth = _auth;
 			IGitHubReview? review = _review;
 			bool remoteResolutionFailed = false;
-			if (relative is not null && repoRoot is not null && _publishing is not null
+			if (remoteDocument is not null)
+			{
+				githubRepo = new GitHubRepo(remoteDocument.Owner, remoteDocument.Name);
+			}
+			else if (relative is not null && repoRoot is not null && _publishing is not null
 				&& repositoryVersioned is not false)
 			{
 				try
@@ -180,7 +193,9 @@ public sealed partial class HostController
 
 			lifetimeToken.ThrowIfCancellationRequested();
 			DocumentActivityPayload payload = new(
-				path is null ? null : Path.GetFileName(path),
+				remoteDocument is not null
+					? remoteDocument.Path.Split('/')[^1]
+					: path is null ? null : Path.GetFileName(path),
 				versions, historyState, historyMessage,
 				comments, commentsState, commentsMessage, history);
 			Emit(IpcSerializer.SerializeEvent(MessageKinds.DocumentActivity, payload, id: id));

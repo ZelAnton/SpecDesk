@@ -221,6 +221,37 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void RestartedController_UsesAnyPersistedRegisteredCloneEvenWhenItIsNoLongerRecent()
+    {
+        string cloneRoot = Path.Combine(_tempDir, "managed-clone-2");
+        string docs = Path.Combine(cloneRoot, "docs");
+        Directory.CreateDirectory(docs);
+        string guide = Path.Combine(docs, "guide.md");
+        File.WriteAllText(guide, "# Guide");
+        WorkspaceStore store = new(Path.Combine(_tempDir, "workspace.json"));
+        store.RegisterRepo(new RegisteredRepo(
+            "octo/specs",
+            "octo/specs",
+            "https://github.com/octo/specs",
+            "main",
+            [new RegisteredClone("copy-2", cloneRoot, [])]));
+
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(
+            versioning,
+            workspace: new WorkspaceStore(Path.Combine(_tempDir, "workspace.json")),
+            initialDocPath: guide);
+
+        WorkspaceContextPayload? context = LatestWorkspaceContext();
+        Assert.Multiple(() =>
+        {
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.RepositoryRoot, Is.EqualTo(cloneRoot));
+            Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
+        });
+    }
+
+    [Test]
     public void Edit_OnAnUnversionedFolder_ReportsAnError()
     {
         FakeVersioning versioning = new() { Versioned = false };

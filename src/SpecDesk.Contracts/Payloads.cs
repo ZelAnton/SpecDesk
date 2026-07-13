@@ -45,6 +45,8 @@ public static class MessageKinds
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
+	public const string RepoClone = "repo.clone";
+	public const string RepoBrowse = "repo.browse";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -82,9 +84,17 @@ public sealed record PreviewPayload(string Html, IReadOnlyList<LineSpan> LineMap
 /// Payload of <c>doc.loaded</c> (native→webview): a file opened from disk. <c>DocDir</c> is the
 /// document's directory relative to the repo root (forward slashes, "" at root) — the webview uses
 /// it to resolve relative image links to <c>app://repo/…</c> in the formatted (WYSIWYG) view, the
-/// same rewrite the native preview renderer applies.
+/// same rewrite the native preview renderer applies. <c>ReadOnly</c> marks an online preview that is not
+/// backed by a writable local copy.
 /// </summary>
-public sealed record DocLoadedPayload(string Path, string Text, string DocDir);
+public sealed record DocLoadedPayload(
+	string Path,
+	string Text,
+	string DocDir,
+	bool ReadOnly = false,
+	string? Repository = null,
+	string? Branch = null,
+	string? RepositoryPath = null);
 
 /// <summary>
 /// Payload of <c>doc.open</c> (webview→native). <c>Path</c> opens that specific file directly (the Start
@@ -397,16 +407,32 @@ public sealed record TemplatesPayload(
 	IReadOnlyList<PromptTemplate> Remote);
 
 /// <summary>One recently-opened or favorited entry (native→webview, inside <see cref="WorkspaceStatePayload"/>).
-/// <paramref name="Path"/> is the absolute file/folder path (opened via <c>doc.open</c>/<c>folder.open</c> when
-/// chosen); <paramref name="Label"/> is the display name (usually the last path segment); <paramref name="IsFolder"/>
-/// distinguishes a folder from a file.</summary>
-public sealed record WorkspaceItem(string Path, string Label, bool IsFolder);
+/// Local items use an absolute <paramref name="Path"/>; remote items use a repository-relative path plus their
+/// <paramref name="RepositoryId"/> and <paramref name="Branch"/>; repository items use their stable id.
+/// <paramref name="Label"/> is the display name and <paramref name="IsFolder"/> distinguishes containers.</summary>
+public sealed record WorkspaceItem(
+	string Path,
+	string Label,
+	bool IsFolder,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null);
 
 /// <summary>One registered GitHub repository the author works with (native→webview, inside
 /// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
 /// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
 /// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
-public sealed record RegisteredRepo(string Id, string Name, string Url);
+public sealed record RegisteredClone(
+	string Id,
+	string Path,
+	IReadOnlyList<string> Branches);
+
+public sealed record RegisteredRepo(
+	string Id,
+	string Name,
+	string Url,
+	string DefaultBranch,
+	IReadOnlyList<RegisteredClone> Clones);
 
 /// <summary>Payload of <c>workspace.state</c> (native→webview): the persisted workspace store — the author's
 /// <paramref name="Recent"/> items (most-recent first), their <paramref name="Favorites"/>, and the
@@ -416,9 +442,15 @@ public sealed record WorkspaceStatePayload(
 	IReadOnlyList<WorkspaceItem> Favorites,
 	IReadOnlyList<RegisteredRepo> Repositories);
 
-/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle whether the file/folder at
-/// <paramref name="Path"/> is a favorite (<paramref name="Favorite"/> true adds it, false removes it).</summary>
-public sealed record WorkspaceFavoritePayload(string Path, bool Favorite);
+/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle a local or remote file/folder, or a
+/// registered repository. <paramref name="Favorite"/> true adds it and false removes it.</summary>
+public sealed record WorkspaceFavoritePayload(
+	string Path,
+	bool Favorite,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null,
+	bool? IsFolder = null);
 
 /// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
 /// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).
@@ -433,4 +465,9 @@ public sealed record UnregisterRepoPayload(string Id);
 /// name="Url"/> (an <c>owner/name</c> or a GitHub URL). The host clones it into a managed local folder — or
 /// reuses the clone if it is already there — and opens that folder as the workspace, emitting a <c>tree</c>;
 /// an unparseable value is reported as an <c>error</c>.</summary>
-public sealed record RepoOpenPayload(string Url);
+public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
+
+/// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
+public sealed record RepoClonePayload(string Id);
+
+public sealed record RepoBrowsePayload(string Id, string? Branch = null);

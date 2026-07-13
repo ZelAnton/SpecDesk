@@ -2,7 +2,8 @@
   "doc.loaded": {
     "path": "specs/billing.md",
     "text": "# Billing\n\nThe refund window is 30 days.\n",
-    "docDir": "specs"
+    "docDir": "specs",
+    "readOnly": false
   },
   "preview.html": {
     "html": "\u003Ch1\u003EBilling\u003C/h1\u003E",
@@ -193,21 +194,31 @@
       {
         "path": "C:\\specs\\billing-repo\\specs\\billing.md",
         "label": "billing.md",
-        "isFolder": false
+        "isFolder": false,
+        "kind": "local"
       }
     ],
     "favorites": [
       {
         "path": "C:\\specs\\billing-repo\\specs",
         "label": "specs",
-        "isFolder": true
+        "isFolder": true,
+        "kind": "local"
       }
     ],
     "repositories": [
       {
         "id": "octo/spec-repo",
         "name": "octo/spec-repo",
-        "url": "https://github.com/octo/spec-repo"
+        "url": "https://github.com/octo/spec-repo",
+        "defaultBranch": "main",
+        "clones": [
+          {
+            "id": "octo-specs",
+            "path": "C:\\specs\\octo-specs",
+            "branches": ["review-copy"]
+          }
+        ]
       }
     ]
   }

@@ -69,6 +69,20 @@ describe("LifecycleChrome.setLifecycle", () => {
     expect(hidden("update-review")).toBe(true);
   });
 
+  it("remote preview: keeps every editing and save action unavailable", () => {
+    const { chrome, setPaneEditable } = harness();
+    chrome.setGitHubAvailable(true);
+    chrome.setDocumentReadOnly(true);
+    chrome.setLifecycle("draft");
+    expect(setPaneEditable).toHaveBeenLastCalledWith(false);
+    expect(hidden("edit")).toBe(true);
+    expect(hidden("save")).toBe(true);
+    expect(hidden("save-version")).toBe(true);
+    expect(hidden("discard")).toBe(true);
+    expect(hidden("send-for-review")).toBe(true);
+    expect(hidden("update-review")).toBe(true);
+  });
+
   // Once In review (and the other post-draft states) the document is still editable and can take more
   // versions; Discard and Send for review are no longer legal moves (both stay hidden), and Update review
   // takes over — pushing the newly-saved versions to the open PR.

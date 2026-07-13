@@ -40,18 +40,18 @@ public sealed class FileTreeBuilderTests
 	}
 
 	[Test]
-	public void Build_IncludesOnlyMarkdown_DirectoriesFirst_Sorted()
+	public void Build_IncludesAllFiles_DirectoriesFirst_Sorted()
 	{
 		Touch("zeta.md");
 		Touch("alpha.markdown");
-		Touch("readme.txt"); // excluded — not Markdown
+		Touch("readme.txt");
 		Touch("sub", "b.md");
 		Touch("sub", "a.md");
 
 		TreePayload tree = FileTreeBuilder.Build(_root);
 
 		// Directory ("sub") before files ("alpha.markdown", "zeta.md"); files alphabetical (case-insensitive).
-		string[] topLevel = ["sub", "alpha.markdown", "zeta.md"];
+		string[] topLevel = ["sub", "alpha.markdown", "readme.txt", "zeta.md"];
 		string[] subChildren = ["a.md", "b.md"];
 		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(topLevel));
 		TreeNode sub = tree.Nodes[0];
@@ -63,17 +63,17 @@ public sealed class FileTreeBuilderTests
 	}
 
 	[Test]
-	public void Build_PrunesDirectoriesWithNoMarkdownBeneath()
+	public void Build_KeepsDirectoriesWithAnyFilesBeneath()
 	{
 		Touch("keep.md");
-		// A directory tree that holds only non-Markdown — every level must be pruned away.
+		// Non-Markdown files are navigable too.
 		Touch("assets", "images", "logo.png");
 		Touch("empty-dir", "deeper", "data.json");
 
 		TreePayload tree = FileTreeBuilder.Build(_root);
 
-		string[] onlyKeep = ["keep.md"];
-		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(onlyKeep));
+		string[] expected = ["assets", "empty-dir", "keep.md"];
+		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(expected));
 	}
 
 	[Test]
@@ -110,12 +110,40 @@ public sealed class FileTreeBuilderTests
 		TreePayload tree = FileTreeBuilder.Build(_root);
 
 		Assert.That(tree.Nodes.Select(n => n.Name), Does.Contain("real.md"));
-		// "sub" holds only the reparse-point "loop" (skipped) and no Markdown, so it prunes away entirely.
+		// "sub" holds only the reparse-point "loop" (skipped), so it prunes away entirely.
 		Assert.That(tree.Nodes.Select(n => n.Name), Does.Not.Contain("sub"));
 	}
 
 	[Test]
-	public void Build_KeepsADirectoryThatHasMarkdownOnlyDeepInside()
+	public void Build_DoesNotExposeAFileSymlinkOutsideTheWorkspace()
+	{
+		string target = Path.Combine(Path.GetTempPath(), "specdesk-tree-target-" + Guid.NewGuid().ToString("N") + ".txt");
+		File.WriteAllText(target, "outside");
+		try
+		{
+			string link = Path.Combine(_root, "outside.txt");
+			try
+			{
+				File.CreateSymbolicLink(link, target);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+			{
+				Assert.Ignore("File symbolic links can't be created here (needs privilege / OS support).");
+				return;
+			}
+
+			TreePayload tree = FileTreeBuilder.Build(_root);
+
+			Assert.That(tree.Nodes.Select(node => node.Name), Does.Not.Contain("outside.txt"));
+		}
+		finally
+		{
+			File.Delete(target);
+		}
+	}
+
+	[Test]
+	public void Build_KeepsADirectoryThatHasAFileOnlyDeepInside()
 	{
 		Touch("outer", "inner", "buried.md");
 

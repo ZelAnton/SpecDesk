@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
+using SpecDesk.Git;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
@@ -16,6 +17,21 @@ public sealed class HostControllerGitHubTests
         public string? PickSaveFile(string? suggestedPath) => null;
     }
 
+    private sealed class CreatingCloner(string destination) : IRepositoryCloner
+    {
+        public int CloneCalls { get; private set; }
+        public bool IsCloned(string destinationPath) => false;
+
+        public string CloneOrReuse(
+            string url, string destinationPath, string? accessToken, CancellationToken cancellationToken)
+        {
+            CloneCalls++;
+            Directory.CreateDirectory(destination);
+            File.WriteAllText(Path.Combine(destination, "README.md"), "# Authorized clone");
+            return destination;
+        }
+    }
+
     private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
 
     // A scripted IGitHubAuth: a fixed prompt + result, controllable signed-in state, and an optional
@@ -30,13 +46,17 @@ public sealed class HostControllerGitHubTests
 
         public string? Login { get; set; }
 
-        public int SignOutCalls { get; private set; }
+		public int SignOutCalls { get; private set; }
+		public int StartCalls { get; private set; }
 
         /// <summary>When true, AwaitAuthorizationAsync blocks until cancelled (the user never authorizes).</summary>
         public bool BlockUntilCancelled { get; init; }
 
-        public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Prompt);
+		public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+		{
+			StartCalls++;
+			return Task.FromResult(Prompt);
+		}
 
         public async Task<SignInResult> AwaitAuthorizationAsync(
             DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
@@ -52,6 +72,11 @@ public sealed class HostControllerGitHubTests
                 {
                     return SignInResult.TimedOut();
                 }
+            }
+            if (result.Outcome == SignInOutcome.Authorized)
+            {
+                SignedIn = true;
+                Login = result.Login;
             }
             return result;
         }
@@ -128,13 +153,108 @@ public sealed class HostControllerGitHubTests
         }
     }
 
-    private static (HostController Controller, List<string> Sent, object Gate) Build(IGitHubAuth? auth)
+    private sealed class RacingStartGitHubAuth : IGitHubAuth
+    {
+        private int _startCount;
+        private bool _signedIn;
+
+        public TaskCompletionSource FirstStartEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ReleaseFirstStart { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+        {
+            int call = Interlocked.Increment(ref _startCount);
+            if (call == 1)
+            {
+                FirstStartEntered.SetResult();
+                await ReleaseFirstStart.Task;
+                throw new HttpRequestException("stale start failed");
+            }
+
+            return new DeviceCodePrompt(
+                "NEW-CODE", new Uri("https://github.com/login/device"),
+                TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5), "new-device-code");
+        }
+
+        public Task<SignInResult> AwaitAuthorizationAsync(
+            DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+        {
+            _signedIn = true;
+            return Task.FromResult(SignInResult.Authorized("octocat"));
+        }
+
+        public bool IsSignedIn() => _signedIn;
+        public string? SignedInLogin() => _signedIn ? "octocat" : null;
+
+        public Task<T> WithAccessTokenAsync<T>(
+            Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+            use("gho_test", cancellationToken);
+
+        public void SignOut() => _signedIn = false;
+    }
+
+    private enum RaceStage
+    {
+        Prompt,
+        Terminal,
+    }
+
+    private sealed class OrdinaryRaceGitHubAuth(RaceStage stage) : IGitHubAuth
+    {
+        private int _calls;
+        public TaskCompletionSource FirstPaused { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirst { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+        {
+            int call = Interlocked.Increment(ref _calls);
+            if (call == 1 && stage == RaceStage.Prompt)
+            {
+                FirstPaused.SetResult();
+                await ReleaseFirst.Task;
+            }
+            return new DeviceCodePrompt(
+                call == 1 ? "OLD-CODE" : "NEW-CODE",
+                new Uri("https://github.com/login/device"),
+                TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5), $"device-{call}");
+        }
+
+        public async Task<SignInResult> AwaitAuthorizationAsync(
+            DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+        {
+            if (prompt.UserCode == "OLD-CODE" && stage == RaceStage.Terminal)
+            {
+                FirstPaused.SetResult();
+                await ReleaseFirst.Task;
+            }
+            return SignInResult.Authorized(prompt.UserCode == "OLD-CODE" ? "old-user" : "new-user");
+        }
+
+        public bool IsSignedIn() => false;
+        public string? SignedInLogin() => null;
+        public Task<T> WithAccessTokenAsync<T>(
+            Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+            use("gho_test", cancellationToken);
+        public void SignOut() { }
+    }
+
+	private static (HostController Controller, List<string> Sent, object Gate) Build(
+		IGitHubAuth? auth,
+		WorkspaceStore? workspace = null,
+		IRepositoryCloner? cloner = null,
+		Action<string>? beforeSend = null)
     {
         List<string> sent = [];
         object gate = new();
-        void Send(string json)
-        {
-            lock (gate)
+		void Send(string json)
+		{
+			beforeSend?.Invoke(json);
+			lock (gate)
             {
                 sent.Add(json);
             }
@@ -142,7 +262,8 @@ public sealed class HostControllerGitHubTests
 
         HostController controller = new(
             StubRender, Send, new NoDialogs(), (_, _, _, _, _) => null,
-            new FakeVersioning(), NullLogger<HostController>.Instance, auth: auth);
+            new FakeVersioning(), NullLogger<HostController>.Instance,
+            auth: auth, workspace: workspace, cloner: cloner);
         return (controller, sent, gate);
     }
 
@@ -170,7 +291,7 @@ public sealed class HostControllerGitHubTests
     }
 
     [Test]
-    public void SignIn_emits_the_code_then_the_authorized_account()
+	public void SignIn_emits_the_code_then_the_authorized_account()
     {
         (HostController controller, List<string> sent, object gate) = Build(new FakeGitHubAuth(SignInResult.Authorized("octocat")));
         using (controller)
@@ -178,7 +299,7 @@ public sealed class HostControllerGitHubTests
             controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
 
             IpcMessage? code = WaitForKind(sent, gate, MessageKinds.GitHubCode);
-            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+			IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
 
             Assert.That(code, Is.Not.Null);
             Assert.That(account, Is.Not.Null);
@@ -194,14 +315,14 @@ public sealed class HostControllerGitHubTests
     }
 
     [Test]
-    public void A_non_authorized_signIn_emits_a_plain_language_message()
+	public void A_non_authorized_signIn_emits_a_plain_language_message()
     {
         (HostController controller, List<string> sent, object gate) = Build(new FakeGitHubAuth(SignInResult.Expired()));
         using (controller)
         {
             controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
 
-            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+			IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
 
             Assert.That(account, Is.Not.Null);
             GitHubAccountPayload payload = account!.GetPayload<GitHubAccountPayload>()!;
@@ -295,6 +416,13 @@ public sealed class HostControllerGitHubTests
                 // its own cancellation back to a plain signed-out state).
                 Assert.That(payload.Message, Is.Null);
             });
+
+            Thread.Sleep(100);
+            lock (gate)
+            {
+                Assert.That(sent.Count(json =>
+                    IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.GitHubAccount), Is.EqualTo(1));
+            }
         }
     }
 
@@ -332,7 +460,7 @@ public sealed class HostControllerGitHubTests
     }
 
     [Test]
-    public void A_cancelled_signIns_fallback_does_not_close_a_newer_signIns_code_prompt()
+	public void A_cancelled_signIns_fallback_does_not_close_a_newer_signIns_code_prompt()
     {
         // Regression for M-14: start a sign-in, cancel it, then start a newer one before the cancelled
         // flow's background task unwinds. The stale flow's "signed out" fallback must stay quiet — only
@@ -351,18 +479,18 @@ public sealed class HostControllerGitHubTests
             Assert.That(newerCode, Is.Not.Null);
             Assert.That(newerCode!.GetPayload<GitHubCodePayload>()!.UserCode, Is.EqualTo("CODE-2"));
 
-            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+			IpcMessage? account = WaitForNthKind(sent, gate, MessageKinds.GitHubAccount, count: 2);
             Assert.That(account, Is.Not.Null);
             GitHubAccountPayload payload = account!.GetPayload<GitHubAccountPayload>()!;
             Assert.Multiple(() =>
             {
-                // The newer flow's own outcome must win, never the stale flow's signed-out fallback.
+				// The newer flow's own outcome must follow the cancel action's single terminal frame.
                 Assert.That(payload.SignedIn, Is.True);
                 Assert.That(payload.Login, Is.EqualTo("octocat"));
             });
 
-            // Give the stale flow's own background task a further beat to (mis)behave, then confirm exactly
-            // one GitHubAccount frame ever reached the webview — the cancelled flow's fallback never fired.
+			// Give the stale flow's own background task a further beat to (mis)behave. There must be exactly
+			// two account frames: one owned by Cancel and one owned by the newer successful flow.
             Thread.Sleep(100);
             int accountFrames;
             lock (gate)
@@ -371,7 +499,246 @@ public sealed class HostControllerGitHubTests
                     IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.GitHubAccount);
             }
 
-            Assert.That(accountFrames, Is.EqualTo(1));
+			Assert.That(accountFrames, Is.EqualTo(2));
         }
     }
+
+    [Test]
+    public void RegisteringWhileSignedOut_ContinuesAfterAuthorization()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-register-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+            WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+            (HostController controller, List<string> sent, object gate) = Build(auth, workspace);
+            using (controller)
+            {
+                controller.OnMessage(IpcSerializer.SerializeEvent(
+                    MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+
+                Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubCode), Is.Not.Null);
+                Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubAccount), Is.Not.Null);
+                IpcMessage? state = WaitForKind(sent, gate, MessageKinds.WorkspaceState);
+                Assert.That(state?.GetPayload<WorkspaceStatePayload>()?.Repositories.Select(repo => repo.Id),
+                    Has.Member("octo/specs"));
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void OpeningWhileSignedOut_ClonesAndOpensAfterAuthorization()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-open-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+            WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+            CreatingCloner cloner = new(Path.Combine(root, "clone"));
+            (HostController controller, List<string> sent, object gate) = Build(auth, workspace, cloner);
+            using (controller)
+            {
+                controller.OnMessage(IpcSerializer.SerializeEvent(
+                    MessageKinds.RepoOpen, new RepoOpenPayload("octo/specs")));
+
+                Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubCode), Is.Not.Null);
+                Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubAccount), Is.Not.Null);
+                Assert.That(WaitForKind(sent, gate, MessageKinds.Tree), Is.Not.Null);
+                Assert.That(cloner.CloneCalls, Is.EqualTo(1));
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void AStaleStartFailure_DoesNotClearOrOverwriteANewerAuthorization()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-race-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            RacingStartGitHubAuth auth = new();
+            WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+            (HostController controller, List<string> sent, object gate) = Build(auth, workspace);
+            using (controller)
+            {
+                controller.OnMessage(IpcSerializer.SerializeEvent(
+                    MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+                Assert.That(auth.FirstStartEntered.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+                controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+                Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubAccount), Is.Not.Null);
+                auth.ReleaseFirstStart.SetResult();
+                Thread.Sleep(100);
+
+                lock (gate)
+                {
+                    GitHubAccountPayload[] accounts = sent
+                        .Select(IpcSerializer.TryDeserialize)
+                        .Where(message => message?.Kind == MessageKinds.GitHubAccount)
+                        .Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+                        .ToArray();
+                    Assert.That(accounts, Has.Length.EqualTo(1));
+                    Assert.That(accounts[0].SignedIn, Is.True);
+                }
+
+                Assert.That(workspace.State().Repositories.Select(repo => repo.Id), Has.Member("octo/specs"));
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void AStalePrompt_IsNeverPublishedAfterANewerFlowStarts()
+    {
+        OrdinaryRaceGitHubAuth auth = new(RaceStage.Prompt);
+        (HostController controller, List<string> sent, object gate) = Build(auth);
+        using (controller)
+        {
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            Assert.That(auth.FirstPaused.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            IpcMessage? newer = WaitForKind(sent, gate, MessageKinds.GitHubCode);
+            Assert.That(newer?.GetPayload<GitHubCodePayload>()?.UserCode, Is.EqualTo("NEW-CODE"));
+            auth.ReleaseFirst.SetResult();
+            Thread.Sleep(100);
+
+            lock (gate)
+            {
+                string[] codes = sent
+                    .Select(IpcSerializer.TryDeserialize)
+                    .Where(message => message?.Kind == MessageKinds.GitHubCode)
+                    .Select(message => message!.GetPayload<GitHubCodePayload>()!.UserCode)
+                    .ToArray();
+				Assert.That(codes, Has.Length.EqualTo(1));
+				Assert.That(codes[0], Is.EqualTo("NEW-CODE"));
+            }
+        }
+    }
+
+    [Test]
+	public void AStaleOrdinaryAuthorizedResult_IsSilentAfterANewerFlowWins()
+    {
+        OrdinaryRaceGitHubAuth auth = new(RaceStage.Terminal);
+        (HostController controller, List<string> sent, object gate) = Build(auth);
+        using (controller)
+        {
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            Assert.That(auth.FirstPaused.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            IpcMessage? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount);
+            Assert.That(account?.GetPayload<GitHubAccountPayload>()?.Login, Is.EqualTo("new-user"));
+            auth.ReleaseFirst.SetResult();
+            Thread.Sleep(100);
+
+            lock (gate)
+            {
+                GitHubAccountPayload[] accounts = sent
+                    .Select(IpcSerializer.TryDeserialize)
+                    .Where(message => message?.Kind == MessageKinds.GitHubAccount)
+                    .Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+                    .ToArray();
+                Assert.That(accounts, Has.Length.EqualTo(1));
+                Assert.That(accounts[0].Login, Is.EqualTo("new-user"));
+			}
+		}
+	}
+
+	[Test]
+	public void Dispose_WaitsForClaimedTerminalPublicationAndNoWorkContinuesAfterReturn()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-dispose-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			using ManualResetEventSlim terminalEntered = new();
+			using ManualResetEventSlim releaseTerminal = new();
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, List<string> sent, object gate) = Build(
+				auth,
+				workspace,
+				beforeSend: json =>
+				{
+					IpcMessage? message = IpcSerializer.TryDeserialize(json);
+					if (message?.Kind == MessageKinds.GitHubAccount
+						&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true)
+					{
+						terminalEntered.Set();
+						releaseTerminal.Wait(TimeSpan.FromSeconds(2));
+					}
+				});
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoRegister,
+				new RegisterRepoPayload("octo/specs")));
+			Assert.That(terminalEntered.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+			Task dispose = Task.Run(controller.Dispose);
+			Assert.That(dispose.Wait(TimeSpan.FromMilliseconds(100)), Is.False,
+				"Dispose must wait for the terminal publication gate");
+			releaseTerminal.Set();
+			Assert.That(dispose.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+			Assert.That(workspace.State().Repositories.Any(repo => repo.Id == "octo/specs"), Is.True);
+			int sentAfterDispose;
+			lock (gate)
+			{
+				sentAfterDispose = sent.Count;
+			}
+			Thread.Sleep(100);
+			lock (gate)
+			{
+				Assert.That(sent, Has.Count.EqualTo(sentAfterDispose));
+			}
+			Assert.That(workspace.State().Repositories, Has.Count.EqualTo(1));
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void MessagesAfterDispose_CannotStartAuthorizationOrRepositoryWork()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-after-dispose-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, List<string> sent, object gate) = Build(auth, workspace);
+			controller.Dispose();
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoRegister,
+				new RegisterRepoPayload("octo/specs")));
+			Thread.Sleep(100);
+
+			Assert.That(auth.StartCalls, Is.Zero);
+			Assert.That(workspace.State().Repositories, Is.Empty);
+			lock (gate)
+			{
+				Assert.That(sent, Is.Empty);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
 }

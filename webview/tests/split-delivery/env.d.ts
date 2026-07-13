@@ -15,8 +15,8 @@ declare module "node:child_process" {
 }
 
 declare module "node:fs" {
-  export function readFileSync(path: string, encoding: "utf8"): string;
-  export function readFileSync(path: string): Uint8Array;
+  export function readFileSync(path: string | URL, encoding: "utf8"): string;
+  export function readFileSync(path: string | URL): Uint8Array;
   export function mkdirSync(path: string): void;
   export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
   export function statSync(path: string): { readonly mtimeMs: number };
@@ -42,7 +42,10 @@ declare module "node:crypto" {
   };
 }
 
-declare const process: { readonly execPath: string };
+declare const process: {
+  readonly execPath: string;
+  readonly env: Readonly<Record<string, string | undefined>>;
+};
 
 /**
  * The T-107 content-manifest module (scripts/webview-manifest.mjs) — the single source of truth the

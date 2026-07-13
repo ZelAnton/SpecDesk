@@ -108,6 +108,7 @@ All are operator/dev opt-ins; unset, behaviour is the shipped default.
 | `SPECDESK_LOG_LEVEL` | File-sink minimum: `verbose`/`trace`, `debug`, `info`/`information`, `warning`/`warn`, `error`, `fatal`/`critical`, or `off`/`none`/`silent` (fatal-only). Default `debug`. |
 | `SPECDESK_DEVTOOLS` | `1`/`true`/`yes`/`on` → enable WebView2 devtools + right-click menu (Debug and Release). Off by default; a shipped app exposes neither. |
 | `E2E_SKIP_BUILD` | `1` → Layer 2 skips the `dotnet build` before launch (fast inner loop). |
+| `SPECDESK_DELIVERY_PREBUILT` | `1` → delivery and E2E gates consume an already-built bundle but still require its manifest to verify as current. Use only when the sandbox forbids esbuild child-process spawn; build first with the native esbuild executable. |
 | `SPECDESK_ALLOW_STALE_WORKTREE` / `SPECDESK_WEBVIEW_ALLOW_STALE` | Override the currency/bundle guards to run a deliberately stale build. **Never set these for E2E.** |
 
 ## Guard-failure recovery

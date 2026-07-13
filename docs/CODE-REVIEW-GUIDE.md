@@ -183,11 +183,10 @@ normal, in-scope finding.
   implemented" is not a useful finding here. (Minor, harmless doc drift: the `.csproj` TODO comment
   and root `README.md` call this "PoC-8"; `docs/ROADMAP.md` numbers it "PoC-9" — same milestone, two
   labels in the wild.)
-- **`GitHubAuthOptions.DefaultClientId` is an empty string** (`""`) by design for local/dev builds —
-  the real client id is meant to arrive via the `SPECDESK_GITHUB_CLIENT_ID` env var, or be compiled in
-  before a real release. Its emptiness means the "Connect to GitHub" affordance simply hides; this is
-  documented as a release-readiness checklist item (`docs/ROADMAP.md` PoC-5), not a crash-causing bug —
-  though it's worth flagging again if you're specifically reviewing for release-readiness gaps.
+- **`GitHubAuthOptions.DefaultClientId` is intentionally embedded** — an OAuth client id is a public
+  identifier, not a client secret, and SpecDesk's device flow needs it in every shipped build. Development
+  and test runs can override it through `SPECDESK_GITHUB_CLIENT_ID`. Do flag a missing/empty default as a
+  release-readiness regression, but do not report the checked-in client id itself as exposed credentials.
 - **`.github/CODEOWNERS` is fully commented out** (a placeholder `# * @__GitHubOwner__`) — intentional
   until the repo has a real owner to fill in; don't flag the missing CODEOWNERS enforcement as a gap
   unless asked to audit release-readiness specifically.

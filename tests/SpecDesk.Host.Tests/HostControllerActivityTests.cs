@@ -9,6 +9,22 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class HostControllerActivityTests
 {
+	private sealed class RemoteCatalog : IGitHubRepositoryCatalog
+	{
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult(new GitHubRepositoryMetadata("main"));
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<GitHubRepositoryEntry>>([]);
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => Task.FromResult("# Remote");
+	}
+
 	private sealed class NoDialogs : IFileDialogs
 	{
 		public string? PickOpenFile() => null;
@@ -259,6 +275,75 @@ public sealed class HostControllerActivityTests
 				Assert.That(review.ListReviewCommentsCalls, Is.EqualTo(1));
 				Assert.That(payload?.Comments, Has.Count.EqualTo(1));
 				Assert.That(payload?.Comments[0].Body, Is.EqualTo("Please clarify"));
+			});
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemotePreview_PublishesContextAndLoadsActivityForTheExactOnlineDocument()
+	{
+		string root = Path.Combine(Path.GetTempPath(), $"specdesk-remote-activity-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			FakeGitHubReview review = new()
+			{
+				ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 42, PullRequestState.Open),
+				CommentsValue =
+				[
+					new ReviewComment(
+						"1", "Docs/Guide.md", "reviewer", "Please clarify", DateTimeOffset.UnixEpoch),
+				],
+			};
+			List<string> sent = [];
+			void Send(string json)
+			{
+				lock (sent)
+				{
+					sent.Add(json);
+				}
+			}
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				Send,
+				new NoDialogs(),
+				(_, _, _, _, _) => null,
+				new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(signedIn: true),
+				review: review,
+				workspace: store,
+				repositoryCatalog: new RemoteCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen,
+				new DocOpenPayload("github://octo/specs/feature%2Fdocs/Docs%2FGuide.md")));
+			Assert.That(WaitFor(sent, MessageKinds.DocLoaded), Is.Not.Null);
+			controller.OnMessage(IpcSerializer.Serialize(new IpcMessage(
+				MessageKinds.DocumentActivityRequest, Id: "remote-activity")));
+
+			WorkspaceContextPayload? context = WaitFor(sent, MessageKinds.WorkspaceContext)
+				?.GetPayload<WorkspaceContextPayload>();
+			DocumentActivityPayload? activity = WaitFor(sent, MessageKinds.DocumentActivity)
+				?.GetPayload<DocumentActivityPayload>();
+			Assert.Multiple(() =>
+			{
+				Assert.That(context?.Repository, Is.EqualTo("octo/specs"));
+				Assert.That(context?.RepositoryRoot, Is.Null);
+				Assert.That(context?.Branch, Is.EqualTo("feature/docs"));
+				Assert.That(context?.BranchState, Is.EqualTo("named"));
+				Assert.That(context?.DefaultBranch, Is.EqualTo("main"));
+				Assert.That(context?.Path, Is.EqualTo("Docs/Guide.md"));
+				Assert.That(activity?.Document, Is.EqualTo("Guide.md"));
+				Assert.That(activity?.HistoryState, Is.EqualTo("notVersioned"));
+				Assert.That(activity?.Comments.Single().Body, Is.EqualTo("Please clarify"));
 			});
 		}
 		finally

@@ -52,6 +52,7 @@ import {
 } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
+import { remoteWirePath } from "./workspace/remote-path.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
@@ -723,6 +724,7 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(text);
+        lifecycleChrome.setDocumentReadOnly(payload.readOnly);
         // Refresh the outline for the freshly loaded document.
         updateOutline(text);
         // Keep the left-rail file navigator relevant: highlight the freshly opened document, and ask for the
@@ -732,7 +734,9 @@ function wire(): void {
         fileTree?.setActiveFile(payload.path);
         invalidateActivityRequests();
         for (const panel of activityPanels) void panel.refresh();
-        ipc.send(Kinds.treeRequest);
+        if (!payload.readOnly) {
+          ipc.send(Kinds.treeRequest);
+        }
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
@@ -753,7 +757,9 @@ function wire(): void {
         syncReviewPolling();
         lifecycleChrome.setLifecycle("published");
         // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
-        showPlainStatus(payload.path);
+        showPlainStatus(
+          payload.readOnly && payload.repositoryPath ? payload.repositoryPath : payload.path,
+        );
         dialogs.closeAll();
         // If we just returned from a non-editor central view, move focus into the freshly shown editing
         // surface so a keyboard user isn't left on the now-hidden Start screen (and lands ready to edit).
@@ -1230,6 +1236,8 @@ function wire(): void {
     const files = new FileTree({
       onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
       onOpenFolder: () => openFolder(),
+      onToggleFavorite: (item, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     });
     fileTree = files;
 
@@ -1237,6 +1245,25 @@ function wire(): void {
     // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
     // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
     const openWorkspaceItem = (item: WorkspaceItem): void => {
+      if (item.kind === "repository") {
+        if (item.repositoryId) {
+          ipc.send(Kinds.repoBrowse, { id: item.repositoryId });
+        }
+        return;
+      }
+      if (item.kind === "remote") {
+        if (item.repositoryId && item.branch) {
+          const path = remoteWirePath(item.repositoryId, item.branch, item.path);
+          if (item.isFolder) {
+            files.setActiveFile(path);
+            revealWorkspaceFiles();
+            ipc.send(Kinds.repoBrowse, { id: item.repositoryId, branch: item.branch });
+          } else {
+            ipc.send(Kinds.docOpen, { path });
+          }
+        }
+        return;
+      }
       if (item.isFolder) {
         openFolder(item.path);
       } else {
@@ -1248,7 +1275,7 @@ function wire(): void {
     const listCallbacks: WorkspaceListCallbacks = {
       onOpen: openWorkspaceItem,
       onToggleFavorite: (item, favorite) =>
-        ipc.send(Kinds.workspaceFavorite, { path: item.path, favorite }),
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     };
     const recent = recentPanel(listCallbacks);
     const favorites = favoritesPanel(listCallbacks);
@@ -1257,7 +1284,17 @@ function wire(): void {
     const repositories = new RepositoriesPanel({
       onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
-      onOpenRepo: (repo) => openRepo(repo.url),
+      onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
+      onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
+      onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
+      onToggleFavorite: (repo, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, {
+          path: repo.id,
+          repositoryId: repo.id,
+          kind: "repository",
+          isFolder: true,
+          favorite,
+        }),
     });
 
     const workspace = setupWorkspace(
@@ -1320,6 +1357,7 @@ function wire(): void {
       if (payload) {
         recent.setState(payload);
         favorites.setState(payload);
+        files.setFavorites(payload.favorites);
         repositories.setState(payload);
         assistantChat?.setRepositories(payload.repositories);
         home?.setRecents(payload.recent);

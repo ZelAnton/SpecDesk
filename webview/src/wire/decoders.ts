@@ -82,11 +82,27 @@ export function parseDocLoaded(value: unknown): DocLoadedPayload | null {
     !isRecord(value) ||
     !isString(value.path) ||
     !isString(value.text) ||
-    !isString(value.docDir)
+    !isString(value.docDir) ||
+    !isBoolean(value.readOnly)
   ) {
     return null;
   }
-  return { path: value.path, text: value.text, docDir: value.docDir };
+  if (
+    (value.repository !== undefined && !isString(value.repository)) ||
+    (value.branch !== undefined && !isString(value.branch)) ||
+    (value.repositoryPath !== undefined && !isString(value.repositoryPath))
+  ) {
+    return null;
+  }
+  return {
+    path: value.path,
+    text: value.text,
+    docDir: value.docDir,
+    readOnly: value.readOnly,
+    ...(isString(value.repository) ? { repository: value.repository } : {}),
+    ...(isString(value.branch) ? { branch: value.branch } : {}),
+    ...(isString(value.repositoryPath) ? { repositoryPath: value.repositoryPath } : {}),
+  };
 }
 
 function parseLineSpan(value: unknown): LineSpan | null {
@@ -533,14 +549,116 @@ function parseWorkspaceItem(value: unknown): WorkspaceItem | null {
   ) {
     return null;
   }
-  return { path: value.path, label: value.label, isFolder: value.isFolder };
+  const kind = value.kind === undefined ? "local" : value.kind;
+  if (
+    (kind !== "local" && kind !== "remote" && kind !== "repository") ||
+    (value.repositoryId !== undefined && !isString(value.repositoryId)) ||
+    (value.branch !== undefined && !isString(value.branch))
+  ) {
+    return null;
+  }
+  if (
+    (kind === "local" &&
+      (value.repositoryId !== undefined ||
+        value.branch !== undefined ||
+        !isAbsoluteLocalPath(value.path))) ||
+    (kind === "remote" &&
+      (!isRepositoryId(value.repositoryId) ||
+        !isRemoteBranch(value.branch) ||
+        !isRemoteRelativePath(value.path))) ||
+    (kind === "repository" &&
+      (!value.isFolder ||
+        value.branch !== undefined ||
+        !isRepositoryId(value.repositoryId) ||
+        value.path.toLowerCase() !== value.repositoryId.toLowerCase()))
+  ) {
+    return null;
+  }
+  return {
+    path: value.path,
+    label: value.label,
+    isFolder: value.isFolder,
+    kind,
+    ...(isString(value.repositoryId) ? { repositoryId: value.repositoryId } : {}),
+    ...(isString(value.branch) ? { branch: value.branch } : {}),
+  };
+}
+
+function isRepositoryId(value: unknown): value is string {
+  if (!isString(value) || value.trim() === "" || value.length > 256) {
+    return false;
+  }
+  const segments = value.split("/");
+  return (
+    segments.length === 2 && isGitHubOwner(segments[0] ?? "") && isGitHubRepoName(segments[1] ?? "")
+  );
+}
+
+function isGitHubOwner(owner: string): boolean {
+  return (
+    owner.length > 0 &&
+    !owner.startsWith("-") &&
+    !owner.endsWith("-") &&
+    /^[A-Za-z0-9-]+$/.test(owner)
+  );
+}
+
+function isGitHubRepoName(name: string): boolean {
+  return name !== "" && name !== "." && name !== ".." && /^[A-Za-z0-9._-]+$/.test(name);
+}
+
+function isAbsoluteLocalPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+}
+
+function isRemoteBranch(value: unknown): value is string {
+  return (
+    isString(value) && value.trim() !== "" && value.length <= 1024 && !hasControlCharacter(value)
+  );
+}
+
+function isRemoteRelativePath(value: string): boolean {
+  if (value.length > 4096 || hasControlCharacter(value)) return false;
+  const segments = value.split("/");
+  return (
+    segments.length <= 64 &&
+    segments.every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  );
+}
+
+function hasControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
 }
 
 function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
-  if (!isRecord(value) || !isString(value.id) || !isString(value.name) || !isString(value.url)) {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.name) ||
+    !isString(value.url) ||
+    !isString(value.defaultBranch)
+  ) {
     return null;
   }
-  return { id: value.id, name: value.name, url: value.url };
+  const clones = parseArray(value.clones, (clone) => {
+    if (!isRecord(clone) || !isString(clone.id) || !isString(clone.path)) {
+      return null;
+    }
+    const branches = parseArray(clone.branches, (branch) => (isString(branch) ? branch : null));
+    return branches === null ? null : { id: clone.id, path: clone.path, branches };
+  });
+  return clones === null
+    ? null
+    : {
+        id: value.id,
+        name: value.name,
+        url: value.url,
+        defaultBranch: value.defaultBranch,
+        clones,
+      };
 }
 
 export function parseWorkspaceState(value: unknown): WorkspaceStatePayload | null {

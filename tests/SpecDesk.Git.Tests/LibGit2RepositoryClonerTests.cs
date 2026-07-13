@@ -122,4 +122,44 @@ public sealed class LibGit2RepositoryClonerTests
         Assert.Throws<ArgumentException>(
             () => _cloner.CloneOrReuse(string.Empty, _dest, null, CancellationToken.None));
     }
+
+    [Test]
+    public void Inspect_InfersMasterAndOmitsItFromTheNestedBranchList()
+    {
+        _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+        using (Repository repository = new(_dest))
+        {
+            repository.Branches.Rename(repository.Head, "master");
+            repository.CreateBranch("draft");
+        }
+
+        LocalRepositoryInfo info = _cloner.Inspect(_dest, knownDefaultBranch: string.Empty);
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(info.DefaultBranch, Is.EqualTo("master"));
+            Assert.That(info.Branches, Has.Member("draft"));
+            Assert.That(info.Branches, Has.No.Member("master"));
+        });
+    }
+
+    [Test]
+    public void Inspect_PreservesAKnownCustomDefaultAndOmitsIt()
+    {
+        _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+        using (Repository repository = new(_dest))
+        {
+            repository.CreateBranch("trunk");
+            repository.CreateBranch("draft");
+        }
+
+        LocalRepositoryInfo info = _cloner.Inspect(_dest, knownDefaultBranch: "trunk");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(info.DefaultBranch, Is.EqualTo("trunk"));
+            Assert.That(info.Branches, Has.Member("draft"));
+            Assert.That(info.Branches, Has.No.Member("trunk"));
+        });
+    }
 }

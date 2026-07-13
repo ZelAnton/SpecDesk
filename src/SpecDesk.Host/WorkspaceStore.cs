@@ -39,9 +39,17 @@ public sealed class WorkspaceStore
 		_path = path;
 		PersistedState? state = Load();
 		// Coalesce so a partially-written file (a list absent or explicitly null) still yields a usable store.
-		_recent = state?.Recent ?? [];
-		_favorites = state?.Favorites ?? [];
-		_repositories = state?.Repositories ?? [];
+		_recent = state?.Recent?
+			.Select(NormalizeItem)
+			.Where(item => item is not null && item.Kind == "local")
+			.Select(item => item!)
+			.ToList() ?? [];
+		_favorites = state?.Favorites?
+			.Select(NormalizeItem)
+			.Where(item => item is not null)
+			.Select(item => item!)
+			.ToList() ?? [];
+		_repositories = state?.Repositories?.Select(NormalizeRepo).ToList() ?? [];
 	}
 
 	/// <summary>
@@ -73,12 +81,18 @@ public sealed class WorkspaceStore
 	public void SetFavorite(WorkspaceItem item, bool favorite)
 	{
 		ArgumentNullException.ThrowIfNull(item);
+		WorkspaceItem? normalized = NormalizeItem(item);
+		if (normalized is null)
+		{
+			return;
+		}
+		item = normalized;
 		lock (_sync)
 		{
 			bool changed;
 			if (favorite)
 			{
-				changed = !_favorites.Exists(existing => SamePath(existing.Path, item.Path));
+				changed = !_favorites.Exists(existing => SameFavoriteIdentity(existing, item));
 				if (changed)
 				{
 					_favorites.Add(item);
@@ -86,7 +100,7 @@ public sealed class WorkspaceStore
 			}
 			else
 			{
-				changed = _favorites.RemoveAll(existing => SamePath(existing.Path, item.Path)) > 0;
+				changed = _favorites.RemoveAll(existing => SameFavoriteIdentity(existing, item)) > 0;
 			}
 
 			// Only persist a real change — re-favoriting or un-favoriting a no-op shouldn't touch the disk
@@ -110,9 +124,95 @@ public sealed class WorkspaceStore
 		{
 			if (!_repositories.Exists(existing => string.Equals(existing.Id, repo.Id, StringComparison.OrdinalIgnoreCase)))
 			{
-				_repositories.Add(repo);
+				_repositories.Add(NormalizeRepo(repo));
 				Save();
 			}
+		}
+	}
+
+	public RegisteredRepo? FindRepo(string id)
+	{
+		lock (_sync)
+		{
+			return _repositories.FirstOrDefault(repo =>
+				string.Equals(repo.Id, id, StringComparison.OrdinalIgnoreCase));
+		}
+	}
+
+	public void UpdateRepo(RegisteredRepo repo)
+	{
+		ArgumentNullException.ThrowIfNull(repo);
+		lock (_sync)
+		{
+			int index = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, repo.Id, StringComparison.OrdinalIgnoreCase));
+			if (index < 0)
+			{
+				_repositories.Add(NormalizeRepo(repo));
+			}
+			else
+			{
+				_repositories[index] = NormalizeRepo(repo);
+			}
+			Save();
+		}
+	}
+
+	public void SetRepoDefaultBranch(RegisteredRepo seed, string defaultBranch)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		ArgumentException.ThrowIfNullOrWhiteSpace(defaultBranch);
+		lock (_sync)
+		{
+			int index = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, seed.Id, StringComparison.OrdinalIgnoreCase));
+			RegisteredRepo current = index >= 0 ? _repositories[index] : NormalizeRepo(seed);
+			RegisteredRepo updated = current with { DefaultBranch = defaultBranch };
+			if (index >= 0)
+			{
+				_repositories[index] = updated;
+			}
+			else
+			{
+				_repositories.Add(updated);
+			}
+			Save();
+		}
+	}
+
+	public void UpsertRepoClone(RegisteredRepo seed, RegisteredClone clone, string inferredDefaultBranch)
+	{
+		ArgumentNullException.ThrowIfNull(seed);
+		ArgumentNullException.ThrowIfNull(clone);
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, seed.Id, StringComparison.OrdinalIgnoreCase));
+			RegisteredRepo current = repoIndex >= 0 ? _repositories[repoIndex] : NormalizeRepo(seed);
+			List<RegisteredClone> clones = [.. current.Clones];
+			int cloneIndex = clones.FindIndex(existing => SamePath(existing.Path, clone.Path));
+			if (cloneIndex >= 0)
+			{
+				clones[cloneIndex] = clone;
+			}
+			else
+			{
+				clones.Add(clone);
+			}
+
+			string defaultBranch = string.IsNullOrWhiteSpace(current.DefaultBranch)
+				? inferredDefaultBranch
+				: current.DefaultBranch;
+			RegisteredRepo updated = current with { DefaultBranch = defaultBranch, Clones = clones };
+			if (repoIndex >= 0)
+			{
+				_repositories[repoIndex] = updated;
+			}
+			else
+			{
+				_repositories.Add(updated);
+			}
+			Save();
 		}
 	}
 
@@ -121,7 +221,11 @@ public sealed class WorkspaceStore
 	{
 		lock (_sync)
 		{
-			if (_repositories.RemoveAll(existing => string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0)
+			bool changed = _repositories.RemoveAll(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			changed |= _favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			if (changed)
 			{
 				Save();
 			}
@@ -191,6 +295,107 @@ public sealed class WorkspaceStore
 	// Windows filesystem paths are case-insensitive, and the same file/folder can reach the store under
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+	private static bool SameFavoriteIdentity(WorkspaceItem left, WorkspaceItem right)
+	{
+		if (!string.Equals(left.Kind, right.Kind, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(left.RepositoryId, right.RepositoryId, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(left.Branch, right.Branch, StringComparison.Ordinal))
+		{
+			return false;
+		}
+		return string.Equals(
+			left.Path, right.Path,
+			string.Equals(left.Kind, "remote", StringComparison.OrdinalIgnoreCase)
+				? StringComparison.Ordinal
+				: StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static WorkspaceItem? NormalizeItem(WorkspaceItem item)
+	{
+		string kind = string.IsNullOrWhiteSpace(item.Kind) ? "local" : item.Kind.ToLowerInvariant();
+		if (string.IsNullOrWhiteSpace(item.Path) || string.IsNullOrWhiteSpace(item.Label))
+		{
+			return null;
+		}
+		if (kind == "local")
+		{
+			if (item.RepositoryId is not null || item.Branch is not null || !Path.IsPathFullyQualified(item.Path))
+			{
+				return null;
+			}
+			try
+			{
+				return item with { Kind = kind, Path = Path.GetFullPath(item.Path) };
+			}
+			catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+			{
+				return null;
+			}
+		}
+		if (kind == "remote")
+		{
+			return IsRepositoryId(item.RepositoryId)
+				&& IsRemoteBranch(item.Branch)
+				&& IsRemoteRelativePath(item.Path)
+				? item with { Kind = kind }
+				: null;
+		}
+		if (kind == "repository")
+		{
+			return item.IsFolder
+				&& item.Branch is null
+				&& IsRepositoryId(item.RepositoryId)
+				&& string.Equals(item.Path, item.RepositoryId, StringComparison.OrdinalIgnoreCase)
+				? item with { Kind = kind, Path = item.RepositoryId! }
+				: null;
+		}
+		return null;
+	}
+
+	private static bool IsRepositoryId(string? id)
+	{
+		if (string.IsNullOrWhiteSpace(id) || id.Length > 256)
+		{
+			return false;
+		}
+		string[] segments = id.Split('/');
+		return segments.Length == 2 && IsGitHubOwner(segments[0]) && IsGitHubRepoName(segments[1]);
+	}
+
+	private static bool IsGitHubOwner(string owner) =>
+		owner.Length > 0
+		&& owner[0] != '-'
+		&& owner[^1] != '-'
+		&& owner.All(character => char.IsAsciiLetterOrDigit(character) || character == '-');
+
+	private static bool IsGitHubRepoName(string name) =>
+		name is not ("" or "." or "..")
+		&& name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+
+	private static bool IsRemoteBranch(string? branch) =>
+		!string.IsNullOrWhiteSpace(branch)
+		&& branch.Length <= 1024
+		&& !branch.Any(char.IsControl);
+
+	private static bool IsRemoteRelativePath(string path)
+	{
+		if (path.Length > 4096 || path.Any(char.IsControl))
+		{
+			return false;
+		}
+		string[] segments = path.Split('/');
+		return segments.Length <= 64 && segments.All(segment => segment is not ("" or "." or ".."));
+	}
+
+	private static RegisteredRepo NormalizeRepo(RegisteredRepo repo) =>
+		repo with
+		{
+			// A legacy descriptor may not have recorded this field. Keep it unknown until metadata or a
+			// clone identifies the actual default; guessing "main" would misclassify master/trunk repos.
+			DefaultBranch = repo.DefaultBranch ?? string.Empty,
+			Clones = repo.Clones ?? [],
+		};
 
 	// The on-disk shape: one JSON object holding the three lists. A private record (not the wire payload) so
 	// its lists can be nullable — a hand-edited or partially-written file with a missing/null list still loads.

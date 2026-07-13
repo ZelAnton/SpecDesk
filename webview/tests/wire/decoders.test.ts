@@ -14,10 +14,11 @@ import {
 
 describe("IPC payload decoders (the native→webview JSON boundary)", () => {
   it("parseDocLoaded accepts a well-formed payload and rejects malformed ones", () => {
-    expect(parseDocLoaded({ path: "a.md", text: "x", docDir: "" })).toEqual({
+    expect(parseDocLoaded({ path: "a.md", text: "x", docDir: "", readOnly: false })).toEqual({
       path: "a.md",
       text: "x",
       docDir: "",
+      readOnly: false,
     });
     expect(parseDocLoaded({ path: "a.md", text: "x" })).toBeNull(); // missing docDir
     expect(parseDocLoaded({ path: 1, text: "x", docDir: "" })).toBeNull(); // wrong type
@@ -115,11 +116,68 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
 
   it("parseWorkspaceState validates items and rejects drift", () => {
     const state = {
-      recent: [{ path: "/a.md", label: "a.md", isFolder: false }],
-      favorites: [{ path: "/specs", label: "specs", isFolder: true }],
-      repositories: [{ id: "octo/spec", name: "octo/spec", url: "https://github.com/octo/spec" }],
+      recent: [{ path: "C:\\specs\\a.md", label: "a.md", isFolder: false, kind: "local" }],
+      favorites: [{ path: "C:\\specs", label: "specs", isFolder: true, kind: "local" }],
+      repositories: [
+        {
+          id: "octo/spec",
+          name: "octo/spec",
+          url: "https://github.com/octo/spec",
+          defaultBranch: "master",
+          clones: [{ id: "octo_spec", path: "C:\\repos\\octo_spec", branches: ["draft"] }],
+        },
+      ],
     };
     expect(parseWorkspaceState(state)).toEqual(state);
+    for (const favorite of [
+      { path: "docs/guide.md", label: "guide.md", isFolder: false, kind: "remote" },
+      {
+        path: "../escape.md",
+        label: "escape.md",
+        isFolder: false,
+        kind: "remote",
+        repositoryId: "octo/spec",
+        branch: "main",
+      },
+      {
+        path: "octo/other",
+        label: "octo/spec",
+        isFolder: true,
+        kind: "repository",
+        repositoryId: "octo/spec",
+      },
+      {
+        path: "C:\\local.md",
+        label: "local.md",
+        isFolder: false,
+        kind: "local",
+        repositoryId: "octo/spec",
+      },
+      { path: "relative.md", label: "relative.md", isFolder: false, kind: "local" },
+      {
+        path: "bad owner/spec",
+        label: "bad",
+        isFolder: true,
+        kind: "repository",
+        repositoryId: "bad owner/spec",
+      },
+      {
+        path: "-owner/spec",
+        label: "bad",
+        isFolder: true,
+        kind: "repository",
+        repositoryId: "-owner/spec",
+      },
+      {
+        path: "octo/spec:bad",
+        label: "bad",
+        isFolder: true,
+        kind: "repository",
+        repositoryId: "octo/spec:bad",
+      },
+    ]) {
+      expect(parseWorkspaceState({ ...state, favorites: [favorite] })).toBeNull();
+    }
 
     // A missing list is drift — the whole payload rejects.
     expect(parseWorkspaceState({ recent: [], favorites: [] })).toBeNull();

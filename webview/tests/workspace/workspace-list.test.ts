@@ -71,7 +71,7 @@ describe("WorkspaceListPanel — Recent", () => {
     // concrete action is on the tooltip), and clicking it ADDS the favorite.
     expect(stars[0]?.getAttribute("aria-pressed")).toBe("false");
     expect(stars[0]?.classList.contains("is-favorite")).toBe(false);
-    expect(stars[0]?.getAttribute("aria-label")).toBe("Favorite");
+    expect(stars[0]?.getAttribute("aria-label")).toContain(`Favorite ${FOLDER.label}`);
     expect(stars[0]?.title).toBe("Add to favorites");
     stars[0]?.click();
     expect(onToggleFavorite).toHaveBeenCalledWith(FOLDER, true);
@@ -79,7 +79,7 @@ describe("WorkspaceListPanel — Recent", () => {
     // `intro.md` is a favorite → the star is filled (aria-pressed=true), and clicking it REMOVES it.
     expect(stars[1]?.getAttribute("aria-pressed")).toBe("true");
     expect(stars[1]?.classList.contains("is-favorite")).toBe(true);
-    expect(stars[1]?.getAttribute("aria-label")).toBe("Favorite");
+    expect(stars[1]?.getAttribute("aria-label")).toContain(`Favorite ${FILE.label}`);
     expect(stars[1]?.title).toBe("Remove from favorites");
     stars[1]?.click();
     expect(onToggleFavorite).toHaveBeenCalledWith(FILE, false);
@@ -117,7 +117,7 @@ describe("WorkspaceListPanel — Favorites", () => {
   it("shows the empty hint until a state is set", () => {
     const { body } = ready("favorites");
     expect(body.querySelector<HTMLElement>(".workspace-list-empty")?.textContent).toBe(
-      "Star a file or folder to keep it here.",
+      "Star a repository, file, or folder to keep it here.",
     );
   });
 
@@ -135,9 +135,75 @@ describe("WorkspaceListPanel — Favorites", () => {
 
     const star = body.querySelector<HTMLButtonElement>(".workspace-star");
     expect(star?.getAttribute("aria-pressed")).toBe("true");
-    expect(star?.getAttribute("aria-label")).toBe("Favorite");
+    expect(star?.getAttribute("aria-label")).toContain(`Favorite ${FILE.label}`);
     expect(star?.title).toBe("Remove from favorites");
     star?.click();
     expect(onToggleFavorite).toHaveBeenCalledWith(FILE, false);
+  });
+
+  it("removes a remote favorite with its complete stable identity", () => {
+    const { panel, body, onToggleFavorite } = ready("favorites");
+    const remote: WorkspaceItem = {
+      path: "Docs/Guide.md",
+      label: "Guide.md",
+      isFolder: false,
+      kind: "remote",
+      repositoryId: "octo/spec",
+      branch: "feature/Docs",
+    };
+    panel.setState({ recent: [], favorites: [remote], repositories: [] });
+
+    body.querySelector<HTMLButtonElement>(".workspace-star")?.click();
+    expect(onToggleFavorite).toHaveBeenCalledWith(remote, false);
+  });
+
+  it("distinguishes identical remote leaf paths and restores focus by typed identity", () => {
+    const { panel, body } = ready("favorites");
+    const first: WorkspaceItem = {
+      path: "docs/README.md",
+      label: "README.md",
+      isFolder: false,
+      kind: "remote",
+      repositoryId: "octo/one",
+      branch: "main",
+    };
+    const second: WorkspaceItem = { ...first, repositoryId: "octo/two", branch: "release" };
+    const state = { recent: [], favorites: [first, second], repositories: [] };
+    panel.setState(state);
+
+    const opens = body.querySelectorAll<HTMLButtonElement>(".workspace-open");
+    expect(opens[0]?.title).toContain("octo/one · main");
+    expect(opens[1]?.title).toContain("octo/two · release");
+    expect(opens[1]?.getAttribute("aria-label")).toContain("octo/two");
+    const stars = body.querySelectorAll<HTMLButtonElement>(".workspace-star");
+    expect(stars[0]?.getAttribute("aria-label")).toContain("octo/one");
+    expect(stars[1]?.getAttribute("aria-label")).toContain("octo/two");
+    stars[1]?.focus();
+    panel.setState(state);
+
+    expect((document.activeElement as HTMLElement | null)?.dataset.itemKey).toContain("octo/two");
+  });
+
+  it("renders repository favorites with repository semantics", () => {
+    const { panel, body } = ready("favorites");
+    panel.setState({
+      recent: [],
+      favorites: [
+        {
+          path: "octo/spec",
+          label: "octo/spec",
+          isFolder: true,
+          kind: "repository",
+          repositoryId: "octo/spec",
+        },
+      ],
+      repositories: [],
+    });
+
+    expect(body.querySelector('.workspace-item-icon[data-kind="repository"]')).not.toBeNull();
+    expect(body.querySelector(".workspace-item-context")?.textContent).toBe("Repository");
+    expect(body.querySelector(".workspace-open")?.getAttribute("aria-label")).toBe(
+      "Repository octo/spec",
+    );
   });
 });

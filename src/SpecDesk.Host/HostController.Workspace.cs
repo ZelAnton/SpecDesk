@@ -17,6 +17,38 @@ namespace SpecDesk.Host;
 // cloning yet. The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	private enum PendingRepoActionKind
+	{
+		Register,
+		Open,
+		Clone,
+		Browse,
+		File,
+	}
+
+	private sealed record PendingRepoAction(
+		PendingRepoActionKind Kind,
+		string Owner,
+		string Name,
+		long NavigationGeneration = 0,
+		string? Branch = null,
+		string? Path = null,
+		string? WirePath = null);
+	private sealed record PendingRepoActions(
+		PendingRepoAction[] Registrations,
+		PendingRepoAction? Open);
+
+	// Repository access is an authenticated GitHub operation. Requests made while signed out are retained
+	// until the device-flow completes, so clicking Add/Open opens GitHub in the normal browser and then
+	// continues the exact action instead of making the author repeat it.
+	private readonly Dictionary<string, PendingRepoAction> _pendingRepoRegistrations =
+		new(StringComparer.OrdinalIgnoreCase);
+	private PendingRepoAction? _pendingRepoOpen;
+	private sealed record RepoMetadataLookup(long Generation, CancellationTokenSource Cts);
+	private readonly Dictionary<string, RepoMetadataLookup> _repoMetadataLookups =
+		new(StringComparer.OrdinalIgnoreCase);
+	private long _repoMetadataGeneration;
+
 	// Emit the current workspace state to the webview. A null store (workspace persistence unconfigured) makes
 	// this a no-op, so the mutating handlers below can call it unconditionally, like the chat guards.
 	private void EmitWorkspaceState()
@@ -42,9 +74,76 @@ public sealed partial class HostController
 			return;
 		}
 
-		WorkspaceItem item = new(payload.Path, LabelFor(payload.Path), Directory.Exists(payload.Path));
+		WorkspaceItem? item = FavoriteItem(payload);
+		if (item is null)
+		{
+			return;
+		}
 		_workspace?.SetFavorite(item, payload.Favorite);
 		EmitWorkspaceState();
+	}
+
+	private WorkspaceItem? FavoriteItem(WorkspaceFavoritePayload payload)
+	{
+		if (string.Equals(payload.Kind, "repository", StringComparison.OrdinalIgnoreCase))
+		{
+			string id = payload.RepositoryId ?? payload.Path;
+			RegisteredRepo? repo = _workspace?.FindRepo(id);
+			return repo is null && payload.Favorite
+				? null
+				: new WorkspaceItem(id, repo?.Name ?? id, true, "repository", id);
+		}
+		if (string.Equals(payload.Kind, "remote", StringComparison.OrdinalIgnoreCase))
+		{
+			string owner;
+			string name;
+			string branch;
+			string path;
+			if (!TryParseRemotePath(payload.Path, out owner, out name, out branch, out path))
+			{
+				if (string.IsNullOrWhiteSpace(payload.RepositoryId)
+					|| string.IsNullOrWhiteSpace(payload.Branch)
+					|| !TryParseGitHubRepo(payload.RepositoryId, out owner, out name))
+				{
+					return null;
+				}
+				branch = payload.Branch;
+				path = payload.Path;
+				string[] segments = path.Split('/');
+				if (path.Length > 4096 || segments.Length > 64
+					|| segments.Any(segment => segment is "" or "." or ".."))
+				{
+					return null;
+				}
+			}
+			string id = $"{owner}/{name}";
+			if (payload.Favorite && _workspace?.FindRepo(id) is null)
+			{
+				return null;
+			}
+			return new WorkspaceItem(
+				path, path.Split('/')[^1], payload.IsFolder == true, "remote", id, branch);
+		}
+
+		string full;
+		try
+		{
+			full = Path.GetFullPath(payload.Path);
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+		{
+			return null;
+		}
+		bool isFolder = Directory.Exists(full);
+		if (payload.Favorite && !isFolder && !File.Exists(full))
+		{
+			return null;
+		}
+		if (!payload.Favorite && !isFolder)
+		{
+			isFolder = payload.IsFolder == true;
+		}
+		return new WorkspaceItem(full, LabelFor(full), isFolder);
 	}
 
 	// Register a GitHub repository from a URL/spec. Parsing/normalization happens here (the store only holds a
@@ -64,9 +163,12 @@ public sealed partial class HostController
 			return;
 		}
 
-		string id = $"{owner}/{name}";
-		_workspace?.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}"));
-		EmitWorkspaceState();
+		if (!EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Register, owner, name)))
+		{
+			return;
+		}
+
+		RegisterRepoCore(owner, name);
 	}
 
 	// Remove a registered repository by its stable id (owner/name).
@@ -78,14 +180,46 @@ public sealed partial class HostController
 			return;
 		}
 
-		_workspace?.UnregisterRepo(payload.Id);
-		EmitWorkspaceState();
+		lock (_clonePublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return;
+				}
+				if (_repoMetadataLookups.Remove(payload.Id, out RepoMetadataLookup? lookup))
+				{
+					lookup.Cts.Cancel();
+				}
+				if (string.Equals(_cloneRepoId, payload.Id, StringComparison.OrdinalIgnoreCase))
+				{
+					_cloneGeneration++;
+					_cloneCts?.Cancel();
+					_cloneCts = null;
+					_cloneRepoId = null;
+				}
+				if (_pendingRepoOpen?.Kind is PendingRepoActionKind.Browse or PendingRepoActionKind.File
+					&& string.Equals(
+						$"{_pendingRepoOpen.Owner}/{_pendingRepoOpen.Name}", payload.Id,
+						StringComparison.OrdinalIgnoreCase))
+				{
+					_pendingRepoOpen = null;
+				}
+				_workspace?.UnregisterRepo(payload.Id);
+			}
+			InvalidateRemoteRepository(payload.Id);
+			EmitWorkspaceState();
+		}
 	}
 
 	// Cancels an in-flight repository clone (window teardown). Guarded by _sync; a non-null value also
 	// single-flights the clone, so only one runs at a time — a repo open can take many seconds. Cancelled and
 	// nulled on Dispose (which lets the task's own finally dispose it), mirroring _chatCts / _signInCts.
 	private CancellationTokenSource? _cloneCts;
+	private readonly object _clonePublishSync = new();
+	private string? _cloneRepoId;
+	private long _cloneGeneration;
 
 	// A6 "Open a GitHub repository": clone it into the managed repos folder (AppPaths.Repos) and open that
 	// folder as the workspace. A repo already cloned is opened straight away (no network, no background task);
@@ -113,40 +247,121 @@ public sealed partial class HostController
 			return;
 		}
 
-		string cloneUrl = $"https://github.com/{owner}/{name}.git";
-		string repoId = $"{owner}/{name}";
-		// The clone's exact local folder: namespaced by BOTH owner and name, so two repos that share a name
-		// across different owners (acme/specs vs globex/specs) never collide on disk. The host owns this path
-		// and hands it to the cloner, so the "already cloned?" check and the clone target can't drift apart.
-		string localPath = Path.Combine(AppPaths.Repos, $"{owner}_{name}");
-
-		if (_cloner.IsCloned(localPath))
+		if (!string.IsNullOrWhiteSpace(payload.ClonePath))
 		{
-			// Already cloned (a valid working tree, not just any leftover folder) — open it straight away
-			// (synchronous, no network). Register it too so a repo opened from an existing clone still lands in
-			// the picker.
-			RegisterOpenedRepo(owner, name);
-			OpenWorkspaceFolder(localPath);
+			TryOpenRegisteredClone($"{owner}/{name}", payload.ClonePath);
 			return;
 		}
 
-		// Single-flight the clone (guarded by _sync), cancelled on dispose — mirrors the chat turn. Drop a
-		// second request while one is already in flight rather than running two concurrent clones.
-		CancellationTokenSource cts;
-		lock (_sync)
+		if (!EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Open, owner, name)))
 		{
-			if (_cloneCts is not null)
-			{
-				_logger.LogDebug("Ignoring a repo open while a clone is already in flight");
-				return;
-			}
-
-			cts = new CancellationTokenSource();
-			_cloneCts = cts;
+			return;
 		}
 
+		OpenRepoCore(owner, name, forceNewClone: false);
+	}
+
+	private void OnCloneRepo(IpcMessage message)
+	{
+		RepoClonePayload? payload = SafeGetPayload<RepoClonePayload>(message);
+		RegisteredRepo? repo = payload is null ? null : _workspace?.FindRepo(payload.Id);
+		if (repo is null || !TryParseGitHubRepo(repo.Url, out string owner, out string name))
+		{
+			SendError("That repository is no longer registered.");
+			return;
+		}
+
+		if (_cloner is null
+			|| !EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Clone, owner, name)))
+		{
+			return;
+		}
+
+		OpenRepoCore(owner, name, forceNewClone: true);
+	}
+
+	private void OpenRepoCore(string owner, string name, bool forceNewClone)
+	{
+		IRepositoryCloner? cloner = _cloner;
+		if (cloner is null)
+		{
+			return;
+		}
+		string cloneUrl = $"https://github.com/{owner}/{name}.git";
+		string repoId = $"{owner}/{name}";
+		string localPath;
+		bool requireStillRegistered;
+		CancellationTokenSource? cts = null;
+		long cloneGeneration = 0;
+		lock (_clonePublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return;
+				}
+			}
+		}
+
+		// Filesystem and LibGit2 probes can block. Check the teardown state before them, then re-enter the
+		// publication gate afterwards before any open/claim side effect. Dispose can therefore finish while a
+		// probe is blocked, and the completed probe is discarded without starting work.
+		RegisteredRepo? descriptor = _workspace?.FindRepo(repoId);
+		requireStillRegistered = descriptor is not null;
+		string? existingClone = descriptor?.Clones?
+			.FirstOrDefault(clone => IsUsableClone(clone.Path))?.Path;
+		string legacyManagedPath = Path.Combine(AppPaths.Repos, $"{owner}_{name}");
+		if (!forceNewClone && existingClone is null && cloner.IsCloned(legacyManagedPath))
+		{
+			existingClone = legacyManagedPath;
+		}
+		localPath = !forceNewClone && existingClone is not null
+			? existingClone
+			: NextClonePath(owner, name, descriptor?.Clones ?? []);
+		bool isCloned = cloner.IsCloned(localPath);
+
+		lock (_clonePublishSync)
+		{
+			lock (_sync)
+			{
+				RegisteredRepo? currentDescriptor = _workspace?.FindRepo(repoId);
+				if (_disposed || (requireStillRegistered && !ReferenceEquals(currentDescriptor, descriptor)))
+				{
+					return;
+				}
+				if (!isCloned)
+				{
+					if (_cloneCts is not null)
+					{
+						_logger.LogDebug("Ignoring a repo open while a clone is already in flight");
+						SendError("Another repository copy is still being prepared. Try again when it finishes.");
+						return;
+					}
+
+					cts = new CancellationTokenSource();
+					_cloneCts = cts;
+					_cloneRepoId = repoId;
+					cloneGeneration = ++_cloneGeneration;
+				}
+			}
+
+			if (isCloned)
+			{
+				// Already cloned (a valid working tree, not just any leftover folder) — open it straight away
+				// (synchronous, no network). Register it too so a repo opened from an existing clone still lands in
+				// the picker.
+				RegisterOpenedRepo(owner, name, localPath);
+				OpenWorkspaceFolder(localPath);
+				return;
+			}
+		}
+
+		if (cts is null)
+		{
+			return;
+		}
 		CancellationToken token = cts.Token;
-		IRepositoryCloner cloner = _cloner;
 		IGitHubAuth? auth = _auth;
 		_ = Task.Run(async () =>
 		{
@@ -170,9 +385,24 @@ public sealed partial class HostController
 
 				// Register + surface the freshly cloned repo, then open it as the workspace. Emit is
 				// thread-safe; OpenWorkspaceFolder's _workspaceRoot mutation takes _sync itself.
-				RegisterOpenedRepo(owner, name);
-				OpenWorkspaceFolder(localClone);
-				_logger.LogInformation("Opened repository {Repo} at {Path}", repoId, localClone);
+				lock (_clonePublishSync)
+				{
+					bool current;
+					lock (_sync)
+					{
+						current = !_disposed
+							&& ReferenceEquals(_cloneCts, cts)
+							&& _cloneGeneration == cloneGeneration
+							&& (!requireStillRegistered || _workspace?.FindRepo(repoId) is not null);
+					}
+					if (!current)
+					{
+						return;
+					}
+					RegisterOpenedRepo(owner, name, localClone);
+					OpenWorkspaceFolder(localClone);
+					_logger.LogInformation("Opened repository {Repo} at {Path}", repoId, localClone);
+				}
 			}
 			catch (OperationCanceledException) when (token.IsCancellationRequested)
 			{
@@ -185,7 +415,26 @@ public sealed partial class HostController
 				// plain line, never a token or a stack trace. InvalidOperationException also covers
 				// ResolveCredentials refusing a non-GitHub host, and WithAccessTokenAsync when signed out.
 				_logger.LogError(ex, "Could not open the repository {Repo}", repoId);
-				SendError("Could not open that repository. Check the name and your connection, then try again.");
+				lock (_clonePublishSync)
+				{
+					bool current;
+					lock (_sync)
+					{
+						current = !_disposed
+							&& ReferenceEquals(_cloneCts, cts)
+							&& _cloneGeneration == cloneGeneration
+							&& (!requireStillRegistered || _workspace?.FindRepo(repoId) is not null);
+						if (current)
+						{
+							_cloneCts = null;
+							_cloneRepoId = null;
+						}
+					}
+					if (current)
+					{
+						SendError("Could not open that repository. Check the name and your connection, then try again.");
+					}
+				}
 			}
 			finally
 			{
@@ -194,6 +443,7 @@ public sealed partial class HostController
 					if (ReferenceEquals(_cloneCts, cts))
 					{
 						_cloneCts = null;
+						_cloneRepoId = null;
 					}
 				}
 
@@ -202,13 +452,344 @@ public sealed partial class HostController
 		});
 	}
 
+	private bool EnsureGitHubAccess(PendingRepoAction action)
+	{
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return false;
+				}
+			}
+			if (_auth is null)
+			{
+				_logger.LogWarning(
+					"GitHub access is not configured; set {ClientIdVariable} for development builds",
+					GitHubAuthOptions.ClientIdEnvironmentVariable);
+				SendError("GitHub access isn't available in this build. Ask your administrator for help.");
+				return false;
+			}
+		}
+
+		bool startSignIn;
+		lock (_sync)
+		{
+			if (_disposed)
+			{
+				return false;
+			}
+			// Check the persisted auth state under the same lock used by ResumePendingRepoActions. Without
+			// this atomic check+enqueue, authorization could finish between them, drain an empty queue, and
+			// leave the newly enqueued action stranded behind a flow that is already complete.
+			if (_auth.IsSignedIn())
+			{
+				return true;
+			}
+
+			if (action.Kind == PendingRepoActionKind.Register)
+			{
+				// Repeated clicks for the same repository collapse to one durable registration request.
+				_pendingRepoRegistrations[$"{action.Owner}/{action.Name}"] = action;
+			}
+			else
+			{
+				// Opening a repository changes the single central workspace. A later Open supersedes an
+				// earlier one while authorization is pending, matching ordinary navigation semantics and
+				// avoiding a burst of clones after the author returns from GitHub.
+				_pendingRepoOpen = action;
+			}
+
+			startSignIn = _signInCts is null;
+		}
+
+		if (startSignIn)
+		{
+			OnGitHubSignIn();
+		}
+
+		return false;
+	}
+
+	private PendingRepoActions TakePendingRepoActions()
+	{
+		PendingRepoActions actions = new([.. _pendingRepoRegistrations.Values], _pendingRepoOpen);
+		_pendingRepoRegistrations.Clear();
+		_pendingRepoOpen = null;
+		return actions;
+	}
+
+	private void ResumePendingRepoActions(PendingRepoActions actions)
+	{
+		foreach (PendingRepoAction action in actions.Registrations)
+		{
+			RegisterRepoCore(action.Owner, action.Name);
+		}
+
+		if (actions.Open is not null)
+		{
+			if (actions.Open.Kind == PendingRepoActionKind.Browse)
+			{
+				BrowseRepoCore(
+					actions.Open.Owner, actions.Open.Name, actions.Open.NavigationGeneration, actions.Open.Branch);
+			}
+			else if (actions.Open.Kind == PendingRepoActionKind.File
+				&& actions.Open.Branch is not null
+				&& actions.Open.Path is not null
+				&& actions.Open.WirePath is not null)
+			{
+				LoadRemoteFileCore(
+					actions.Open.Owner,
+					actions.Open.Name,
+					actions.Open.Branch,
+					actions.Open.Path,
+					actions.Open.WirePath,
+					actions.Open.NavigationGeneration);
+			}
+			else
+			{
+				OpenRepoCore(
+					actions.Open.Owner,
+					actions.Open.Name,
+					forceNewClone: actions.Open.Kind == PendingRepoActionKind.Clone);
+			}
+		}
+	}
+
+	private void ClearPendingRepoActions()
+	{
+		lock (_sync)
+		{
+			_pendingRepoRegistrations.Clear();
+			_pendingRepoOpen = null;
+		}
+	}
+
+	private void RegisterRepoCore(string owner, string name)
+	{
+		lock (_clonePublishSync)
+		{
+			RegisterRepoCorePublished(owner, name);
+		}
+	}
+
+	private void RegisterRepoCorePublished(string owner, string name)
+	{
+		lock (_sync)
+		{
+			if (_disposed)
+			{
+				return;
+			}
+		}
+		string id = $"{owner}/{name}";
+		string url = $"https://github.com/{owner}/{name}";
+		RegisteredRepo? saved = _workspace?.FindRepo(id);
+		if (saved is not null && !string.IsNullOrWhiteSpace(saved.DefaultBranch))
+		{
+			// The descriptor already owns the authoritative default. Do not turn every repeated Add into
+			// another network lookup or silently change the stored baseline underneath existing copies.
+			EmitWorkspaceState();
+			return;
+		}
+		if (_repositoryCatalog is null || _auth is null)
+		{
+			_workspace?.UpdateRepo(new RegisteredRepo(id, id, url, string.Empty, []));
+			EmitWorkspaceState();
+			return;
+		}
+
+		CancellationTokenSource cts = new();
+		RepoMetadataLookup lookup;
+		lock (_sync)
+		{
+			if (_repoMetadataLookups.Remove(id, out RepoMetadataLookup? previous))
+			{
+				previous.Cts.Cancel();
+			}
+			lookup = new RepoMetadataLookup(Interlocked.Increment(ref _repoMetadataGeneration), cts);
+			_repoMetadataLookups[id] = lookup;
+		}
+		CancellationToken cancellationToken = cts.Token;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				GitHubRepositoryMetadata metadata = await _auth.WithAccessTokenAsync(
+					(token, ct) => _repositoryCatalog.GetMetadataAsync(owner, name, token, ct),
+					cancellationToken);
+				lock (_clonePublishSync)
+				{
+					bool publish;
+					lock (_sync)
+					{
+						publish = !_disposed
+							&& _repoMetadataLookups.TryGetValue(id, out RepoMetadataLookup? current)
+							&& ReferenceEquals(current, lookup);
+						if (publish)
+						{
+							_workspace?.SetRepoDefaultBranch(
+								new RegisteredRepo(id, id, url, string.Empty, []), metadata.DefaultBranch);
+							_repoMetadataLookups.Remove(id);
+						}
+					}
+					if (publish)
+					{
+						EmitWorkspaceState();
+					}
+				}
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				// Superseded registration, explicit removal, or controller teardown.
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Could not register GitHub repository {Repo}", id);
+				lock (_clonePublishSync)
+				{
+					bool current;
+					lock (_sync)
+					{
+						current = !_disposed
+							&& _repoMetadataLookups.TryGetValue(id, out RepoMetadataLookup? active)
+							&& ReferenceEquals(active, lookup);
+						if (current)
+						{
+							_repoMetadataLookups.Remove(id);
+						}
+					}
+					if (current)
+					{
+						SendError("Could not add that repository. Check its name and your access, then try again.");
+					}
+				}
+			}
+			finally
+			{
+				lock (_sync)
+				{
+					if (_repoMetadataLookups.TryGetValue(id, out RepoMetadataLookup? active)
+						&& ReferenceEquals(active, lookup))
+					{
+						_repoMetadataLookups.Remove(id);
+					}
+				}
+				cts.Dispose();
+			}
+		});
+	}
+
 	// Register the just-opened repo (de-duplicated by id in the store) and re-emit workspace.state, so opening
 	// a GitHub repo also keeps it in the Repositories picker. Same normalized shape as OnRegisterRepo.
-	private void RegisterOpenedRepo(string owner, string name)
+	private void RegisterOpenedRepo(string owner, string name, string clonePath)
 	{
 		string id = $"{owner}/{name}";
-		_workspace?.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}"));
+		RegisteredRepo descriptor = _workspace?.FindRepo(id)
+			?? new RegisteredRepo(id, id, $"https://github.com/{owner}/{name}", string.Empty, []);
+		LocalRepositoryInfo info;
+		try
+		{
+			info = _repositoryInspector?.Inspect(clonePath, descriptor.DefaultBranch)
+				?? new LocalRepositoryInfo(descriptor.DefaultBranch, []);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or LibGit2SharpException)
+		{
+			// The clone itself succeeded. Keep it usable even if its optional branch inventory could not be
+			// read this time; opening it is more important than the nested branch labels.
+			_logger.LogWarning(ex, "Could not inspect branches for local repository {Repo}", id);
+			info = new LocalRepositoryInfo(descriptor.DefaultBranch, []);
+		}
+		RegisteredClone clone = new(
+			Path.GetFileName(clonePath), Path.GetFullPath(clonePath), info.Branches);
+		_workspace?.UpsertRepoClone(descriptor, clone, info.DefaultBranch);
 		EmitWorkspaceState();
+	}
+
+	private bool TryOpenRegisteredClone(string repoId, string path)
+	{
+		lock (_clonePublishSync)
+		{
+			RegisteredRepo? repo;
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return false;
+				}
+				repo = _workspace?.FindRepo(repoId);
+			}
+			RegisteredClone? clone = repo?.Clones?.FirstOrDefault(candidate => SameFullPath(candidate.Path, path));
+			if (clone is null || !IsUsableClone(clone.Path))
+			{
+				SendError("That local copy is no longer available.");
+				return false;
+			}
+
+			RegisterOpenedRepo(
+				repoId[..repoId.IndexOf('/', StringComparison.Ordinal)],
+				repoId[(repoId.IndexOf('/', StringComparison.Ordinal) + 1)..], clone.Path);
+			OpenWorkspaceFolder(clone.Path);
+			return true;
+		}
+	}
+
+	private static string NextClonePath(
+		string owner, string name, IReadOnlyList<RegisteredClone> registeredClones)
+	{
+		string stem = $"{owner}_{name}";
+		HashSet<string> known = registeredClones
+			.Select(clone => TryFullPath(clone.Path))
+			.Where(path => path is not null)
+			.Select(path => path!)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		for (int suffix = 1; ; suffix++)
+		{
+			string folder = suffix == 1 ? stem : $"{stem}-{suffix}";
+			string candidate = Path.GetFullPath(Path.Combine(AppPaths.Repos, folder));
+			if (!known.Contains(candidate) && !Directory.Exists(candidate))
+			{
+				return candidate;
+			}
+		}
+	}
+
+	private static bool SameFullPath(string left, string right)
+	{
+		string? leftFull = TryFullPath(left);
+		string? rightFull = TryFullPath(right);
+		return leftFull is not null && rightFull is not null
+			&& string.Equals(leftFull, rightFull, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static string? TryFullPath(string path)
+	{
+		try
+		{
+			return Path.GetFullPath(path);
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			return null;
+		}
+	}
+
+	private bool IsUsableClone(string path)
+	{
+		if (_cloner is null || TryFullPath(path) is null)
+		{
+			return false;
+		}
+		try
+		{
+			return _cloner.IsCloned(path);
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or IOException)
+		{
+			_logger.LogWarning(ex, "Ignoring an unavailable registered repository copy");
+			return false;
+		}
 	}
 
 	// Record a freshly opened file/folder as the most recent, then push the refreshed state. Called from
