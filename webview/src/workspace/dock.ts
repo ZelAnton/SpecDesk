@@ -178,6 +178,8 @@ export class Dock {
   setAvailableTools(ids: ReadonlySet<string>): void {
     const previousMode = this.modeId;
     const previousTool = this.tools.find((tool) => tool.id === previousMode);
+    const previousBody = this.toolBodies.get(previousMode);
+    const focusWasInPreviousBody = previousBody?.contains(document.activeElement) ?? false;
     const wasOpen = this.isOpen;
     this.availableToolIds = new Set(
       this.tools.filter((tool) => ids.has(tool.id)).map((tool) => tool.id),
@@ -214,7 +216,10 @@ export class Dock {
       this.activeTool()?.onShow?.();
     }
 
-    if (focusedMode !== undefined && !this.availableToolIds.has(focusedMode)) {
+    if (
+      (focusedMode !== undefined && !this.availableToolIds.has(focusedMode)) ||
+      (focusWasInPreviousBody && modeChanged)
+    ) {
       this.railButtons.get(this.modeId)?.focus();
     }
   }

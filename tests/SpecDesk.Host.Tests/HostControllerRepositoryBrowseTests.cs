@@ -550,6 +550,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			CountingCatalog catalog = new();
 			List<string> sent = [];
 			object gate = new();
+			int navigationTriggered = 0;
 			HostController? controller = null;
 			void Send(string json)
 			{
@@ -559,7 +560,8 @@ public sealed class HostControllerRepositoryBrowseTests
 				}
 				IpcMessage? message = IpcSerializer.TryDeserialize(json);
 				if (message?.Kind == MessageKinds.GitHubAccount
-					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true)
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true
+					&& Interlocked.Exchange(ref navigationTriggered, 1) == 0)
 				{
 					// PublishTerminalIfCurrent has already taken the pending actions before SendAccount.
 					// Navigate here so this runs in the exact Take -> navigation -> Resume window.

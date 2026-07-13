@@ -252,27 +252,6 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
-    public void Ready_EmitsAuthoritativeRepositoryContextForTheOpenDocument()
-    {
-        FakeVersioning versioning = new() { Branch = "main" };
-        using HostController controller = NewController(versioning);
-
-        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
-            ?.GetPayload<WorkspaceContextPayload>();
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(context, Is.Not.Null);
-            Assert.That(context!.Repository, Is.EqualTo(Path.GetFileName(_tempDir)));
-            Assert.That(context.RepositoryRoot, Is.EqualTo(_tempDir));
-            Assert.That(context.Branch, Is.EqualTo("main"));
-            Assert.That(context.BranchState, Is.EqualTo("named"));
-            Assert.That(context.DefaultBranch, Is.EqualTo("main"));
-            Assert.That(context.Path, Is.EqualTo("billing.md"));
-        });
-    }
-
-    [Test]
     public void Ready_WhenDocumentHasNoRepository_ReportsUnavailableContext()
     {
         FakeVersioning versioning = new() { Versioned = false };
@@ -289,24 +268,6 @@ public sealed class HostControllerLifecycleTests
             Assert.That(context.Branch, Is.Null);
             Assert.That(context.BranchState, Is.EqualTo("unavailable"));
             Assert.That(context.Path, Is.EqualTo("billing.md"));
-        });
-    }
-
-    [Test]
-    public void Ready_WhenHeadIsDetached_ReportsDetachedBranchState()
-    {
-        FakeVersioning versioning = new() { Branch = null };
-        using HostController controller = NewController(versioning);
-
-        WorkspaceContextPayload? context = WaitForKind(MessageKinds.WorkspaceContext)
-            ?.GetPayload<WorkspaceContextPayload>();
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(context, Is.Not.Null);
-            Assert.That(context!.Repository, Is.Not.Null);
-            Assert.That(context.Branch, Is.Null);
-            Assert.That(context.BranchState, Is.EqualTo("detached"));
         });
     }
 

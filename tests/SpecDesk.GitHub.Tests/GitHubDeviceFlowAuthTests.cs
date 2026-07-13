@@ -6,6 +6,32 @@ public sealed class GitHubDeviceFlowAuthTests
     private static readonly Uri DeviceUri = new("https://github.com/login/device");
     private static readonly GitHubAuthOptions Options = GitHubAuthOptions.ForClient("test-client-id");
 
+    private sealed class BlockingTokenStore : ITokenStore
+    {
+        public ManualResetEventSlim SaveEntered { get; } = new(false);
+        public ManualResetEventSlim SaveRelease { get; } = new(false);
+        public StoredToken? Saved { get; private set; }
+        public int ClearCalls { get; private set; }
+
+        public void Save(StoredToken token)
+        {
+            SaveEntered.Set();
+            if (!SaveRelease.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("test did not release the token save");
+            }
+            Saved = token;
+        }
+
+        public StoredToken? Load() => Saved;
+
+        public void Clear()
+        {
+            ClearCalls++;
+            Saved = null;
+        }
+    }
+
     private static DeviceCodeResponse DeviceCode(TimeSpan? expires = null, TimeSpan? interval = null) =>
         new("device-code", "WXYZ-1234", DeviceUri, expires ?? TimeSpan.FromMinutes(15), interval ?? TimeSpan.FromSeconds(5));
 
@@ -84,6 +110,74 @@ public sealed class GitHubDeviceFlowAuthTests
             Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.StorageFailed));
             Assert.That(store.Saved, Is.Null);
             Assert.That(auth.IsSignedIn(), Is.False);
+        });
+    }
+
+    [Test]
+    public async Task Cancellation_during_a_blocked_token_commit_clears_the_late_token_and_session()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_late"));
+        BlockingTokenStore store = new();
+        GitHubDeviceFlowAuth auth = new(
+            Options, api, store, TimeProvider.System, (_, ct) => Task.Delay(TimeSpan.Zero, ct));
+        using CancellationTokenSource cts = new();
+
+        Task<SignInResult> authorization = Task.Run(() => auth.AwaitAuthorizationAsync(Prompt(), cts.Token));
+        Assert.That(store.SaveEntered.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        using ManualResetEventSlim cancelStarted = new(false);
+        Task cancel = Task.Run(() =>
+        {
+            cancelStarted.Set();
+            cts.Cancel();
+        });
+        Assert.That(cancelStarted.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(cancel.Wait(TimeSpan.FromMilliseconds(100)), Is.False,
+            "cancel returned before the in-progress token commit reached its account gate");
+
+        store.SaveRelease.Set();
+        await cancel.WaitAsync(TimeSpan.FromSeconds(2));
+        SignInResult result = await authorization.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(result.Outcome, Is.EqualTo(SignInOutcome.TimedOut));
+            Assert.That(auth.IsSignedIn(), Is.False);
+            Assert.That(auth.SignedInLogin(), Is.Null);
+            Assert.That(store.Saved, Is.Null);
+            Assert.That(store.ClearCalls, Is.GreaterThanOrEqualTo(1));
+        });
+    }
+
+    [Test]
+    public async Task SignOut_waits_for_a_blocked_token_commit_then_clears_it_durably()
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_late"));
+        BlockingTokenStore store = new();
+        GitHubDeviceFlowAuth auth = new(
+            Options, api, store, TimeProvider.System, (_, ct) => Task.Delay(TimeSpan.Zero, ct));
+
+        Task<SignInResult> authorization = Task.Run(() => auth.AwaitAuthorizationAsync(Prompt()));
+        Assert.That(store.SaveEntered.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        using ManualResetEventSlim signOutStarted = new(false);
+        Task signOut = Task.Run(() =>
+        {
+            signOutStarted.Set();
+            auth.SignOut();
+        });
+        Assert.That(signOutStarted.Wait(TimeSpan.FromSeconds(2)), Is.True);
+        Assert.That(signOut.Wait(TimeSpan.FromMilliseconds(100)), Is.False,
+            "sign-out returned before the in-progress token commit reached its account gate");
+
+        store.SaveRelease.Set();
+        await signOut.WaitAsync(TimeSpan.FromSeconds(2));
+        await authorization.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(auth.IsSignedIn(), Is.False);
+            Assert.That(auth.SignedInLogin(), Is.Null);
+            Assert.That(store.Saved, Is.Null);
+            Assert.That(store.ClearCalls, Is.EqualTo(1));
         });
     }
 
@@ -385,6 +479,33 @@ public sealed class GitHubDeviceFlowAuthTests
 
         Assert.ThrowsAsync<InvalidOperationException>(
             () => auth.WithAccessTokenAsync((token, _) => Task.FromResult(token)));
+    }
+
+    [TestCase(typeof(IOException))]
+    [TestCase(typeof(UnauthorizedAccessException))]
+    public async Task SignOut_clears_the_process_session_when_persistent_cleanup_fails(Type exceptionType)
+    {
+        FakeDeviceFlowApi api = new(DeviceCode(), "octocat", DevicePollOutcome.Authorized("gho_token"));
+        (GitHubDeviceFlowAuth auth, _, InMemoryTokenStore store) = Build(api);
+        await auth.AwaitAuthorizationAsync(Prompt());
+        store.ClearException = (Exception)Activator.CreateInstance(exceptionType, "token clear boom")!;
+        bool callbackInvoked = false;
+
+        Assert.That(auth.SignOut, Throws.TypeOf(exceptionType));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(auth.IsSignedIn(), Is.False);
+            Assert.That(auth.SignedInLogin(), Is.Null);
+            Assert.ThrowsAsync<InvalidOperationException>(() =>
+                auth.WithAccessTokenAsync((_, _) =>
+                {
+                    callbackInvoked = true;
+                    return Task.FromResult(0);
+                }));
+            Assert.That(callbackInvoked, Is.False);
+            Assert.That(store.Saved, Is.Not.Null, "the fake models a locked token file that could not be deleted");
+        });
     }
 
     [Test]

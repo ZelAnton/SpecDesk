@@ -133,6 +133,8 @@ internal sealed class InMemoryTokenStore : ITokenStore
     /// token locally" path (a disk / DPAPI fault).</summary>
     public bool ThrowOnSave { get; set; }
 
+    public Exception? ClearException { get; set; }
+
     public void Save(StoredToken token)
     {
         if (ThrowOnSave)
@@ -145,7 +147,15 @@ internal sealed class InMemoryTokenStore : ITokenStore
 
     public StoredToken? Load() => Saved;
 
-    public void Clear() => Saved = null;
+    public void Clear()
+    {
+        if (ClearException is not null)
+        {
+            throw ClearException;
+        }
+
+        Saved = null;
+    }
 }
 
 // A controllable clock for the deadline check; the test's delay callback advances it.

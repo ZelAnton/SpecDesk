@@ -133,6 +133,7 @@ public sealed class HostControllerGitHubTests
 
 		public int SignOutCalls { get; private set; }
 		public int StartCalls { get; private set; }
+		public Exception? SignOutException { get; init; }
 
         /// <summary>When true, AwaitAuthorizationAsync blocks until cancelled (the user never authorizes).</summary>
         public bool BlockUntilCancelled { get; init; }
@@ -184,10 +185,14 @@ public sealed class HostControllerGitHubTests
 
         public void SignOut()
         {
-            SignOutCalls++;
-            SignedIn = false;
-            Login = null;
-        }
+			SignOutCalls++;
+			SignedIn = false;
+			Login = null;
+			if (SignOutException is not null)
+			{
+				throw SignOutException;
+			}
+		}
     }
 
     // A fake IGitHubAuth whose device code is unique per StartSignInAsync call (CODE-1, CODE-2, ...), so a
@@ -421,7 +426,7 @@ public sealed class HostControllerGitHubTests
     }
 
     [Test]
-    public void SignOut_clears_the_account()
+	public void SignOut_clears_the_account()
     {
         FakeGitHubAuth auth = new(SignInResult.Authorized("octocat")) { SignedIn = true, Login = "octocat" };
         (HostController controller, List<string> sent, object gate) = Build(auth);
@@ -490,6 +495,32 @@ public sealed class HostControllerGitHubTests
 			}
 
 			Assert.That(account?.Organizations, Is.EqualTo(AuthorizedOrganizations));
+		}
+	}
+
+	[Test]
+	public void SignOut_storage_failure_still_publishes_the_disconnected_account()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+			SignOutException = new IOException("token file is locked"),
+		};
+		(HostController controller, List<string> sent, object gate) = Build(auth);
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+
+			GitHubAccountPayload? account = WaitForKind(sent, gate, MessageKinds.GitHubAccount)
+				?.GetPayload<GitHubAccountPayload>();
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(auth.SignedIn, Is.False);
+				Assert.That(account?.SignedIn, Is.False);
+				Assert.That(account?.Message, Does.Contain("saved GitHub authorization"));
+			});
 		}
 	}
 
@@ -632,6 +663,34 @@ public sealed class HostControllerGitHubTests
             }
         }
     }
+
+	[Test]
+	public void Cancelling_a_signIn_reports_durable_cleanup_failure_but_stays_disconnected()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			BlockUntilCancelled = true,
+			SignOutException = new IOException("token marker is locked"),
+		};
+		(HostController controller, List<string> sent, object gate) = Build(auth);
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+			Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubCode), Is.Not.Null);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignInCancel));
+
+			GitHubAccountPayload payload = WaitForKind(sent, gate, MessageKinds.GitHubAccount)!
+				.GetPayload<GitHubAccountPayload>()!;
+			Assert.Multiple(() =>
+			{
+				Assert.That(auth.SignOutCalls, Is.EqualTo(1));
+				Assert.That(payload.SignedIn, Is.False);
+				Assert.That(payload.Login, Is.Null);
+				Assert.That(payload.Message, Does.Contain("couldn't update the saved GitHub authorization"));
+			});
+		}
+	}
 
     // Poll briefly for at least `count` messages of the given kind, returning the last one seen. Used where
     // a scenario emits the same kind more than once (a second sign-in's own GitHubCode) and the test must

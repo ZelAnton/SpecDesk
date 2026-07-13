@@ -81,8 +81,9 @@ describe("RepositoriesPanel", () => {
     expect(body.querySelector<HTMLElement>(".repo-list")?.hidden).toBe(true);
   });
 
-  it("clones the typed repo to managed storage and clears the field", () => {
-    const { panel, body, input, add, onCloneManaged } = ready();
+  it("retains and refreshes the managed clone entry until a matching success state arrives", () => {
+    vi.useFakeTimers();
+    const { panel, body, input, add, onCloneManaged, onDestinationRequest } = ready();
     input.value = "  owner/name  ";
     panel.setManagedDestination({
       url: "owner/name",
@@ -94,7 +95,43 @@ describe("RepositoriesPanel", () => {
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledWith("owner/name", "C:\\managed\\owner_name");
-    expect(input.value).toBe(""); // cleared for the next entry
+    expect(input.value).toBe("  owner/name  "); // retained so a native failure can be retried
+    expect(add.disabled).toBe(false);
+
+    vi.advanceTimersByTime(120);
+    expect(onDestinationRequest).toHaveBeenLastCalledWith("owner/name", 1);
+    panel.setManagedDestination({
+      url: "owner/name",
+      requestId: 1,
+      path: "C:\\managed\\owner_name-2",
+    });
+
+    // A native error/collision does not emit a success state. Any unrelated refresh must preserve the retry.
+    panel.setState(STATE);
+    expect(input.value).toBe("  owner/name  ");
+    add.click();
+    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
+    expect(onCloneManaged).toHaveBeenCalledTimes(2);
+    expect(onCloneManaged).toHaveBeenLastCalledWith("owner/name", "C:\\managed\\owner_name-2");
+
+    // RegisterOpenedRepo emits workspace.state only after the clone completed at the requested path.
+    panel.setState({
+      recent: [],
+      favorites: [],
+      repositories: [
+        {
+          ...REPO,
+          id: "owner/name",
+          name: "owner/name",
+          url: "https://github.com/owner/name",
+          clones: [{ id: "owner-name-2", path: "C:/managed/owner_name-2/", branches: [] }],
+        },
+      ],
+    });
+    expect(input.value).toBe("");
+    expect(add.disabled).toBe(true);
+    vi.useRealTimers();
   });
 
   it("ignores a blank register submit", () => {
@@ -205,7 +242,7 @@ describe("RepositoriesPanel", () => {
 
     input.value = "owner/folder";
     input.dispatchEvent(new Event("input"));
-    resolveDescription(panel, "owner/folder", 2);
+    resolveDescription(panel, "owner/folder", 1);
     add.click();
     actions[1]?.click();
     actions[1]?.click();
@@ -213,6 +250,7 @@ describe("RepositoriesPanel", () => {
     yes?.click();
     expect(onCloneToFolder).toHaveBeenCalledTimes(1);
     expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder");
+    expect(input.value).toBe("owner/folder");
   });
 
   it("requires Yes and keeps the input unchanged when No is chosen", () => {
@@ -359,6 +397,76 @@ describe("RepositoriesPanel", () => {
     panel.setDescription({ url: "owner/repository", requestId: 0, state: "error" });
     expect(body.querySelector(".repo-description")?.textContent).toContain("Couldn’t load");
     expect(add.disabled).toBe(true);
+  });
+
+  it("clears private lookup and pending clone state at an account boundary", () => {
+    vi.useFakeTimers();
+    try {
+      const { panel, body, input, add, onCloneManaged } = ready();
+      panel.setSuggestions([{ fullName: "account-a/private-specs" }]);
+      input.value = "account-a/private-specs";
+      input.dispatchEvent(new Event("input"));
+      panel.setManagedDestination({
+        url: "account-a/private-specs",
+        requestId: 1,
+        path: "C:\\managed\\account-a_private-specs",
+      });
+      panel.setDescription({
+        url: "account-a/private-specs",
+        requestId: 1,
+        state: "private",
+        description: "Account A confidential roadmap",
+      });
+      add.click();
+      body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+      const oldYes = body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes");
+      expect(body.textContent).toContain("Account A confidential roadmap");
+      expect(body.querySelector<HTMLElement>(".repo-clone-confirmation")?.hidden).toBe(false);
+
+      // github.account changed from A to signed-out (and later B): no private lookup or queued action survives.
+      panel.clearAccountState();
+      expect(input.value).toBe("");
+      expect(body.textContent).not.toContain("Account A confidential roadmap");
+      expect(body.querySelector<HTMLElement>(".repo-description")?.hidden).toBe(true);
+      expect(body.querySelector<HTMLElement>(".repo-managed-destination")?.hidden).toBe(true);
+      expect(body.querySelector<HTMLElement>(".repo-clone-confirmation")?.hidden).toBe(true);
+      expect(add.disabled).toBe(true);
+      oldYes?.click();
+      expect(onCloneManaged).not.toHaveBeenCalled();
+
+      // Account B can enter the same arbitrary public name, but an A-era response cannot authorize Clone.
+      input.value = "account-a/private-specs";
+      input.dispatchEvent(new Event("input"));
+      panel.setDescription({
+        url: "account-a/private-specs",
+        requestId: 1,
+        state: "private",
+        description: "late Account A description",
+      });
+      panel.setManagedDestination({
+        url: "account-a/private-specs",
+        requestId: 1,
+        path: "C:\\managed\\stale-account-a",
+      });
+      expect(body.textContent).not.toContain("late Account A description");
+      expect(add.disabled).toBe(true);
+
+      panel.setDescription({
+        url: "account-a/private-specs",
+        requestId: 3,
+        state: "found",
+        description: "Public description resolved for account B",
+      });
+      panel.setManagedDestination({
+        url: "account-a/private-specs",
+        requestId: 3,
+        path: "C:\\managed\\account-b_public-specs",
+      });
+      expect(body.textContent).toContain("Public description resolved for account B");
+      expect(add.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not claim that an unverified owner/repository is public", () => {

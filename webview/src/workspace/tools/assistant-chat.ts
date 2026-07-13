@@ -49,6 +49,7 @@ export class AssistantChat implements PanelTool {
   private attachmentsList!: HTMLElement;
   private connectionStatus!: HTMLElement;
   private composerSurface!: HTMLElement;
+  private intro!: HTMLElement;
 
   // The assistant message currently being streamed (its text node grows with each delta), or null between
   // turns. A single streaming turn at a time (the host single-flights; the composer is disabled meanwhile).
@@ -60,6 +61,8 @@ export class AssistantChat implements PanelTool {
   private attachOpen = false;
   private busy = false;
   private signedIn = false;
+  private accountIdentity: string | null = null;
+  private accountGeneration = 0;
   private repositories: readonly RegisteredRepo[] = [];
   private attachments: ChatAttachment[] = [];
 
@@ -85,11 +88,11 @@ export class AssistantChat implements PanelTool {
     this.srStatus.className = "chat-sr-status";
     this.srStatus.setAttribute("role", "status");
 
-    const intro = document.createElement("p");
-    intro.className = "chat-intro";
-    intro.textContent =
+    this.intro = document.createElement("p");
+    this.intro.className = "chat-intro";
+    this.intro.textContent =
       "Ask Copilot about the active document or repository. Nothing is changed without your confirmation.";
-    this.log.appendChild(intro);
+    this.log.appendChild(this.intro);
 
     // The template picker panel, populated when opened.
     this.templatesPanel = document.createElement("div");
@@ -246,11 +249,22 @@ export class AssistantChat implements PanelTool {
 
   /** Reflect the real GitHub account frame. Copilot has no separate credential path in SpecDesk. */
   setGitHubAccount(available: boolean, signedIn: boolean, login?: string): void {
-    this.signedIn = available && signedIn;
+    const nextSignedIn = available && signedIn;
+    const nextIdentity = nextSignedIn ? (login ?? "") : null;
+    const crossedAccountBoundary =
+      this.accountIdentity !== null && nextIdentity !== this.accountIdentity;
+    if (nextIdentity !== this.accountIdentity) {
+      this.accountGeneration++;
+    }
+    this.signedIn = nextSignedIn;
+    this.accountIdentity = nextIdentity;
+    if (crossedAccountBoundary) {
+      this.clearAccountState();
+    }
     // Signing out cancels the native Copilot turn. That cancellation intentionally has no chat.done frame
     // (the host also uses it during teardown), so settle the visible turn here or a later sign-in would leave
     // a permanently non-submittable composer. Any already-queued late delta is ignored in appendDelta.
-    if (!this.signedIn && this.streamingTurnId !== null) {
+    if (!crossedAccountBoundary && !this.signedIn && this.streamingTurnId !== null) {
       this.endTurn(this.streamingTurnId);
     }
     this.connectionStatus.dataset.state = this.signedIn
@@ -272,6 +286,20 @@ export class AssistantChat implements PanelTool {
       ? "Describe what you want to work on…"
       : "Connect to GitHub to start a conversation";
     this.syncComposerState();
+  }
+
+  private clearAccountState(): void {
+    this.streamingText = null;
+    this.streamingTurnId = null;
+    this.busy = false;
+    this.log.setAttribute("aria-busy", "false");
+    this.log.replaceChildren(this.intro);
+    this.srStatus.textContent = "";
+    this.input.value = "";
+    this.attachments = [];
+    this.renderAttachments();
+    this.closeTemplates();
+    this.closeAttachMenu();
   }
 
   setRepositories(repositories: readonly RegisteredRepo[]): void {
@@ -405,10 +433,12 @@ export class AssistantChat implements PanelTool {
     const button = this.attachmentMenuButton(label, null);
     button.disabled = false;
     button.addEventListener("click", async () => {
+      const accountGeneration = this.accountGeneration;
       this.closeAttachMenu();
       const attachment = await this.options.pickAttachment(kind);
-      if (attachment) this.addAttachment(attachment);
-      else this.input.focus();
+      if (attachment && this.signedIn && accountGeneration === this.accountGeneration) {
+        this.addAttachment(attachment);
+      } else this.input.focus();
     });
     return button;
   }
@@ -478,9 +508,10 @@ export class AssistantChat implements PanelTool {
     this.templatesPanel.hidden = false;
     this.templatesPanel.replaceChildren(loadingRow());
 
+    const accountGeneration = this.accountGeneration;
     const templates = await this.options.requestTemplates();
-    // The author may have closed the panel while the request was in flight — don't reopen it.
-    if (!this.templatesOpen) {
+    // The author may have closed the panel or changed GitHub accounts while the request was in flight.
+    if (!this.templatesOpen || accountGeneration !== this.accountGeneration || !this.signedIn) {
       return;
     }
     this.renderTemplates(templates);

@@ -3,15 +3,19 @@ namespace SpecDesk.GitHub;
 /// <summary>
 /// What to show the user to authorize the device (GitHub OAuth device flow, RFC 8628 §3.2): the
 /// <see cref="UserCode"/> they type at <see cref="VerificationUri"/>. The opaque <see cref="DeviceCode"/>
-/// is round-tripped into <see cref="IGitHubAuth.AwaitAuthorizationAsync"/> so the implementation holds no
-/// per-flow state; it is never shown to the user.
+/// is round-tripped into <see cref="IGitHubAuth.AwaitAuthorizationAsync"/>; it is never shown to the user.
 /// </summary>
 public sealed record DeviceCodePrompt(
     string UserCode,
     Uri VerificationUri,
     TimeSpan ExpiresIn,
     TimeSpan Interval,
-    string DeviceCode);
+    string DeviceCode)
+{
+    // The host only round-trips the public device-flow fields. The concrete auth implementation stamps
+    // its own attempt epoch here so a superseded prompt can never commit a token after cancel/sign-out.
+    internal long AuthorizationEpoch { get; init; }
+}
 
 /// <summary>How awaiting device authorization ended.</summary>
 public enum SignInOutcome
@@ -79,9 +83,9 @@ public sealed record SignInResult(SignInOutcome Outcome, string? Login, string? 
 /// <summary>
 /// GitHub OAuth device-flow sign-in and the secure token store behind it. Kept behind an interface so
 /// the host is testable without a real GitHub session and so no HTTP / token types leak into
-/// <c>SpecDesk.Host</c> — the access token is confined to <c>SpecDesk.GitHub</c>. Async and stateless:
-/// the host starts the flow (to display the user code), then awaits authorization on a background task
-/// and replies to the webview by echoing the request id, matching the existing host pattern.
+/// <c>SpecDesk.Host</c> — the access token is confined to <c>SpecDesk.GitHub</c>. The host starts the flow
+/// (to display the user code), then awaits authorization on a background task and replies to the webview
+/// by echoing the request id, matching the existing host pattern.
 /// </summary>
 public interface IGitHubAuth
 {
@@ -89,8 +93,7 @@ public interface IGitHubAuth
     /// any failure throws (rather than returning a result) for the host to show a "couldn't start sign-in"
     /// error and let the user retry — a transport failure, a GitHub API error (e.g. a misconfigured client
     /// id), a request timeout, or cancellation. The varied exception types mean the host's start handler
-    /// should catch broadly. The returned prompt carries the opaque device code, so the implementation
-    /// holds no per-flow state.</summary>
+    /// should catch broadly. The returned prompt carries the opaque device code.</summary>
     Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Poll until the displayed code is authorized, expires, is denied, or the wait is

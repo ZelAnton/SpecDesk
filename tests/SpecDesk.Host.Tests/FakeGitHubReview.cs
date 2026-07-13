@@ -50,6 +50,10 @@ internal sealed class FakeGitHubReview : IGitHubReview
 
     public int GetReviewStatusCalls { get; private set; }
 
+    public TaskCompletionSource? GetReviewStatusStarted { get; set; }
+
+    public TaskCompletionSource? GetReviewStatusGate { get; set; }
+
     /// <summary>When set, the call blocks (after recording its arguments) until released — so a test
     /// can keep one round-trip in flight and assert a concurrent send is single-flighted away.</summary>
     public ManualResetEventSlim? ReleaseGate { get; init; }
@@ -96,11 +100,16 @@ internal sealed class FakeGitHubReview : IGitHubReview
         return Task.FromResult(reviewers.Count);
     }
 
-    public Task<ReviewStatus?> GetReviewStatusAsync(
+    public async Task<ReviewStatus?> GetReviewStatusAsync(
         string accessToken, string owner, string repo, string branch, CancellationToken cancellationToken = default)
     {
         GetReviewStatusCalls++;
-        return Task.FromResult(ReviewStatusValue);
+        GetReviewStatusStarted?.TrySetResult();
+        if (GetReviewStatusGate is not null)
+        {
+            await GetReviewStatusGate.Task;
+        }
+        return ReviewStatusValue;
     }
 
     /// <summary>What <see cref="ListReviewsAsync"/> returns; a test sets it. Defaults to empty.</summary>
@@ -111,16 +120,25 @@ internal sealed class FakeGitHubReview : IGitHubReview
 
     public int ListReviewsCalls { get; private set; }
 
-    public Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
+    public TaskCompletionSource? ListReviewsStarted { get; set; }
+
+    public TaskCompletionSource? ListReviewsGate { get; set; }
+
+    public async Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
         string accessToken, CancellationToken cancellationToken = default)
     {
         ListReviewsCalls++;
+        ListReviewsStarted?.TrySetResult();
+        if (ListReviewsGate is not null)
+        {
+            await ListReviewsGate.Task;
+        }
         if (ThrowOnListReviews)
         {
             throw new HttpRequestException("boom");
         }
 
-        return Task.FromResult(ReviewsValue);
+        return ReviewsValue;
     }
 
     public IReadOnlyList<ReviewSummary> ReviewRequestsValue { get; set; } = [];

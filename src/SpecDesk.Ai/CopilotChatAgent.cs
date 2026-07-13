@@ -49,6 +49,7 @@ public sealed class CopilotChatAgent : IChatAgent, IAsyncDisposable
 	private readonly TimeSpan _abortTimeout = DefaultAbortTimeout;
 	private readonly TimeSpan _disposeTimeout = DefaultDisposeTimeout;
 	private readonly SemaphoreSlim _turnGate = new(1, 1);
+	private readonly CancellationTokenSource _disposeCts = new();
 	private ICopilotSessionTransport? _session;
 	private int _disposeStarted;
 
@@ -93,20 +94,29 @@ public sealed class CopilotChatAgent : IChatAgent, IAsyncDisposable
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(userMessage);
 		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeStarted) != 0, this);
+		using CancellationTokenSource turnCts = CancellationTokenSource.CreateLinkedTokenSource(
+			cancellationToken, _disposeCts.Token);
+		CancellationToken turnCancellation = turnCts.Token;
 
-		await _turnGate.WaitAsync(cancellationToken);
+		await _turnGate.WaitAsync(turnCancellation);
 		try
 		{
 			ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeStarted) != 0, this);
-			ICopilotSessionTransport session = await EnsureSessionAsync(cancellationToken);
+			ICopilotSessionTransport session = await EnsureSessionAsync(turnCancellation);
 			Channel<string> chunks = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
 			{
 				SingleReader = true,
 				SingleWriter = false,
 			});
+			int acceptEvents = 1;
 
 			using IDisposable subscription = session.On(evt =>
 			{
+				if (Volatile.Read(ref acceptEvents) == 0)
+				{
+					return;
+				}
+
 				switch (evt)
 				{
 					case AssistantMessageDeltaEvent { Data.DeltaContent.Length: > 0 } delta:
@@ -125,26 +135,48 @@ public sealed class CopilotChatAgent : IChatAgent, IAsyncDisposable
 			});
 			using CancellationTokenSource abortMonitor = new();
 			Task<bool> abortTask = AbortWhenCancelledAsync(
-				session, _abortTimeout, cancellationToken, abortMonitor.Token);
+				session, _abortTimeout, turnCancellation, abortMonitor.Token);
+			Task? sendTask = null;
+			bool detachSession = false;
 			try
 			{
-				await session.SendAsync(userMessage, cancellationToken);
-				await foreach (string chunk in chunks.Reader.ReadAllAsync(cancellationToken))
+				sendTask = session.SendAsync(userMessage, turnCancellation);
+				try
+				{
+					// WaitAsync bounds a provider call that ignores its cancellation token. The abort monitor below
+					// still asks Copilot to stop; this wait only prevents that uncooperative RPC from owning the
+					// agent's turn gate (and therefore Host disposal) forever.
+					await sendTask.WaitAsync(turnCancellation);
+				}
+				catch (OperationCanceledException) when (turnCancellation.IsCancellationRequested)
+				{
+					detachSession = !sendTask.IsCompleted;
+					if (detachSession)
+					{
+						ObserveFault(sendTask);
+					}
+					throw;
+				}
+				await foreach (string chunk in chunks.Reader.ReadAllAsync(turnCancellation))
 				{
 					yield return chunk;
 				}
 			}
 			finally
 			{
+				// An SDK callback already queued before unsubscription may arrive after cancellation. Close this
+				// turn before aborting so stale events are ignored even when the provider retains the delegate.
+				Volatile.Write(ref acceptEvents, 0);
+				chunks.Writer.TryComplete();
 				// Do not release _turnGate until an abort triggered by this cancellation has finished. Otherwise
 				// its late completion could abort the next message sent on the shared Copilot session.
 				abortMonitor.Cancel();
 				bool reusable = await abortTask;
-				if (!reusable && ReferenceEquals(_session, session))
+				if ((!reusable || detachSession) && ReferenceEquals(_session, session))
 				{
-					// A timed-out/faulted abort can finish late. Detach this exact session before releasing the
-					// turn gate, then bound its cleanup; a later turn creates a different session, so the old
-					// abort can never cancel new work.
+					// A timed-out/faulted abort or a SendAsync that ignored cancellation can finish late. Detach this
+					// exact session before releasing the turn gate, then bound cleanup; neither its late send nor its
+					// abort can affect a later turn on the replacement session.
 					_session = null;
 					await DisposeWithinAsync(session, _disposeTimeout);
 				}
@@ -280,6 +312,7 @@ public sealed class CopilotChatAgent : IChatAgent, IAsyncDisposable
 			return;
 		}
 
+		_disposeCts.Cancel();
 		await _turnGate.WaitAsync();
 		try
 		{
@@ -297,6 +330,7 @@ public sealed class CopilotChatAgent : IChatAgent, IAsyncDisposable
 		{
 			_turnGate.Release();
 			_turnGate.Dispose();
+			_disposeCts.Dispose();
 		}
 	}
 }

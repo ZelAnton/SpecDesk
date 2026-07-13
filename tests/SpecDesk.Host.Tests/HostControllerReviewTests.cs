@@ -1091,7 +1091,9 @@ public sealed class HostControllerReviewTests
         {
             Assert.That(reply!.Id, Is.EqualTo("pull-list"));
             Assert.That(review.ListPullRequestsCalls, Is.EqualTo(1));
-            Assert.That(payload!.Items.Select(item => item.Role), Is.EqualTo(new[] { "author", "reviewer" }));
+            Assert.That(
+                payload!.Items.Select(item => item.Role),
+                Is.EqualTo(new List<string> { "author", "reviewer" }));
         });
     }
 

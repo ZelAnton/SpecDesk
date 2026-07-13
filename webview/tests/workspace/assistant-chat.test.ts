@@ -108,6 +108,45 @@ describe("AssistantChat", () => {
     );
   });
 
+  it("clears private chat state at sign-out and cannot submit an old attachment as another account", async () => {
+    let resolvePick!: (attachment: ChatAttachment | null) => void;
+    const pendingPick = new Promise<ChatAttachment | null>((resolve) => {
+      resolvePick = resolve;
+    });
+    const { chat, body, input, sendBtn, sendMessage, pickAttachment, templatesBtn } = harness({
+      personal: [{ id: "old", title: "Private", body: "old private template" }],
+      remote: [],
+    });
+    pickAttachment.mockReturnValueOnce(pendingPick);
+
+    body.querySelector<HTMLButtonElement>(".chat-attach-toggle")?.click();
+    body.querySelector<HTMLButtonElement>(".chat-attach-item")?.click();
+    templatesBtn.click();
+    await flush();
+    expect(body.textContent).toContain("Private");
+
+    input.value = "old question";
+    sendBtn.click();
+    const oldId = sendMessage.mock.calls[0]?.[0];
+    if (oldId === undefined) throw new Error("old turn was not sent");
+    chat.appendDelta(oldId, "old private answer");
+
+    chat.setGitHubAccount(true, false);
+    resolvePick({ kind: "file", label: "secret.md", reference: "C:\\private\\secret.md" });
+    await flush();
+    chat.setGitHubAccount(true, true, "mona");
+
+    expect(body.textContent).not.toContain("old question");
+    expect(body.textContent).not.toContain("old private answer");
+    expect(body.textContent).not.toContain("Private");
+    expect(body.querySelectorAll(".chat-attachment")).toHaveLength(0);
+    expect(input.value).toBe("");
+
+    input.value = "new question";
+    sendBtn.click();
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.any(String), "new question", []);
+  });
+
   it("sends the composed message, shows a user bubble, opens a pending reply, and disables the composer", () => {
     const { input, sendBtn, sendMessage, messages, body } = harness();
     input.value = "Summarize the changes";

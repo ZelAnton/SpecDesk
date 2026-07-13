@@ -30,6 +30,10 @@ public sealed partial class HostController
 		}
 
 		string text = BuildChatPrompt(payload.Text, payload.Attachments ?? []);
+		AccountSession? accountSession = _chatAgentFactory is not null
+			&& TryCaptureAccountSession(out AccountSession capturedSession)
+				? capturedSession
+				: null;
 
 		CancellationTokenSource? cts = null;
 		string id = string.IsNullOrWhiteSpace(payload.Id) || payload.Id.Length > 128
@@ -38,6 +42,10 @@ public sealed partial class HostController
 		bool rejected = false;
 		lock (_sync)
 		{
+			if (_disposed)
+			{
+				return;
+			}
 			if (_chatCts is not null && !_chatCts.IsCancellationRequested)
 			{
 				// A turn is already streaming (the composer is meant to be disabled until it finishes); drop
@@ -51,13 +59,15 @@ public sealed partial class HostController
 				// A sign-out cancels the previous CTS before its background task reaches finally. It is safe to
 				// replace that canceled slot: _chatAgentGate still serializes transports, and the old finally uses
 				// ReferenceEquals so it cannot clear this new turn.
-				cts = new CancellationTokenSource();
+				cts = accountSession is { } session
+					? CancellationTokenSource.CreateLinkedTokenSource(session.CancellationToken)
+					: new CancellationTokenSource();
 				_chatCts = cts;
 			}
 		}
 		if (rejected)
 		{
-			EmitChatDone(id);
+			EmitChatDoneForSession(id, accountSession);
 			return;
 		}
 
@@ -70,22 +80,19 @@ public sealed partial class HostController
 				await _chatAgentGate.WaitAsync(token);
 				try
 				{
-					IChatAgent? agent = await ResolveChatAgentAsync(token);
+					IChatAgent? agent = await ResolveChatAgentAsync(accountSession, token);
 					if (agent is null)
 					{
-						EmitChatDelta(id, _chatAgentFactory is not null
+						EmitChatDeltaForSession(id, _chatAgentFactory is not null
 							? "Connect to GitHub to use Copilot."
-							: "The assistant isn't available right now.");
-						EmitChatDone(id);
+							: "The assistant isn't available right now.", accountSession);
+						EmitChatDoneForSession(id, accountSession);
 						return;
 					}
 
-					await foreach (string chunk in agent.StreamAsync(text, token))
+					if (!await StreamChatAgentAsync(agent, text, id, accountSession, token))
 					{
-						if (chunk.Length > 0)
-						{
-							EmitChatDelta(id, chunk);
-						}
+						return;
 					}
 				}
 				finally
@@ -93,7 +100,7 @@ public sealed partial class HostController
 					_chatAgentGate.Release();
 				}
 
-				EmitChatDone(id);
+				EmitChatDoneForSession(id, accountSession);
 			}
 			catch (OperationCanceledException) when (token.IsCancellationRequested)
 			{
@@ -101,11 +108,16 @@ public sealed partial class HostController
 			}
 			catch (Exception ex)
 			{
+				if (accountSession is { } session && !IsAccountSessionCurrent(session))
+				{
+					return;
+				}
 				// The provider/agent failed mid-turn. Surface a plain apology in the stream (never a stack
 				// trace) and still close the turn so the composer re-enables.
 				_logger.LogError(ex, "AI chat turn failed");
-				EmitChatDelta(id, "Sorry — the assistant ran into a problem. Please try again.");
-				EmitChatDone(id);
+				EmitChatDeltaForSession(
+					id, "Sorry — the assistant ran into a problem. Please try again.", accountSession);
+				EmitChatDoneForSession(id, accountSession);
 			}
 			finally
 			{
@@ -126,7 +138,55 @@ public sealed partial class HostController
 	// turn is starting or streaming. The host hands the token directly to the factory; the SDK retains it
 	// only in process for this account session. SpecDesk never logs, persists, or sends it over IPC, and
 	// disposing the session on sign-out/account replacement releases it.
-	private async Task<IChatAgent?> ResolveChatAgentAsync(CancellationToken cancellationToken)
+	private async Task<bool> StreamChatAgentAsync(
+		IChatAgent agent,
+		string text,
+		string id,
+		AccountSession? accountSession,
+		CancellationToken cancellationToken)
+	{
+		IAsyncEnumerable<string>? stream = null;
+		if (accountSession is { } session)
+		{
+			if (!StartForAccountSession(session, () => stream = agent.StreamAsync(text, cancellationToken)))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			stream = agent.StreamAsync(text, cancellationToken);
+		}
+
+		await using IAsyncEnumerator<string> enumerator = stream!.GetAsyncEnumerator(cancellationToken);
+		while (true)
+		{
+			ValueTask<bool> moveNext = default;
+			if (accountSession is { } activeSession)
+			{
+				if (!StartForAccountSession(activeSession, () => moveNext = enumerator.MoveNextAsync()))
+				{
+					return false;
+				}
+			}
+			else
+			{
+				moveNext = enumerator.MoveNextAsync();
+			}
+			if (!await moveNext)
+			{
+				return true;
+			}
+			if (enumerator.Current.Length > 0
+				&& !EmitChatDeltaForSession(id, enumerator.Current, accountSession))
+			{
+				return false;
+			}
+		}
+	}
+
+	private async Task<IChatAgent?> ResolveChatAgentAsync(
+		AccountSession? accountSession, CancellationToken cancellationToken)
 	{
 		if (_chatAgentFactory is null)
 		{
@@ -141,10 +201,32 @@ public sealed partial class HostController
 			return _chatAgent;
 		}
 
-		_chatAgent = await _auth.WithAccessTokenAsync(
-			(accessToken, _) => Task.FromResult(_chatAgentFactory.Create(accessToken)),
-			cancellationToken);
-		return _chatAgent;
+		if (accountSession is not { } session)
+		{
+			return null;
+		}
+		Task<IChatAgent>? createOperation = null;
+		if (!StartForAccountSession(session, () =>
+			createOperation = _auth.WithAccessTokenAsync(
+				(accessToken, _) => Task.FromResult(_chatAgentFactory.Create(accessToken)),
+				cancellationToken)))
+		{
+			return null;
+		}
+		IChatAgent created = await createOperation!;
+		if (!PublishForAccountSession(session, () => _chatAgent = created))
+		{
+			if (created is IAsyncDisposable asyncDisposable)
+			{
+				await asyncDisposable.DisposeAsync();
+			}
+			else if (created is IDisposable disposable)
+			{
+				disposable.Dispose();
+			}
+			return null;
+		}
+		return created;
 	}
 
 	private async Task ResetChatAgentAsync()
@@ -218,6 +300,28 @@ public sealed partial class HostController
 
 	private void EmitChatDone(string id) =>
 		Emit(IpcSerializer.SerializeEvent(MessageKinds.ChatDone, new ChatDonePayload(id)));
+
+	private bool EmitChatDeltaForSession(string id, string text, AccountSession? accountSession) =>
+		accountSession is { } session
+			? PublishForAccountSession(session, () => EmitChatDelta(id, text))
+			: EmitUnboundChatDelta(id, text);
+
+	private bool EmitChatDoneForSession(string id, AccountSession? accountSession) =>
+		accountSession is { } session
+			? PublishForAccountSession(session, () => EmitChatDone(id))
+			: EmitUnboundChatDone(id);
+
+	private bool EmitUnboundChatDelta(string id, string text)
+	{
+		EmitChatDelta(id, text);
+		return true;
+	}
+
+	private bool EmitUnboundChatDone(string id)
+	{
+		EmitChatDone(id);
+		return true;
+	}
 
 	private void EmitTemplates(TemplatesPayload payload, string? id) =>
 		Emit(IpcSerializer.SerializeEvent(MessageKinds.Templates, payload, id: id));

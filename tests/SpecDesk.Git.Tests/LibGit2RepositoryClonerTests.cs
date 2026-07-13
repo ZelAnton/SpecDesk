@@ -77,25 +77,21 @@ public sealed class LibGit2RepositoryClonerTests
         File.WriteAllText(Path.Combine(_dest, "junk.txt"), "debris");
         Assert.That(_cloner.IsCloned(_dest), Is.False, "a non-repo folder is not a clone");
 
-        _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+		Directory.Delete(_dest, recursive: true);
+		_cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
         Assert.That(_cloner.IsCloned(_dest), Is.True, "a valid working tree is a clone");
     }
 
     [Test]
-    public void CloneOrReuse_OverPartialDebris_ClearsItAndClonesFresh()
+	public void CloneOrReuse_PreExistingNonRepositoryDestination_FailsClosedAndPreservesIt()
     {
         // Simulate a previous clone that faulted mid-transfer: a non-empty, non-repo directory at the target.
         Directory.CreateDirectory(_dest);
         File.WriteAllText(Path.Combine(_dest, "partial.pack"), "debris");
 
-        string local = _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
-
-        Assert.Multiple(() =>
-        {
-            Assert.That(Repository.IsValid(local), Is.True);
-            Assert.That(File.Exists(Path.Combine(local, "spec.md")), Is.True);
-            Assert.That(File.Exists(Path.Combine(local, "partial.pack")), Is.False, "debris cleared");
-        });
+		Assert.Throws<IOException>(
+			() => _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None));
+		Assert.That(File.ReadAllText(Path.Combine(_dest, "partial.pack")), Is.EqualTo("debris"));
     }
 
     [Test]

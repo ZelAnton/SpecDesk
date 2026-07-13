@@ -6,6 +6,7 @@ import { SignInController } from "../../src/chrome/signin.js";
 function setupDom(): void {
   document.body.innerHTML = `
     <button id="github-btn" aria-expanded="false">Account</button>
+		<button id="github-auth-btn" hidden>Connect to GitHub</button>
     <span id="github-account-status" hidden></span>
     <div id="account-menu" role="menu" hidden>
       <button id="account-settings" role="menuitem">Settings</button>
@@ -38,6 +39,7 @@ function mount() {
   const openUrl = vi.fn();
   const controller = new SignInController({
     accountBtn: document.querySelector<HTMLButtonElement>("#github-btn"),
+    authBtn: document.querySelector<HTMLButtonElement>("#github-auth-btn"),
     accountStatus: document.querySelector<HTMLElement>("#github-account-status"),
     menu: document.querySelector<HTMLElement>("#account-menu"),
     connectBtn: document.querySelector<HTMLButtonElement>("#account-connect"),
@@ -68,20 +70,26 @@ describe("SignInController — account button", () => {
   it("offers Connect when signed out, and signs in on click", () => {
     const { controller, signIn } = mount();
     controller.applyAccount({ available: true, signedIn: false });
+    expect(el("github-auth-btn").textContent).toBe("Connect to GitHub");
+    el("github-auth-btn").click();
+    expect(signIn).toHaveBeenCalledTimes(1);
     el("github-btn").click();
     expect(el("account-menu").hidden).toBe(false);
     el("account-connect").click();
-    expect(signIn).toHaveBeenCalledTimes(1);
+    expect(signIn).toHaveBeenCalledTimes(2);
   });
 
   it("shows the handle in the accessible account name, and signs out from the menu", () => {
     const { controller, signOut } = mount();
     controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
     expect(el("github-btn").getAttribute("aria-label")).toBe("Account, signed in as @octocat");
+    expect(el("github-auth-btn").textContent).toBe("Sign out @octocat");
+    el("github-auth-btn").click();
+    expect(signOut).toHaveBeenCalledTimes(1);
     el("github-btn").click();
     expect(el("account-signout").textContent).toBe("Sign out @octocat");
     el("account-signout").click();
-    expect(signOut).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledTimes(2);
   });
 
   it("shows the account and authorized organizations in the status bar", () => {

@@ -37,6 +37,7 @@ public sealed partial class HostController
 		string fromState;
 		long seq;
 		long generation;
+		long publishClaim;
 		lock (_sync)
 		{
 			DraftSession session = _session;
@@ -64,22 +65,25 @@ public sealed partial class HostController
 			// reject a same-named draft recreated mid-push (M-13).
 			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
+			publishClaim = ++_publishClaimCounter;
+			_activePublishClaim = publishClaim;
 		}
 
 		// The two pure null checks below can't throw, so it's safe to release the claim and return here.
 		// EVERYTHING that can throw (IsSignedIn, the repo read, the push, the API call) runs inside the
 		// background task (RunReviewPublish), whose finally always releases the claim — otherwise a single
 		// libgit2/IO fault on the synchronous path would leak the claim and wedge the feature for the session.
-		if (_auth is null || _publishing is null || _review is null)
+		if (_auth is null || _publishing is null || _review is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession))
 		{
-			ClearPublishInFlight();
+			ClearPublishInFlight(publishClaim);
 			SendError("Connect a GitHub account to send a document for review.");
 			return;
 		}
 
 		if (repoRoot is null || branch is null || baseBranch is null || path is null)
 		{
-			ClearPublishInFlight();
+			ClearPublishInFlight(publishClaim);
 			return;
 		}
 
@@ -89,21 +93,30 @@ public sealed partial class HostController
 		string baseName = baseBranch;
 		string docPath = path;
 
+
 		RunReviewPublish(
-			fromState, branchName, next, seq, generation, "Sent for review",
+			accountSession, publishClaim, fromState, branchName, next, seq, generation, "Sent for review",
 			"Couldn't send this for review. Check your connection and try again.",
 			async ct =>
 			{
 				// Re-check readiness at send time (the prompt already gated on it, but the state could have
 				// moved) — one shared policy for the prompt and the send, and it hands back the title seed.
+				if (!IsAccountSessionCurrent(accountSession))
+				{
+					return false;
+				}
 				(string? blocked, GitHubRepo? repo, string? lastNote) = CheckSendReadiness(root, branchName, baseName);
 				if (blocked is not null)
 				{
-					SendError(blocked);
+					PublishForAccountSession(accountSession, () => SendError(blocked));
 					return false;
 				}
 
-				SendTransientStatus("Sending for review…");
+				if (!PublishForAccountSession(
+					accountSession, () => SendTransientStatus("Sending for review…")))
+				{
+					return false;
+				}
 				// Use the author's confirmed text. A blank title degrades to the generated seed — GitHub
 				// rejects an empty title. The body degrades ONLY when it is absent (a bare send with no
 				// payload, or a payload missing the field) — a description the author cleared is honoured as
@@ -119,20 +132,28 @@ public sealed partial class HostController
 				PullRequest pr = await _auth.WithAccessTokenAsync(
 					async (token, innerCt) =>
 					{
-						// The push is a repo operation AND a network transfer, so _repoGate is held across the
-						// whole push to serialize it with every other libgit2 access (libgit2 isn't
-						// concurrency-safe). This can block a concurrent repo-gated message-thread handler for
-						// the push's duration — see the _repoGate note. The lock is released before the
-						// separate PR API call below, which needs no repo access.
-						lock (_repoGate)
+						if (!StartForAccountSession(accountSession, () =>
 						{
-							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+							lock (_repoGate)
+							{
+								_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+							}
+						}))
+						{
+							throw new OperationCanceledException(innerCt);
 						}
 
-						PullRequest opened = await _review.OpenPullRequestAsync(
-							token, repo!.Owner, repo.Name, branchName, baseName, title, body, innerCt);
+						Task<PullRequest>? openOperation = null;
+						if (!StartForAccountSession(accountSession, () =>
+							openOperation = _review.OpenPullRequestAsync(
+								token, repo!.Owner, repo.Name, branchName, baseName, title, body, innerCt)))
+						{
+							throw new OperationCanceledException(innerCt);
+						}
+						PullRequest opened = await openOperation!;
 						// Assign reviewers within the same token scope, best-effort (never fails the send).
-						await RequestReviewersBestEffort(token, repo, opened, reviewers, innerCt);
+						await RequestReviewersBestEffort(
+							accountSession, token, repo!, opened, reviewers, innerCt);
 						return opened;
 					},
 					ct);
@@ -165,6 +186,7 @@ public sealed partial class HostController
 		long seq;
 		long shared;
 		long generation;
+		long publishClaim;
 		lock (_sync)
 		{
 			DraftSession session = _session;
@@ -191,18 +213,21 @@ public sealed partial class HostController
 			// discarded and re-created while this push is in flight (M-13).
 			generation = Interlocked.Read(ref _draftGeneration);
 			_publishInFlight = true;
+			publishClaim = ++_publishClaimCounter;
+			_activePublishClaim = publishClaim;
 		}
 
-		if (_auth is null || _publishing is null)
+		if (_auth is null || _publishing is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession))
 		{
-			ClearPublishInFlight();
+			ClearPublishInFlight(publishClaim);
 			SendError("Connect a GitHub account to update a review.");
 			return;
 		}
 
 		if (repoRoot is null || branch is null)
 		{
-			ClearPublishInFlight();
+			ClearPublishInFlight(publishClaim);
 			return;
 		}
 
@@ -211,7 +236,7 @@ public sealed partial class HostController
 			// Nothing saved since the review was last shared: a push would be a no-op and re-opening review
 			// (or dropping an Approved status) would be misleading. Report it plainly, touch nothing. This is
 			// a pure field compare, so it's safe on the synchronous path — no background task is spun up.
-			ClearPublishInFlight();
+			ClearPublishInFlight(publishClaim);
 			SendTransientStatus("No new versions to update the review with");
 			return;
 		}
@@ -220,36 +245,47 @@ public sealed partial class HostController
 		string root = repoRoot;
 		string branchName = branch;
 
+
 		RunReviewPublish(
-			fromState, branchName, next, seq, generation, "Updated the review",
+			accountSession, publishClaim, fromState, branchName, next, seq, generation, "Updated the review",
 			"Couldn't update the review. Check your connection and try again.",
 			ct =>
 			{
-				if (!_auth.IsSignedIn())
+				if (!IsAccountSessionCurrent(accountSession))
 				{
-					SendError("Connect your GitHub account first, then update the review.");
 					return Task.FromResult(false);
 				}
 
 				if (ResolveGitHubReviewRepo(root) is null)
 				{
-					SendError("This document isn't in a GitHub repository, so its review can't be updated.");
+					PublishForAccountSession(accountSession, () =>
+						SendError("This document isn't in a GitHub repository, so its review can't be updated."));
 					return Task.FromResult(false);
 				}
 
-				SendTransientStatus("Updating the review…");
+				if (!PublishForAccountSession(
+					accountSession, () => SendTransientStatus("Updating the review…")))
+				{
+					return Task.FromResult(false);
+				}
 
 				// Push only — the PR already exists and tracks the branch, so there is no network step to
 				// await once the repo-gated push returns.
 				return _auth.WithAccessTokenAsync(
 					(token, innerCt) =>
 					{
-						lock (_repoGate)
+						if (!StartForAccountSession(accountSession, () =>
 						{
-							_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+							lock (_repoGate)
+							{
+								_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+							}
+						}))
+						{
+							throw new OperationCanceledException(innerCt);
 						}
 
-						return Task.FromResult(true);
+						return Task.FromResult(IsAccountSessionCurrent(accountSession));
 					},
 					ct);
 				});
@@ -293,9 +329,19 @@ public sealed partial class HostController
 
 		string root = repoRoot;
 		string branchName = branch;
+		if (!TryCaptureAccountSession(out AccountSession accountSession))
+		{
+			lock (_sync)
+			{
+				_refreshingStatus = false;
+				_refreshPending = false;
+			}
+			return;
+		}
 		_ = Task.Run(async () =>
 		{
-			using CancellationTokenSource timeout = new();
+			using CancellationTokenSource timeout =
+				CancellationTokenSource.CreateLinkedTokenSource(accountSession.CancellationToken);
 			timeout.CancelAfter(ReviewStatusTimeout);
 			try
 			{
@@ -304,9 +350,16 @@ public sealed partial class HostController
 					return;
 				}
 
-				ReviewStatus? status = await _auth.WithAccessTokenAsync(
-					(token, ct) => _review.GetReviewStatusAsync(token, repo.Owner, repo.Name, branchName, ct),
-					timeout.Token);
+				Task<ReviewStatus?>? statusOperation = null;
+				if (!StartForAccountSession(accountSession, () =>
+					statusOperation = _auth.WithAccessTokenAsync(
+						(token, ct) => _review.GetReviewStatusAsync(
+							token, repo.Owner, repo.Name, branchName, ct),
+						timeout.Token)))
+				{
+					return;
+				}
+				ReviewStatus? status = await statusOperation!;
 				if (status is null)
 				{
 					// The branch never had a pull request (shouldn't happen once under review) — nothing to do.
@@ -337,25 +390,32 @@ public sealed partial class HostController
 				// head-level freshness check before merging rather than trusting this transient status.
 				string mapped = DecisionStateName(status.Decision);
 
-				bool changed = false;
-				lock (_sync)
+				PublishForAccountSession(accountSession, () =>
 				{
-					// Apply the decision only if the document is still the same review draft that we queried
-					// for, no publish started meanwhile (its committed state wins), and the decision moved.
-					DraftSession session = _session;
-					if (session.Branch == branchName && !_publishInFlight && IsReviewState(session.State) && session.State != mapped)
+					bool changed = false;
+					lock (_sync)
 					{
-						_session = session with { State = mapped };
-						changed = true;
+						DraftSession session = _session;
+						if (session.Branch == branchName && !_publishInFlight
+							&& IsReviewState(session.State) && session.State != mapped)
+						{
+							_session = session with { State = mapped };
+							changed = true;
+						}
 					}
-				}
-
-				if (changed)
-				{
-					_logger.LogInformation(
-						"Review status for {Branch} (PR #{Number}) is now {State}", branchName, status.Number, mapped);
-					SendLifecycleStatus();
-				}
+					if (changed)
+					{
+						_logger.LogInformation(
+							"Review status for {Branch} (PR #{Number}) is now {State}",
+							branchName, status.Number, mapped);
+						SendLifecycleStatus();
+					}
+				});
+			}
+			catch (OperationCanceledException) when (
+				accountSession.CancellationToken.IsCancellationRequested)
+			{
+				// Sign-out retired the account that owned this refresh.
 			}
 			catch (Exception ex)
 			{
@@ -375,7 +435,7 @@ public sealed partial class HostController
 
 				// A refresh was requested mid-flight — run exactly one more so a focus/poll read that arrived
 				// during this one isn't lost (it may have wanted a newer decision than this read saw).
-				if (again)
+				if (again && IsAccountSessionCurrent(accountSession))
 				{
 					OnRefreshReviewStatus();
 				}
@@ -401,46 +461,12 @@ public sealed partial class HostController
 		}
 
 		const string connectFirst = "Connect a GitHub account to see your reviews.";
-		string? id = message.Id;
-		IGitHubAuth? auth = _auth;
-		IGitHubReview? review = _review;
-		if (auth is null || review is null)
-		{
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
-			return;
-		}
-
-		_ = Task.Run(async () =>
-		{
-			using CancellationTokenSource timeout = new();
-			// Bounded below the webview's ipc.request timeout (30s) so the host always replies before the
-			// waiter gives up — otherwise a slow-but-successful load would surface as a failure and the real
-			// reply would be dropped against an already-abandoned request id.
-			timeout.CancelAfter(PrListTimeout);
-			PrListPayload payload;
-			try
-			{
-				if (!auth.IsSignedIn())
-				{
-					payload = new PrListPayload([], connectFirst);
-				}
-				else
-				{
-					IReadOnlyList<ReviewSummary> reviews = await auth.WithAccessTokenAsync(
-						(token, ct) => review.ListReviewsAsync(token, ct), timeout.Token);
-					payload = new PrListPayload([.. reviews.Select(ToListItem)], null);
-				}
-			}
-			catch (Exception ex)
-			{
-				// Best-effort browse: a failure (HttpRequestException / a request timeout) is reported plainly,
-				// never as a token or a stack trace, so the panel shows a reason instead of hanging.
-				_logger.LogWarning(ex, "Could not list the user's reviews");
-				payload = new PrListPayload([], "Couldn't load your reviews. Check your connection and try again.");
-			}
-
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
-		});
+		RunReviewList(
+			message.Id,
+			connectFirst,
+			"Could not list the user's reviews",
+			"Couldn't load your reviews. Check your connection and try again.",
+			(token, ct) => _review!.ListReviewsAsync(token, ct));
 	}
 
 	// Reply to the left-panel Review mode. This is deliberately separate from the legacy combined "My
@@ -449,82 +475,68 @@ public sealed partial class HostController
 	private void OnListReviewRequests(IpcMessage message)
 	{
 		const string connectFirst = "Connect a GitHub account to see review requests.";
-		string? id = message.Id;
-		IGitHubAuth? auth = _auth;
-		IGitHubReview? review = _review;
-		if (auth is null || review is null)
-		{
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
-			return;
-		}
-
-		_ = Task.Run(async () =>
-		{
-			using CancellationTokenSource timeout = new();
-			timeout.CancelAfter(PrListTimeout);
-			PrListPayload payload;
-			try
-			{
-				if (!auth.IsSignedIn())
-				{
-					payload = new PrListPayload([], connectFirst);
-				}
-				else
-				{
-					IReadOnlyList<ReviewSummary> reviews = await auth.WithAccessTokenAsync(
-						(token, ct) => review.ListReviewRequestsAsync(token, ct), timeout.Token);
-					payload = new PrListPayload([.. reviews.Select(ToListItem)], null);
-				}
-			}
-			catch (Exception ex)
-			{
-				_logger.LogWarning(ex, "Could not list review requests");
-				payload = new PrListPayload(
-					[], "Couldn't load review requests. Check your connection and try again.");
-			}
-
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
-		});
+		RunReviewList(
+			message.Id,
+			connectFirst,
+			"Could not list review requests",
+			"Couldn't load review requests. Check your connection and try again.",
+			(token, ct) => _review!.ListReviewRequestsAsync(token, ct));
 	}
 
 	private void OnListPullRequests(IpcMessage message)
 	{
 		const string connectFirst = "Connect a GitHub account to see pull requests.";
-		string? id = message.Id;
-		IGitHubAuth? auth = _auth;
-		IGitHubReview? review = _review;
-		if (auth is null || review is null)
+		RunReviewList(
+			message.Id,
+			connectFirst,
+			"Could not list pull requests",
+			"Couldn't load pull requests. Check your connection and try again.",
+			(token, ct) => _review!.ListPullRequestsAsync(token, ct));
+	}
+
+	private void RunReviewList(
+		string? id,
+		string connectFirst,
+		string logMessage,
+		string errorMessage,
+		Func<string, CancellationToken, Task<IReadOnlyList<ReviewSummary>>> list)
+	{
+		if (_auth is null || _review is null || !TryCaptureAccountSession(out AccountSession accountSession))
 		{
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
 			return;
 		}
 
 		_ = Task.Run(async () =>
 		{
-			using CancellationTokenSource timeout = new();
+			using CancellationTokenSource timeout =
+				CancellationTokenSource.CreateLinkedTokenSource(accountSession.CancellationToken);
 			timeout.CancelAfter(PrListTimeout);
 			PrListPayload payload;
 			try
 			{
-				if (!auth.IsSignedIn())
+				Task<IReadOnlyList<ReviewSummary>>? operation = null;
+				if (!StartForAccountSession(accountSession, () =>
+					operation = _auth.WithAccessTokenAsync(list, timeout.Token)))
 				{
-					payload = new PrListPayload([], connectFirst);
+					return;
 				}
-				else
-				{
-					IReadOnlyList<ReviewSummary> requests = await auth.WithAccessTokenAsync(
-						(token, ct) => review.ListPullRequestsAsync(token, ct), timeout.Token);
-					payload = new PrListPayload([.. requests.Select(ToListItem)], null);
-				}
+				IReadOnlyList<ReviewSummary> reviews = await operation!;
+				payload = new PrListPayload([.. reviews.Select(ToListItem)], null);
+			}
+			catch (OperationCanceledException) when (accountSession.CancellationToken.IsCancellationRequested)
+			{
+				return;
 			}
 			catch (Exception ex)
 			{
-				_logger.LogWarning(ex, "Could not list pull requests");
-				payload = new PrListPayload(
-					[], "Couldn't load pull requests. Check your connection and try again.");
+				_logger.LogWarning(ex, "GitHub review list failed: {Operation}", logMessage);
+				payload = new PrListPayload([], errorMessage);
 			}
 
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
+			PublishForAccountSession(accountSession, () => Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.PrList, payload, id: id)));
 		});
 	}
 
@@ -559,6 +571,8 @@ public sealed partial class HostController
 	// the single-flight claim. A <paramref name="publish"/> that returns false has already told the author
 	// why it bailed, so the lifecycle is left untouched.
 	private void RunReviewPublish(
+		AccountSession accountSession,
+		long publishClaim,
 		string fromState,
 		string branchName,
 		string next,
@@ -570,10 +584,12 @@ public sealed partial class HostController
 	{
 		_ = Task.Run(async () =>
 		{
+			bool clearInFinally = true;
 			// Bound the whole round-trip so a stalled push/API call can't hold _repoGate (and the single-
 			// flight claim) indefinitely. The transfer phase honours this; a connect-phase stall is bounded
 			// only by the OS socket timeout (see PushBranch).
-			using CancellationTokenSource timeout = new();
+			using CancellationTokenSource timeout =
+				CancellationTokenSource.CreateLinkedTokenSource(accountSession.CancellationToken);
 			timeout.CancelAfter(SendForReviewTimeout);
 			try
 			{
@@ -582,26 +598,29 @@ public sealed partial class HostController
 					return;
 				}
 
-				if (TryAdvanceReview(fromState, branchName, next, seq, generation))
+				PublishForAccountSession(accountSession, () =>
 				{
-					_logger.LogInformation("{Action}: {Branch}", action, branchName);
-				}
-				else
-				{
-					// The document changed during the push (discard / switch, including a same-named draft
-					// recreated in place — M-13), so the branch was pushed / the PR opened but this document
-					// must NOT be stamped — re-sync the chrome to the real state so the transient "…" label
-					// never lingers.
-					_logger.LogInformation(
-						"{Action} completed, but the document moved on — not advancing: {Branch}", action, branchName);
-				}
-
-				// Settle on the lifecycle label — the terminal status frame, so the author is never left
-				// staring at the transient "Updating…/Sending…" message. For Update review (a self-transition)
-				// the "Updating the review…" transient clearing to the settled state is the confirmation, and
-				// a no-op instead shows the distinct "No new versions…" line. GitHub's own decision (if it
-				// changed) is picked up by the periodic poll / next window focus.
-				SendLifecycleStatus();
+					if (TryAdvanceReview(fromState, branchName, next, seq, generation))
+					{
+						_logger.LogInformation("{Action}: {Branch}", action, branchName);
+					}
+					else
+					{
+						_logger.LogInformation(
+							"{Action} completed, but the document moved on — not advancing: {Branch}",
+							action, branchName);
+					}
+					// Publish the terminal status only after releasing the single-flight claim. The terminal
+					// frame is the observable completion boundary, so a retry triggered by it must not be dropped.
+					ClearPublishInFlight(publishClaim);
+					clearInFinally = false;
+					SendLifecycleStatus();
+				});
+			}
+			catch (OperationCanceledException) when (
+				accountSession.CancellationToken.IsCancellationRequested)
+			{
+				// Sign-out owns the UI now; a cancellation-ignoring provider is still blocked by generation.
 			}
 			catch (Exception ex)
 			{
@@ -609,11 +628,16 @@ public sealed partial class HostController
 				// InvalidOperationException, a request timeout) all surface as one plain line — never the
 				// token or a stack trace. The document stays where it was so the author can retry.
 				_logger.LogError(ex, "Review push failed for {Branch}", branchName);
-				SendError(errorMessage);
+				ClearPublishInFlight(publishClaim);
+				clearInFinally = false;
+				PublishForAccountSession(accountSession, () => SendError(errorMessage));
 			}
 			finally
 			{
-				ClearPublishInFlight();
+				if (clearInFinally)
+				{
+					ClearPublishInFlight(publishClaim);
+				}
 			}
 		});
 	}
@@ -709,12 +733,22 @@ public sealed partial class HostController
 
 	// Release the shared single-flight claim taken by OnSendForReview / OnUpdateReview (success, failure,
 	// or an early gate exit).
-	private void ClearPublishInFlight()
+	private void ClearPublishInFlight(long publishClaim)
 	{
 		lock (_sync)
 		{
-			_publishInFlight = false;
+			if (_activePublishClaim == publishClaim)
+			{
+				_publishInFlight = false;
+				_activePublishClaim = 0;
+			}
 		}
+	}
+
+	private void RetirePublishInFlightLocked()
+	{
+		_publishInFlight = false;
+		_activePublishClaim = 0;
 	}
 
 	// Compose the pull-request title and body for a review request: the title is the author's last
@@ -735,7 +769,12 @@ public sealed partial class HostController
 	// reviewers on GitHub. Skipped when there are no explicit reviewers, or the PR number is unknown (a 2xx
 	// create with an unparseable body). Runs inside the caller's token scope.
 	private async Task RequestReviewersBestEffort(
-		string token, GitHubRepo repo, PullRequest pr, string[] reviewers, CancellationToken ct)
+		AccountSession accountSession,
+		string token,
+		GitHubRepo repo,
+		PullRequest pr,
+		string[] reviewers,
+		CancellationToken ct)
 	{
 		if (reviewers.Length == 0 || _review is null)
 		{
@@ -755,7 +794,14 @@ public sealed partial class HostController
 
 		try
 		{
-			int requested = await _review.RequestReviewersAsync(token, repo.Owner, repo.Name, pr.Number, reviewers, ct);
+			Task<int>? requestOperation = null;
+			if (!StartForAccountSession(accountSession, () =>
+				requestOperation = _review.RequestReviewersAsync(
+					token, repo.Owner, repo.Name, pr.Number, reviewers, ct)))
+			{
+				return;
+			}
+			int requested = await requestOperation!;
 			if (requested > 0)
 			{
 				_logger.LogInformation("Requested {Count} reviewer(s) on pull request #{Number}", requested, pr.Number);

@@ -25,21 +25,28 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
         ArgumentException.ThrowIfNullOrEmpty(destinationPath);
         ct.ThrowIfCancellationRequested();
 
-        if (Directory.Exists(destinationPath))
-        {
-            // Already a valid clone — hand back the existing working tree rather than cloning over it (a
-            // second clone into a non-empty directory fails anyway). This is the "already cloned" contract.
-            if (Repository.IsValid(destinationPath))
-            {
-                return destinationPath;
-            }
+		if (Directory.Exists(destinationPath))
+		{
+			// Already a valid clone — hand back the existing working tree rather than cloning over it.
+			if (Repository.IsValid(destinationPath))
+			{
+				return destinationPath;
+			}
 
-            // A leftover directory at the target that is NOT a git working tree (a previous clone cancelled or
-            // faulted mid-transfer left partial debris) would make Repository.Clone fail on a non-empty target.
-            // Clear it first — this only ever lives under the app's own managed repos folder, so nothing the
-            // author placed elsewhere is at risk.
-            TryDeleteDirectory(destinationPath);
-        }
+			// The host can target a user-selected folder. Never guess that an existing non-repository directory
+			// is stale clone debris: another process may have created it after the picker chose the destination.
+			throw new IOException("The repository destination already exists and is not a working tree.");
+		}
+		if (File.Exists(destinationPath))
+		{
+			throw new IOException("The repository destination is occupied by a file.");
+		}
+
+		string parent = Path.GetDirectoryName(Path.GetFullPath(destinationPath))
+			?? throw new IOException("The repository destination has no parent folder.");
+		string stagingPath = Path.Combine(
+			parent,
+			$".{Path.GetFileName(destinationPath)}.specdesk-clone-{Guid.NewGuid():N}");
 
         CloneOptions options = new();
         if (!string.IsNullOrEmpty(accessToken))
@@ -57,11 +64,15 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
         // is bounded only by the OS socket timeout — the same LibGit2Sharp limitation the push path documents.
         options.FetchOptions.OnTransferProgress = _ => !ct.IsCancellationRequested;
 
-        try
-        {
-            // Repository.Clone returns the path to the created .git directory, not the working tree; return
-            // destinationPath (the workdir we passed) — that is the folder opened as the workspace.
-            Repository.Clone(url, destinationPath, options);
+		try
+		{
+			// Repository.Clone returns the path to the created .git directory, not the working tree; return
+			// destinationPath (the workdir we passed) — that is the folder opened as the workspace.
+			Repository.Clone(url, stagingPath, options);
+			ct.ThrowIfCancellationRequested();
+			// The move is same-parent and therefore fail-closed: if anything claimed the requested destination
+			// while the clone was running, Directory.Move throws and the unrelated path remains untouched.
+			Directory.Move(stagingPath, destinationPath);
             return destinationPath;
         }
         catch (UserCancelledException) when (ct.IsCancellationRequested)
@@ -69,17 +80,23 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
             // The transfer-progress callback above aborted the clone because the caller cancelled (window
             // teardown). Remove the partial working tree and surface it as a plain OperationCanceledException,
             // so the host treats it like any other cancellation rather than a clone error.
-            TryDeleteDirectory(destinationPath);
-            throw new OperationCanceledException(ct);
-        }
-        catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+			TryDeleteOwnedDirectory(stagingPath);
+			throw new OperationCanceledException(ct);
+		}
+		catch (OperationCanceledException) when (ct.IsCancellationRequested)
+		{
+			// Cancellation may arrive after the final transfer callback but before the atomic publish move.
+			TryDeleteOwnedDirectory(stagingPath);
+			throw;
+		}
+        catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException or IOException)
         {
             // A genuine clone failure leaves a partial directory; remove it so the next attempt — and the
             // host's IsCloned check — doesn't mistake the debris for a usable clone. LibGit2SharpException is
             // the ordinary failure (a missing/private repo, a network fault); InvalidOperationException is the
             // credentials guard refusing a non-github endpoint (ResolveCredentials) surfaced back through
             // Repository.Clone. Rethrow either for the host to report plainly.
-            TryDeleteDirectory(destinationPath);
+			TryDeleteOwnedDirectory(stagingPath);
             throw;
         }
     }
@@ -120,7 +137,7 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 
     // Best-effort recursive delete that first clears the read-only attribute git sets on pack files (mirrors
     // the Git tests' own teardown). Never throws: leaving debris behind is preferable to faulting the clone.
-    private static void TryDeleteDirectory(string path)
+	private static void TryDeleteOwnedDirectory(string path)
     {
         if (!Directory.Exists(path))
         {
@@ -129,16 +146,42 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 
         try
         {
-            foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-            {
-                File.SetAttributes(file, FileAttributes.Normal);
-            }
-
-            Directory.Delete(path, recursive: true);
+			DeleteOwnedTree(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Cleanup is best-effort — a locked/partly-removed tree is left in place rather than faulting here.
         }
     }
+
+	private static void DeleteOwnedTree(string path)
+	{
+		FileAttributes rootAttributes = File.GetAttributes(path);
+		if ((rootAttributes & FileAttributes.ReparsePoint) != 0)
+		{
+			Directory.Delete(path, recursive: false);
+			return;
+		}
+
+		foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+		{
+			FileAttributes attributes = File.GetAttributes(entry);
+			if ((attributes & FileAttributes.Directory) != 0)
+			{
+				if ((attributes & FileAttributes.ReparsePoint) != 0)
+				{
+					Directory.Delete(entry, recursive: false);
+				}
+				else
+				{
+					DeleteOwnedTree(entry);
+				}
+				continue;
+			}
+
+			File.SetAttributes(entry, FileAttributes.Normal);
+			File.Delete(entry);
+		}
+		Directory.Delete(path, recursive: false);
+	}
 }

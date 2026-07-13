@@ -49,6 +49,11 @@ interface PendingCloneConfirmation {
   readonly run: () => void;
 }
 
+interface PendingManagedClone {
+  readonly url: string;
+  readonly destination: string;
+}
+
 export class RepositoriesPanel implements PanelTool {
   readonly id = "repositories";
   readonly label = "Repositories";
@@ -84,6 +89,7 @@ export class RepositoriesPanel implements PanelTool {
   private descriptionReady = false;
   private skipCloneConfirmation = false;
   private pendingConfirmation: PendingCloneConfirmation | null = null;
+  private pendingManagedClone: PendingManagedClone | null = null;
   private confirmationReturnFocus: HTMLElement | null = null;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
@@ -248,6 +254,7 @@ export class RepositoriesPanel implements PanelTool {
   setState(state: WorkspaceStatePayload): void {
     this.repos = state.repositories;
     this.favorites = state.favorites;
+    this.clearManagedCloneInputAfterSuccess();
     this.render();
   }
 
@@ -264,6 +271,57 @@ export class RepositoriesPanel implements PanelTool {
       left.fullName.localeCompare(right.fullName, undefined, { sensitivity: "base" }),
     );
     this.updateSuggestions();
+  }
+
+  /** Drop repository discovery state at a GitHub account boundary. The input may name a private repository,
+   *  and a resolved description/confirmation is authorization-specific, so none of it may survive sign-out
+   *  or an account replacement. Incrementing both request ids makes already-queued host replies stale. */
+  clearAccountState(): void {
+    if (this.destinationTimer !== null) {
+      window.clearTimeout(this.destinationTimer);
+      this.destinationTimer = null;
+    }
+    if (this.descriptionTimer !== null) {
+      window.clearTimeout(this.descriptionTimer);
+      this.descriptionTimer = null;
+    }
+    this.destinationRequestId++;
+    this.descriptionRequestId++;
+    this.managedDestination = null;
+    this.descriptionReady = false;
+    this.cloneActionPending = false;
+    this.pendingManagedClone = null;
+    this.suggestions = [];
+
+    const focusWasInConfirmation = this.confirmationEl?.contains(document.activeElement) === true;
+    this.pendingConfirmation = null;
+    this.confirmationReturnFocus = null;
+    if (this.confirmationEl !== null) {
+      this.confirmationEl.hidden = true;
+    }
+    this.setCloneContentInert(false);
+
+    if (this.input !== null) {
+      this.input.value = "";
+    }
+    this.closeSuggestions();
+    this.closeCloneMenu();
+    if (this.publicHintEl !== null) {
+      this.publicHintEl.hidden = true;
+    }
+    if (this.destinationEl !== null) {
+      this.destinationEl.hidden = true;
+      this.destinationEl.textContent = "";
+      this.destinationEl.title = "";
+    }
+    if (this.descriptionEl !== null) {
+      this.descriptionEl.hidden = true;
+      this.descriptionEl.textContent = "";
+    }
+    this.updateCloneAvailability();
+    if (focusWasInConfirmation) {
+      this.input?.focus();
+    }
   }
 
   setManagedDestination(payload: RepoCloneDestinationPayload): void {
@@ -317,15 +375,20 @@ export class RepositoriesPanel implements PanelTool {
     if (url === "" || this.cloneActionPending) {
       return;
     }
-    // Clear immediately: the host validates and either adds it (a `workspace.state` follows and rebuilds
-    // the list) or emits an `error` the app surfaces — either way the field is ready for the next entry.
-    this.input.value = "";
+    // Keep the exact entry until the author changes it. Native clone can fail or be cancelled without a
+    // correlated success frame; clearing here used to destroy the only retryable copy of owner/name.
     this.closeSuggestions();
-    this.scheduleDestination();
-    this.scheduleDescription();
     this.closeCloneMenu();
     this.cloneActionPending = true;
-    action(url);
+    try {
+      action(url);
+    } finally {
+      // Sending IPC is synchronous. Refresh the destination because a native collision can make the path
+      // stale before it rejects this request; the unchanged owner/name becomes retryable as soon as the
+      // authoritative replacement arrives.
+      this.cloneActionPending = false;
+      this.scheduleDestination();
+    }
   }
 
   private requestManagedClone(): void {
@@ -337,9 +400,34 @@ export class RepositoriesPanel implements PanelTool {
     this.requestCloneConfirmation({
       url,
       summary: `Clone ${url} to ${destination}?`,
-      run: () =>
-        this.executeClone(url, (value) => this.callbacks.onCloneManaged(value, destination)),
+      run: () => {
+        this.pendingManagedClone = { url, destination };
+        this.executeClone(url, (value) => this.callbacks.onCloneManaged(value, destination));
+      },
     });
+  }
+
+  private clearManagedCloneInputAfterSuccess(): void {
+    const pending = this.pendingManagedClone;
+    if (pending === null || this.input?.value.trim() !== pending.url) {
+      return;
+    }
+    const pendingRepo = normalizeGitHubRepository(pending.url);
+    const completed =
+      pendingRepo !== null &&
+      this.repos.some(
+        (repo) =>
+          repo.id.toLocaleLowerCase() === pendingRepo &&
+          repo.clones.some((clone) => sameLocalPath(clone.path, pending.destination)),
+      );
+    if (!completed) {
+      return;
+    }
+    this.pendingManagedClone = null;
+    this.input.value = "";
+    this.updateSuggestions();
+    this.scheduleDestination();
+    this.scheduleDescription();
   }
 
   private requestFolderClone(): void {
@@ -350,7 +438,14 @@ export class RepositoriesPanel implements PanelTool {
     this.requestCloneConfirmation({
       url,
       summary: `Choose a folder and clone ${url} there?`,
-      run: () => this.executeClone(url, this.callbacks.onCloneToFolder),
+      run: () => {
+        // Keep the entry visible: the native folder picker may be cancelled and intentionally emits no
+        // success frame. The modal picker prevents a second click while it is open, so no pending flag is
+        // needed here; retaining the text makes cancel-and-retry immediate and lossless.
+        this.closeSuggestions();
+        this.closeCloneMenu();
+        this.callbacks.onCloneToFolder(url);
+      },
     });
   }
 
@@ -740,6 +835,26 @@ export class RepositoriesPanel implements PanelTool {
 
 function isOwnerRepository(value: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/[a-z0-9._-]+$/i.test(value);
+}
+
+function sameLocalPath(left: string, right: string): boolean {
+  const normalize = (path: string): string => path.replace(/[\\/]+$/, "").replaceAll("/", "\\");
+  return normalize(left).toLocaleLowerCase() === normalize(right).toLocaleLowerCase();
+}
+
+function normalizeGitHubRepository(value: string): string | null {
+  let spec = value.trim();
+  const scpPrefix = "git@github.com:";
+  if (spec.toLocaleLowerCase().startsWith(scpPrefix)) {
+    spec = spec.slice(scpPrefix.length);
+  } else {
+    const url = /^(?:https?:\/\/)?(?:www\.)?github\.com\/(.+)$/i.exec(spec);
+    if (url?.[1] !== undefined) {
+      spec = url[1];
+    }
+  }
+  spec = spec.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "");
+  return isOwnerRepository(spec) ? spec.toLocaleLowerCase() : null;
 }
 
 function readSkipCloneConfirmation(): boolean {

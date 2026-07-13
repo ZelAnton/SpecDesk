@@ -1,3 +1,4 @@
+using GitHub.Copilot;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json;
 using SpecDesk.Ai;
@@ -102,7 +103,7 @@ public sealed class HostControllerChatTests
 
 		IpcMessage? done = WaitForKind(MessageKinds.ChatDone);
 		ChatDeltaPayload[] deltas = SnapshotSent()
-			.Select(IpcSerializer.Deserialize)
+			.Select(IpcSerializer.TryDeserialize)
 			.Where(message => message?.Kind == MessageKinds.ChatDelta)
 			.Select(message => message!.GetPayload<ChatDeltaPayload>()!)
 			.ToArray();
@@ -172,7 +173,7 @@ public sealed class HostControllerChatTests
 		await Task.Run(controller.Dispose).WaitAsync(TimeSpan.FromSeconds(1));
 	}
 
-	private void SendChat(HostController controller, string text) =>
+	private static void SendChat(HostController controller, string text) =>
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.ChatSend, new ChatSendPayload(text, [])));
 
@@ -182,7 +183,7 @@ public sealed class HostControllerChatTests
 		{
 			lock (_gate)
 			{
-				if (_sent.Count(json => IpcSerializer.Deserialize(json)?.Kind == MessageKinds.ChatDone) >= expected)
+				if (_sent.Count(json => IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.ChatDone) >= expected)
 				{
 					return true;
 				}
@@ -199,7 +200,7 @@ public sealed class HostControllerChatTests
 			lock (_gate)
 			{
 				if (_sent
-					.Select(IpcSerializer.Deserialize)
+					.Select(IpcSerializer.TryDeserialize)
 					.Where(message => message?.Kind == MessageKinds.GitHubAccount)
 					.Any(message => message?.GetPayload<GitHubAccountPayload>()?.SignedIn == true))
 				{

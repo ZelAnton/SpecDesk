@@ -264,6 +264,28 @@ describe("Dock mode switching", () => {
     expect(document.activeElement).toBe(buttons[2]);
     expect(buttons[2]?.getAttribute("aria-checked")).toBe("true");
   });
+
+  it("moves focus out of a tool body before context hides that tool", () => {
+    const comments = tool("comments", "Comments");
+    comments.mount = (body) => {
+      const input = document.createElement("input");
+      input.setAttribute("aria-label", "Comment text");
+      body.appendChild(input);
+    };
+    const { dockEl, dock } = harness({
+      tools: [tool("assistant", "Assistant"), comments],
+      initial: { open: true, size: 320, mode: "comments" },
+    });
+    const input = dockEl.querySelector<HTMLInputElement>('[aria-label="Comment text"]');
+    input?.focus();
+    expect(document.activeElement).toBe(input);
+
+    dock.setAvailableTools(new Set(["assistant"]));
+
+    expect(document.activeElement).toBe(
+      dockEl.querySelector<HTMLButtonElement>('[data-tool="assistant"]'),
+    );
+  });
 });
 
 describe("Dock resize", () => {

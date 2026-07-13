@@ -91,4 +91,64 @@ public sealed class FileTokenStoreTests
             Assert.DoesNotThrow(store.Clear); // already gone
         });
     }
+
+    [TestCase(typeof(IOException))]
+    [TestCase(typeof(UnauthorizedAccessException))]
+    public void Clear_records_sign_out_when_token_deletion_fails(Type exceptionType)
+    {
+        string dir = NewDir();
+        FileTokenStore initial = Store(dir);
+        initial.Save(new StoredToken("stale-token", "octocat"));
+        FileTokenStore failingDelete = new(
+            new IdentityTokenProtector(),
+            dir,
+            _ => throw (Exception)Activator.CreateInstance(exceptionType, "delete failed")!);
+
+        Assert.DoesNotThrow(failingDelete.Clear);
+
+        // A newly-created store models the next application process. The undeleted token must not
+        // resurrect the session, and a later successful sign-in must make the store usable again.
+        FileTokenStore restarted = Store(dir);
+        FakeDeviceFlowApi api = new(
+            new DeviceCodeResponse(
+                "device-code", "ABCD-1234", new Uri("https://github.com/login/device"),
+                TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5)),
+            "octocat");
+        GitHubDeviceFlowAuth restartedAuth = new(
+            GitHubAuthOptions.ForClient("test-client-id"),
+            api,
+            restarted,
+            TimeProvider.System,
+            delay: null);
+        bool callbackInvoked = false;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(restartedAuth.IsSignedIn(), Is.False);
+            Assert.That(restartedAuth.SignedInLogin(), Is.Null);
+            Assert.ThrowsAsync<InvalidOperationException>(() =>
+                restartedAuth.WithAccessTokenAsync((_, _) =>
+                {
+                    callbackInvoked = true;
+                    return Task.FromResult(0);
+                }));
+            Assert.That(callbackInvoked, Is.False);
+        });
+
+        restarted.Save(new StoredToken("new-token", "hubot"));
+        Assert.That(restarted.Load(), Is.EqualTo(new StoredToken("new-token", "hubot")));
+    }
+
+    [TestCase(typeof(IOException))]
+    [TestCase(typeof(UnauthorizedAccessException))]
+    public void Clear_surfaces_a_failure_to_persist_the_sign_out_marker(Type exceptionType)
+    {
+        FileTokenStore store = new(
+            new IdentityTokenProtector(),
+            NewDir(),
+            File.Delete,
+            (_, _) => throw (Exception)Activator.CreateInstance(exceptionType, "marker write failed")!);
+
+        Assert.That(() => store.Clear(), Throws.TypeOf(exceptionType));
+    }
 }

@@ -23,10 +23,16 @@ public sealed partial class HostController
 		}
 		string? id = message.Id;
 		CancellationToken lifetimeToken = _lifetimeCts.Token;
+		AccountSession? accountSession = TryCaptureAccountSession(out AccountSession capturedSession)
+			? capturedSession
+			: null;
 		_ = Task.Run(async () =>
 		{
 			using CancellationTokenSource activityTimeout =
-				CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
+				accountSession is { } linkedSession
+					? CancellationTokenSource.CreateLinkedTokenSource(
+						lifetimeToken, linkedSession.CancellationToken)
+					: CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
 			activityTimeout.CancelAfter(DocumentActivityTimeout);
 			CancellationToken token = activityTimeout.Token;
 			List<DocumentVersionPayload> versions = [];
@@ -78,6 +84,12 @@ public sealed partial class HostController
 				}
 			}
 			catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
+			{
+				return;
+			}
+			catch (OperationCanceledException) when (
+				accountSession is { } cancelledSession
+				&& cancelledSession.CancellationToken.IsCancellationRequested)
 			{
 				return;
 			}
@@ -134,7 +146,7 @@ public sealed partial class HostController
 				commentsState = "unavailable";
 				commentsMessage = "Comments aren't available right now.";
 			}
-			else if (!auth.IsSignedIn())
+			else if (accountSession is null)
 			{
 				commentsState = "notConnected";
 				commentsMessage = "Connect to GitHub to load review comments.";
@@ -153,17 +165,38 @@ public sealed partial class HostController
 				string commentsPath = relative!;
 				try
 				{
-					IReadOnlyList<ReviewComment> remote = await commentsAuth.WithAccessTokenAsync(
-						async (accessToken, ct) =>
-						{
-							ReviewStatus? status = await commentsReview.GetReviewStatusAsync(
-								accessToken, commentsRepo.Owner, commentsRepo.Name, commentsBranch, ct);
-							return status is null
-								? []
-								: await commentsReview.ListReviewCommentsAsync(
-									accessToken, commentsRepo.Owner, commentsRepo.Name, status.Number, ct);
-						},
-						token);
+					AccountSession activeAccount = accountSession!.Value;
+					Task<IReadOnlyList<ReviewComment>>? operation = null;
+					if (!StartForAccountSession(activeAccount, () =>
+						operation = commentsAuth.WithAccessTokenAsync(
+							async (accessToken, ct) =>
+							{
+								Task<ReviewStatus?>? statusOperation = null;
+								if (!StartForAccountSession(activeAccount, () =>
+									statusOperation = commentsReview.GetReviewStatusAsync(
+										accessToken, commentsRepo.Owner, commentsRepo.Name, commentsBranch, ct)))
+								{
+									return [];
+								}
+								ReviewStatus? status = await statusOperation!;
+								if (status is null)
+								{
+									return [];
+								}
+								Task<IReadOnlyList<ReviewComment>>? commentsOperation = null;
+								if (!StartForAccountSession(activeAccount, () =>
+									commentsOperation = commentsReview.ListReviewCommentsAsync(
+										accessToken, commentsRepo.Owner, commentsRepo.Name, status.Number, ct)))
+								{
+									return [];
+								}
+								return await commentsOperation!;
+							},
+							token)))
+					{
+						return;
+					}
+					IReadOnlyList<ReviewComment> remote = await operation!;
 					comments = remote
 						.Where(item => string.Equals(item.Path, commentsPath, StringComparison.Ordinal))
 						.Take(100)
@@ -174,6 +207,12 @@ public sealed partial class HostController
 					commentsMessage = null;
 				}
 				catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
+				{
+					return;
+				}
+				catch (OperationCanceledException) when (
+					accountSession is { } cancelledSession
+					&& cancelledSession.CancellationToken.IsCancellationRequested)
 				{
 					return;
 				}
@@ -191,6 +230,10 @@ public sealed partial class HostController
 				}
 			}
 
+			if (accountSession is { } activeSession && !IsAccountSessionCurrent(activeSession))
+			{
+				return;
+			}
 			lifetimeToken.ThrowIfCancellationRequested();
 			DocumentActivityPayload payload = new(
 				remoteDocument is not null
@@ -198,7 +241,15 @@ public sealed partial class HostController
 					: path is null ? null : Path.GetFileName(path),
 				versions, historyState, historyMessage,
 				comments, commentsState, commentsMessage, history);
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.DocumentActivity, payload, id: id));
+			if (accountSession is { } currentSession)
+			{
+				PublishForAccountSession(currentSession, () => Emit(IpcSerializer.SerializeEvent(
+					MessageKinds.DocumentActivity, payload, id: id)));
+			}
+			else
+			{
+				Emit(IpcSerializer.SerializeEvent(MessageKinds.DocumentActivity, payload, id: id));
+			}
 		}, lifetimeToken);
 	}
 }

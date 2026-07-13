@@ -40,19 +40,6 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
       description: "Public product specifications",
     },
   });
-  await waitForSent(page, "repo.description.request");
-  const descriptionRequest = (await sentFrames(page)).find(
-    (frame) => frame.kind === "repo.description.request",
-  );
-  await emit(page, {
-    kind: "repo.description",
-    payload: {
-      url: "outside/public-specs",
-      requestId: (descriptionRequest?.payload as { requestId: number }).requestId,
-      state: "found",
-      description: "Public product specifications",
-    },
-  });
   await page.locator(".repo-register-add").click();
   await page.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
 

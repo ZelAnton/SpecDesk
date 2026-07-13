@@ -6,6 +6,8 @@ import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.j
 export interface SignInDeps {
   /** The global account-menu trigger. */
   accountBtn: HTMLButtonElement | null;
+  /** The direct GitHub Connect/Sign out action on the main toolbar. */
+  authBtn: HTMLButtonElement | null;
   /** Read-only GitHub identity in the bottom status bar. */
   accountStatus: HTMLElement | null;
   menu: HTMLElement | null;
@@ -41,6 +43,7 @@ function atHandle(login: string): string {
  */
 export class SignInController {
   private readonly accountBtn: HTMLButtonElement | null;
+  private readonly authBtn: HTMLButtonElement | null;
   private readonly accountStatus: HTMLElement | null;
   private readonly menu: HTMLElement | null;
   private readonly connectBtn: HTMLButtonElement | null;
@@ -52,9 +55,12 @@ export class SignInController {
   private readonly status: HTMLElement | null;
   private readonly cancelBtn: HTMLButtonElement | null;
   private verificationUri = "";
+  private available = false;
+  private signedIn = false;
 
   constructor(private readonly deps: SignInDeps) {
     this.accountBtn = deps.accountBtn;
+    this.authBtn = deps.authBtn;
     this.accountStatus = deps.accountStatus;
     this.menu = deps.menu;
     this.connectBtn = deps.connectBtn;
@@ -73,6 +79,16 @@ export class SignInController {
       if (event.key === "ArrowDown") {
         event.preventDefault();
         this.setMenuOpen(true, true);
+      }
+    });
+    this.authBtn?.addEventListener("click", () => {
+      if (!this.available) {
+        return;
+      }
+      if (this.signedIn) {
+        this.deps.signOut();
+      } else {
+        this.deps.signIn();
       }
     });
     this.connectBtn?.addEventListener("click", () => {
@@ -170,9 +186,22 @@ export class SignInController {
 
   /** Update the account affordance from the host's connection state. */
   applyAccount(payload: GitHubAccountPayload): void {
+    this.available = payload.available;
+    this.signedIn = payload.available && payload.signedIn;
     setHidden(this.accountBtn, false);
+    setHidden(this.authBtn, !payload.available);
     setHidden(this.accountStatus, !payload.available || !payload.signedIn);
     const handle = payload.login && payload.login.length > 0 ? atHandle(payload.login) : "";
+    const authLabel = payload.signedIn
+      ? handle
+        ? `Sign out ${handle}`
+        : "Sign out of GitHub"
+      : "Connect to GitHub";
+    setText(this.authBtn, authLabel);
+    this.authBtn?.setAttribute("aria-label", authLabel);
+    if (this.authBtn !== null) {
+      this.authBtn.title = authLabel;
+    }
     this.accountBtn?.setAttribute(
       "aria-label",
       payload.signedIn && handle ? `Account, signed in as ${handle}` : "Account",

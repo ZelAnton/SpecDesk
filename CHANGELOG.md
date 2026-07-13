@@ -345,6 +345,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Disconnecting GitHub now forms a hard account boundary for review lists, document comments, review
+  publishing, and Copilot streams, so cancellation-ignoring late work cannot publish private results or
+  continue with another account-bound action.
+- Disconnecting or changing GitHub accounts now clears the previous account's Copilot conversation, draft,
+  attachments, and review comments before the new account can use them.
+- Disconnecting or changing GitHub accounts now also clears private repository lookup details and pending
+  copy confirmations before another account can see or act on them.
+- Disconnecting GitHub now clears the running app's authorization even when its encrypted token file is
+  temporarily locked or protected, records that choice durably for the next launch, and a failed managed
+  repository copy keeps the entered owner/name ready to retry.
+- Cancelling GitHub authorization now prevents a late token save from reconnecting the current or next app
+  session after the sign-in prompt has closed.
+- Closing SpecDesk during a review update now cancels the repository push before waiting for account cleanup,
+  avoiding a shutdown stall while the network operation unwinds.
+- Repository copies now preserve every pre-existing destination and become visible only after a complete
+  copy has been moved atomically out of private staging storage.
+- Disconnecting GitHub now cancels every account-bound repository request before removing the saved
+  authorization, so late private clone, metadata, description, browse, and file results cannot reach the UI.
 - Copilot replies are now isolated by turn, so signing out and reconnecting cannot mix a late reply into
   the new conversation or leave the composer waiting forever.
 - Split view now keeps the LAST row of a table and the LAST item of a list level with their rendered

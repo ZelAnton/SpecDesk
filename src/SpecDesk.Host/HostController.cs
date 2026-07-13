@@ -185,6 +185,8 @@ public sealed partial class HostController : IDisposable
 	// double-click would fire a second push (and, for Send, open a second PR). Send and Update are never
 	// legal in the same state, but sharing one claim also stops a state change mid-flight racing the two.
 	private bool _publishInFlight;
+	private long _publishClaimCounter;
+	private long _activePublishClaim;
 
 	// True while a review-status refresh (a read-only GitHub query) is in flight (guarded by _sync). It
 	// single-flights the refresh so repeated window-focus triggers don't fan out concurrent queries.
@@ -198,6 +200,11 @@ public sealed partial class HostController : IDisposable
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
+	// One cancellation/generation boundary for every operation authenticated as the current GitHub
+	// account. Sign-out rotates it while holding _signInPublishSync -> _sync; late work must cross the
+	// same publication gate and match the generation before it can mutate state or emit account data.
+	private CancellationTokenSource _accountSessionCts = new();
+	private long _accountSessionGeneration;
 	private CancellationTokenSource? _accountDetailsCts;
 	private long _accountDetailsGeneration;
 	private CancellationTokenSource? _repositoryDescriptionCts;
@@ -282,49 +289,54 @@ public sealed partial class HostController : IDisposable
 	public void Dispose()
 	{
 		_lifetimeCts.Cancel();
+		// A review push holds the account publication gate while it crosses the synchronous git boundary.
+		// Cancel its linked token before waiting for that gate so shutdown can release a cooperative push.
+		CancelCurrentAccountSession();
 		lock (_signInPublishSync)
 		{
 			lock (_clonePublishSync)
 			{
-			lock (_remotePublishSync)
-			{
-				lock (_repositoryDescriptionPublishSync)
+				lock (_remotePublishSync)
 				{
-					lock (_sync)
+					lock (_repositoryDescriptionPublishSync)
 					{
-						_disposed = true;
-						_autosaveTimer?.Dispose();
-						_autosaveTimer = null;
-						_signInCts?.Cancel();
-						_signInCts = null;
-						_accountDetailsGeneration++;
-						_accountDetailsCts?.Cancel();
-						_accountDetailsCts = null;
-						_repositoryDescriptionGeneration++;
-						_repositoryDescriptionCts?.Cancel();
-						_repositoryDescriptionCts = null;
-						TakePendingRepoActions();
-						_chatCts?.Cancel();
-						_chatCts = null;
-						_cloneGeneration++;
-						_cloneCts?.Cancel();
-						_cloneCts = null;
-						_cloneRepoId = null;
-						foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+						lock (_sync)
 						{
-							lookup.Cts.Cancel();
+							_disposed = true;
+							_autosaveTimer?.Dispose();
+							_autosaveTimer = null;
+							_signInCts?.Cancel();
+							_signInCts = null;
+							_accountSessionGeneration++;
+							_accountSessionCts.Cancel();
+							_accountDetailsGeneration++;
+							_accountDetailsCts?.Cancel();
+							_accountDetailsCts = null;
+							_repositoryDescriptionGeneration++;
+							_repositoryDescriptionCts?.Cancel();
+							_repositoryDescriptionCts = null;
+							TakePendingRepoActions();
+							_chatCts?.Cancel();
+							_chatCts = null;
+							_cloneGeneration++;
+							_cloneCts?.Cancel();
+							_cloneCts = null;
+							_cloneRepoId = null;
+							foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+							{
+								lookup.Cts.Cancel();
+							}
+							_repoMetadataLookups.Clear();
+							_remoteBrowseCts?.Cancel();
+							_remoteBrowseCts = null;
+							_remoteBrowseRepoId = null;
+							_remoteBrowseIntentRepoId = null;
+							_remoteFileCts?.Cancel();
+							_remoteFileCts = null;
+							_remoteFileRepoId = null;
 						}
-						_repoMetadataLookups.Clear();
-						_remoteBrowseCts?.Cancel();
-						_remoteBrowseCts = null;
-						_remoteBrowseRepoId = null;
-						_remoteBrowseIntentRepoId = null;
-						_remoteFileCts?.Cancel();
-						_remoteFileCts = null;
-						_remoteFileRepoId = null;
 					}
 				}
-			}
 			}
 		}
 		ResetChatAgentAsync().GetAwaiter().GetResult();
@@ -364,6 +376,14 @@ public sealed partial class HostController : IDisposable
 		}
 
 		bool mutationGuard = IsRemoteMutation(message.Kind);
+		bool accountMutationGuard = IsAccountBoundRemoteMutation(message.Kind);
+		if (accountMutationGuard)
+		{
+			// Sign-out takes the same order. Review handlers re-enter this monitor when they capture the
+			// account session, so taking it before the remote-document guard prevents a remote -> sign-in
+			// inversion against sign-out's sign-in -> remote path.
+			Monitor.Enter(_signInPublishSync);
+		}
 		if (mutationGuard)
 		{
 			Monitor.Enter(_remotePublishSync);
@@ -525,8 +545,16 @@ public sealed partial class HostController : IDisposable
 			{
 				Monitor.Exit(_remotePublishSync);
 			}
+			if (accountMutationGuard)
+			{
+				Monitor.Exit(_signInPublishSync);
+			}
 		}
 	}
+
+	private static bool IsAccountBoundRemoteMutation(string kind) => kind is
+		MessageKinds.DocSendForReview
+		or MessageKinds.DocUpdateReview;
 
 	private static bool IsRemoteMutation(string kind) => kind is
 		MessageKinds.EditorChanged

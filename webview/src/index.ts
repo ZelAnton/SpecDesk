@@ -184,6 +184,7 @@ function wire(): void {
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const githubAuthBtn = document.querySelector<HTMLButtonElement>("#github-auth-btn");
   const githubAccountStatus = document.querySelector<HTMLElement>("#github-account-status");
   const accountMenu = document.querySelector<HTMLElement>("#account-menu");
   const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
@@ -268,8 +269,10 @@ function wire(): void {
   // The left-rail file navigator, assigned in wireWorkspace; told which document is open so it highlights it.
   let fileTree: FileTree | undefined;
   let assistantChat: AssistantChat | undefined;
+  let repositoriesPanel: RepositoriesPanel | undefined;
   let activityPanels: DocumentActivityPanel[] = [];
   let invalidateActivityRequests = (): void => {};
+  let githubAccountIdentity: string | null = null;
   // The Start screen handle, assigned in wireWorkspace; index.ts feeds its recent-item shortcuts.
   // Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
@@ -920,6 +923,7 @@ function wire(): void {
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
       accountBtn: githubBtn,
+      authBtn: githubAuthBtn,
       accountStatus: githubAccountStatus,
       menu: accountMenu,
       connectBtn: accountConnectBtn,
@@ -978,6 +982,18 @@ function wire(): void {
     ipc.on(Kinds.githubAccount, (message) => {
       const payload = parseGitHubAccount(message.payload);
       if (payload) {
+        const nextIdentity = payload.available && payload.signedIn ? (payload.login ?? "") : null;
+        if (nextIdentity !== githubAccountIdentity) {
+          githubAccountIdentity = nextIdentity;
+          repositoriesPanel?.clearAccountState();
+          invalidateActivityRequests();
+          for (const panel of activityPanels) {
+            panel.clear();
+            if (nextIdentity !== null) {
+              void panel.refresh();
+            }
+          }
+        }
         signInController.applyAccount(payload);
         assistantChat?.setGitHubAccount(payload.available, payload.signedIn, payload.login);
         // "Send for review" is a dead end without GitHub configured (no Connect affordance), so the chrome
@@ -1306,6 +1322,7 @@ function wire(): void {
           favorite,
         }),
     });
+    repositoriesPanel = repositories;
     const reviewRequests = new ReviewRequestsPanel({
       request: () =>
         requestSuggestion(

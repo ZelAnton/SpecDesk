@@ -131,4 +131,42 @@ describe("DocumentActivityPanel", () => {
     expect(body.textContent).toContain("new.md");
     expect(body.textContent).not.toContain("billing.md");
   });
+
+  it("reloads local activity after an account-bound clear", async () => {
+    const { panel, body, request } = await mount("versions");
+
+    panel.clear();
+    expect(body.textContent).toBe("");
+    await panel.refresh();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(body.textContent).toContain("Clarify refunds");
+  });
+  it("clears private comments and rejects a late old-account response", async () => {
+    let resolveOld!: (value: DocumentActivityPayload) => void;
+    const old = new Promise<DocumentActivityPayload>((resolve) => {
+      resolveOld = resolve;
+    });
+    const request = vi.fn<() => Promise<DocumentActivityPayload>>().mockReturnValue(old);
+    const panel = new DocumentActivityPanel("comments", "Comments", request);
+    const body = document.createElement("div");
+    panel.mount(body);
+    panel.clear();
+    resolveOld({
+      ...payload,
+      comments: [
+        {
+          id: "private",
+          author: "reviewer",
+          body: "old account private comment",
+          when: "2026-07-13T00:00:00Z",
+        },
+      ],
+    });
+    await old;
+    await Promise.resolve();
+
+    expect(body.textContent).toBe("");
+    expect(body.textContent).not.toContain("old account private comment");
+  });
 });

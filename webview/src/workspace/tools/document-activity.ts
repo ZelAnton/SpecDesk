@@ -31,6 +31,13 @@ export class DocumentActivityPanel implements PanelTool {
     this.render();
   }
 
+  /** Forget rendered activity immediately; any in-flight response belongs to the old generation. */
+  clear(): void {
+    this.requestGeneration++;
+    this.payload = null;
+    this.body?.replaceChildren();
+  }
+
   private render(): void {
     if (!this.body || !this.payload) return;
     this.body.replaceChildren();
