@@ -111,6 +111,12 @@ public interface IGitHubReview
     Task<IReadOnlyList<ReviewSummary>> ListReviewsAsync(
         string accessToken, CancellationToken cancellationToken = default);
 
+    /// <summary>The open pull requests waiting for the signed-in user's review. Includes direct
+    /// <c>review-requested:@me</c> matches and team requests for memberships visible to the token. Search and
+    /// team endpoints are paged; duplicate matches are returned once, newest first.</summary>
+    Task<IReadOnlyList<ReviewSummary>> ListReviewRequestsAsync(
+        string accessToken, CancellationToken cancellationToken = default);
+
     /// <summary>Return at most 100 inline comments from the first API page of a review.</summary>
     Task<IReadOnlyList<ReviewComment>> ListReviewCommentsAsync(
         string accessToken,
@@ -409,6 +415,150 @@ public sealed class GitHubReviewClient : IGitHubReview
                 .OrderByDescending(r => r.UpdatedAt, StringComparer.Ordinal)
                 .Select(r => r.Summary),
         ];
+    }
+
+    public async Task<IReadOnlyList<ReviewSummary>> ListReviewRequestsAsync(
+        string accessToken, CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        await CollectRestSearchAsync(
+            accessToken, "is:pr is:open review-requested:@me sort:updated-desc", byUrl, timeout.Token);
+
+        // Team membership can be unavailable without `read:org`. Direct requests remain useful in that
+        // case; search only the memberships GitHub actually disclosed instead of failing the whole panel.
+        foreach (string team in await ListViewerTeamsBestEffortAsync(accessToken, timeout.Token))
+        {
+            await CollectRestSearchAsync(
+                accessToken, $"is:pr is:open team-review-requested:{team} sort:updated-desc", byUrl,
+                timeout.Token);
+        }
+
+        return
+        [
+            .. byUrl.Values
+                .OrderByDescending(item => item.UpdatedAt, StringComparer.Ordinal)
+                .Select(item => item.Summary),
+        ];
+    }
+
+    private async Task CollectRestSearchAsync(
+        string accessToken,
+        string query,
+        Dictionary<string, (ReviewSummary Summary, string UpdatedAt)> byUrl,
+        CancellationToken cancellationToken)
+    {
+        // GitHub Search exposes at most 1,000 results. A 100-row page keeps the request count bounded while
+        // still following every page the API can return.
+        for (int page = 1; page <= 10; page++)
+        {
+            string encoded = Uri.EscapeDataString(query);
+            Uri endpoint = new($"https://api.github.com/search/issues?q={encoded}&per_page=100&page={page}");
+            using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException(
+                    $"GitHub rejected the review-request search (HTTP {(int)response.StatusCode}).");
+            }
+
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (!TryProperty(document.RootElement, "items", out JsonElement items)
+                || items.ValueKind != JsonValueKind.Array)
+            {
+                throw new HttpRequestException("GitHub returned a malformed review-request search.");
+            }
+
+            foreach (JsonElement item in items.EnumerateArray())
+            {
+                string url = GitHubHttp.StringOf(item, "html_url");
+                if (url.Length == 0 || byUrl.ContainsKey(url))
+                {
+                    continue;
+                }
+
+                string repo = RepoNameFromApiUrl(GitHubHttp.StringOf(item, "repository_url"));
+                byUrl[url] = (
+                    new ReviewSummary(
+                        GitHubHttp.NumberOf(item, "number"), GitHubHttp.StringOf(item, "title"), url, repo,
+                        ReviewRole.Reviewer, ReviewDecision.InReview),
+                    GitHubHttp.StringOf(item, "updated_at"));
+            }
+
+            if (items.GetArrayLength() < 100)
+            {
+                break;
+            }
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> ListViewerTeamsBestEffortAsync(
+        string accessToken, CancellationToken cancellationToken)
+    {
+        HashSet<string> teams = new(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            for (int page = 1; page <= 10; page++)
+            {
+                Uri endpoint = new($"https://api.github.com/user/teams?per_page=100&page={page}");
+                using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+                using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken);
+                string body = await response.Content.ReadAsStringAsync(cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return [.. teams];
+                }
+
+                using JsonDocument document = JsonDocument.Parse(body);
+                if (document.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    return [.. teams];
+                }
+
+                foreach (JsonElement team in document.RootElement.EnumerateArray())
+                {
+                    string slug = GitHubHttp.StringOf(team, "slug");
+                    string organization = TryProperty(team, "organization", out JsonElement org)
+                        ? GitHubHttp.StringOf(org, "login")
+                        : string.Empty;
+                    if (organization.Length > 0 && slug.Length > 0)
+                    {
+                        teams.Add($"{organization}/{slug}");
+                    }
+                }
+
+                if (document.RootElement.GetArrayLength() < 100)
+                {
+                    break;
+                }
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Team discovery is optional: direct review requests still form a complete usable result.
+        }
+        catch (JsonException)
+        {
+            // An unreadable team page means those memberships are unknown, not that direct results vanish.
+        }
+
+        return [.. teams];
+    }
+
+    private static string RepoNameFromApiUrl(string repositoryUrl)
+    {
+        if (!Uri.TryCreate(repositoryUrl, UriKind.Absolute, out Uri? uri))
+        {
+            return string.Empty;
+        }
+
+        string[] segments = uri.AbsolutePath.Trim('/').Split('/');
+        return segments.Length >= 3 && segments[0].Equals("repos", StringComparison.OrdinalIgnoreCase)
+            ? $"{segments[1]}/{segments[2]}"
+            : string.Empty;
     }
 
     private static void CollectReviews(

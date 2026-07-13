@@ -87,6 +87,8 @@ export interface WorkspaceTools {
   readonly favorites?: PanelTool;
   /** The left rail's Repositories panel (registered GitHub repos). Absent → a placeholder. */
   readonly repositories?: PanelTool;
+  /** Review requests assigned directly or through a known GitHub team. */
+  readonly reviews?: PanelTool;
 }
 
 /**
@@ -172,6 +174,13 @@ export function setupWorkspace(
           "Repositories",
           icon("repositories"),
           "Register a repository to keep it handy.",
+        ),
+      tools.reviews ??
+        placeholderTool(
+          "reviews",
+          "Review",
+          icon("review"),
+          "Reviews waiting for you will appear here.",
         ),
     ],
     right: [

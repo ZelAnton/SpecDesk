@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The left-panel Review mode now lists open reviews assigned to you directly or through a visible GitHub
+  team, with refresh, connection, loading, empty, and error states.
 - Clicking the notification icon now opens a dedicated Notifications list in the main workspace; the
   placeholder explains where review requests and mentions will appear as notification sources are added.
 - Repositories, folders, and files can now be starred as favorites and reopened later, including exact online

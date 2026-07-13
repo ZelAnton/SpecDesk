@@ -59,6 +59,7 @@ import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { RepositoriesPanel } from "./workspace/tools/repositories-panel.js";
+import { ReviewRequestsPanel } from "./workspace/tools/review-requests-panel.js";
 import {
   favoritesPanel,
   recentPanel,
@@ -266,6 +267,8 @@ function wire(): void {
   // The Start screen handle, assigned in wireWorkspace; index.ts feeds its recent-item shortcuts.
   // Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
+  // The left Review mode is created with the workspace, then receives account state from wireGitHub.
+  let reviewRequestsPanel: ReviewRequestsPanel | undefined;
   // Reveals the Files navigator (opens the left dock + switches to it). Assigned once the workspace wires;
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
@@ -968,6 +971,7 @@ function wire(): void {
         if (!payload.signedIn) {
           reviewsPanel.close();
         }
+        reviewRequestsPanel?.setSignedIn(payload.signedIn);
       }
     });
   }
@@ -1275,6 +1279,20 @@ function wire(): void {
           favorite,
         }),
     });
+    const reviewRequests = new ReviewRequestsPanel({
+      request: () =>
+        requestSuggestion(
+          Kinds.prListRequest,
+          parsePrList,
+          {
+            items: [],
+            error: "Couldn't load review requests. Check your connection and try again.",
+          },
+          { scope: "reviewRequests" },
+        ),
+      openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+    });
+    reviewRequestsPanel = reviewRequests;
 
     const workspace = setupWorkspace(
       {
@@ -1301,7 +1319,17 @@ function wire(): void {
         onOpenItem: openWorkspaceItem,
         onOutlineNavigate: (line) => navigateToLine(line),
       },
-      { assistant: chat, versions, comments, history, files, recent, favorites, repositories },
+      {
+        assistant: chat,
+        versions,
+        comments,
+        history,
+        files,
+        recent,
+        favorites,
+        repositories,
+        reviews: reviewRequests,
+      },
     );
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;

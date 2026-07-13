@@ -200,6 +200,10 @@ public sealed record VersionNoteSuggestedPayload(string Note);
 public sealed record PrListItemPayload(
     int Number, string Title, string Url, string Repo, string Role, string Status, string Label);
 
+/// <summary>Optional scope for <c>pr.list.request</c>. Absent preserves the legacy combined list;
+/// <c>reviewRequests</c> selects only work waiting on the signed-in reviewer.</summary>
+public sealed record PrListRequestPayload(string? Scope);
+
 /// <summary>Payload of <c>pr.list</c> (native→webview, correlated to <c>pr.list.request</c> by id): the open
 /// pull requests the signed-in user is involved in (as author or requested reviewer), most recently updated
 /// first. <paramref name="Error"/> is a plain-language reason the list couldn't be loaded (not connected, a

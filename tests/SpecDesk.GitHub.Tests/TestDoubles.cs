@@ -23,6 +23,32 @@ internal sealed class StubHttpMessageHandler(HttpStatusCode status, string body)
     }
 }
 
+// A multi-request transport for paged/list orchestration. Each request consumes one scripted response and
+// records its URI so tests can verify escaping and page progression.
+internal sealed class ScriptedHttpMessageHandler(
+    params (HttpStatusCode Status, string Body)[] responses) : HttpMessageHandler
+{
+    private readonly Queue<(HttpStatusCode Status, string Body)> _responses = new(responses);
+
+    public List<Uri> Requests { get; } = [];
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Requests.Add(request.RequestUri ?? throw new InvalidOperationException("request URI missing"));
+        if (!_responses.TryDequeue(out (HttpStatusCode Status, string Body) response))
+        {
+            throw new InvalidOperationException("No scripted response remains.");
+        }
+
+        return Task.FromResult(new HttpResponseMessage(response.Status)
+        {
+            Content = new StringContent(response.Body),
+        });
+    }
+}
+
 // An HTTP transport that always faults the send with a given exception — models a connection-level
 // transient (HttpRequestException) or a request timeout (TaskCanceledException) during the exchange poll.
 internal sealed class ThrowingHttpMessageHandler(Exception toThrow) : HttpMessageHandler

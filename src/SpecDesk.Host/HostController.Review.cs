@@ -389,6 +389,12 @@ public sealed partial class HostController
 	// unanswered. No git vocabulary reaches the author.
 	private void OnListReviews(IpcMessage message)
 	{
+		if (message.GetPayload<PrListRequestPayload>()?.Scope == "reviewRequests")
+		{
+			OnListReviewRequests(message);
+			return;
+		}
+
 		const string connectFirst = "Connect a GitHub account to see your reviews.";
 		string? id = message.Id;
 		IGitHubAuth? auth = _auth;
@@ -426,6 +432,50 @@ public sealed partial class HostController
 				// never as a token or a stack trace, so the panel shows a reason instead of hanging.
 				_logger.LogWarning(ex, "Could not list the user's reviews");
 				payload = new PrListPayload([], "Couldn't load your reviews. Check your connection and try again.");
+			}
+
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));
+		});
+	}
+
+	// Reply to the left-panel Review mode. This is deliberately separate from the legacy combined "My
+	// reviews" list: it contains only requests waiting on the signed-in user, including visible team
+	// memberships, and keeps the same correlated payload contract for the webview decoder.
+	private void OnListReviewRequests(IpcMessage message)
+	{
+		const string connectFirst = "Connect a GitHub account to see review requests.";
+		string? id = message.Id;
+		IGitHubAuth? auth = _auth;
+		IGitHubReview? review = _review;
+		if (auth is null || review is null)
+		{
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, new PrListPayload([], connectFirst), id: id));
+			return;
+		}
+
+		_ = Task.Run(async () =>
+		{
+			using CancellationTokenSource timeout = new();
+			timeout.CancelAfter(PrListTimeout);
+			PrListPayload payload;
+			try
+			{
+				if (!auth.IsSignedIn())
+				{
+					payload = new PrListPayload([], connectFirst);
+				}
+				else
+				{
+					IReadOnlyList<ReviewSummary> reviews = await auth.WithAccessTokenAsync(
+						(token, ct) => review.ListReviewRequestsAsync(token, ct), timeout.Token);
+					payload = new PrListPayload([.. reviews.Select(ToListItem)], null);
+				}
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Could not list review requests");
+				payload = new PrListPayload(
+					[], "Couldn't load review requests. Check your connection and try again.");
 			}
 
 			Emit(IpcSerializer.SerializeEvent(MessageKinds.PrList, payload, id: id));

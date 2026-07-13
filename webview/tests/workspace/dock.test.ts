@@ -100,6 +100,19 @@ describe("Dock chrome", () => {
 });
 
 describe("Dock open/collapse", () => {
+  it("notifies the active tool when expansion or a mode switch changes its visibility", () => {
+    const a = { ...tool("a", "Alpha"), onShow: vi.fn(), onHide: vi.fn() };
+    const b = { ...tool("b", "Bravo"), onShow: vi.fn(), onHide: vi.fn() };
+    const { dock } = harness({ tools: [a, b] });
+    dock.setOpen(true);
+    expect(a.onShow).toHaveBeenCalledTimes(1);
+    dock.setMode("b");
+    expect(a.onHide).toHaveBeenCalledTimes(1);
+    expect(b.onShow).toHaveBeenCalledTimes(1);
+    dock.setOpen(false);
+    expect(b.onHide).toHaveBeenCalledTimes(1);
+  });
+
   it("applies the initial collapsed state as a visible rail with a hidden splitter", () => {
     const { dockEl, splitter } = harness({
       initial: { open: false, size: 260, mode: "a" },

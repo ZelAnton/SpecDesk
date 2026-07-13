@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 
 namespace SpecDesk.GitHub.Tests;
 
@@ -301,6 +302,63 @@ public sealed class GitHubReviewTests
         using HttpClient http = new(handler);
         GitHubReviewClient client = new(http);
         return await client.ListReviewsAsync("gho_token");
+    }
+
+    private static async Task<IReadOnlyList<ReviewSummary>> ListReviewRequests(
+        ScriptedHttpMessageHandler handler)
+    {
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+        return await client.ListReviewRequestsAsync("gho_token");
+    }
+
+    [Test]
+    public async Task ListReviewRequestsAsync_includes_known_teams_encodes_queries_and_deduplicates()
+    {
+        const string direct =
+            """{"items":[{"number":7,"title":"Direct","html_url":"https://github.com/o/r/pull/7","repository_url":"https://api.github.com/repos/o/r","updated_at":"2026-07-01T00:00:00Z"}]}""";
+        const string teams = """[{"slug":"docs team","organization":{"login":"acme"}}]""";
+        const string team =
+            """{"items":[{"number":7,"title":"Duplicate","html_url":"https://github.com/o/r/pull/7","repository_url":"https://api.github.com/repos/o/r","updated_at":"2026-07-01T00:00:00Z"},{"number":9,"title":"Team","html_url":"https://github.com/acme/spec/pull/9","repository_url":"https://api.github.com/repos/acme/spec","updated_at":"2026-07-03T00:00:00Z"}]}""";
+        using ScriptedHttpMessageHandler handler = new(
+            (HttpStatusCode.OK, direct), (HttpStatusCode.OK, teams), (HttpStatusCode.OK, team));
+
+        IReadOnlyList<ReviewSummary> reviews = await ListReviewRequests(handler);
+
+        Assert.That(reviews, Has.Count.EqualTo(2));
+        Assert.Multiple(() =>
+        {
+            Assert.That(reviews[0].Title, Is.EqualTo("Team"));
+            Assert.That(reviews[1].Repo, Is.EqualTo("o/r"));
+            Assert.That(handler.Requests[0].OriginalString, Does.Contain("review-requested%3A%40me"));
+            Assert.That(handler.Requests[2].OriginalString, Does.Contain("team-review-requested%3Aacme%2Fdocs%20team"));
+        });
+    }
+
+    [Test]
+    public async Task ListReviewRequestsAsync_pages_full_search_results()
+    {
+        object[] firstPage = Enumerable.Range(1, 100)
+            .Select(number => new
+            {
+                number,
+                title = $"Review {number}",
+                html_url = $"https://github.com/o/r/pull/{number}",
+                repository_url = "https://api.github.com/repos/o/r",
+                updated_at = "2026-07-01T00:00:00Z",
+            })
+            .Cast<object>()
+            .ToArray();
+        string first = JsonSerializer.Serialize(new { items = firstPage });
+        const string second =
+            """{"items":[{"number":101,"title":"Review 101","html_url":"https://github.com/o/r/pull/101","repository_url":"https://api.github.com/repos/o/r","updated_at":"2026-07-02T00:00:00Z"}]}""";
+        using ScriptedHttpMessageHandler handler = new(
+            (HttpStatusCode.OK, first), (HttpStatusCode.OK, second), (HttpStatusCode.OK, "[]"));
+
+        IReadOnlyList<ReviewSummary> reviews = await ListReviewRequests(handler);
+
+        Assert.That(reviews, Has.Count.EqualTo(101));
+        Assert.That(handler.Requests[1].Query, Does.Contain("page=2"));
     }
 
     [Test]

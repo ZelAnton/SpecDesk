@@ -58,6 +58,8 @@ panel; choose the active icon again to collapse it. Collapsed side rails remain 
 bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
 On the Start screen, `Open Repository` reveals the Repositories panel, where repositories are registered and
 opened; the Start screen itself does not ask for a repository address.
+The left-panel Review mode shows open review requests assigned to the connected account, including requests
+for GitHub teams whose membership is visible to SpecDesk.
 
 The notification icon switches the main workspace to a Notifications list. The current list is a
 placeholder for future review-request and mention events.

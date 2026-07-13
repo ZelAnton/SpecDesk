@@ -97,6 +97,9 @@ export class Dock {
     this.showActiveTool();
     this.modeControl?.setSelected(this.modeId);
     this.updateTitle();
+    if (this.isOpen) {
+      this.activeTool()?.onShow?.();
+    }
 
     this.splitter.addEventListener("pointerdown", (event) => this.onSplitterPointerDown(event));
     this.splitter.addEventListener("keydown", (event) => this.onSplitterKeyDown(event));
@@ -129,8 +132,14 @@ export class Dock {
     if (!next && activeButton !== undefined && this.el.contains(document.activeElement)) {
       activeButton.focus();
     }
+    if (!next) {
+      this.activeTool()?.onHide?.();
+    }
     this.isOpen = next;
     this.applyOpen();
+    if (next) {
+      this.activeTool()?.onShow?.();
+    }
     this.callbacks.onChange();
   }
 
@@ -141,11 +150,17 @@ export class Dock {
       this.modeControl?.setSelected(this.modeId);
       return;
     }
+    if (this.isOpen) {
+      this.activeTool()?.onHide?.();
+    }
     this.modeId = id;
     this.showActiveTool();
     this.modeControl?.setSelected(id);
     this.updateTitle();
     this.applyOpen();
+    if (this.isOpen) {
+      this.activeTool()?.onShow?.();
+    }
     this.callbacks.onChange();
   }
 
@@ -200,6 +215,10 @@ export class Dock {
     for (const [id, body] of this.toolBodies) {
       body.hidden = id !== this.modeId;
     }
+  }
+
+  private activeTool(): PanelTool | undefined {
+    return this.tools.find((tool) => tool.id === this.modeId);
   }
 
   private buildChrome(): {
@@ -306,12 +325,16 @@ export class Dock {
       this.modeControl?.setSelected(this.modeId);
       return;
     }
+    if (this.isOpen) {
+      this.activeTool()?.onHide?.();
+    }
     this.modeId = id;
     this.isOpen = true;
     this.showActiveTool();
     this.modeControl?.setSelected(id);
     this.updateTitle();
     this.applyOpen();
+    this.activeTool()?.onShow?.();
     this.callbacks.onChange();
   }
 

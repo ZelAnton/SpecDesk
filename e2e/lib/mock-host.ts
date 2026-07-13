@@ -3,6 +3,7 @@ import type { BrowserContext, Page } from "@playwright/test";
 /** A native→webview frame the host would send, or a webview→native frame the app sent out. */
 export interface HostFrame {
   kind: string;
+  id?: string;
   version?: number;
   payload?: unknown;
 }

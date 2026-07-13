@@ -15,6 +15,10 @@ export interface PanelTool {
   /** Build this tool's content into `body`. Called once, when the dock mounts — the tool's element is then
    *  shown/hidden as the mode switches, never rebuilt, so it keeps its own scroll/state. */
   mount(body: HTMLElement): void;
+  /** Called whenever this tool becomes visible in an expanded dock. */
+  onShow?(): void;
+  /** Called before this tool is hidden by collapse or a mode switch. */
+  onHide?(): void;
 }
 
 /**
