@@ -2082,6 +2082,51 @@ button {
   white-space: nowrap;
 }
 
+.repo-clone-confirmation {
+  margin: 0.25rem 0.5rem 0.55rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.repo-clone-confirmation strong,
+.repo-clone-confirm-summary {
+  display: block;
+  margin: 0 0 0.45rem;
+}
+
+.repo-clone-confirm-skip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.repo-clone-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+}
+
+.repo-clone-confirm-actions button {
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.repo-clone-confirm-actions .repo-clone-confirm-yes {
+  color: var(--on-accent);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
 .repo-register-input {
   flex: 1;
   min-width: 0;

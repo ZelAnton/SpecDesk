@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
 - Repository entry now offers **Clone…** to managed storage and **Clone to folder…** with collision-safe destinations.
 - The exact managed clone destination is shown before a repository copy starts.
+- Repository copies now require Yes/No confirmation with a persisted **Do not show again** option.
 - The main toolbar can connect or disconnect GitHub, and the bottom status bar now shows the connected
   username and organizations available to that authorization.
 - The left-panel Pull Requests mode now lists open requests you authored or participated in, combining and

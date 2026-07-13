@@ -35,6 +35,7 @@ test("a public owner/repository outside suggestions remains available", async ({
   await page.screenshot({ path: testInfo.outputPath("public-repository.png"), fullPage: true });
   await page.locator(".repo-register-add").click();
   await page.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
+  await page.locator(".repo-clone-confirm-yes").click();
   expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneManaged")?.payload).toEqual({
     url: "outside/public-specs",
     destinationPath: "C:\\SpecDesk\\repos\\outside_public-specs",

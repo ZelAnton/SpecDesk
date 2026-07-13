@@ -84,7 +84,8 @@ each choice as `owner/repository`, and matches text against the repository name 
 You can also enter any public `owner/repository` directly when it is not in the suggestions.
 The **Clone…** menu either creates a copy in SpecDesk-managed storage or lets you choose a parent folder;
 the exact managed destination is shown before Clone is enabled, and an occupied same-name destination is
-never reused. **Copy locally** creates another managed copy.
+never reused. Both clone choices require a Yes/No confirmation; selecting **Do not show this confirmation
+again** with Yes persists that preference for future clones. **Copy locally** creates another managed copy.
 
 Selecting the repository itself browses its files directly from GitHub, so a local copy is optional. Online
 files open as read-only previews; select **Copy locally** before editing. Local repository trees show all files

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegisteredRepo, WorkspaceStatePayload } from "../../src/wire/protocol.js";
 import { RepositoriesPanel } from "../../src/workspace/tools/repositories-panel.js";
 
@@ -11,6 +11,10 @@ const REPO: RegisteredRepo = {
   clones: [{ id: "acme-specs", path: "C:\\repos\\acme-specs", branches: ["draft"] }],
 };
 const STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [REPO] };
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
 
 function ready() {
   const onCloneManaged = vi.fn<(url: string, destinationPath: string) => void>();
@@ -75,6 +79,7 @@ describe("RepositoriesPanel", () => {
     });
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledWith("owner/name", "C:\\managed\\owner_name");
     expect(input.value).toBe(""); // cleared for the next entry
   });
@@ -133,6 +138,7 @@ describe("RepositoriesPanel", () => {
     });
     body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledWith("outside/public", "C:\\managed\\outside_public");
   });
 
@@ -153,6 +159,7 @@ describe("RepositoriesPanel", () => {
     });
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledWith(
       "outside/public-specs",
       "C:\\managed\\outside_public-specs",
@@ -175,6 +182,9 @@ describe("RepositoriesPanel", () => {
     ]);
     actions[0]?.click();
     actions[0]?.click();
+    const yes = body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes");
+    yes?.click();
+    yes?.click();
     expect(onCloneManaged).toHaveBeenCalledTimes(1);
 
     input.value = "owner/folder";
@@ -182,8 +192,64 @@ describe("RepositoriesPanel", () => {
     add.click();
     actions[1]?.click();
     actions[1]?.click();
+    yes?.click();
+    yes?.click();
     expect(onCloneToFolder).toHaveBeenCalledTimes(1);
     expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder");
+  });
+
+  it("requires Yes and keeps the input unchanged when No is chosen", () => {
+    const { panel, body, input, add, onCloneManaged } = ready();
+    input.value = "owner/cancelled";
+    panel.setManagedDestination({
+      url: "owner/cancelled",
+      requestId: 0,
+      path: "C:\\managed\\owner_cancelled",
+    });
+    add.click();
+    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    const confirmation = body.querySelector<HTMLElement>(".repo-clone-confirmation");
+    const form = body.querySelector<HTMLFormElement>(".repo-register");
+    const list = body.querySelector<HTMLElement>(".repo-list");
+    const yes = body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes");
+    expect(confirmation?.hidden).toBe(false);
+    expect(confirmation?.textContent).toContain("C:\\managed\\owner_cancelled");
+    expect(form?.inert).toBe(true);
+    expect(list?.inert).toBe(true);
+    expect(document.activeElement).toBe(yes);
+    body.querySelector<HTMLButtonElement>(".repo-clone-confirm-actions button")?.click();
+
+    expect(onCloneManaged).not.toHaveBeenCalled();
+    expect(input.value).toBe("owner/cancelled");
+    expect(confirmation?.hidden).toBe(true);
+    expect(form?.inert).toBe(false);
+    expect(list?.inert).toBe(false);
+    expect(document.activeElement).toBe(add);
+  });
+
+  it("persists Do not show again and skips later confirmations", () => {
+    const first = ready();
+    first.input.value = "owner/first";
+    first.panel.setManagedDestination({
+      url: "owner/first",
+      requestId: 0,
+      path: "C:\\managed\\owner_first",
+    });
+    first.add.click();
+    first.body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    const skip = first.body.querySelector<HTMLInputElement>(".repo-clone-confirm-skip input");
+    if (skip) {
+      skip.checked = true;
+    }
+    first.body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
+    expect(first.onCloneManaged).toHaveBeenCalledTimes(1);
+
+    const second = ready();
+    second.input.value = "owner/second";
+    second.add.click();
+    second.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]?.click();
+    expect(second.onCloneToFolder).toHaveBeenCalledWith("owner/second");
+    expect(second.body.querySelector<HTMLElement>(".repo-clone-confirmation")?.hidden).toBe(true);
   });
 
   it("shows the exact managed destination and ignores stale destination responses", () => {

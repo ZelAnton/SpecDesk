@@ -37,6 +37,7 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
   await page.screenshot({ path: testInfo.outputPath("clone-menu.png"), fullPage: true });
 
   await actions.filter({ hasText: /^Clone to folder…$/ }).click();
+  await page.locator(".repo-clone-confirm-yes").click();
   expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneToFolder")?.payload).toEqual({
     url: "outside/public-specs",
   });

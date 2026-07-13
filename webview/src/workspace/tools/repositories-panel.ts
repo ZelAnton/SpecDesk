@@ -38,6 +38,13 @@ export interface RepositoriesCallbacks {
 }
 
 let suggestionListSequence = 0;
+const SKIP_CLONE_CONFIRMATION_KEY = "specdesk.clone.skip-confirmation.v1";
+
+interface PendingCloneConfirmation {
+  readonly url: string;
+  readonly summary: string;
+  readonly run: () => void;
+}
 
 export class RepositoriesPanel implements PanelTool {
   readonly id = "repositories";
@@ -51,6 +58,11 @@ export class RepositoriesPanel implements PanelTool {
   private cloneToggleEl: HTMLButtonElement | null = null;
   private managedActionEl: HTMLButtonElement | null = null;
   private destinationEl: HTMLElement | null = null;
+  private confirmationEl: HTMLElement | null = null;
+  private confirmationSummaryEl: HTMLElement | null = null;
+  private confirmationSkipEl: HTMLInputElement | null = null;
+  private confirmationYesEl: HTMLButtonElement | null = null;
+  private cloneFormEl: HTMLFormElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
@@ -62,6 +74,9 @@ export class RepositoriesPanel implements PanelTool {
   private destinationRequestId = 0;
   private destinationTimer: number | null = null;
   private managedDestination: string | null = null;
+  private skipCloneConfirmation = false;
+  private pendingConfirmation: PendingCloneConfirmation | null = null;
+  private confirmationReturnFocus: HTMLElement | null = null;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -121,13 +136,13 @@ export class RepositoriesPanel implements PanelTool {
     managed.setAttribute("role", "menuitem");
     managed.textContent = "Clone…";
     managed.disabled = true;
-    managed.addEventListener("click", () => this.runManagedClone());
+    managed.addEventListener("click", () => this.requestManagedClone());
     const toFolder = document.createElement("button");
     toFolder.type = "button";
     toFolder.className = "repo-clone-menu-action";
     toFolder.setAttribute("role", "menuitem");
     toFolder.textContent = "Clone to folder…";
-    toFolder.addEventListener("click", () => this.runClone(this.callbacks.onCloneToFolder));
+    toFolder.addEventListener("click", () => this.requestFolderClone());
     cloneMenu.append(managed, toFolder);
     cloneToggle.addEventListener("click", () => this.toggleCloneMenu());
 
@@ -135,6 +150,46 @@ export class RepositoriesPanel implements PanelTool {
     destination.className = "repo-managed-destination";
     destination.setAttribute("role", "status");
     destination.hidden = true;
+
+    const confirmation = document.createElement("div");
+    confirmation.className = "repo-clone-confirmation";
+    confirmation.setAttribute("role", "dialog");
+    confirmation.setAttribute("aria-labelledby", "repo-clone-confirm-title");
+    confirmation.hidden = true;
+    const confirmationTitle = document.createElement("strong");
+    confirmationTitle.id = "repo-clone-confirm-title";
+    confirmationTitle.textContent = "Clone repository?";
+    const confirmationSummary = document.createElement("p");
+    confirmationSummary.className = "repo-clone-confirm-summary";
+    const confirmationSkipLabel = document.createElement("label");
+    confirmationSkipLabel.className = "repo-clone-confirm-skip";
+    const confirmationSkip = document.createElement("input");
+    confirmationSkip.type = "checkbox";
+    confirmationSkipLabel.append(confirmationSkip, " Do not show this confirmation again");
+    const confirmationActions = document.createElement("div");
+    confirmationActions.className = "repo-clone-confirm-actions";
+    const confirmationNo = document.createElement("button");
+    confirmationNo.type = "button";
+    confirmationNo.textContent = "No";
+    confirmationNo.addEventListener("click", () => this.cancelCloneConfirmation());
+    const confirmationYes = document.createElement("button");
+    confirmationYes.type = "button";
+    confirmationYes.textContent = "Yes";
+    confirmationYes.className = "repo-clone-confirm-yes";
+    confirmationYes.addEventListener("click", () => this.acceptCloneConfirmation());
+    confirmationActions.append(confirmationNo, confirmationYes);
+    confirmation.append(
+      confirmationTitle,
+      confirmationSummary,
+      confirmationSkipLabel,
+      confirmationActions,
+    );
+    confirmation.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.cancelCloneConfirmation();
+      }
+    });
 
     form.append(input, cloneToggle, suggestions, cloneMenu, publicHint, destination);
     form.addEventListener("submit", (event) => {
@@ -150,7 +205,7 @@ export class RepositoriesPanel implements PanelTool {
     list.className = "repo-list";
     list.setAttribute("aria-label", "Registered repositories");
 
-    root.append(form, empty, list);
+    root.append(form, confirmation, empty, list);
     body.appendChild(root);
     this.input = input;
     this.suggestionsEl = suggestions;
@@ -159,6 +214,12 @@ export class RepositoriesPanel implements PanelTool {
     this.cloneToggleEl = cloneToggle;
     this.managedActionEl = managed;
     this.destinationEl = destination;
+    this.confirmationEl = confirmation;
+    this.confirmationSummaryEl = confirmationSummary;
+    this.confirmationSkipEl = confirmationSkip;
+    this.confirmationYesEl = confirmationYes;
+    this.cloneFormEl = form;
+    this.skipCloneConfirmation = readSkipCloneConfirmation();
     this.emptyEl = empty;
     this.listEl = list;
     this.render();
@@ -206,11 +267,10 @@ export class RepositoriesPanel implements PanelTool {
     }
   }
 
-  private runClone(action: (url: string) => void): void {
+  private executeClone(url: string, action: (url: string) => void): void {
     if (this.input === null) {
       return;
     }
-    const url = this.input.value.trim();
     if (url === "" || this.cloneActionPending) {
       return;
     }
@@ -224,12 +284,95 @@ export class RepositoriesPanel implements PanelTool {
     action(url);
   }
 
-  private runManagedClone(): void {
+  private requestManagedClone(): void {
     const destination = this.managedDestination;
-    if (destination === null) {
+    const url = this.input?.value.trim() ?? "";
+    if (destination === null || url === "") {
       return;
     }
-    this.runClone((url) => this.callbacks.onCloneManaged(url, destination));
+    this.requestCloneConfirmation({
+      url,
+      summary: `Clone ${url} to ${destination}?`,
+      run: () =>
+        this.executeClone(url, (value) => this.callbacks.onCloneManaged(value, destination)),
+    });
+  }
+
+  private requestFolderClone(): void {
+    const url = this.input?.value.trim() ?? "";
+    if (url === "") {
+      return;
+    }
+    this.requestCloneConfirmation({
+      url,
+      summary: `Choose a folder and clone ${url} there?`,
+      run: () => this.executeClone(url, this.callbacks.onCloneToFolder),
+    });
+  }
+
+  private requestCloneConfirmation(pending: PendingCloneConfirmation): void {
+    if (this.cloneActionPending || this.pendingConfirmation !== null) {
+      return;
+    }
+    this.closeCloneMenu();
+    if (this.skipCloneConfirmation) {
+      pending.run();
+      return;
+    }
+    this.pendingConfirmation = pending;
+    this.confirmationReturnFocus = this.cloneToggleEl;
+    if (this.confirmationSummaryEl !== null) {
+      this.confirmationSummaryEl.textContent = pending.summary;
+    }
+    if (this.confirmationSkipEl !== null) {
+      this.confirmationSkipEl.checked = false;
+    }
+    if (this.confirmationEl !== null) {
+      this.confirmationEl.hidden = false;
+    }
+    this.setCloneContentInert(true);
+    this.confirmationYesEl?.focus();
+  }
+
+  private acceptCloneConfirmation(): void {
+    const pending = this.pendingConfirmation;
+    if (pending === null) {
+      return;
+    }
+    this.pendingConfirmation = null;
+    if (this.confirmationSkipEl?.checked === true) {
+      this.skipCloneConfirmation = true;
+      writeSkipCloneConfirmation();
+    }
+    if (this.confirmationEl !== null) {
+      this.confirmationEl.hidden = true;
+    }
+    this.setCloneContentInert(false);
+    this.confirmationReturnFocus = null;
+    pending.run();
+    this.input?.focus();
+  }
+
+  private cancelCloneConfirmation(): void {
+    if (this.pendingConfirmation === null) {
+      return;
+    }
+    this.pendingConfirmation = null;
+    if (this.confirmationEl !== null) {
+      this.confirmationEl.hidden = true;
+    }
+    this.setCloneContentInert(false);
+    this.confirmationReturnFocus?.focus();
+    this.confirmationReturnFocus = null;
+  }
+
+  private setCloneContentInert(inert: boolean): void {
+    if (this.cloneFormEl !== null) {
+      this.cloneFormEl.inert = inert;
+    }
+    if (this.listEl !== null) {
+      this.listEl.inert = inert;
+    }
   }
 
   private scheduleDestination(): void {
@@ -515,4 +658,20 @@ export class RepositoriesPanel implements PanelTool {
 
 function isOwnerRepository(value: string): boolean {
   return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/[a-z0-9._-]+$/i.test(value);
+}
+
+function readSkipCloneConfirmation(): boolean {
+  try {
+    return window.localStorage.getItem(SKIP_CLONE_CONFIRMATION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeSkipCloneConfirmation(): void {
+  try {
+    window.localStorage.setItem(SKIP_CLONE_CONFIRMATION_KEY, "true");
+  } catch {
+    // Storage can be disabled by policy; confirmation remains skipped only for this app session.
+  }
 }

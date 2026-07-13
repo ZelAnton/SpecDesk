@@ -100,6 +100,7 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   });
   await repos.locator(".repo-register-add").click();
   await repos.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
+  await repos.locator(".repo-clone-confirm-yes").click();
   expect((await sentFrames(page)).find((f) => f.kind === "repo.cloneManaged")?.payload).toMatchObject({
     url: "owner/name",
     destinationPath: "C:\\SpecDesk\\repos\\owner_name",
