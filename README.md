@@ -7,8 +7,9 @@ stored in GitHub without ever touching git, branches, or pull requests directly.
 Connect your GitHub account to use GitHub Copilot in the assistant's right panel. The OAuth token stays
 inside the native host, and the chat runs without filesystem, command, or repository tools. The composer
 supports multi-line prompts: press Enter for a new line and Ctrl+Enter (Cmd+Enter on macOS) to send.
-Use **Attach** beside the composer to include the open file, current folder, or a registered repository
-as context for the next message; attachments can be removed before sending.
+The large composer keeps its actions in one footer and shows the live GitHub connection state. Use **+**
+to include the open file, current folder, or a registered repository as context for the next message;
+attachments can be removed before sending.
 The right panel also exposes the selected document's saved versions, comments, and change history.
 Assistant is the first mode on that panel's toolbar so chat stays in a consistent position.
 Its mode icons follow what is active: review comments require a review, history a repository branch,

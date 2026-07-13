@@ -31,24 +31,38 @@ public sealed partial class HostController
 
 		string text = BuildChatPrompt(payload.Text, payload.Attachments ?? []);
 
-		CancellationTokenSource cts;
-		string id;
+		CancellationTokenSource? cts = null;
+		string id = string.IsNullOrWhiteSpace(payload.Id) || payload.Id.Length > 128
+			? NextChatTurnId()
+			: payload.Id;
+		bool rejected = false;
 		lock (_sync)
 		{
-			if (_chatCts is not null)
+			if (_chatCts is not null && !_chatCts.IsCancellationRequested)
 			{
 				// A turn is already streaming (the composer is meant to be disabled until it finishes); drop
-				// this one rather than run a second, concurrent turn on the same agent session.
+				// this one rather than run a second, concurrent turn on the same agent session. Close this
+				// request's own id below so a stale/duplicate UI submit cannot leave its composer waiting forever.
 				_logger.LogDebug("Ignoring a chat message while a turn is already in flight");
-				return;
+				rejected = true;
 			}
-
-			cts = new CancellationTokenSource();
-			_chatCts = cts;
-			id = NextChatTurnIdLocked();
+			else
+			{
+				// A sign-out cancels the previous CTS before its background task reaches finally. It is safe to
+				// replace that canceled slot: _chatAgentGate still serializes transports, and the old finally uses
+				// ReferenceEquals so it cannot clear this new turn.
+				cts = new CancellationTokenSource();
+				_chatCts = cts;
+			}
+		}
+		if (rejected)
+		{
+			EmitChatDone(id);
+			return;
 		}
 
-		CancellationToken token = cts.Token;
+		CancellationTokenSource activeCts = cts!;
+		CancellationToken token = activeCts.Token;
 		_ = Task.Run(async () =>
 		{
 			try
@@ -59,7 +73,7 @@ public sealed partial class HostController
 					IChatAgent? agent = await ResolveChatAgentAsync(token);
 					if (agent is null)
 					{
-						EmitChatDelta(_chatAgentFactory is not null
+						EmitChatDelta(id, _chatAgentFactory is not null
 							? "Connect to GitHub to use Copilot."
 							: "The assistant isn't available right now.");
 						EmitChatDone(id);
@@ -70,7 +84,7 @@ public sealed partial class HostController
 					{
 						if (chunk.Length > 0)
 						{
-							EmitChatDelta(chunk);
+							EmitChatDelta(id, chunk);
 						}
 					}
 				}
@@ -90,20 +104,20 @@ public sealed partial class HostController
 				// The provider/agent failed mid-turn. Surface a plain apology in the stream (never a stack
 				// trace) and still close the turn so the composer re-enables.
 				_logger.LogError(ex, "AI chat turn failed");
-				EmitChatDelta("Sorry — the assistant ran into a problem. Please try again.");
+				EmitChatDelta(id, "Sorry — the assistant ran into a problem. Please try again.");
 				EmitChatDone(id);
 			}
 			finally
 			{
 				lock (_sync)
 				{
-					if (ReferenceEquals(_chatCts, cts))
+					if (ReferenceEquals(_chatCts, activeCts))
 					{
 						_chatCts = null;
 					}
 				}
 
-				cts.Dispose();
+				activeCts.Dispose();
 			}
 		});
 	}
@@ -199,8 +213,8 @@ public sealed partial class HostController
 		});
 	}
 
-	private void EmitChatDelta(string text) =>
-		Emit(IpcSerializer.SerializeEvent(MessageKinds.ChatDelta, new ChatDeltaPayload(text)));
+	private void EmitChatDelta(string id, string text) =>
+		Emit(IpcSerializer.SerializeEvent(MessageKinds.ChatDelta, new ChatDeltaPayload(id, text)));
 
 	private void EmitChatDone(string id) =>
 		Emit(IpcSerializer.SerializeEvent(MessageKinds.ChatDone, new ChatDonePayload(id)));

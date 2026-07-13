@@ -979,6 +979,7 @@ function wire(): void {
       const payload = parseGitHubAccount(message.payload);
       if (payload) {
         signInController.applyAccount(payload);
+        assistantChat?.setGitHubAccount(payload.available, payload.signedIn, payload.login);
         // "Send for review" is a dead end without GitHub configured (no Connect affordance), so the chrome
         // hides it unless sign-in is available. Sign-in *state* (signed in or not) is the host's gate.
         lifecycleChrome.setGitHubAvailable(payload.available);
@@ -1187,7 +1188,7 @@ function wire(): void {
     // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
     // feeds the streamed reply back in through appendDelta / endTurn (mirroring ReviewsPanel / SignIn).
     const chat = new AssistantChat({
-      sendMessage: (text, attachments) => ipc.send(Kinds.chatSend, { text, attachments }),
+      sendMessage: (id, text, attachments) => ipc.send(Kinds.chatSend, { id, text, attachments }),
       requestTemplates: () =>
         requestSuggestion(Kinds.templatesRequest, parseTemplates, { personal: [], remote: [] }),
       pickAttachment: (kind) =>
@@ -1223,12 +1224,13 @@ function wire(): void {
     ipc.on(Kinds.chatDelta, (message) => {
       const payload = parseChatDelta(message.payload);
       if (payload) {
-        chat.appendDelta(payload.text);
+        chat.appendDelta(payload.id, payload.text);
       }
     });
     ipc.on(Kinds.chatDone, (message) => {
-      if (parseChatDone(message.payload)) {
-        chat.endTurn();
+      const payload = parseChatDone(message.payload);
+      if (payload) {
+        chat.endTurn(payload.id);
       }
     });
 

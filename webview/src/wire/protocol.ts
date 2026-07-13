@@ -392,6 +392,7 @@ export interface GitHubRepositoriesPayload {
 
 /** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */
 export interface ChatSendPayload {
+  id: string;
   text: string;
   attachments?: ChatAttachment[];
 }
@@ -438,6 +439,7 @@ export interface DocumentActivityPayload {
 /** Payload of `chat.delta` (native→webview): one streamed chunk of the assistant's reply, appended to
  *  the in-progress assistant message until `chat.done`. */
 export interface ChatDeltaPayload {
+  id: string;
   text: string;
 }
 

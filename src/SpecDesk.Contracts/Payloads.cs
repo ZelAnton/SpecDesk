@@ -378,7 +378,10 @@ public sealed record GitHubRepositoriesPayload(IReadOnlyList<GitHubRepositoryOpt
 /// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
 /// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>
 /// chunks followed by a terminal <see cref="ChatDonePayload"/>.</summary>
-public sealed record ChatSendPayload(string Text, IReadOnlyList<ChatAttachmentPayload>? Attachments = null);
+public sealed record ChatSendPayload(
+	string Text,
+	IReadOnlyList<ChatAttachmentPayload>? Attachments = null,
+	string? Id = null);
 
 /// <summary>A file, folder, or registered repository selected as context for one assistant turn.</summary>
 public sealed record ChatAttachmentPayload(string Kind, string Label, string Reference);
@@ -409,13 +412,13 @@ public sealed record DocumentActivityPayload(
 	IReadOnlyList<DocumentChangePayload> History);
 
 /// <summary>Payload of <c>chat.delta</c> (native→webview): one streamed chunk of the assistant's reply.
-/// Chunks arrive in order and are appended to the in-progress assistant message until <c>chat.done</c>.
-/// Unsolicited (carries no correlation id): the webview shows a single streaming turn at a time.</summary>
-public sealed record ChatDeltaPayload(string Text);
+/// <paramref name="Id"/> is the client-generated turn token echoed from <see cref="ChatSendPayload"/>;
+/// chunks with a stale token are ignored instead of being appended to a newer turn.</summary>
+public sealed record ChatDeltaPayload(string Id, string Text);
 
 /// <summary>Payload of <c>chat.done</c> (native→webview): the assistant turn identified by <paramref
 /// name="Id"/> has finished streaming. The webview re-enables the composer and finalizes the message.
-/// The <paramref name="Id"/> is a host-assigned per-turn token so a late/duplicate done can be ignored.</summary>
+/// The <paramref name="Id"/> echoes the client-generated turn token so a late/duplicate done can be ignored.</summary>
 public sealed record ChatDonePayload(string Id);
 
 /// <summary>One prompt-library entry (shared by the personal store, the remote source, and the wire).

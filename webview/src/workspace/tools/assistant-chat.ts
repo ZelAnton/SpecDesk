@@ -22,7 +22,7 @@ import type { PanelTool } from "../panel-tool.js";
 
 export interface AssistantChatOptions {
   /** Send the author's message to the host (index.ts maps this to `chat.send`). */
-  sendMessage(text: string, attachments: readonly ChatAttachment[]): void;
+  sendMessage(id: string, text: string, attachments: readonly ChatAttachment[]): void;
   /** Fetch the personal + remote prompt library (index.ts maps this to the `templates.request` round-trip).
    *  Resolves with an empty set on any failure — the picker just shows "no templates" then. */
   requestTemplates(): Promise<TemplatesPayload>;
@@ -47,12 +47,19 @@ export class AssistantChat implements PanelTool {
   private attachButton!: HTMLButtonElement;
   private attachMenu!: HTMLElement;
   private attachmentsList!: HTMLElement;
+  private connectionStatus!: HTMLElement;
+  private composerSurface!: HTMLElement;
 
   // The assistant message currently being streamed (its text node grows with each delta), or null between
   // turns. A single streaming turn at a time (the host single-flights; the composer is disabled meanwhile).
   private streamingText: HTMLElement | null = null;
+  private streamingTurnId: string | null = null;
+  private readonly turnPrefix = globalThis.crypto.randomUUID();
+  private turnCounter = 0;
   private templatesOpen = false;
   private attachOpen = false;
+  private busy = false;
+  private signedIn = false;
   private repositories: readonly RegisteredRepo[] = [];
   private attachments: ChatAttachment[] = [];
 
@@ -81,7 +88,7 @@ export class AssistantChat implements PanelTool {
     const intro = document.createElement("p");
     intro.className = "chat-intro";
     intro.textContent =
-      "Ask about this document, or insert a prompt from the library (▤). Nothing is changed without your confirmation.";
+      "Ask Copilot about the active document or repository. Nothing is changed without your confirmation.";
     this.log.appendChild(intro);
 
     // The template picker panel, populated when opened.
@@ -129,14 +136,18 @@ export class AssistantChat implements PanelTool {
       }
     });
 
+    // VS Code-inspired composer: one quiet card contains context, the multi-line prompt, and its action
+    // row. Its controls remain SpecDesk controls and vocabulary; the reference informs hierarchy, not branding.
+    const composer = document.createElement("form");
+    composer.className = "chat-composer";
+
+    this.composerSurface = document.createElement("div");
+    this.composerSurface.className = "chat-composer-surface";
+
     this.attachmentsList = document.createElement("div");
     this.attachmentsList.className = "chat-attachments";
     this.attachmentsList.setAttribute("aria-label", "Attached context");
     this.attachmentsList.hidden = true;
-
-    // The composer: a template-picker toggle, the input, and Send.
-    const composer = document.createElement("form");
-    composer.className = "chat-composer";
 
     this.templatesButton = document.createElement("button");
     this.templatesButton.type = "button";
@@ -156,7 +167,9 @@ export class AssistantChat implements PanelTool {
     this.attachButton.setAttribute("aria-haspopup", "menu");
     this.attachButton.setAttribute("aria-expanded", "false");
     this.attachButton.setAttribute("aria-controls", "chat-attach-menu");
-    this.attachButton.textContent = "Attach";
+    this.attachButton.setAttribute("aria-label", "Add context");
+    this.attachButton.title = "Add context";
+    this.attachButton.textContent = "+";
     this.attachButton.addEventListener("click", () => this.toggleAttachMenu());
 
     this.input = document.createElement("textarea");
@@ -164,7 +177,7 @@ export class AssistantChat implements PanelTool {
     this.input.rows = 3;
     this.input.setAttribute("aria-label", "Message the assistant");
     this.input.setAttribute("aria-describedby", "chat-input-hint");
-    this.input.placeholder = "Message the assistant…";
+    this.input.placeholder = "Describe what you want to work on…";
     // A multi-line composer must keep plain Enter for authoring. The explicit modifier shortcut avoids
     // surprising keyboard and assistive-technology users while still supporting fast submission.
     this.input.addEventListener("keydown", (event) => {
@@ -174,37 +187,91 @@ export class AssistantChat implements PanelTool {
       }
     });
 
-    const inputStack = document.createElement("div");
-    inputStack.className = "chat-input-stack";
-    inputStack.appendChild(this.input);
-
     const inputHint = document.createElement("span");
     inputHint.id = "chat-input-hint";
     inputHint.className = "chat-input-hint";
     inputHint.textContent = "Ctrl/Cmd+Enter to send";
-    inputStack.appendChild(inputHint);
 
     this.sendButton = document.createElement("button");
     this.sendButton.type = "submit";
     this.sendButton.className = "chat-send";
+    this.sendButton.setAttribute("aria-label", "Send message");
     this.sendButton.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
-    this.sendButton.textContent = "Send";
+    this.sendButton.title = "Send message (Ctrl/Cmd+Enter)";
+    this.sendButton.textContent = "↑";
 
-    composer.append(this.templatesButton, this.attachButton, inputStack, this.sendButton);
+    const actionRow = document.createElement("div");
+    actionRow.className = "chat-composer-actions";
+    const actionGroup = document.createElement("div");
+    actionGroup.className = "chat-composer-action-group";
+
+    const agent = document.createElement("span");
+    agent.className = "chat-composer-chip chat-composer-agent";
+    agent.setAttribute("aria-label", "Assistant: GitHub Copilot");
+    agent.innerHTML = `${icon("assistant")}<span>Copilot</span>`;
+
+    const model = document.createElement("span");
+    model.className = "chat-composer-chip";
+    model.setAttribute("aria-label", "Model selection: automatic");
+    model.title = "Copilot chooses the model";
+    model.textContent = "Automatic";
+
+    actionGroup.append(this.attachButton, this.templatesButton, agent, model);
+    actionRow.append(actionGroup, this.sendButton);
+
+    const statusRow = document.createElement("div");
+    statusRow.className = "chat-composer-status";
+    this.connectionStatus = document.createElement("span");
+    this.connectionStatus.className = "chat-connection-status";
+    this.connectionStatus.setAttribute("role", "status");
+    const statusDot = document.createElement("span");
+    statusDot.className = "chat-connection-dot";
+    statusDot.setAttribute("aria-hidden", "true");
+    const statusText = document.createElement("span");
+    statusText.className = "chat-connection-text";
+    this.connectionStatus.append(statusDot, statusText);
+    statusRow.append(this.connectionStatus, inputHint);
+
+    this.composerSurface.append(this.attachmentsList, this.input, actionRow);
+    composer.append(this.composerSurface, statusRow);
     composer.addEventListener("submit", (event) => {
       event.preventDefault();
       this.submit();
     });
 
-    root.append(
-      this.log,
-      this.srStatus,
-      this.templatesPanel,
-      this.attachMenu,
-      this.attachmentsList,
-      composer,
-    );
+    root.append(this.log, this.srStatus, this.templatesPanel, this.attachMenu, composer);
     body.appendChild(root);
+    this.setGitHubAccount(true, false);
+  }
+
+  /** Reflect the real GitHub account frame. Copilot has no separate credential path in SpecDesk. */
+  setGitHubAccount(available: boolean, signedIn: boolean, login?: string): void {
+    this.signedIn = available && signedIn;
+    // Signing out cancels the native Copilot turn. That cancellation intentionally has no chat.done frame
+    // (the host also uses it during teardown), so settle the visible turn here or a later sign-in would leave
+    // a permanently non-submittable composer. Any already-queued late delta is ignored in appendDelta.
+    if (!this.signedIn && this.streamingTurnId !== null) {
+      this.endTurn(this.streamingTurnId);
+    }
+    this.connectionStatus.dataset.state = this.signedIn
+      ? "connected"
+      : available
+        ? "disconnected"
+        : "unavailable";
+    const text = this.connectionStatus.querySelector<HTMLElement>(".chat-connection-text");
+    if (text !== null) {
+      text.textContent = this.signedIn
+        ? login
+          ? `Connected to GitHub as ${login}`
+          : "Connected to GitHub"
+        : available
+          ? "Connect to GitHub to use Copilot"
+          : "Copilot is unavailable in this build";
+    }
+    this.input.placeholder = this.signedIn
+      ? "Describe what you want to work on…"
+      : "Connect to GitHub to start a conversation";
+    this.syncComposerState();
   }
 
   setRepositories(repositories: readonly RegisteredRepo[]): void {
@@ -218,7 +285,8 @@ export class AssistantChat implements PanelTool {
   }
 
   /** Append one streamed chunk to the in-progress assistant message (creating it on the first chunk). */
-  appendDelta(text: string): void {
+  appendDelta(id: string, text: string): void {
+    if (!this.signedIn || id !== this.streamingTurnId) return;
     if (this.streamingText === null) {
       this.streamingText = this.addMessage("assistant", "");
     }
@@ -227,7 +295,8 @@ export class AssistantChat implements PanelTool {
   }
 
   /** Finalize the current assistant turn: announce the completed reply, then re-enable the composer. */
-  endTurn(): void {
+  endTurn(id: string): void {
+    if (id !== this.streamingTurnId) return;
     const finalText = this.streamingText?.textContent ?? "";
     // An empty reply (the turn produced no text) leaves a stray blank message — drop it; otherwise announce
     // the completed reply once to screen readers (the transcript itself is not a live region — see mount).
@@ -237,6 +306,7 @@ export class AssistantChat implements PanelTool {
       this.srStatus.textContent = finalText;
     }
     this.streamingText = null;
+    this.streamingTurnId = null;
     this.setBusy(false);
     this.input.focus();
   }
@@ -244,7 +314,7 @@ export class AssistantChat implements PanelTool {
   // Send the composed message: render the user bubble, open a pending assistant message, disable the
   // composer, and hand the text to the host. Ignores a blank message or one sent while already streaming.
   private submit(): void {
-    if (this.streamingText !== null) {
+    if (!this.signedIn || this.streamingTurnId !== null) {
       return;
     }
     const text = this.input.value.trim();
@@ -259,12 +329,14 @@ export class AssistantChat implements PanelTool {
     this.setBusy(true);
     // Open the assistant's (empty) reply now so the streamed deltas have somewhere to land and the "thinking"
     // state is visible immediately.
+    const id = `${this.turnPrefix}-${++this.turnCounter}`;
+    this.streamingTurnId = id;
     this.streamingText = this.addMessage("assistant", "");
     this.scrollToEnd();
     const attachments = [...this.attachments];
     this.attachments = [];
     this.renderAttachments();
-    this.options.sendMessage(text, attachments);
+    this.options.sendMessage(id, text, attachments);
   }
 
   private toggleAttachMenu(): void {
@@ -469,11 +541,18 @@ export class AssistantChat implements PanelTool {
   }
 
   private setBusy(busy: boolean): void {
-    this.sendButton.disabled = busy;
-    this.templatesButton.disabled = busy;
-    this.attachButton.disabled = busy;
-    this.input.disabled = busy;
+    this.busy = busy;
+    this.syncComposerState();
     this.log.setAttribute("aria-busy", String(busy));
+  }
+
+  private syncComposerState(): void {
+    const disabled = this.busy || !this.signedIn;
+    this.sendButton.disabled = disabled;
+    this.templatesButton.disabled = disabled;
+    this.attachButton.disabled = disabled;
+    this.input.disabled = disabled;
+    this.composerSurface.dataset.disabled = String(disabled);
   }
 
   private scrollToEnd(): void {

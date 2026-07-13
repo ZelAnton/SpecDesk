@@ -49,7 +49,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `diff.request` | `{ base }` (`base` ∈ `"lastVersion"`, `"published"`, `"pr"`; editor `version` on the envelope) — the webview overlay picks `base`; only `"lastVersion"` (the working copy vs its last saved version, the live "show changes" overlay) is wired today, `"published"`/`"pr"` are reserved for PoC-7 | diff the working copy against the requested base — replies with structured blocks via `diff.result` |
 | `pr.diff.request` | `{ path, mode }` | request the rendered/raw diff of the open PR (base↔head) |
 | `pr.compare.request` | `{ prNumber, base, mode }` | compare a PR's version of the open file against a base (`base` ∈ `workingCopy`, `main`; `mode` ∈ `rendered`, `raw`) |
-| `chat.send` | `{ text, attachments? }` (`attachments[]`: `{ kind, label, reference }`) | message to the agent; file/folder references are accepted only when issued by the native attachment picker, consumed once, and resolved by the host into bounded context |
+| `chat.send` | `{ id, text, attachments? }` (`attachments[]`: `{ kind, label, reference }`) | message to the agent; client-generated `id` correlates every streamed frame, while file/folder references are accepted only when issued by the native attachment picker, consumed once, and resolved by the host into bounded context |
 | `chat.attachment.pick` | `{ kind }` (`file` or `folder`) | show an attachment-specific native picker without opening the document/workspace; host replies with `chat.attachment.picked`, correlated by `id` |
 | `document.activity.request` | `{}` | request saved versions, comments, and change history for the selected document; host replies with `document.activity`, correlated by `id` |
 | `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
@@ -84,7 +84,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `image.inserted` | `{ markdown, cursorHint }` | link to insert at the cursor |
 | `status` | `{ state, label, branch? }` | plain-language status (`state` ∈ `published`, `draft`, `inReview`, `changesRequested`, `approved` — the wire state names, pinned by `lifecycle-states.json`; `label` is the author-facing text, including transient "Unsaved changes" / "Version saved"; `branch` is diagnostic only) |
 | `conflict.detected` | `{ sections }` | "someone else changed this too" data |
-| `chat.delta` | `{ text }` | streaming agent output chunk |
+| `chat.delta` | `{ id, text }` | streaming agent output chunk for the identified turn |
 | `chat.done` | `{ id }` | agent turn complete |
 | `chat.attachment.picked` | `{ kind, label, reference }` or `null` | native-picked attachment descriptor — reply to `chat.attachment.pick`; the path stays host-owned and is usable once by `chat.send` |
 | `document.activity` | `{ document?, versions, historyState, historyMessage?, comments, commentsState, commentsMessage?, history }` | selected-document activity; versions and distinct change summaries come from bounded repository history, with `notVersioned` distinguished from a load failure, while comments are the newest bounded inline GitHub review comments filtered by the exact selected repository path and distinguish verified-empty, disconnected, and unavailable states |

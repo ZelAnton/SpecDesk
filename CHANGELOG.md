@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Copilot panel now uses a roomy VS Code-style composer card with context and template actions,
+  assistant/model indicators, an icon send action, and live GitHub connection status in one compact footer.
 - The right panel now follows the active context: Chat is always available, Comments appears for a review, Change history for a repository branch, Outline for Markdown, and Versions for repository files.
 - GitHub repository entry now suggests accessible personal and organization repositories by name.
 - Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
@@ -342,6 +344,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoWarn`.
 
 ### Fixed
+
+- Copilot replies are now isolated by turn, so signing out and reconnecting cannot mix a late reply into
+  the new conversation or leave the composer waiting forever.
 - Split view now keeps the LAST row of a table and the LAST item of a list level with their rendered
   counterparts even when content above the container has accumulated more source-pane padding than any
   of the container's own rows call for. Height-sync pads with a single document-wide running maximum, so

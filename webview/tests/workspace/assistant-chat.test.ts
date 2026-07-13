@@ -6,7 +6,8 @@ import { AssistantChat } from "../../src/workspace/tools/assistant-chat.js";
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
-  const sendMessage = vi.fn<(text: string, attachments: readonly ChatAttachment[]) => void>();
+  const sendMessage =
+    vi.fn<(id: string, text: string, attachments: readonly ChatAttachment[]) => void>();
   const requestTemplates = vi.fn<() => Promise<TemplatesPayload>>().mockResolvedValue(templates);
   const pickAttachment = vi.fn<(kind: "file" | "folder") => Promise<ChatAttachment | null>>(
     async (kind) =>
@@ -18,6 +19,7 @@ function harness(templates: TemplatesPayload = { personal: [], remote: [] }) {
   const body = document.createElement("div");
   document.body.appendChild(body);
   chat.mount(body);
+  chat.setGitHubAccount(true, true, "octo");
 
   const input = body.querySelector<HTMLTextAreaElement>(".chat-input");
   const sendBtn = body.querySelector<HTMLButtonElement>(".chat-send");
@@ -44,10 +46,66 @@ describe("AssistantChat", () => {
     const { body, input, sendBtn } = harness();
     expect(body.querySelector(".chat-log")).not.toBeNull();
     expect(body.querySelector(".chat-composer")).not.toBeNull();
+    expect(body.querySelector(".chat-composer-surface")).not.toBeNull();
+    expect(body.querySelector(".chat-composer-agent")?.textContent).toBe("Copilot");
+    expect(body.querySelector('[aria-label="Model selection: automatic"]')?.textContent).toBe(
+      "Automatic",
+    );
     expect(input.rows).toBe(3);
     expect(input.getAttribute("aria-describedby")).toBe("chat-input-hint");
     expect(body.querySelector("#chat-input-hint")?.textContent).toBe("Ctrl/Cmd+Enter to send");
     expect(sendBtn.getAttribute("aria-keyshortcuts")).toContain("Control+Enter");
+    expect(sendBtn.getAttribute("aria-label")).toBe("Send message");
+    expect(body.querySelector(".chat-connection-status")?.getAttribute("role")).toBe("status");
+    expect(body.querySelector(".chat-connection-text")?.textContent).toContain("octo");
+  });
+
+  it("follows the real GitHub connection state", () => {
+    const { chat, body, input, sendBtn } = harness();
+    chat.setGitHubAccount(true, false);
+    expect(input.disabled).toBe(true);
+    expect(sendBtn.disabled).toBe(true);
+    expect(input.placeholder).toContain("Connect to GitHub");
+    expect(body.querySelector(".chat-connection-text")?.textContent).toContain("Connect to GitHub");
+
+    chat.setGitHubAccount(true, true, "mona");
+    expect(input.disabled).toBe(false);
+    expect(sendBtn.disabled).toBe(false);
+    expect(body.querySelector(".chat-connection-text")?.textContent).toContain("mona");
+  });
+
+  it("isolates a new account turn from stale frames queued before sign-out", () => {
+    const { chat, body, input, sendBtn, sendMessage } = harness();
+    input.value = "First question";
+    sendBtn.click();
+    expect(sendBtn.disabled).toBe(true);
+    const firstId = sendMessage.mock.calls[0]?.[0];
+    if (firstId === undefined) throw new Error("first turn was not sent");
+
+    chat.setGitHubAccount(true, false);
+    chat.appendDelta(firstId, "late while signed out");
+    expect(body.querySelector(".chat-msg--assistant")).toBeNull();
+
+    chat.setGitHubAccount(true, true, "octo");
+    input.value = "Second question";
+    sendBtn.click();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const secondId = sendMessage.mock.calls[1]?.[0];
+    if (secondId === undefined) throw new Error("second turn was not sent");
+    expect(secondId).not.toBe(firstId);
+    expect(sendMessage).toHaveBeenLastCalledWith(secondId, "Second question", []);
+
+    chat.appendDelta(firstId, "late after re-auth");
+    chat.endTurn(firstId);
+    expect(sendBtn.disabled).toBe(true);
+    expect(body.querySelector(".chat-msg--assistant .chat-text")?.textContent).toBe("");
+
+    chat.appendDelta(secondId, "current response");
+    chat.endTurn(secondId);
+    expect(sendBtn.disabled).toBe(false);
+    expect(body.querySelector(".chat-msg--assistant .chat-text")?.textContent).toBe(
+      "current response",
+    );
   });
 
   it("sends the composed message, shows a user bubble, opens a pending reply, and disables the composer", () => {
@@ -55,7 +113,7 @@ describe("AssistantChat", () => {
     input.value = "Summarize the changes";
     sendBtn.click();
 
-    expect(sendMessage).toHaveBeenCalledWith("Summarize the changes", []);
+    expect(sendMessage).toHaveBeenCalledWith(expect.any(String), "Summarize the changes", []);
     expect(input.value).toBe(""); // cleared
     expect(sendBtn.disabled).toBe(true); // busy until chat.done
 
@@ -89,26 +147,28 @@ describe("AssistantChat", () => {
     input.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }),
     );
-    expect(sendMessage).toHaveBeenCalledWith("hi", []);
+    expect(sendMessage).toHaveBeenCalledWith(expect.any(String), "hi", []);
 
     const second = harness();
     second.input.value = "hello";
     second.input.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }),
     );
-    expect(second.sendMessage).toHaveBeenCalledWith("hello", []);
+    expect(second.sendMessage).toHaveBeenCalledWith(expect.any(String), "hello", []);
   });
 
   it("appends streamed deltas to the pending assistant message and re-enables on endTurn", () => {
-    const { input, sendBtn, chat, body } = harness();
+    const { input, sendBtn, chat, body, sendMessage } = harness();
     input.value = "question";
     sendBtn.click();
+    const id = sendMessage.mock.calls[0]?.[0];
+    if (id === undefined) throw new Error("turn was not sent");
 
-    chat.appendDelta("Hello ");
-    chat.appendDelta("world");
+    chat.appendDelta(id, "Hello ");
+    chat.appendDelta(id, "world");
     expect(body.querySelector(".chat-msg--assistant .chat-text")?.textContent).toBe("Hello world");
 
-    chat.endTurn();
+    chat.endTurn(id);
     expect(sendBtn.disabled).toBe(false);
     // The finished reply is announced once through the off-screen polite status region, not by mutating
     // a live transcript delta-by-delta (which screen readers announce as noisy growing prefixes).
@@ -117,12 +177,14 @@ describe("AssistantChat", () => {
   });
 
   it("drops the empty assistant message when a turn ends with no output", () => {
-    const { input, sendBtn, chat, messages } = harness();
+    const { input, sendBtn, chat, messages, sendMessage } = harness();
     input.value = "question";
     sendBtn.click();
+    const id = sendMessage.mock.calls[0]?.[0];
+    if (id === undefined) throw new Error("turn was not sent");
     expect(messages()).toHaveLength(2); // user + empty pending assistant
 
-    chat.endTurn(); // no deltas arrived
+    chat.endTurn(id); // no deltas arrived
     expect(messages()).toHaveLength(1); // the blank assistant message is removed
   });
 
@@ -183,7 +245,7 @@ describe("AssistantChat", () => {
 
     input.value = "Compare these";
     sendBtn.click();
-    expect(sendMessage).toHaveBeenCalledWith("Compare these", [
+    expect(sendMessage).toHaveBeenCalledWith(expect.any(String), "Compare these", [
       { kind: "file", label: "roadmap.md", reference: "C:\\specs\\roadmap.md" },
       { kind: "folder", label: "specs", reference: "C:\\specs" },
     ]);

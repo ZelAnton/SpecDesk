@@ -134,6 +134,7 @@
     "description": "Product specifications"
   },
   "chat.delta": {
+	"id": "7",
     "text": "Here is a summary of the change: "
   },
   "chat.done": {

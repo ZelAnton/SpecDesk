@@ -1333,43 +1333,88 @@ button {
   color: var(--text-muted);
 }
 
-/* Composer: template-picker toggle, the multi-line input, and Send. */
+/* Composer: a VS Code-inspired single card with a roomy prompt above one compact action row. The
+   hierarchy follows the reference while colours, radii, focus, and control language stay on SpecDesk tokens. */
 .chat-composer {
   flex: none;
   display: flex;
-  align-items: flex-end;
-  gap: 0.4rem;
-  padding: 0.55rem 0.6rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem;
   border-top: 1px solid var(--border);
   background: var(--surface-raised);
 }
 
-.chat-templates-toggle {
+.chat-composer-surface {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.chat-composer-surface:focus-within {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.chat-composer-surface[data-disabled="true"] {
+  background: var(--surface-sunken);
+}
+
+.chat-composer-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem 0.45rem;
+}
+
+.chat-composer-action-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.chat-templates-toggle,
+.chat-attach-toggle {
   flex: none;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
   border-radius: var(--r-sm);
-  background: var(--surface);
+  background: transparent;
   color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1;
+  font: 500 17px / 1 var(--font-ui);
   cursor: pointer;
 }
 
-.chat-attach-toggle {
+.chat-composer-chip {
   flex: none;
-  height: 30px;
-  padding: 0 0.55rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--surface);
+  height: 26px;
+  padding: 0 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-raised);
   color: var(--text-muted);
-  font: 500 12px / 1 var(--font-ui);
-  cursor: pointer;
+  font: 500 11px / 1 var(--font-ui);
+  white-space: nowrap;
+}
+
+.chat-composer-chip svg {
+  width: 14px;
+  height: 14px;
 }
 
 .chat-attach-toggle:hover:not(:disabled),
@@ -1421,13 +1466,10 @@ button {
 }
 
 .chat-attachments {
-  flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0.4rem 0.6rem 0;
-  border-top: 1px solid var(--border);
-  background: var(--surface-raised);
+  padding: 0.45rem 0.55rem 0;
 }
 
 .chat-attachment {
@@ -1460,25 +1502,58 @@ button {
 }
 
 .chat-input {
+  display: block;
   width: 100%;
   min-width: 0;
-  min-height: 4.5rem;
+  min-height: 5.25rem;
   resize: vertical;
-  max-height: 8rem;
-  padding: 0.4rem 0.55rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--surface);
+  max-height: 12rem;
+  padding: 0.7rem 0.75rem 0.35rem;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
   color: var(--text);
   font: 13px / 1.5 var(--font-ui);
 }
 
-.chat-input-stack {
-  flex: 1;
-  min-width: 0;
+.chat-input::placeholder {
+  color: var(--text-subtle);
+}
+
+.chat-composer-status {
   display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.6rem;
+  min-height: 18px;
+  padding: 0 0.15rem;
+}
+
+.chat-connection-status {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-subtle);
+  font: 11px / 1.3 var(--font-ui);
+}
+
+.chat-connection-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+}
+
+.chat-connection-status[data-state="connected"] {
+  color: var(--ok-fg);
+}
+
+.chat-connection-status[data-state="connected"] .chat-connection-dot {
+  background: var(--ok-dot);
 }
 
 .chat-input-hint {
@@ -1488,12 +1563,17 @@ button {
 
 .chat-send {
   flex: none;
-  padding: 0.4rem 0.75rem;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--on-accent);
-  font: 500 13px / 1 var(--font-ui);
+  font: 600 17px / 1 var(--font-ui);
   cursor: pointer;
 }
 

@@ -92,6 +92,29 @@ public sealed class HostControllerChatTests
 	}
 
 	[Test]
+	public void ChatSend_EchoesTheClientTurnIdOnEveryStreamingFrame()
+	{
+		FakeChatAgent agent = new();
+		using HostController controller = NewController(agent);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.ChatSend, new ChatSendPayload("Hello", [], "web-42")));
+
+		IpcMessage? done = WaitForKind(MessageKinds.ChatDone);
+		ChatDeltaPayload[] deltas = SnapshotSent()
+			.Select(IpcSerializer.Deserialize)
+			.Where(message => message?.Kind == MessageKinds.ChatDelta)
+			.Select(message => message!.GetPayload<ChatDeltaPayload>()!)
+			.ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(deltas, Is.Not.Empty);
+			Assert.That(deltas.All(delta => delta.Id == "web-42"), Is.True);
+			Assert.That(done?.GetPayload<ChatDonePayload>()?.Id, Is.EqualTo("web-42"));
+		});
+	}
+
+	[Test]
 	public async Task CopilotChat_SignOutDisposesTheSession_AndReauthenticationCreatesANewOne()
 	{
 		const string token = "gho_secret_never_on_wire";

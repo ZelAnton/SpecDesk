@@ -196,6 +196,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
   it("chat.delta", () => {
     const payload = parseChatDelta(fixture["chat.delta"]);
     expect(payload).not.toBeNull();
+    expect(payload?.id).toBe("7");
     expect(payload?.text).toBe("Here is a summary of the change: ");
   });
 

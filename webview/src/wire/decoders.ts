@@ -417,10 +417,10 @@ export function parsePrList(value: unknown): PrListPayload | null {
 }
 
 export function parseChatDelta(value: unknown): ChatDeltaPayload | null {
-  if (!isRecord(value) || !isString(value.text)) {
+  if (!isRecord(value) || !isString(value.id) || !isString(value.text)) {
     return null;
   }
-  return { text: value.text };
+  return { id: value.id, text: value.text };
 }
 
 export function parseChatDone(value: unknown): ChatDonePayload | null {
