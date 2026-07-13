@@ -55,8 +55,6 @@ export interface WorkspaceCallbacks {
   onOpenFolder(): void;
   /** Open a recent item from the Start screen (a folder → `folder.open`, a file → `doc.open`). */
   onOpenItem(item: WorkspaceItem): void;
-  /** Open a GitHub repository from the Start screen (`repo.open`); the host clones it and opens it. */
-  onOpenRepo(url: string): void;
   /** Scroll the editor to a 0-based source line (an outline heading was clicked). */
   onOutlineNavigate(line: number): void;
 }
@@ -105,6 +103,9 @@ export function setupWorkspace(
   // The navigator's onNavigate and the frame's onChange reference each other, so forward-declare the frame;
   // both closures only fire on later user interaction, by which point it is assigned.
   let centralFrame: CentralFrame;
+  // The Start screen is built before the docks. Its repository action closes over this function, which is
+  // assigned once the docks exist later in this synchronous setup.
+  let revealRepositories: () => void = () => {};
   const navigator = new Navigator(NAV_DESTINATIONS, (id) => centralFrame.show(id));
   // The document-outline tool (right rail): index.ts feeds it headings via the returned handle, and a click
   // scrolls the editor through onOutlineNavigate.
@@ -125,7 +126,7 @@ export function setupWorkspace(
       onOpenFile: () => callbacks.onOpenFile(),
       onOpenFolder: () => callbacks.onOpenFolder(),
       onOpenItem: (item) => callbacks.onOpenItem(item),
-      onOpenRepo: (url) => callbacks.onOpenRepo(url),
+      onOpenRepositories: () => revealRepositories(),
     });
     centralFrame.register({ id: CENTRAL_VIEW_HOME, el: elements.homeView });
   }
@@ -263,6 +264,7 @@ export function setupWorkspace(
     dock.setOpen(true);
     dock.setMode(toolId);
   };
+  revealRepositories = () => revealTool("left", "repositories");
 
   // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it
   // an explicit undefined).

@@ -25,28 +25,21 @@ async function goToStart(page: import("@playwright/test").Page): Promise<void> {
   await expect(page.locator("#home-view")).toBeVisible();
 }
 
-test("the Start screen opens a GitHub repo and reveals Files when its tree arrives", async ({
-  page,
-}) => {
+test("the Start screen opens the Repositories panel without its own repo input", async ({ page }, testInfo) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
   await goToStart(page);
 
-  const note = page.locator("#home-view .home-open-repo-note");
-  await page.locator("#home-view .home-open-repo-input").fill("acme/specs");
-  await page.locator("#home-view .home-open-repo-btn").click();
+  await expect(page.locator("#home-view input")).toHaveCount(0);
+  await expect(page.locator("#home-view form")).toHaveCount(0);
+  await page.locator("#home-view .home-open", { hasText: "Open Repository" }).click();
 
-  // Clone-and-open: sends `repo.open` with the typed value, and shows the immediate "Opening…" feedback.
-  expect((await sentFrames(page)).find((f) => f.kind === "repo.open")?.payload).toMatchObject({
-    url: "acme/specs",
-  });
-  await expect(note).toBeVisible();
-
-  // The host answers with the cloned repo's tree — the Files panel is revealed and the busy note clears.
-  await emit(page, TREE);
-  await expect(page.locator('#left-dock [data-tool="files"]')).toBeVisible();
-  await expect(page.locator("#left-dock .file-tree-file")).toHaveText(["README.md"]);
-  await expect(note).toBeHidden();
+  await expect(page.locator('#left-dock [data-tool="repositories"]')).toBeVisible();
+  await expect(
+    page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]'),
+  ).toHaveAttribute("aria-expanded", "true");
+  expect((await sentFrames(page)).some((frame) => frame.kind === "repo.open")).toBe(false);
+  await page.screenshot({ path: testInfo.outputPath("start-repositories.png"), fullPage: true });
 });
 
 test("opening a folder reveals the Files panel even when the left dock was collapsed", async ({

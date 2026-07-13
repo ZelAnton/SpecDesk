@@ -26,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selected context appears as removable chips and is sent with the next message.
 - The assistant message box is now visibly multi-line: Enter writes a new line, Ctrl+Enter (or Cmd+Enter)
   sends, and the box can be resized vertically for longer prompts.
-- You can now open a GitHub repository that isn't on your machine yet — from the Start screen ("Open a GitHub
-  repo") or by clicking one in the Repositories list. SpecDesk copies it into a local folder and opens it as
+- You can now open a GitHub repository that isn't on your machine yet by clicking one in the Repositories
+  list. SpecDesk copies it into a local folder and opens it as
   your workspace. Opening a folder or a repository now also reveals the file navigator (and opens the left
   panel if it was collapsed), so you immediately see what you opened.
 - The left panel now has **Recent**, **Favorites**, and **Repositories** views. Recent and Favorites list the
@@ -114,6 +114,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+- The Start screen now opens the Repositories panel with one `Open Repository` button instead of asking for a
+  repository address itself.
 - Markdown actions, wrapping, change highlighting, and the Code / Split / Formatted switch now live directly
   above the editor. The global toolbar now shows the current repository, version line, document path, working
   document search, notifications, and an accessible account menu with Settings, Help, and Sign out.

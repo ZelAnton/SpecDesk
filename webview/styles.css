@@ -2225,69 +2225,6 @@ button {
   border-color: var(--border-strong);
 }
 
-/* The Start screen's "Open a GitHub repo" control — a compact input + button that clones a repo and opens it
-   (home-view.ts), with an inline "Opening…" note while the clone runs. Reuses the app input/accent tokens, so
-   it follows light/dark/warm automatically (like the Repositories register form). */
-.home-open-repo-section {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.4rem;
-  width: 100%;
-  max-width: 24rem;
-  margin-top: 0.75rem;
-}
-
-.home-open-repo {
-  display: flex;
-  gap: 0.4rem;
-  width: 100%;
-}
-
-.home-open-repo-input {
-  flex: 1;
-  min-width: 0;
-  padding: 0.45rem 0.6rem;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  /* Match every other app input (14px via the base type scale) rather than a one-off size. */
-  font: inherit;
-}
-
-.home-open-repo-btn {
-  flex: none;
-  padding: 0.45rem 0.9rem;
-  color: var(--on-accent);
-  background: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: var(--r-sm);
-  font: 600 14px var(--font-ui);
-  cursor: pointer;
-}
-
-.home-open-repo-btn:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
-
-.home-open-repo-input:disabled,
-.home-open-repo-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.home-open-repo-note {
-  margin: 0;
-  font: 13px / 1.5 var(--font-ui);
-  color: var(--text-muted);
-}
-
-.home-open-repo-note[hidden] {
-  display: none;
-}
-
 .home-recents {
   width: 100%;
   margin-top: 1.5rem;

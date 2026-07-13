@@ -2,8 +2,8 @@
  * The Start central view (design concept §10.7 "empty / first-run"): a calm, centered open-a-spec screen.
  * It is one of the views the left-rail navigator switches the central frame to. The author can open a single
  * file or a whole folder (its Markdown tree then fills the left-rail file navigator), pick one of their
- * recent items straight from here (the left-rail Recent panel holds the full history), or open a GitHub
- * repository by `owner/name` or URL — the host clones it into a managed folder and opens it as the workspace.
+ * recent items straight from here (the left-rail Recent panel holds the full history), or reveal the
+ * Repositories panel where GitHub repositories are registered and opened.
  */
 
 import type { WorkspaceItem } from "../../wire/protocol.js";
@@ -17,18 +17,14 @@ export interface HomeActions {
   /** Open a recent item (a folder → `folder.open`, a file → `doc.open` — the owner resolves which, the
    *  same open logic the left-rail Recent/Favorites panels use). */
   onOpenItem(item: WorkspaceItem): void;
-  /** Open a GitHub repository named by `url` (an `owner/name` or a GitHub link) — the host clones it into a
-   *  managed folder and opens that folder as the workspace. */
-  onOpenRepo(url: string): void;
+  /** Reveal the left-rail Repositories panel. */
+  onOpenRepositories(): void;
 }
 
 /** The handle {@link buildHomeView} returns so the owner can feed the recent list as `workspace.state` arrives. */
 export interface HomeView {
   /** Replace the Start screen's recent list with up to a few most-recent items; empty restores the hint. */
   setRecents(items: readonly WorkspaceItem[]): void;
-  /** Reflect that a repo open is in flight (a clone can be slow): `true` disables the open-repo control and
-   *  shows an inline "Opening…" note; `false` restores it — the owner clears it on the next `tree`/`error`. */
-  setRepoBusy(busy: boolean): void;
 }
 
 /** How many recent items the Start screen lists — a short shortcut set; the left-rail Recent panel shows all. */
@@ -61,56 +57,13 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView
   openFolder.textContent = "Open a folder";
   openFolder.addEventListener("click", actions.onOpenFolder);
 
-  actionsRow.append(openFile, openFolder);
+  const openRepositories = document.createElement("button");
+  openRepositories.type = "button";
+  openRepositories.className = "home-open home-open--secondary";
+  openRepositories.textContent = "Open Repository";
+  openRepositories.addEventListener("click", actions.onOpenRepositories);
 
-  // Open a GitHub repository: the host clones it into a managed folder and opens it. A clone can be slow, so
-  // submitting disables the control and shows an inline "Opening…" note until the owner clears it (on the
-  // next tree/error) via setRepoBusy.
-  const repoForm = document.createElement("form");
-  repoForm.className = "home-open-repo";
-
-  const repoInput = document.createElement("input");
-  repoInput.type = "text";
-  repoInput.className = "home-open-repo-input";
-  repoInput.setAttribute("aria-label", "GitHub repository owner/name or URL");
-  repoInput.placeholder = "Open a GitHub repo — e.g. acme/specs";
-
-  const repoSubmit = document.createElement("button");
-  repoSubmit.type = "submit";
-  repoSubmit.className = "home-open-repo-btn";
-  repoSubmit.textContent = "Open";
-
-  repoForm.append(repoInput, repoSubmit);
-
-  const repoNote = document.createElement("p");
-  repoNote.className = "home-open-repo-note";
-  // A polite live region so a screen reader hears "Opening…" without stealing focus; it starts empty (an
-  // empty status node announces nothing) and is filled while a clone is in flight.
-  repoNote.setAttribute("role", "status");
-  repoNote.hidden = true;
-
-  const repoSection = document.createElement("div");
-  repoSection.className = "home-open-repo-section";
-  repoSection.append(repoForm, repoNote);
-
-  // Show/hide the "Opening…" note. Deliberately does NOT disable the input/button: disabling the focused
-  // control would drop keyboard focus to <body>, and a re-submit while busy is harmless (the host
-  // single-flights one clone at a time).
-  const setRepoBusy = (busy: boolean): void => {
-    repoNote.textContent = busy ? "Opening…" : "";
-    repoNote.hidden = !busy;
-  };
-
-  repoForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const url = repoInput.value.trim();
-    if (url === "") {
-      return;
-    }
-    // Immediate feedback: mark busy now (the owner clears it when the host answers with a tree/error).
-    setRepoBusy(true);
-    actions.onOpenRepo(url);
-  });
+  actionsRow.append(openFile, openFolder, openRepositories);
 
   const recents = document.createElement("div");
   recents.className = "home-recents";
@@ -124,7 +77,7 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView
   recentsList.className = "home-recents-list";
   recents.append(recentsLabel, recentsEmpty, recentsList);
 
-  screen.append(title, prompt, actionsRow, repoSection, recents);
+  screen.append(title, prompt, actionsRow, recents);
   host.appendChild(screen);
 
   const render = (items: readonly WorkspaceItem[]): void => {
@@ -158,5 +111,5 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView
   // Start empty (the hint shows) until the host's first `workspace.state` feeds real recents.
   render([]);
 
-  return { setRecents: render, setRepoBusy };
+  return { setRecents: render };
 }

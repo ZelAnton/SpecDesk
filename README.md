@@ -56,6 +56,8 @@ Requires .NET SDK 10 and Node 24.
 The left, right, and bottom mode rails stay available around the document. Choose a mode icon to open its
 panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
 bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
+On the Start screen, `Open Repository` reveals the Repositories panel, where repositories are registered and
+opened; the Start screen itself does not ask for a repository address.
 
 The notification icon switches the main workspace to a Notifications list. The current list is a
 placeholder for future review-request and mention events.

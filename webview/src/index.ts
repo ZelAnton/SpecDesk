@@ -263,16 +263,13 @@ function wire(): void {
   let assistantChat: AssistantChat | undefined;
   let activityPanels: DocumentActivityPanel[] = [];
   let invalidateActivityRequests = (): void => {};
-  // The Start screen handle, assigned in wireWorkspace; index.ts drives its "Opening…" busy state on a repo
-  // open and clears it on the next tree/error. Undefined before the workspace wires (or in reduced-DOM tests).
+  // The Start screen handle, assigned in wireWorkspace; index.ts feeds its recent-item shortcuts.
+  // Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
   // Reveals the Files navigator (opens the left dock + switches to it). Assigned once the workspace wires;
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
   let revealWorkspaceFiles: () => void = () => {};
-  // Armed for a repo open (a slow clone) so the "Opening…" note clears on the resulting tree/error. A folder
-  // open reveals Files immediately and needs no note; a plain file open never arms this.
-  let pendingRepoOpen = false;
   const setContext = (element: HTMLElement | null, text: string): void => {
     if (element) {
       element.textContent = text;
@@ -857,11 +854,6 @@ function wire(): void {
       if (payload) {
         // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
         showPlainStatus(payload.message);
-        // A repo open (clone) that failed — end the Start screen's "Opening…" note so the author can retry.
-        if (pendingRepoOpen) {
-          pendingRepoOpen = false;
-          home?.setRepoBusy(false);
-        }
       }
     });
 
@@ -1159,8 +1151,7 @@ function wire(): void {
       return;
     }
     // Initiating a workspace open reveals the Files navigator IMMEDIATELY (not on the next `tree`, which a
-    // plain doc.loaded could produce first) so the panel surfaces right away. A repo open also arms the
-    // "Opening…" note (a clone is slow), cleared on the resulting tree/error. A plain file open does neither.
+    // plain doc.loaded could produce first) so the panel surfaces right away. A plain file open does neither.
     const openFolder = (path?: string): void => {
       revealWorkspaceFiles();
       if (path === undefined) {
@@ -1168,14 +1159,6 @@ function wire(): void {
       } else {
         ipc.send(Kinds.folderOpen, { path });
       }
-    };
-    const openRepo = (url: string): void => {
-      revealWorkspaceFiles();
-      // The Start form shows its own "Opening…" note on submit; arm the flag so it clears on the tree/error
-      // (a panel-initiated open shows no note — its feedback is the Files reveal above — and clearing is a
-      // no-op there).
-      pendingRepoOpen = true;
-      ipc.send(Kinds.repoOpen, { url });
     };
     // The AI assistant chat (design §10.5), the real right-rail tool. It owns its DOM and streaming state;
     // index.ts keeps the ipc/Kinds knowledge — sending the message and fetching the template library — and
@@ -1316,7 +1299,6 @@ function wire(): void {
         onOpenFile: () => ipc.send(Kinds.docOpen),
         onOpenFolder: () => openFolder(),
         onOpenItem: openWorkspaceItem,
-        onOpenRepo: (url) => openRepo(url),
         onOutlineNavigate: (line) => navigateToLine(line),
       },
       { assistant: chat, versions, comments, history, files, recent, favorites, repositories },
@@ -1330,18 +1312,11 @@ function wire(): void {
     // The host feeds the file navigator the workspace tree via unsolicited `tree` events (a folder was
     // opened, a repo cloned, or a document loaded — see the tree.request in the doc.loaded handler). When the
     // author just initiated a folder/repo open, ALSO surface the Files panel (open the left dock + switch to
-    // it) and end the "Opening…" state — so opening a folder/repo actually shows its tree.
+    // it), so opening a folder/repo actually shows its tree.
     ipc.on(Kinds.tree, (message) => {
       const payload = parseTree(message.payload);
       if (payload) {
         files.setTree(payload);
-        // A repo clone finished (its tree arrived) — end the Start screen's "Opening…" note. The Files panel
-        // was already revealed when the open began, so nothing to reveal here (and a plain doc.loaded tree,
-        // which never arms pendingRepoOpen, correctly leaves the note untouched).
-        if (pendingRepoOpen) {
-          pendingRepoOpen = false;
-          home?.setRepoBusy(false);
-        }
       }
     });
 
