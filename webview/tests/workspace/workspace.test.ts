@@ -8,18 +8,11 @@ describe("workspace right toolbar", () => {
     document.body.innerHTML = `
       <main id="central"><section id="editor"></section></main>
       <aside id="right"></aside>
-      <button id="right-toggle"></button>
     `;
     const centralFrame = document.querySelector<HTMLElement>("#central");
     const editorView = document.querySelector<HTMLElement>("#editor");
     const rightDock = document.querySelector<HTMLElement>("#right");
-    const rightToggle = document.querySelector<HTMLButtonElement>("#right-toggle");
-    if (
-      centralFrame === null ||
-      editorView === null ||
-      rightDock === null ||
-      rightToggle === null
-    ) {
+    if (centralFrame === null || editorView === null || rightDock === null) {
       throw new Error("workspace fixture is incomplete");
     }
 
@@ -28,8 +21,8 @@ describe("workspace right toolbar", () => {
         centralFrame,
         editorView,
         homeView: null,
+        notificationsView: null,
         docks: { left: null, right: rightDock, bottom: null },
-        toggles: { left: null, right: rightToggle, bottom: null },
       },
       new DockStore(null),
       {
@@ -38,7 +31,6 @@ describe("workspace right toolbar", () => {
         onOpenFile: vi.fn(),
         onOpenFolder: vi.fn(),
         onOpenItem: vi.fn(),
-        onOpenRepo: vi.fn(),
         onOutlineNavigate: vi.fn(),
       },
     );

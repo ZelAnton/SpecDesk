@@ -28,7 +28,7 @@ export class SegmentedControl<T extends string> {
     for (const option of this.options) {
       const checked = option.value === value;
       option.el.setAttribute("aria-checked", String(checked));
-      option.el.tabIndex = checked ? 0 : -1;
+      option.el.tabIndex = checked && !option.el.hidden && !option.el.disabled ? 0 : -1;
     }
   }
 
@@ -50,9 +50,10 @@ export class SegmentedControl<T extends string> {
       return;
     }
     event.preventDefault();
-    const count = this.options.length;
-    const index = this.options.indexOf(current);
-    const next = this.options[(index + (forward ? 1 : -1) + count) % count];
+    const available = this.options.filter((option) => !option.el.hidden && !option.el.disabled);
+    const count = available.length;
+    const index = available.indexOf(current);
+    const next = count === 0 ? undefined : available[(index + (forward ? 1 : -1) + count) % count];
     if (next !== undefined) {
       next.el.focus();
       this.onSelect(next.value);

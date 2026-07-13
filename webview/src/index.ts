@@ -38,6 +38,7 @@ import {
   parsePrList,
   parsePrSuggested,
   parseRepoCloneDestination,
+  parseRepoDescription,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -52,6 +53,7 @@ import {
   Kinds,
   type WorkspaceItem,
 } from "./wire/protocol.js";
+import { type ActiveContext, ActiveContextModel } from "./workspace/active-context.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { remoteWirePath } from "./workspace/remote-path.js";
@@ -278,6 +280,13 @@ function wire(): void {
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
   let revealWorkspaceFiles: () => void = () => {};
+  const activeContextModel = new ActiveContextModel();
+  let activeContext: ActiveContext = activeContextModel.current();
+  let setWorkspaceContext: (context: ActiveContext) => void = () => {};
+  const applyActiveContext = (context: ActiveContext): void => {
+    activeContext = context;
+    setWorkspaceContext(context);
+  };
   const setContext = (element: HTMLElement | null, text: string): void => {
     if (element) {
       element.textContent = text;
@@ -696,6 +705,7 @@ function wire(): void {
     ipc.on(Kinds.docLoaded, (message) => {
       const payload = parseDocLoaded(message.payload);
       if (payload) {
+        applyActiveContext(activeContextModel.documentLoaded(payload.path));
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
@@ -825,6 +835,7 @@ function wire(): void {
       if (!payload) {
         return;
       }
+      applyActiveContext(activeContextModel.statusChanged(payload));
       if (statusEl) {
         statusEl.textContent = payload.label;
         // Colour the lifecycle dot for this state (styles.css §8: one token family per state).
@@ -870,6 +881,7 @@ function wire(): void {
       if (!payload) {
         return;
       }
+      applyActiveContext(activeContextModel.workspaceChanged(payload));
       setContext(currentRepositoryEl, payload.repository ?? "No repository");
       if (currentRepositoryEl && payload.repositoryRoot) {
         currentRepositoryEl.title = payload.repositoryRoot;
@@ -1277,6 +1289,8 @@ function wire(): void {
       onCloneToFolder: (url) => ipc.send(Kinds.repoCloneToFolder, { url }),
       onDestinationRequest: (url, requestId) =>
         ipc.send(Kinds.repoCloneDestinationRequest, { url, requestId }),
+      onDescriptionRequest: (url, requestId) =>
+        ipc.send(Kinds.repoDescriptionRequest, { url, requestId }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
       onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
@@ -1330,6 +1344,12 @@ function wire(): void {
         repositories.setManagedDestination(payload);
       }
     });
+    ipc.on(Kinds.repoDescription, (message) => {
+      const payload = parseRepoDescription(message.payload);
+      if (payload) {
+        repositories.setDescription(payload);
+      }
+    });
 
     const workspace = setupWorkspace(
       {
@@ -1372,6 +1392,8 @@ function wire(): void {
     centralFrame = workspace.centralFrame;
     outline = workspace.outline;
     home = workspace.home;
+    setWorkspaceContext = (context) => workspace.setActiveContext(context);
+    setWorkspaceContext(activeContext);
     // Now that the docks exist, opening a folder/repo can surface the Files navigator immediately.
     revealWorkspaceFiles = () => workspace.revealTool("left", "files");
 

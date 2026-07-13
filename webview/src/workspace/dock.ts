@@ -59,6 +59,9 @@ export class Dock {
   private isOpen: boolean;
   private size: number;
   private modeId: string;
+  // Context fallbacks must not erase the author's preferred mode. Restore it when it applies again.
+  private preferredModeId: string;
+  private availableToolIds: ReadonlySet<string>;
   private readonly toolBodies = new Map<string, HTMLElement>();
   private readonly railButtons = new Map<string, HTMLButtonElement>();
   private readonly modeControl: SegmentedControl<string> | null;
@@ -83,6 +86,8 @@ export class Dock {
     this.modeId = tools.some((tool) => tool.id === initial.mode)
       ? initial.mode
       : (tools[0]?.id ?? "");
+    this.preferredModeId = this.modeId;
+    this.availableToolIds = new Set(tools.map((tool) => tool.id));
     this.size = clampDockSize(edge, initial.size);
     // An empty dock cannot be opened (nothing to show).
     this.isOpen = initial.open && tools.length > 0;
@@ -107,7 +112,7 @@ export class Dock {
 
   /** This dock's current state, for persistence. */
   state(): DockState {
-    return { open: this.isOpen, size: this.size, mode: this.modeId };
+    return { open: this.isOpen, size: this.size, mode: this.preferredModeId };
   }
 
   /** Whether the dock is currently open. */
@@ -122,7 +127,7 @@ export class Dock {
 
   /** Open or collapse the dock, persisting only on an actual change. A dock with no tools stays collapsed. */
   setOpen(open: boolean): void {
-    const next = open && this.tools.length > 0;
+    const next = open && this.availableToolIds.size > 0;
     if (next === this.isOpen) {
       return;
     }
@@ -146,7 +151,12 @@ export class Dock {
   /** Switch to the mode with `id`, persisting the change; an unknown or already-active id is a no-op (the
    *  switcher is re-synced to the true mode either way, so a rejected click can't leave it mis-highlighted). */
   setMode(id: string): void {
-    if (id === this.modeId || !this.toolBodies.has(id)) {
+    if (!this.toolBodies.has(id) || !this.availableToolIds.has(id)) {
+      this.modeControl?.setSelected(this.modeId);
+      return;
+    }
+    this.preferredModeId = id;
+    if (id === this.modeId) {
       this.modeControl?.setSelected(this.modeId);
       return;
     }
@@ -162,6 +172,51 @@ export class Dock {
       this.activeTool()?.onShow?.();
     }
     this.callbacks.onChange();
+  }
+
+  /** Apply the tools admitted by the active context without persisting a temporary fallback. */
+  setAvailableTools(ids: ReadonlySet<string>): void {
+    const previousMode = this.modeId;
+    const previousTool = this.tools.find((tool) => tool.id === previousMode);
+    const wasOpen = this.isOpen;
+    this.availableToolIds = new Set(
+      this.tools.filter((tool) => ids.has(tool.id)).map((tool) => tool.id),
+    );
+    const focusedMode = Array.from(this.railButtons.entries()).find(([, button]) =>
+      button.contains(document.activeElement),
+    )?.[0];
+    for (const tool of this.tools) {
+      const available = this.availableToolIds.has(tool.id);
+      const button = this.railButtons.get(tool.id);
+      if (button !== undefined) {
+        button.hidden = !available;
+        button.setAttribute("aria-hidden", String(!available));
+      }
+    }
+
+    if (this.availableToolIds.has(this.preferredModeId)) {
+      this.modeId = this.preferredModeId;
+    } else if (!this.availableToolIds.has(this.modeId)) {
+      this.modeId = this.tools.find((tool) => this.availableToolIds.has(tool.id))?.id ?? "";
+    }
+    const modeChanged = previousMode !== this.modeId;
+    if (wasOpen && (modeChanged || this.availableToolIds.size === 0)) {
+      previousTool?.onHide?.();
+    }
+    if (this.availableToolIds.size === 0) {
+      this.isOpen = false;
+    }
+    this.showActiveTool();
+    this.modeControl?.setSelected(this.modeId);
+    this.updateTitle();
+    this.applyOpen();
+    if (wasOpen && modeChanged && this.availableToolIds.size > 0) {
+      this.activeTool()?.onShow?.();
+    }
+
+    if (focusedMode !== undefined && !this.availableToolIds.has(focusedMode)) {
+      this.railButtons.get(this.modeId)?.focus();
+    }
   }
 
   /** Reflect the active mode's label in the header title. */
@@ -187,7 +242,7 @@ export class Dock {
   }
 
   private applyOpen(): void {
-    this.el.hidden = this.tools.length === 0;
+    this.el.hidden = this.availableToolIds.size === 0;
     this.el.classList.toggle("dock--collapsed", !this.isOpen);
     this.splitter.hidden = !this.isOpen;
     this.railEl?.setAttribute(
@@ -213,12 +268,14 @@ export class Dock {
 
   private showActiveTool(): void {
     for (const [id, body] of this.toolBodies) {
-      body.hidden = id !== this.modeId;
+      body.hidden = id !== this.modeId || !this.availableToolIds.has(id);
     }
   }
 
   private activeTool(): PanelTool | undefined {
-    return this.tools.find((tool) => tool.id === this.modeId);
+    return this.availableToolIds.has(this.modeId)
+      ? this.tools.find((tool) => tool.id === this.modeId)
+      : undefined;
   }
 
   private buildChrome(): {
@@ -317,6 +374,10 @@ export class Dock {
   /** A rail click selects a different tool and opens it, or toggles the panel when its active icon is
    * clicked. Switching a mode and opening is one persisted user action rather than two intermediate saves. */
   private activateMode(id: string): void {
+    if (!this.availableToolIds.has(id)) {
+      this.modeControl?.setSelected(this.modeId);
+      return;
+    }
     if (id === this.modeId) {
       this.toggle();
       return;
@@ -328,6 +389,7 @@ export class Dock {
     if (this.isOpen) {
       this.activeTool()?.onHide?.();
     }
+    this.preferredModeId = id;
     this.modeId = id;
     this.isOpen = true;
     this.showActiveTool();

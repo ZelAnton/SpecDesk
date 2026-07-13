@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- The right panel now follows the active context: Chat is always available, Comments appears for a review, Change history for a repository branch, Outline for Markdown, and Versions for repository files.
 - GitHub repository entry now suggests accessible personal and organization repositories by name.
 - Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
 - Repository entry now offers **Clone…** to managed storage and **Clone to folder…** with collision-safe destinations.

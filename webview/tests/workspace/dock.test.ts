@@ -220,6 +220,50 @@ describe("Dock mode switching", () => {
     expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Alpha");
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("hides context-inapplicable modes, falls back, and restores the preferred mode", () => {
+    const { dockEl, onChange, dock } = harness({
+      tools: [
+        tool("assistant", "Assistant"),
+        tool("comments", "Comments"),
+        tool("history", "History"),
+      ],
+      initial: { open: true, size: 320, mode: "comments" },
+    });
+    dock.setAvailableTools(new Set(["assistant", "history"]));
+    const buttons = Array.from(dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn"));
+    expect(buttons.map((button) => [button.getAttribute("aria-label"), button.hidden])).toEqual([
+      ["Assistant", false],
+      ["Comments", true],
+      ["History", false],
+    ]);
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Assistant");
+    expect(dock.state().mode).toBe("comments");
+    expect(onChange).not.toHaveBeenCalled();
+
+    dock.setAvailableTools(new Set(["assistant", "comments", "history"]));
+    expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Comments");
+    expect(buttons[1]?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("arrow-key navigation skips modes hidden by context", () => {
+    const { dockEl, dock } = harness({
+      tools: [
+        tool("assistant", "Assistant"),
+        tool("comments", "Comments"),
+        tool("history", "History"),
+      ],
+      initial: { open: true, size: 320, mode: "assistant" },
+    });
+    dock.setAvailableTools(new Set(["assistant", "history"]));
+    const buttons = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn");
+    const assistantButton = buttons[0];
+    if (assistantButton === undefined) throw new Error("Assistant mode missing");
+    assistantButton.focus();
+    key(assistantButton, "ArrowDown");
+    expect(document.activeElement).toBe(buttons[2]);
+    expect(buttons[2]?.getAttribute("aria-checked")).toBe("true");
+  });
 });
 
 describe("Dock resize", () => {

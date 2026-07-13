@@ -11,6 +11,8 @@ Use **Attach** beside the composer to include the open file, current folder, or 
 as context for the next message; attachments can be removed before sending.
 The right panel also exposes the selected document's saved versions, comments, and change history.
 Assistant is the first mode on that panel's toolbar so chat stays in a consistent position.
+Its mode icons follow what is active: review comments require a review, history a repository branch,
+outline a Markdown file, and versions any file inside a repository.
 
 > **Working title.** `SpecDesk` is a placeholder name; rename before any registry/namespace work.
 

@@ -11,6 +11,11 @@
  */
 
 import type { WorkspaceItem } from "../wire/protocol.js";
+import {
+  type ActiveContext,
+  EMPTY_ACTIVE_CONTEXT,
+  rightToolsForContext,
+} from "./active-context.js";
 import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./central-frame.js";
 import { Dock } from "./dock.js";
 import { DOCK_EDGES, type DockEdge, type WorkspaceDocksState } from "./dock-state.js";
@@ -69,6 +74,8 @@ export interface WorkspaceHandle {
   /** Reveal a dock tool programmatically: open the dock on `edge` and switch it to `toolId` (a no-op if that
    *  dock or tool is absent). Lets index.ts surface a panel — e.g. the Files navigator when a workspace opens. */
   readonly revealTool: (edge: DockEdge, toolId: string) => void;
+  /** Recompute context-aware right-rail modes from the active document and lifecycle. */
+  readonly setActiveContext: (context: ActiveContext) => void;
 }
 
 /** The real dock tools index.ts builds (they need IPC/host wiring, which stays out of the workspace).
@@ -263,6 +270,9 @@ export function setupWorkspace(
     );
   }
 
+  // Before the first document frame only the globally useful Assistant applies.
+  docks.get("right")?.setAvailableTools(rightToolsForContext(EMPTY_ACTIVE_CONTEXT));
+
   // A dock open/close/resize changes the centre's box; observing it (rather than each dock) catches all
   // three uniformly and coalesces a live drag into one re-measure per frame. Guarded for jsdom, which has
   // no ResizeObserver — those tests exercise the editor relayout through the window-resize path instead.
@@ -283,10 +293,13 @@ export function setupWorkspace(
     dock.setMode(toolId);
   };
   revealRepositories = () => revealTool("left", "repositories");
+  const setActiveContext = (context: ActiveContext): void => {
+    docks.get("right")?.setAvailableTools(rightToolsForContext(context));
+  };
 
   // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it
   // an explicit undefined).
   return home !== undefined
-    ? { centralFrame, outline, home, revealTool }
-    : { centralFrame, outline, revealTool };
+    ? { centralFrame, outline, home, revealTool, setActiveContext }
+    : { centralFrame, outline, revealTool, setActiveContext };
 }
