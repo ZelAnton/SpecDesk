@@ -158,14 +158,16 @@
       {
         "path": "C:\\specs\\billing-repo\\specs\\billing.md",
         "label": "billing.md",
-        "isFolder": false
+        "isFolder": false,
+        "kind": "local"
       }
     ],
     "favorites": [
       {
         "path": "C:\\specs\\billing-repo\\specs",
         "label": "specs",
-        "isFolder": true
+        "isFolder": true,
+        "kind": "local"
       }
     ],
     "repositories": [

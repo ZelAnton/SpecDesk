@@ -309,6 +309,66 @@ public sealed class HostControllerWorkspaceTests
 	}
 
 	[Test]
+	public void FavoriteToggle_PersistsRepositoryAndStableRemoteFolderIdentity()
+	{
+		using HostController controller = NewController();
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(
+				"octo/specs", true, "repository", RepositoryId: "octo/specs", IsFolder: true)));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(
+				"docs", true, "remote", RepositoryId: "octo/specs", Branch: "main", IsFolder: true)));
+
+		WorkspaceItem[] favorites = new WorkspaceStore(_wsPath).State().Favorites.ToArray();
+		Assert.That(favorites, Has.Length.EqualTo(2));
+		Assert.That(favorites.Single(item => item.Kind == "repository").RepositoryId, Is.EqualTo("octo/specs"));
+		WorkspaceItem remote = favorites.Single(item => item.Kind == "remote");
+		Assert.Multiple(() =>
+		{
+			Assert.That(remote.Path, Is.EqualTo("docs"));
+			Assert.That(remote.Branch, Is.EqualTo("main"));
+			Assert.That(remote.IsFolder, Is.True);
+		});
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FavoriteToggle_CanRemoveADeletedLocalItem(bool folder)
+	{
+		using HostController controller = NewController();
+		string path = Path.Combine(_root, folder ? "gone-folder" : "gone.md");
+		if (folder)
+		{
+			Directory.CreateDirectory(path);
+		}
+		else
+		{
+			File.WriteAllText(path, "gone");
+		}
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(path, true, IsFolder: folder)));
+		if (folder)
+		{
+			Directory.Delete(path);
+		}
+		else
+		{
+			File.Delete(path);
+		}
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(path, false, IsFolder: folder)));
+
+		Assert.That(new WorkspaceStore(_wsPath).State().Favorites, Is.Empty);
+	}
+
+	[Test]
 	public void RegisterRepo_WithAValidUrl_StoresANormalizedEntry()
 	{
 		using HostController controller = NewController();

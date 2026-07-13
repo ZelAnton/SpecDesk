@@ -60,3 +60,7 @@ each copy. **Copy locally** creates another copy in SpecDesk's managed repositor
 Selecting the repository itself browses its files directly from GitHub, so a local copy is optional. Online
 files open as read-only previews; select **Copy locally** before editing. Local repository trees show all files
 (large and binary files are listed but rejected with a plain preview message).
+
+Use the star beside a registered repository, folder, or file to keep it in **Favorites**. Favorites remember
+the exact online branch and path, so reopening an online folder restores that branch's tree even after an app
+restart. Removing a registered repository also removes its repository, folder, and file favorites.

@@ -18,12 +18,14 @@ function ready() {
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
   const onClone = vi.fn<(repo: RegisteredRepo) => void>();
+  const onToggleFavorite = vi.fn<(repo: RegisteredRepo, favorite: boolean) => void>();
   const panel = new RepositoriesPanel({
     onRegister,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
     onClone,
+    onToggleFavorite,
   });
   const body = document.createElement("div");
   document.body.appendChild(body);
@@ -43,6 +45,7 @@ function ready() {
     onBrowseRepo,
     onOpenClone,
     onClone,
+    onToggleFavorite,
   };
 }
 
@@ -98,7 +101,34 @@ describe("RepositoriesPanel", () => {
     expect(onOpenClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
     body.querySelector<HTMLButtonElement>(".repo-clone-action")?.click();
     expect(onClone).toHaveBeenCalledWith(REPO);
-    expect(body.querySelector(".repo-clone-action")?.getAttribute("aria-label")).toContain("acme/specs");
+    expect(body.querySelector(".repo-clone-action")?.getAttribute("aria-label")).toContain(
+      "acme/specs",
+    );
   });
 
+  it("toggles the repository star and preserves its keyboard focus after state refresh", () => {
+    const { panel, body, onToggleFavorite } = ready();
+    panel.setState(STATE);
+    const star = body.querySelector<HTMLButtonElement>(".repo-star");
+    expect(star?.getAttribute("aria-pressed")).toBe("false");
+    star?.click();
+    expect(onToggleFavorite).toHaveBeenCalledWith(REPO, true);
+
+    star?.focus();
+    panel.setState({
+      ...STATE,
+      favorites: [
+        {
+          path: REPO.id,
+          label: REPO.name,
+          isFolder: true,
+          kind: "repository",
+          repositoryId: REPO.id,
+        },
+      ],
+    });
+    const refreshed = body.querySelector<HTMLButtonElement>(".repo-star");
+    expect(refreshed?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.activeElement).toBe(refreshed);
+  });
 });

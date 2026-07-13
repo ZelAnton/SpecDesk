@@ -39,8 +39,16 @@ public sealed class WorkspaceStore
 		_path = path;
 		PersistedState? state = Load();
 		// Coalesce so a partially-written file (a list absent or explicitly null) still yields a usable store.
-		_recent = state?.Recent ?? [];
-		_favorites = state?.Favorites ?? [];
+		_recent = state?.Recent?
+			.Select(NormalizeItem)
+			.Where(item => item is not null && item.Kind == "local")
+			.Select(item => item!)
+			.ToList() ?? [];
+		_favorites = state?.Favorites?
+			.Select(NormalizeItem)
+			.Where(item => item is not null)
+			.Select(item => item!)
+			.ToList() ?? [];
 		_repositories = state?.Repositories?.Select(NormalizeRepo).ToList() ?? [];
 	}
 
@@ -73,12 +81,18 @@ public sealed class WorkspaceStore
 	public void SetFavorite(WorkspaceItem item, bool favorite)
 	{
 		ArgumentNullException.ThrowIfNull(item);
+		WorkspaceItem? normalized = NormalizeItem(item);
+		if (normalized is null)
+		{
+			return;
+		}
+		item = normalized;
 		lock (_sync)
 		{
 			bool changed;
 			if (favorite)
 			{
-				changed = !_favorites.Exists(existing => SamePath(existing.Path, item.Path));
+				changed = !_favorites.Exists(existing => SameFavoriteIdentity(existing, item));
 				if (changed)
 				{
 					_favorites.Add(item);
@@ -86,7 +100,7 @@ public sealed class WorkspaceStore
 			}
 			else
 			{
-				changed = _favorites.RemoveAll(existing => SamePath(existing.Path, item.Path)) > 0;
+				changed = _favorites.RemoveAll(existing => SameFavoriteIdentity(existing, item)) > 0;
 			}
 
 			// Only persist a real change — re-favoriting or un-favoriting a no-op shouldn't touch the disk
@@ -207,8 +221,11 @@ public sealed class WorkspaceStore
 	{
 		lock (_sync)
 		{
-			if (_repositories.RemoveAll(existing =>
-				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0)
+			bool changed = _repositories.RemoveAll(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			changed |= _favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			if (changed)
 			{
 				Save();
 			}
@@ -278,6 +295,98 @@ public sealed class WorkspaceStore
 	// Windows filesystem paths are case-insensitive, and the same file/folder can reach the store under
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+	private static bool SameFavoriteIdentity(WorkspaceItem left, WorkspaceItem right)
+	{
+		if (!string.Equals(left.Kind, right.Kind, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(left.RepositoryId, right.RepositoryId, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(left.Branch, right.Branch, StringComparison.Ordinal))
+		{
+			return false;
+		}
+		return string.Equals(
+			left.Path, right.Path,
+			string.Equals(left.Kind, "remote", StringComparison.OrdinalIgnoreCase)
+				? StringComparison.Ordinal
+				: StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static WorkspaceItem? NormalizeItem(WorkspaceItem item)
+	{
+		string kind = string.IsNullOrWhiteSpace(item.Kind) ? "local" : item.Kind.ToLowerInvariant();
+		if (string.IsNullOrWhiteSpace(item.Path) || string.IsNullOrWhiteSpace(item.Label))
+		{
+			return null;
+		}
+		if (kind == "local")
+		{
+			if (item.RepositoryId is not null || item.Branch is not null || !Path.IsPathFullyQualified(item.Path))
+			{
+				return null;
+			}
+			try
+			{
+				return item with { Kind = kind, Path = Path.GetFullPath(item.Path) };
+			}
+			catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+			{
+				return null;
+			}
+		}
+		if (kind == "remote")
+		{
+			return IsRepositoryId(item.RepositoryId)
+				&& IsRemoteBranch(item.Branch)
+				&& IsRemoteRelativePath(item.Path)
+				? item with { Kind = kind }
+				: null;
+		}
+		if (kind == "repository")
+		{
+			return item.IsFolder
+				&& item.Branch is null
+				&& IsRepositoryId(item.RepositoryId)
+				&& string.Equals(item.Path, item.RepositoryId, StringComparison.OrdinalIgnoreCase)
+				? item with { Kind = kind, Path = item.RepositoryId! }
+				: null;
+		}
+		return null;
+	}
+
+	private static bool IsRepositoryId(string? id)
+	{
+		if (string.IsNullOrWhiteSpace(id) || id.Length > 256)
+		{
+			return false;
+		}
+		string[] segments = id.Split('/');
+		return segments.Length == 2 && IsGitHubOwner(segments[0]) && IsGitHubRepoName(segments[1]);
+	}
+
+	private static bool IsGitHubOwner(string owner) =>
+		owner.Length > 0
+		&& owner[0] != '-'
+		&& owner[^1] != '-'
+		&& owner.All(character => char.IsAsciiLetterOrDigit(character) || character == '-');
+
+	private static bool IsGitHubRepoName(string name) =>
+		name is not ("" or "." or "..")
+		&& name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.');
+
+	private static bool IsRemoteBranch(string? branch) =>
+		!string.IsNullOrWhiteSpace(branch)
+		&& branch.Length <= 1024
+		&& !branch.Any(char.IsControl);
+
+	private static bool IsRemoteRelativePath(string path)
+	{
+		if (path.Length > 4096 || path.Any(char.IsControl))
+		{
+			return false;
+		}
+		string[] segments = path.Split('/');
+		return segments.Length <= 64 && segments.All(segment => segment is not ("" or "." or ".."));
+	}
 
 	private static RegisteredRepo NormalizeRepo(RegisteredRepo repo) =>
 		repo with

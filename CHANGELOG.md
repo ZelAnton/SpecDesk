@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Repositories, folders, and files can now be starred as favorites and reopened later, including exact online
+  branches and paths for repositories that have not been copied locally.
 - Selecting a registered repository now browses its complete folder/file tree directly from GitHub even
   without a local copy; selecting a text file opens a read-only preview, while local trees now include all files.
 - Registered repositories now show their managed local copies and each copy's non-default working branches;

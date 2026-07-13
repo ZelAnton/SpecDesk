@@ -434,13 +434,16 @@ export interface TreePayload {
   nodes: TreeNode[];
 }
 
-/** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). `path` is the absolute
- *  file/folder path; `label` is the display name (usually the last path segment); `isFolder` distinguishes a
- *  folder from a file. */
+/** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). Local paths are absolute;
+ *  remote paths are repository-relative and paired with `repositoryId` + `branch`; repository items use their
+ *  stable id. */
 export interface WorkspaceItem {
   path: string;
   label: string;
   isFolder: boolean;
+  kind?: "local" | "remote" | "repository";
+  repositoryId?: string;
+  branch?: string;
 }
 
 /** One registered GitHub repository (native→webview, inside {@link WorkspaceStatePayload}). A4 stores the
@@ -469,11 +472,15 @@ export interface WorkspaceStatePayload {
   repositories: RegisteredRepo[];
 }
 
-/** Payload of `workspace.favorite` (webview→native): toggle whether the file/folder at `path` is a favorite
- *  (`favorite` true adds it, false removes it). */
+/** Payload of `workspace.favorite` (webview→native): toggle a local/remote file or folder, or a registered
+ *  repository (`favorite` true adds it, false removes it). */
 export interface WorkspaceFavoritePayload {
   path: string;
   favorite: boolean;
+  kind?: "local" | "remote" | "repository";
+  repositoryId?: string;
+  branch?: string;
+  isFolder?: boolean;
 }
 
 /** Payload of `repo.register` (webview→native): register a GitHub repository from a URL or spec

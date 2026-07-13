@@ -44,6 +44,7 @@ import { ipc, postReady } from "./wire/ipc.js";
 import { isReviewState, Kinds, type WorkspaceItem } from "./wire/protocol.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
+import { remoteWirePath } from "./workspace/remote-path.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
@@ -1103,6 +1104,8 @@ function wire(): void {
     const files = new FileTree({
       onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
       onOpenFolder: () => openFolder(),
+      onToggleFavorite: (item, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     });
     fileTree = files;
 
@@ -1110,6 +1113,25 @@ function wire(): void {
     // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
     // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
     const openWorkspaceItem = (item: WorkspaceItem): void => {
+      if (item.kind === "repository") {
+        if (item.repositoryId) {
+          ipc.send(Kinds.repoBrowse, { id: item.repositoryId });
+        }
+        return;
+      }
+      if (item.kind === "remote") {
+        if (item.repositoryId && item.branch) {
+          const path = remoteWirePath(item.repositoryId, item.branch, item.path);
+          if (item.isFolder) {
+            files.setActiveFile(path);
+            revealWorkspaceFiles();
+            ipc.send(Kinds.repoBrowse, { id: item.repositoryId, branch: item.branch });
+          } else {
+            ipc.send(Kinds.docOpen, { path });
+          }
+        }
+        return;
+      }
       if (item.isFolder) {
         openFolder(item.path);
       } else {
@@ -1121,7 +1143,7 @@ function wire(): void {
     const listCallbacks: WorkspaceListCallbacks = {
       onOpen: openWorkspaceItem,
       onToggleFavorite: (item, favorite) =>
-        ipc.send(Kinds.workspaceFavorite, { path: item.path, favorite }),
+        ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
     };
     const recent = recentPanel(listCallbacks);
     const favorites = favoritesPanel(listCallbacks);
@@ -1133,6 +1155,14 @@ function wire(): void {
       onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
       onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
+      onToggleFavorite: (repo, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, {
+          path: repo.id,
+          repositoryId: repo.id,
+          kind: "repository",
+          isFolder: true,
+          favorite,
+        }),
     });
 
     const workspace = setupWorkspace(
@@ -1195,6 +1225,7 @@ function wire(): void {
       if (payload) {
         recent.setState(payload);
         favorites.setState(payload);
+        files.setFavorites(payload.favorites);
         repositories.setState(payload);
         home?.setRecents(payload.recent);
       }

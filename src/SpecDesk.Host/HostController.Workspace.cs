@@ -23,10 +23,17 @@ public sealed partial class HostController
 		Open,
 		Clone,
 		Browse,
+		File,
 	}
 
 	private sealed record PendingRepoAction(
-		PendingRepoActionKind Kind, string Owner, string Name, long NavigationGeneration = 0);
+		PendingRepoActionKind Kind,
+		string Owner,
+		string Name,
+		long NavigationGeneration = 0,
+		string? Branch = null,
+		string? Path = null,
+		string? WirePath = null);
 	private sealed record PendingRepoActions(
 		PendingRepoAction[] Registrations,
 		PendingRepoAction? Open);
@@ -67,9 +74,76 @@ public sealed partial class HostController
 			return;
 		}
 
-		WorkspaceItem item = new(payload.Path, LabelFor(payload.Path), Directory.Exists(payload.Path));
+		WorkspaceItem? item = FavoriteItem(payload);
+		if (item is null)
+		{
+			return;
+		}
 		_workspace?.SetFavorite(item, payload.Favorite);
 		EmitWorkspaceState();
+	}
+
+	private WorkspaceItem? FavoriteItem(WorkspaceFavoritePayload payload)
+	{
+		if (string.Equals(payload.Kind, "repository", StringComparison.OrdinalIgnoreCase))
+		{
+			string id = payload.RepositoryId ?? payload.Path;
+			RegisteredRepo? repo = _workspace?.FindRepo(id);
+			return repo is null && payload.Favorite
+				? null
+				: new WorkspaceItem(id, repo?.Name ?? id, true, "repository", id);
+		}
+		if (string.Equals(payload.Kind, "remote", StringComparison.OrdinalIgnoreCase))
+		{
+			string owner;
+			string name;
+			string branch;
+			string path;
+			if (!TryParseRemotePath(payload.Path, out owner, out name, out branch, out path))
+			{
+				if (string.IsNullOrWhiteSpace(payload.RepositoryId)
+					|| string.IsNullOrWhiteSpace(payload.Branch)
+					|| !TryParseGitHubRepo(payload.RepositoryId, out owner, out name))
+				{
+					return null;
+				}
+				branch = payload.Branch;
+				path = payload.Path;
+				string[] segments = path.Split('/');
+				if (path.Length > 4096 || segments.Length > 64
+					|| segments.Any(segment => segment is "" or "." or ".."))
+				{
+					return null;
+				}
+			}
+			string id = $"{owner}/{name}";
+			if (payload.Favorite && _workspace?.FindRepo(id) is null)
+			{
+				return null;
+			}
+			return new WorkspaceItem(
+				path, path.Split('/')[^1], payload.IsFolder == true, "remote", id, branch);
+		}
+
+		string full;
+		try
+		{
+			full = Path.GetFullPath(payload.Path);
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+		{
+			return null;
+		}
+		bool isFolder = Directory.Exists(full);
+		if (payload.Favorite && !isFolder && !File.Exists(full))
+		{
+			return null;
+		}
+		if (!payload.Favorite && !isFolder)
+		{
+			isFolder = payload.IsFolder == true;
+		}
+		return new WorkspaceItem(full, LabelFor(full), isFolder);
 	}
 
 	// Register a GitHub repository from a URL/spec. Parsing/normalization happens here (the store only holds a
@@ -125,7 +199,7 @@ public sealed partial class HostController
 					_cloneCts = null;
 					_cloneRepoId = null;
 				}
-				if (_pendingRepoOpen?.Kind == PendingRepoActionKind.Browse
+				if (_pendingRepoOpen?.Kind is PendingRepoActionKind.Browse or PendingRepoActionKind.File
 					&& string.Equals(
 						$"{_pendingRepoOpen.Owner}/{_pendingRepoOpen.Name}", payload.Id,
 						StringComparison.OrdinalIgnoreCase))
@@ -458,7 +532,20 @@ public sealed partial class HostController
 			if (actions.Open.Kind == PendingRepoActionKind.Browse)
 			{
 				BrowseRepoCore(
-					actions.Open.Owner, actions.Open.Name, actions.Open.NavigationGeneration);
+					actions.Open.Owner, actions.Open.Name, actions.Open.NavigationGeneration, actions.Open.Branch);
+			}
+			else if (actions.Open.Kind == PendingRepoActionKind.File
+				&& actions.Open.Branch is not null
+				&& actions.Open.Path is not null
+				&& actions.Open.WirePath is not null)
+			{
+				LoadRemoteFileCore(
+					actions.Open.Owner,
+					actions.Open.Name,
+					actions.Open.Branch,
+					actions.Open.Path,
+					actions.Open.WirePath,
+					actions.Open.NavigationGeneration);
 			}
 			else
 			{

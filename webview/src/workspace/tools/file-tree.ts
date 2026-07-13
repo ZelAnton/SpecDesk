@@ -7,7 +7,7 @@
  * plain buttons, so the hierarchy and expand state are programmatic (a screen reader announces both).
  */
 
-import type { TreeNode, TreePayload } from "../../wire/protocol.js";
+import type { TreeNode, TreePayload, WorkspaceItem } from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -16,6 +16,7 @@ export interface FileTreeCallbacks {
   onOpenFile(path: string): void;
   /** Open a folder as the workspace (the empty-state action; maps to `folder.open`). */
   onOpenFolder(): void;
+  onToggleFavorite?(item: WorkspaceItem, favorite: boolean): void;
 }
 
 export class FileTree implements PanelTool {
@@ -34,6 +35,7 @@ export class FileTree implements PanelTool {
   // The open document's path, highlighted in the tree so the author keeps their place (like the navigator
   // highlighting the active view). null when nothing is open or the open file isn't in this tree.
   private activeFile: string | null = null;
+  private favorites: readonly WorkspaceItem[] = [];
   // Per-render counter for the folder→child-list `aria-controls` ids (reset at the top of each render).
   private branchSeq = 0;
 
@@ -94,11 +96,16 @@ export class FileTree implements PanelTool {
     // author had collapsed doesn't hide the very highlight meant to keep their place.
     if (path !== null) {
       for (const folder of [...this.collapsed]) {
-        if (path.startsWith(`${folder}/`) || path.startsWith(`${folder}\\`)) {
+        if (path === folder || path.startsWith(`${folder}/`) || path.startsWith(`${folder}\\`)) {
           this.collapsed.delete(folder);
         }
       }
     }
+    this.render();
+  }
+
+  setFavorites(favorites: readonly WorkspaceItem[]): void {
+    this.favorites = favorites;
     this.render();
   }
 
@@ -142,7 +149,7 @@ export class FileTree implements PanelTool {
     if (
       active instanceof HTMLElement &&
       this.listEl?.contains(active) &&
-      active.classList.contains("file-tree-item")
+      (active.classList.contains("file-tree-item") || active.classList.contains("file-tree-star"))
     ) {
       return active.dataset.path ?? null;
     }
@@ -154,7 +161,9 @@ export class FileTree implements PanelTool {
     if (path === null || this.listEl === null) {
       return;
     }
-    for (const el of this.listEl.querySelectorAll<HTMLElement>(".file-tree-item")) {
+    for (const el of this.listEl.querySelectorAll<HTMLElement>(
+      ".file-tree-item, .file-tree-star",
+    )) {
       if (el.dataset.path === path) {
         el.focus();
         return;
@@ -174,6 +183,8 @@ export class FileTree implements PanelTool {
   private buildFolder(node: TreeNode): HTMLLIElement {
     const li = document.createElement("li");
     const expanded = !this.collapsed.has(node.path);
+    const row = document.createElement("div");
+    row.className = "file-tree-row";
 
     const childList = this.buildList(node.children);
     const listId = `file-tree-branch-${this.branchSeq++}`;
@@ -188,6 +199,10 @@ export class FileTree implements PanelTool {
     toggle.setAttribute("aria-controls", listId);
     toggle.textContent = node.name;
     toggle.title = node.name;
+    if (node.path === this.activeFile) {
+      toggle.classList.add("is-current");
+      toggle.setAttribute("aria-current", "true");
+    }
 
     toggle.addEventListener("click", () => {
       // Collapsed ≡ present in the set; toggle membership and derive the new expanded state from it.
@@ -201,12 +216,15 @@ export class FileTree implements PanelTool {
       childList.hidden = !willExpand;
     });
 
-    li.append(toggle, childList);
+    row.append(toggle, this.favoriteButton(node));
+    li.append(row, childList);
     return li;
   }
 
   private buildFile(node: TreeNode): HTMLLIElement {
     const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "file-tree-row";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "file-tree-item file-tree-file";
@@ -218,9 +236,72 @@ export class FileTree implements PanelTool {
       button.setAttribute("aria-current", "true");
     }
     button.addEventListener("click", () => this.callbacks.onOpenFile(node.path));
-    li.appendChild(button);
+    row.append(button, this.favoriteButton(node));
+    li.append(row);
     return li;
   }
+
+  private favoriteButton(node: TreeNode): HTMLButtonElement {
+    const item = workspaceItemForNode(node);
+    const favored = this.favorites.some((favorite) => sameWorkspaceItem(favorite, item));
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "workspace-star file-tree-star";
+    star.dataset.path = `favorite:${node.path}`;
+    star.classList.toggle("is-favorite", favored);
+    star.setAttribute(
+      "aria-label",
+      `Favorite ${node.isDirectory ? "folder" : "file"} ${node.name}`,
+    );
+    star.setAttribute("aria-pressed", String(favored));
+    star.title = favored ? "Remove from favorites" : "Add to favorites";
+    star.innerHTML = icon("favorites");
+    star.addEventListener("click", () => this.callbacks.onToggleFavorite?.(item, !favored));
+    return star;
+  }
+}
+
+function workspaceItemForNode(node: TreeNode): WorkspaceItem {
+  const remote = parseRemotePath(node.path);
+  return remote
+    ? {
+        path: remote.path,
+        label: node.name,
+        isFolder: node.isDirectory,
+        kind: "remote",
+        repositoryId: remote.repositoryId,
+        branch: remote.branch,
+      }
+    : { path: node.path, label: node.name, isFolder: node.isDirectory, kind: "local" };
+}
+
+function parseRemotePath(
+  path: string,
+): { repositoryId: string; branch: string; path: string } | null {
+  if (!path.startsWith("github://")) return null;
+  const parts = path.slice("github://".length).split("/", 4);
+  if (parts.length !== 4) return null;
+  try {
+    return {
+      repositoryId: `${parts[0]}/${parts[1]}`,
+      branch: decodeURIComponent(parts[2] ?? ""),
+      path: decodeURIComponent(parts[3] ?? ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sameWorkspaceItem(left: WorkspaceItem, right: WorkspaceItem): boolean {
+  if (
+    (left.kind ?? "local") !== (right.kind ?? "local") ||
+    left.repositoryId?.toLowerCase() !== right.repositoryId?.toLowerCase() ||
+    left.branch !== right.branch
+  )
+    return false;
+  return left.kind === "remote"
+    ? left.path === right.path
+    : left.path.toLowerCase() === right.path.toLowerCase();
 }
 
 /** Collect every directory node's path (recursively) into `into` — for pruning stale collapse state. */

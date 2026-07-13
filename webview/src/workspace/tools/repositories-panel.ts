@@ -11,7 +11,7 @@
  * "Remove", not clone/branch/remote.
  */
 
-import type { RegisteredRepo, WorkspaceStatePayload } from "../../wire/protocol.js";
+import type { RegisteredRepo, WorkspaceItem, WorkspaceStatePayload } from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -24,6 +24,7 @@ export interface RepositoriesCallbacks {
   onBrowseRepo(repo: RegisteredRepo): void;
   onOpenClone(repo: RegisteredRepo, clonePath: string): void;
   onClone(repo: RegisteredRepo): void;
+  onToggleFavorite?(repo: RegisteredRepo, favorite: boolean): void;
 }
 
 export class RepositoriesPanel implements PanelTool {
@@ -35,6 +36,7 @@ export class RepositoriesPanel implements PanelTool {
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
+  private favorites: readonly WorkspaceItem[] = [];
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -82,6 +84,7 @@ export class RepositoriesPanel implements PanelTool {
   /** Replace the repository list with the host's latest workspace state. */
   setState(state: WorkspaceStatePayload): void {
     this.repos = state.repositories;
+    this.favorites = state.favorites;
     this.render();
   }
 
@@ -149,9 +152,24 @@ export class RepositoriesPanel implements PanelTool {
     copy.setAttribute("aria-label", `Copy repository ${repo.name} locally`);
     copy.addEventListener("click", () => this.callbacks.onClone(repo));
 
+    const favored = this.favorites.some(
+      (item) =>
+        item.kind === "repository" && item.repositoryId?.toLowerCase() === repo.id.toLowerCase(),
+    );
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "workspace-star repo-star";
+    star.dataset.id = `favorite:${repo.id}`;
+    star.classList.toggle("is-favorite", favored);
+    star.setAttribute("aria-label", `Favorite repository ${repo.name}`);
+    star.setAttribute("aria-pressed", String(favored));
+    star.title = favored ? "Remove from favorites" : "Add to favorites";
+    star.innerHTML = icon("favorites");
+    star.addEventListener("click", () => this.callbacks.onToggleFavorite?.(repo, !favored));
+
     const header = document.createElement("div");
     header.className = "repo-row-header";
-    header.append(open, copy, remove);
+    header.append(open, copy, star, remove);
     li.append(header);
 
     if (repo.clones.length > 0) {

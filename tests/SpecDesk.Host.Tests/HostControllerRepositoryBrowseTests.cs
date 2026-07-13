@@ -17,18 +17,23 @@ public sealed class HostControllerRepositoryBrowseTests
 
 	private sealed class Catalog : IGitHubRepositoryCatalog
 	{
+		public string? LastTreeBranch { get; private set; }
+
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
 			Task.FromResult(new GitHubRepositoryMetadata("master"));
 
 		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
 			string owner, string name, string branch, string accessToken,
-			CancellationToken cancellationToken = default) =>
-			Task.FromResult<IReadOnlyList<GitHubRepositoryEntry>>([
+			CancellationToken cancellationToken = default)
+		{
+			LastTreeBranch = branch;
+			return Task.FromResult<IReadOnlyList<GitHubRepositoryEntry>>([
 				new("docs", true, 0),
 				new("docs/config.json", false, 12),
 				new("README.md", false, 8),
 			]);
+		}
 
 		public Task<string> GetFileAsync(
 			string owner, string name, string branch, string path, string accessToken,
@@ -125,6 +130,7 @@ public sealed class HostControllerRepositoryBrowseTests
 	private sealed class CountingCatalog : IGitHubRepositoryCatalog
 	{
 		public int TreeCalls { get; private set; }
+		public int FileCalls { get; private set; }
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
 			Task.FromResult(new GitHubRepositoryMetadata("main"));
@@ -137,7 +143,11 @@ public sealed class HostControllerRepositoryBrowseTests
 		}
 		public Task<string> GetFileAsync(
 			string owner, string name, string branch, string path, string accessToken,
-			CancellationToken cancellationToken = default) => Task.FromResult("text");
+			CancellationToken cancellationToken = default)
+		{
+			FileCalls++;
+			return Task.FromResult("text");
+		}
 	}
 
 	private sealed class IsolationCatalog : IGitHubRepositoryCatalog
@@ -295,6 +305,44 @@ public sealed class HostControllerRepositoryBrowseTests
 				Assert.That(sent.Count(json => IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.Error),
 					Is.EqualTo(mutations.Length));
 			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteFavorite_ReopensItsStoredBranchInsteadOfTheRepositoryDefault()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-favorite-branch-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			Catalog catalog = new();
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json =>
+				{
+					lock (gate)
+					{
+						sent.Add(json);
+					}
+				},
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: catalog);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs", "feature/Case-Sensitive")));
+			_ = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree);
+
+			Assert.That(catalog.LastTreeBranch, Is.EqualTo("feature/Case-Sensitive"));
 		}
 		finally
 		{
@@ -544,6 +592,108 @@ public sealed class HostControllerRepositoryBrowseTests
 						.ToArray();
 					Assert.That(trees, Has.Length.EqualTo(1));
 					Assert.That(trees[0].Root, Is.EqualTo(Path.GetFullPath(root)));
+				}
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void SignedOutRemoteFileFavorite_AuthorizesThenResumesTheExactFile()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-pending-remote-file-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			BlockingSignInAuth auth = new();
+			CountingCatalog catalog = new();
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: auth, workspace: store, repositoryCatalog: catalog);
+			string wirePath = "github://octo/specs/feature%2FDocs/Docs%2FGuide.md";
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen, new DocOpenPayload(wirePath)));
+			Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			Assert.That(catalog.FileCalls, Is.Zero);
+			auth.ReleaseAuthorization.SetResult();
+			DocLoadedPayload loaded = WaitFor<DocLoadedPayload>(sent, gate, MessageKinds.DocLoaded)!;
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(catalog.FileCalls, Is.EqualTo(1));
+				Assert.That(loaded.Path, Is.EqualTo(wirePath));
+				Assert.That(loaded.Repository, Is.EqualTo("octo/specs"));
+				Assert.That(loaded.Branch, Is.EqualTo("feature/Docs"));
+				Assert.That(loaded.RepositoryPath, Is.EqualTo("Docs/Guide.md"));
+			});
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void LocalNavigationRetiresARemoteFileQueuedBehindAuthorization()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-pending-file-navigation-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			File.WriteAllText(Path.Combine(root, "local.md"), "# Local");
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			BlockingSignInAuth auth = new();
+			CountingCatalog catalog = new();
+			List<string> sent = [];
+			object gate = new();
+			HostController? controller = null;
+			void Send(string json)
+			{
+				lock (gate)
+				{
+					sent.Add(json);
+				}
+				IpcMessage? message = IpcSerializer.TryDeserialize(json);
+				if (message?.Kind == MessageKinds.GitHubAccount
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true)
+				{
+					controller!.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.FolderOpen, new FolderOpenPayload(root)));
+				}
+			}
+			controller = new HostController(
+				(_, _) => new Renderer.RenderResult(string.Empty, []), Send,
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: auth, workspace: store, repositoryCatalog: catalog);
+			using (controller)
+			{
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.DocOpen,
+					new DocOpenPayload("github://octo/specs/main/Docs%2FGuide.md")));
+				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				auth.ReleaseAuthorization.SetResult();
+				Thread.Sleep(100);
+
+				Assert.That(catalog.FileCalls, Is.Zero);
+				lock (gate)
+				{
+					Assert.That(sent.Any(json =>
+						IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.DocLoaded), Is.False);
 				}
 			}
 		}

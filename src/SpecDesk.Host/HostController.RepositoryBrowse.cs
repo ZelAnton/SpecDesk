@@ -37,15 +37,16 @@ public sealed partial class HostController
 		}
 
 		string id = $"{owner}/{name}";
+		string? requestedBranch = payload?.Branch;
 		long intentGeneration = BeginRemoteBrowseIntent(id);
 		if (intentGeneration == 0
 			|| !EnsureGitHubAccess(new PendingRepoAction(
-				PendingRepoActionKind.Browse, owner, name, intentGeneration)))
+				PendingRepoActionKind.Browse, owner, name, intentGeneration, requestedBranch)))
 		{
 			return;
 		}
 
-		BrowseRepoCore(owner, name, intentGeneration);
+		BrowseRepoCore(owner, name, intentGeneration, requestedBranch);
 	}
 
 	private long BeginRemoteBrowseIntent(string id)
@@ -70,7 +71,8 @@ public sealed partial class HostController
 		}
 	}
 
-	private void BrowseRepoCore(string owner, string name, long intentGeneration)
+	private void BrowseRepoCore(
+		string owner, string name, long intentGeneration, string? requestedBranch = null)
 	{
 		if (_repositoryCatalog is null || _auth is null)
 		{
@@ -111,7 +113,9 @@ public sealed partial class HostController
 			{
 				await _auth.WithAccessTokenAsync(async (token, ct) =>
 				{
-					string branch = descriptor.DefaultBranch;
+					string branch = string.IsNullOrWhiteSpace(requestedBranch)
+						? descriptor.DefaultBranch
+						: requestedBranch;
 					if (string.IsNullOrWhiteSpace(branch))
 					{
 						GitHubRepositoryMetadata metadata =
@@ -281,13 +285,12 @@ public sealed partial class HostController
 
 	private void LoadRemoteFile(string owner, string name, string branch, string path, string wirePath)
 	{
-		if (_repositoryCatalog is null || _auth is null || !_auth.IsSignedIn())
+		if (_repositoryCatalog is null)
 		{
-			SendError("Connect to GitHub to preview that file.");
+			SendError("Browsing repositories online isn't available in this build.");
 			return;
 		}
-
-		CancellationTokenSource cts;
+		string id = $"{owner}/{name}";
 		long generation;
 		lock (_remotePublishSync)
 		{
@@ -297,7 +300,6 @@ public sealed partial class HostController
 				{
 					return;
 				}
-				string id = $"{owner}/{name}";
 				if (_workspace?.FindRepo(id) is null)
 				{
 					SendError("That repository is no longer registered.");
@@ -305,6 +307,42 @@ public sealed partial class HostController
 				}
 				_remoteFileCts?.Cancel();
 				generation = Interlocked.Increment(ref _remoteFileGeneration);
+				_remoteFileRepoId = id;
+			}
+		}
+		PendingRepoAction action = new(
+			PendingRepoActionKind.File, owner, name, generation, branch, path, wirePath);
+		if (!EnsureGitHubAccess(action))
+		{
+			return;
+		}
+		LoadRemoteFileCore(owner, name, branch, path, wirePath, generation);
+	}
+
+	private void LoadRemoteFileCore(
+		string owner, string name, string branch, string path, string wirePath, long generation)
+	{
+		if (_repositoryCatalog is null || _auth is null)
+		{
+			return;
+		}
+		CancellationTokenSource cts;
+		lock (_remotePublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return;
+				}
+				string id = $"{owner}/{name}";
+				if (generation != _remoteFileGeneration
+					|| !string.Equals(_remoteFileRepoId, id, StringComparison.OrdinalIgnoreCase)
+					|| _workspace?.FindRepo(id) is null)
+				{
+					return;
+				}
+				_remoteFileCts?.Cancel();
 				cts = new CancellationTokenSource();
 				_remoteFileCts = cts;
 				_remoteFileRepoId = id;
@@ -397,6 +435,10 @@ public sealed partial class HostController
 					_remoteFileGeneration++;
 					_remoteFileCts?.Cancel();
 					_remoteFileRepoId = null;
+					if (_pendingRepoOpen?.Kind == PendingRepoActionKind.File)
+					{
+						_pendingRepoOpen = null;
+					}
 				}
 			}
 		}
@@ -425,6 +467,13 @@ public sealed partial class HostController
 					_remoteFileGeneration++;
 					_remoteFileCts?.Cancel();
 					_remoteFileRepoId = null;
+				}
+				if (_pendingRepoOpen?.Kind == PendingRepoActionKind.File
+					&& string.Equals(
+						$"{_pendingRepoOpen.Owner}/{_pendingRepoOpen.Name}", id,
+						StringComparison.OrdinalIgnoreCase))
+				{
+					_pendingRepoOpen = null;
 				}
 			}
 		}

@@ -1390,6 +1390,22 @@ button {
   cursor: pointer;
 }
 
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.file-tree-row > .file-tree-item {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.file-tree-row > .file-tree-star {
+  margin-right: 0.25rem;
+}
+
 .file-tree-item:hover {
   background: var(--surface-sunken);
 }
@@ -1534,6 +1550,22 @@ button {
 .home-recent-label {
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workspace-item-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.workspace-item-context {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.2;
   white-space: nowrap;
   text-overflow: ellipsis;
 }

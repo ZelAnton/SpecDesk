@@ -361,10 +361,16 @@ public sealed record TemplatesPayload(
 	IReadOnlyList<PromptTemplate> Remote);
 
 /// <summary>One recently-opened or favorited entry (native→webview, inside <see cref="WorkspaceStatePayload"/>).
-/// <paramref name="Path"/> is the absolute file/folder path (opened via <c>doc.open</c>/<c>folder.open</c> when
-/// chosen); <paramref name="Label"/> is the display name (usually the last path segment); <paramref name="IsFolder"/>
-/// distinguishes a folder from a file.</summary>
-public sealed record WorkspaceItem(string Path, string Label, bool IsFolder);
+/// Local items use an absolute <paramref name="Path"/>; remote items use a repository-relative path plus their
+/// <paramref name="RepositoryId"/> and <paramref name="Branch"/>; repository items use their stable id.
+/// <paramref name="Label"/> is the display name and <paramref name="IsFolder"/> distinguishes containers.</summary>
+public sealed record WorkspaceItem(
+	string Path,
+	string Label,
+	bool IsFolder,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null);
 
 /// <summary>One registered GitHub repository the author works with (native→webview, inside
 /// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
@@ -390,9 +396,15 @@ public sealed record WorkspaceStatePayload(
 	IReadOnlyList<WorkspaceItem> Favorites,
 	IReadOnlyList<RegisteredRepo> Repositories);
 
-/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle whether the file/folder at
-/// <paramref name="Path"/> is a favorite (<paramref name="Favorite"/> true adds it, false removes it).</summary>
-public sealed record WorkspaceFavoritePayload(string Path, bool Favorite);
+/// <summary>Payload of <c>workspace.favorite</c> (webview→native): toggle a local or remote file/folder, or a
+/// registered repository. <paramref name="Favorite"/> true adds it and false removes it.</summary>
+public sealed record WorkspaceFavoritePayload(
+	string Path,
+	bool Favorite,
+	string Kind = "local",
+	string? RepositoryId = null,
+	string? Branch = null,
+	bool? IsFolder = null);
 
 /// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
 /// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).
@@ -412,4 +424,4 @@ public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
 /// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
 public sealed record RepoClonePayload(string Id);
 
-public sealed record RepoBrowsePayload(string Id);
+public sealed record RepoBrowsePayload(string Id, string? Branch = null);
