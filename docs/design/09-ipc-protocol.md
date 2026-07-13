@@ -91,7 +91,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |
-| `github.account` | `{ available, signedIn, login?, message? }` | GitHub connection state for the account affordance (`available` false → the affordance hides; `message` is a transient/failed sign-in line) |
+| `github.account` | `{ available, signedIn, login?, message?, organizations? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` is the authorized organization-login list after it loads; `message` is a transient/failed sign-in line) |
 | `confirm.request` | `{ id, action, summary }` | ask the author to confirm a mutating action |
 
 ## Ordering & correctness rules

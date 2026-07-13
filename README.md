@@ -73,6 +73,9 @@ public client id of SpecDesk's registered GitHub OAuth App is built in, so no ac
 before connecting. Development and test builds can override it with `SPECDESK_GITHUB_CLIENT_ID`. No client
 secret is used or stored. When a disconnected user adds or opens a repository, SpecDesk opens GitHub's
 standard authorization page in the system browser and resumes the action after authorization.
+The main toolbar also lets you connect or disconnect explicitly. While connected, the bottom status bar
+shows the GitHub username and organizations visible to the authorization; new authorizations request
+`read:org` in addition to repository and profile access.
 
 Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
 groups any number of managed local copies beneath each repository and shows only non-default branches under

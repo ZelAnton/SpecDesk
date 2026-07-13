@@ -257,6 +257,12 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   if (value.message !== undefined && !isString(value.message)) {
     return null;
   }
+  if (
+    value.organizations !== undefined &&
+    (!Array.isArray(value.organizations) || !value.organizations.every(isString))
+  ) {
+    return null;
+  }
   // login / message are optional (exactOptionalPropertyTypes forbids an explicit undefined), so add them
   // only when present.
   const payload: GitHubAccountPayload = { available: value.available, signedIn: value.signedIn };
@@ -265,6 +271,9 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   }
   if (value.message !== undefined) {
     payload.message = value.message;
+  }
+  if (value.organizations !== undefined) {
+    payload.organizations = value.organizations;
   }
   return payload;
 }

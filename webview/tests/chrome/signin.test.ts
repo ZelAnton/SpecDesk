@@ -6,6 +6,7 @@ import { SignInController } from "../../src/chrome/signin.js";
 function setupDom(): void {
   document.body.innerHTML = `
     <button id="github-btn" aria-expanded="false">Account</button>
+    <span id="github-account-status" hidden></span>
     <div id="account-menu" role="menu" hidden>
       <button id="account-settings" role="menuitem">Settings</button>
       <button id="account-connect" role="menuitem" hidden>Connect to GitHub</button>
@@ -37,6 +38,7 @@ function mount() {
   const openUrl = vi.fn();
   const controller = new SignInController({
     accountBtn: document.querySelector<HTMLButtonElement>("#github-btn"),
+    accountStatus: document.querySelector<HTMLElement>("#github-account-status"),
     menu: document.querySelector<HTMLElement>("#account-menu"),
     connectBtn: document.querySelector<HTMLButtonElement>("#account-connect"),
     signOutBtn: document.querySelector<HTMLButtonElement>("#account-signout"),
@@ -80,6 +82,38 @@ describe("SignInController — account button", () => {
     expect(el("account-signout").textContent).toBe("Sign out @octocat");
     el("account-signout").click();
     expect(signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the account and authorized organizations in the status bar", () => {
+    const { controller } = mount();
+    controller.applyAccount({
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: ["acme", "octo-labs"],
+    });
+
+    expect(el("github-account-status").hidden).toBe(false);
+    expect(el("github-account-status").textContent).toBe(
+      "GitHub: @octocat · Organizations: acme, octo-labs",
+    );
+    controller.applyAccount({ available: true, signedIn: false });
+    expect(el("github-account-status").hidden).toBe(true);
+  });
+
+  it("replaces the organization loading state with actionable failure text", () => {
+    const { controller } = mount();
+    controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
+    expect(el("github-account-status").textContent).toContain("loading");
+
+    controller.applyAccount({
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: [],
+      message: "Organizations unavailable — reconnect GitHub to refresh access.",
+    });
+    expect(el("github-account-status").textContent).toContain("reconnect GitHub");
   });
 
   it("falls back to a plain Sign out when the handle is unknown", () => {

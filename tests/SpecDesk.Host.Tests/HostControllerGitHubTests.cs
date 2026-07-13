@@ -9,6 +9,8 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class HostControllerGitHubTests
 {
+	private static readonly string[] AuthorizedOrganizations = ["acme", "octo-labs"];
+
     private sealed class NoDialogs : IFileDialogs
     {
         public string? PickOpenFile() => null;
@@ -31,6 +33,44 @@ public sealed class HostControllerGitHubTests
             return destination;
         }
     }
+
+	private sealed class AccountCatalog : IGitHubRepositoryCatalog
+	{
+		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<string>>(["acme", "octo-labs"]);
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException();
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+	}
+
+	private sealed class FailingAccountCatalog : IGitHubRepositoryCatalog
+	{
+		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromException<IReadOnlyList<string>>(new HttpRequestException("offline"));
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException();
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+	}
 
     private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
 
@@ -247,7 +287,8 @@ public sealed class HostControllerGitHubTests
 		IGitHubAuth? auth,
 		WorkspaceStore? workspace = null,
 		IRepositoryCloner? cloner = null,
-		Action<string>? beforeSend = null)
+		Action<string>? beforeSend = null,
+		IGitHubRepositoryCatalog? repositoryCatalog = null)
     {
         List<string> sent = [];
         object gate = new();
@@ -263,7 +304,7 @@ public sealed class HostControllerGitHubTests
         HostController controller = new(
             StubRender, Send, new NoDialogs(), (_, _, _, _, _) => null,
             new FakeVersioning(), NullLogger<HostController>.Instance,
-            auth: auth, workspace: workspace, cloner: cloner);
+            auth: auth, workspace: workspace, cloner: cloner, repositoryCatalog: repositoryCatalog);
         return (controller, sent, gate);
     }
 
@@ -375,6 +416,73 @@ public sealed class HostControllerGitHubTests
             });
         }
     }
+
+	[Test]
+	public void Ready_refreshes_the_authorized_organizations()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+		};
+		(HostController controller, List<string> sent, object gate) =
+			Build(auth, repositoryCatalog: new AccountCatalog());
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+
+			GitHubAccountPayload? account = null;
+			for (int attempt = 0; attempt < 100 && account?.Organizations is null; attempt++)
+			{
+				lock (gate)
+				{
+					account = sent.Select(IpcSerializer.TryDeserialize)
+						.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+						.Select(message => message!.GetPayload<GitHubAccountPayload>())
+						.LastOrDefault(payload => payload?.Organizations is not null);
+				}
+				Thread.Sleep(20);
+			}
+
+			Assert.That(account?.Organizations, Is.EqualTo(AuthorizedOrganizations));
+		}
+	}
+
+	[Test]
+	public void Organization_refresh_failure_replaces_loading_with_actionable_status()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+		};
+		(HostController controller, List<string> sent, object gate) =
+			Build(auth, repositoryCatalog: new FailingAccountCatalog());
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+
+			GitHubAccountPayload? account = null;
+			for (int attempt = 0; attempt < 100 && account?.Message is null; attempt++)
+			{
+				lock (gate)
+				{
+					account = sent.Select(IpcSerializer.TryDeserialize)
+						.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+						.Select(message => message!.GetPayload<GitHubAccountPayload>())
+						.LastOrDefault(payload => payload?.Message is not null);
+				}
+				Thread.Sleep(20);
+			}
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(account?.SignedIn, Is.True);
+				Assert.That(account?.Message, Does.Contain("reconnect GitHub"));
+				Assert.That(account?.Organizations, Is.Empty);
+			});
+		}
+	}
 
     [Test]
     public void An_unconfigured_host_reports_the_account_unavailable()
@@ -490,13 +598,16 @@ public sealed class HostControllerGitHubTests
             });
 
 			// Give the stale flow's own background task a further beat to (mis)behave. There must be exactly
-			// two account frames: one owned by Cancel and one owned by the newer successful flow.
+			// two terminal account frames: one owned by Cancel and one owned by the newer successful flow.
             Thread.Sleep(100);
             int accountFrames;
             lock (gate)
             {
-                accountFrames = sent.Count(json =>
-                    IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.GitHubAccount);
+				accountFrames = sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+					.Select(message => message!.GetPayload<GitHubAccountPayload>())
+					.Count(payload => payload?.Organizations is null);
             }
 
 			Assert.That(accountFrames, Is.EqualTo(2));
@@ -586,6 +697,7 @@ public sealed class HostControllerGitHubTests
                         .Select(IpcSerializer.TryDeserialize)
                         .Where(message => message?.Kind == MessageKinds.GitHubAccount)
                         .Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+						.Where(payload => payload.Organizations is null)
                         .ToArray();
                     Assert.That(accounts, Has.Length.EqualTo(1));
                     Assert.That(accounts[0].SignedIn, Is.True);
@@ -649,6 +761,7 @@ public sealed class HostControllerGitHubTests
                     .Select(IpcSerializer.TryDeserialize)
                     .Where(message => message?.Kind == MessageKinds.GitHubAccount)
                     .Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+					.Where(payload => payload.Organizations is null)
                     .ToArray();
                 Assert.That(accounts, Has.Length.EqualTo(1));
                 Assert.That(accounts[0].Login, Is.EqualTo("new-user"));

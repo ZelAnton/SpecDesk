@@ -66,7 +66,12 @@ public sealed class ContractFixtureTests
 			new GitHubCodePayload("WXYZ-1234", "https://github.com/login/device")),
 		// Signed in: Login present, Message absent (the optional fields are exercised by both decoders).
 		(MessageKinds.GitHubAccount,
-			new GitHubAccountPayload(Available: true, SignedIn: true, Login: "octocat", Message: null)),
+			new GitHubAccountPayload(
+				Available: true,
+				SignedIn: true,
+				Login: "octocat",
+				Message: null,
+				Organizations: ["acme", "octo-labs"])),
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
 		(MessageKinds.ChatDelta, new ChatDeltaPayload("Here is a summary of the change: ")),
 		(MessageKinds.ChatDone, new ChatDonePayload("7")),

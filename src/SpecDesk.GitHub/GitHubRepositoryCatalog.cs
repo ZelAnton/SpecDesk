@@ -9,6 +9,10 @@ public sealed record GitHubRepositoryEntry(string Path, bool IsDirectory, long S
 
 public interface IGitHubRepositoryCatalog
 {
+	Task<IReadOnlyList<string>> GetOrganizationsAsync(
+		string accessToken, CancellationToken cancellationToken = default) =>
+		Task.FromResult<IReadOnlyList<string>>([]);
+
 	Task<GitHubRepositoryMetadata> GetMetadataAsync(
 		string owner, string name, string accessToken, CancellationToken cancellationToken = default);
 
@@ -27,6 +31,46 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	private const int MaxFileBytes = 4 * 1024 * 1024;
 	private const int MaxTreeEntries = 5000;
 	private const int MaxTreeBytes = 8 * 1024 * 1024;
+	private const int MaxOrganizationPages = 100;
+
+	public async Task<IReadOnlyList<string>> GetOrganizationsAsync(
+		string accessToken, CancellationToken cancellationToken = default)
+	{
+		HashSet<string> organizations = new(StringComparer.OrdinalIgnoreCase);
+		for (int page = 1; page <= MaxOrganizationPages; page++)
+		{
+			using HttpRequestMessage request = CreateRequest(
+				$"https://api.github.com/user/orgs?per_page=100&page={page}", accessToken);
+			using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+			response.EnsureSuccessStatusCode();
+			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+			using JsonDocument json = JsonDocument.Parse(
+				await response.Content.ReadAsStreamAsync(cancellationToken));
+			if (json.RootElement.ValueKind != JsonValueKind.Array)
+			{
+				throw new InvalidDataException("GitHub returned an invalid organization list.");
+			}
+
+			int count = 0;
+			foreach (JsonElement item in json.RootElement.EnumerateArray())
+			{
+				count++;
+				if (item.TryGetProperty("login", out JsonElement login)
+					&& login.ValueKind == JsonValueKind.String
+					&& !string.IsNullOrWhiteSpace(login.GetString()))
+				{
+					organizations.Add(login.GetString()!);
+				}
+			}
+			if (count < 100)
+			{
+				break;
+			}
+		}
+
+		return organizations.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray();
+	}
+
 	public async Task<GitHubRepositoryMetadata> GetMetadataAsync(
 		string owner, string name, string accessToken, CancellationToken cancellationToken = default)
 	{

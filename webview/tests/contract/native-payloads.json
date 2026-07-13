@@ -105,7 +105,11 @@
   "github.account": {
     "available": true,
     "signedIn": true,
-    "login": "octocat"
+    "login": "octocat",
+    "organizations": [
+      "acme",
+      "octo-labs"
+    ]
   },
   "chat.delta": {
     "text": "Here is a summary of the change: "

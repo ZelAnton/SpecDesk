@@ -180,6 +180,7 @@ function wire(): void {
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const githubAccountStatus = document.querySelector<HTMLElement>("#github-account-status");
   const accountMenu = document.querySelector<HTMLElement>("#account-menu");
   const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
   const accountSignOutBtn = document.querySelector<HTMLButtonElement>("#account-signout");
@@ -905,6 +906,7 @@ function wire(): void {
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
       accountBtn: githubBtn,
+      accountStatus: githubAccountStatus,
       menu: accountMenu,
       connectBtn: accountConnectBtn,
       signOutBtn: accountSignOutBtn,

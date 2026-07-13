@@ -6,6 +6,8 @@ import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.j
 export interface SignInDeps {
   /** The global account-menu trigger. */
   accountBtn: HTMLButtonElement | null;
+  /** Read-only GitHub identity in the bottom status bar. */
+  accountStatus: HTMLElement | null;
   menu: HTMLElement | null;
   connectBtn: HTMLButtonElement | null;
   signOutBtn: HTMLButtonElement | null;
@@ -39,6 +41,7 @@ function atHandle(login: string): string {
  */
 export class SignInController {
   private readonly accountBtn: HTMLButtonElement | null;
+  private readonly accountStatus: HTMLElement | null;
   private readonly menu: HTMLElement | null;
   private readonly connectBtn: HTMLButtonElement | null;
   private readonly signOutBtn: HTMLButtonElement | null;
@@ -52,6 +55,7 @@ export class SignInController {
 
   constructor(private readonly deps: SignInDeps) {
     this.accountBtn = deps.accountBtn;
+    this.accountStatus = deps.accountStatus;
     this.menu = deps.menu;
     this.connectBtn = deps.connectBtn;
     this.signOutBtn = deps.signOutBtn;
@@ -167,6 +171,7 @@ export class SignInController {
   /** Update the account affordance from the host's connection state. */
   applyAccount(payload: GitHubAccountPayload): void {
     setHidden(this.accountBtn, false);
+    setHidden(this.accountStatus, !payload.available || !payload.signedIn);
     const handle = payload.login && payload.login.length > 0 ? atHandle(payload.login) : "";
     this.accountBtn?.setAttribute(
       "aria-label",
@@ -175,6 +180,20 @@ export class SignInController {
     setHidden(this.connectBtn, !payload.available || payload.signedIn);
     setHidden(this.signOutBtn, !payload.available || !payload.signedIn);
     setText(this.signOutBtn, handle ? `Sign out ${handle}` : "Sign out");
+
+    if (payload.available && payload.signedIn) {
+      const identity = handle ? `GitHub: ${handle}` : "GitHub connected";
+      const organizations = payload.organizations;
+      const access =
+        payload.message && payload.message.length > 0
+          ? payload.message
+          : organizations === undefined
+            ? "Organizations: loading…"
+            : organizations.length > 0
+              ? `Organizations: ${organizations.join(", ")}`
+              : "No authorized organizations";
+      setText(this.accountStatus, `${identity} · ${access}`);
+    }
 
     if (payload.signedIn) {
       setHidden(this.bar, true);

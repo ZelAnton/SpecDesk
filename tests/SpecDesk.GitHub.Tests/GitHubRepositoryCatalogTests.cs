@@ -38,6 +38,37 @@ public sealed class GitHubRepositoryCatalogTests
 	}
 
 	[Test]
+	public async Task Organizations_paginate_deduplicate_and_sort_authorized_memberships()
+	{
+		int requests = 0;
+		Handler handler = new(request =>
+		{
+			requests++;
+			if (requests == 1)
+			{
+				string items = string.Join(',', Enumerable.Range(0, 100)
+					.Select(index => $$"""{"login":"org{{index}}"}"""));
+				return Json($"[{items}]");
+			}
+			return Json("""[{"login":"ORG1"},{"login":"acme"}]""");
+		});
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		IReadOnlyList<string> organizations = await catalog.GetOrganizationsAsync("secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(requests, Is.EqualTo(2));
+			Assert.That(organizations, Has.Count.EqualTo(101));
+			Assert.That(organizations[0], Is.EqualTo("acme"));
+			Assert.That(organizations.Count(value =>
+				string.Equals(value, "org1", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(1));
+			Assert.That(handler.LastRequest?.Headers.Authorization?.Parameter, Is.EqualTo("secret"));
+		});
+	}
+
+	[Test]
 	public async Task Tree_decodes_directories_and_files()
 	{
 		Handler handler = new(_ => Json(

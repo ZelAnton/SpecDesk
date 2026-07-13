@@ -196,6 +196,8 @@ public sealed partial class HostController : IDisposable
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
+	private CancellationTokenSource? _accountDetailsCts;
+	private long _accountDetailsGeneration;
 
 	private string _text = string.Empty;
 	private string? _currentPath;
@@ -282,6 +284,9 @@ public sealed partial class HostController : IDisposable
 						_autosaveTimer = null;
 						_signInCts?.Cancel();
 						_signInCts = null;
+						_accountDetailsGeneration++;
+						_accountDetailsCts?.Cancel();
+						_accountDetailsCts = null;
 						TakePendingRepoActions();
 						_chatCts?.Cancel();
 						_chatCts = null;

@@ -22,8 +22,8 @@ public sealed record GitHubAuthOptions(string ClientId, IReadOnlyList<string> Sc
     public const string DefaultClientId = "Ov23li5nQZNLvX2PEvZ0";
 
     /// <summary><c>repo</c> (push + open PR), <c>read:user</c> and <c>user:email</c> (identify the
-    /// signed-in author). Team reviewers may add <c>read:org</c> in a later stage.</summary>
-    public static IReadOnlyList<string> DefaultScopes { get; } = ["repo", "read:user", "user:email"];
+    /// signed-in author), and <c>read:org</c> (show organizations this authorization can access).</summary>
+    public static IReadOnlyList<string> DefaultScopes { get; } = ["repo", "read:user", "user:email", "read:org"];
 
     /// <summary>Options with the default scopes for a given client id.</summary>
     public static GitHubAuthOptions ForClient(string clientId) => new(clientId, DefaultScopes);

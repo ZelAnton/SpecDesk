@@ -138,6 +138,14 @@ public sealed partial class HostController
 			}
 
 			SendAccount(signedIn, login, message);
+			if (signedIn)
+			{
+				RefreshAccountOrganizations(login);
+			}
+			else
+			{
+				InvalidateAccountDetails();
+			}
 			if (resume && actions is not null)
 			{
 				ResumePendingRepoActions(actions);
@@ -171,6 +179,7 @@ public sealed partial class HostController
 				_signInCts?.Cancel();
 				_signInCts = null;
 			}
+			InvalidateAccountDetails();
 			_auth?.SignOut();
 			SendCurrentAccount();
 		}
@@ -188,16 +197,133 @@ public sealed partial class HostController
 
 		if (_auth is null)
 		{
+			InvalidateAccountDetails();
 			SendAccount(false, login: null, message: null, available: false);
 			return;
 		}
-		SendAccount(_auth.IsSignedIn(), _auth.SignedInLogin(), message: null);
+
+		bool signedIn = _auth.IsSignedIn();
+		string? login = signedIn ? _auth.SignedInLogin() : null;
+		SendAccount(signedIn, login, message: null);
+		if (signedIn)
+		{
+			RefreshAccountOrganizations(login);
+		}
+		else
+		{
+			InvalidateAccountDetails();
+		}
 	}
 
-	private void SendAccount(bool signedIn, string? login, string? message, bool available = true) =>
+	private void RefreshAccountOrganizations(string? login)
+	{
+		if (_auth is null)
+		{
+			return;
+		}
+		if (_repositoryCatalog is null)
+		{
+			SendAccount(
+				signedIn: true,
+				login: login,
+				message: "Organizations are unavailable in this build.",
+				organizations: []);
+			return;
+		}
+
+		CancellationTokenSource cts;
+		long generation;
+		lock (_sync)
+		{
+			if (_disposed)
+			{
+				return;
+			}
+			_accountDetailsCts?.Cancel();
+			cts = new CancellationTokenSource();
+			_accountDetailsCts = cts;
+			generation = ++_accountDetailsGeneration;
+		}
+
+		CancellationToken cancellationToken = cts.Token;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				IReadOnlyList<string> organizations = await _auth.WithAccessTokenAsync(
+					(token, ct) => _repositoryCatalog.GetOrganizationsAsync(token, ct),
+					cancellationToken);
+				PublishAccountOrganizationsIfCurrent(generation, login, organizations, message: null);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				// A newer account state owns the status bar now.
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Could not load GitHub organizations for the account status");
+				PublishAccountOrganizationsIfCurrent(
+					generation,
+					login,
+					[],
+					"Organizations unavailable — check your connection or reconnect GitHub to refresh access.");
+			}
+			finally
+			{
+				lock (_sync)
+				{
+					if (ReferenceEquals(_accountDetailsCts, cts))
+					{
+						_accountDetailsCts = null;
+					}
+				}
+				cts.Dispose();
+			}
+		});
+	}
+
+	private void PublishAccountOrganizationsIfCurrent(
+		long generation,
+		string? login,
+		IReadOnlyList<string> organizations,
+		string? message)
+	{
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed || generation != _accountDetailsGeneration || _auth?.IsSignedIn() != true)
+				{
+					return;
+				}
+			}
+			SendAccount(
+				signedIn: true,
+				login: login,
+				message: message,
+				organizations: organizations);
+		}
+	}
+
+	private void InvalidateAccountDetails()
+	{
+		lock (_sync)
+		{
+			_accountDetailsGeneration++;
+			_accountDetailsCts?.Cancel();
+			_accountDetailsCts = null;
+		}
+	}
+
+	private void SendAccount(
+		bool signedIn,
+		string? login,
+		string? message,
+		bool available = true,
+		IReadOnlyList<string>? organizations = null) =>
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.GitHubAccount,
-			new GitHubAccountPayload(available, signedIn, login, message)));
+			new GitHubAccountPayload(available, signedIn, login, message, organizations)));
 
 	private static string SignInMessage(SignInOutcome outcome) => outcome switch
 	{

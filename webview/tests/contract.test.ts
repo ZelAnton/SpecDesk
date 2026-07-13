@@ -153,6 +153,10 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.signedIn).toBe(true);
     expect(payload?.login).toBe("octocat");
     expect(payload?.message).toBeUndefined();
+    expect(payload?.organizations).toEqual(["acme", "octo-labs"]);
+    expect(
+      parseGitHubAccount({ available: true, signedIn: true, organizations: ["acme", 7] }),
+    ).toBeNull();
   });
 
   it("chat.delta", () => {

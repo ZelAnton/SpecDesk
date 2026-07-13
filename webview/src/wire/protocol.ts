@@ -368,8 +368,10 @@ export interface GitHubAccountPayload {
   signedIn: boolean;
   /** The GitHub handle when connected (may be empty if it couldn't be looked up). */
   login?: string;
-  /** An author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"). */
+  /** An author-facing line for a transient account-state failure (e.g. "Sign-in code expired"). */
   message?: string;
+  /** Organizations visible to this authorization, after the host finishes loading them. */
+  organizations?: string[];
 }
 
 /** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */

@@ -351,9 +351,16 @@ public sealed record GitHubCodePayload(string UserCode, string VerificationUri);
 /// affordance. <paramref name="Available"/> is false when sign-in isn't configured (no client id) — the
 /// UI hides the affordance entirely. <paramref name="SignedIn"/> with a <paramref name="Login"/> (the
 /// GitHub handle, possibly empty if it couldn't be looked up) means connected. <paramref name="Message"/>
-/// is an author-facing line for a transient/failed sign-in (e.g. "Sign-in code expired"); never jargon.
+/// is an author-facing line for a transient account-state failure (e.g. "Sign-in code expired"); never
+/// jargon. <paramref name="Organizations"/> is absent while details load and then contains the organization
+/// logins visible to this authorization.
 /// </summary>
-public sealed record GitHubAccountPayload(bool Available, bool SignedIn, string? Login, string? Message);
+public sealed record GitHubAccountPayload(
+	bool Available,
+	bool SignedIn,
+	string? Login,
+	string? Message,
+	IReadOnlyList<string>? Organizations = null);
 
 /// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
 /// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- The main toolbar can connect or disconnect GitHub, and the bottom status bar now shows the connected
+  username and organizations available to that authorization.
 - The left-panel Pull Requests mode now lists open requests you authored or participated in, combining and
   deduplicating both relationships while keeping closed and merged work out of the active queue.
 - The left-panel Review mode now lists open reviews assigned to you directly or through a visible GitHub
