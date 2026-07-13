@@ -98,6 +98,19 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
       path: "C:\\SpecDesk\\repos\\owner_name",
     },
   });
+  await waitForSent(page, "repo.description.request");
+  const descriptionRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.description.request",
+  );
+  await emit(page, {
+    kind: "repo.description",
+    payload: {
+      url: "owner/name",
+      requestId: (descriptionRequest?.payload as { requestId: number }).requestId,
+      state: "found",
+      description: "Repository description",
+    },
+  });
   await repos.locator(".repo-register-add").click();
   await repos.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
   await repos.locator(".repo-clone-confirm-yes").click();

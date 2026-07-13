@@ -15,6 +15,7 @@ import type {
   GitHubRepositoryOptionPayload,
   RegisteredRepo,
   RepoCloneDestinationPayload,
+  RepoDescriptionPayload,
   WorkspaceItem,
   WorkspaceStatePayload,
 } from "../../wire/protocol.js";
@@ -28,6 +29,8 @@ export interface RepositoriesCallbacks {
   onCloneToFolder(url: string): void;
   /** Resolve the exact managed path shown before Clone is allowed. */
   onDestinationRequest(url: string, requestId: number): void;
+  /** Resolve the current repository's description and visibility before Clone is allowed. */
+  onDescriptionRequest(url: string, requestId: number): void;
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
@@ -57,7 +60,9 @@ export class RepositoriesPanel implements PanelTool {
   private cloneMenuEl: HTMLElement | null = null;
   private cloneToggleEl: HTMLButtonElement | null = null;
   private managedActionEl: HTMLButtonElement | null = null;
+  private folderActionEl: HTMLButtonElement | null = null;
   private destinationEl: HTMLElement | null = null;
+  private descriptionEl: HTMLElement | null = null;
   private confirmationEl: HTMLElement | null = null;
   private confirmationSummaryEl: HTMLElement | null = null;
   private confirmationSkipEl: HTMLInputElement | null = null;
@@ -74,6 +79,9 @@ export class RepositoriesPanel implements PanelTool {
   private destinationRequestId = 0;
   private destinationTimer: number | null = null;
   private managedDestination: string | null = null;
+  private descriptionRequestId = 0;
+  private descriptionTimer: number | null = null;
+  private descriptionReady = false;
   private skipCloneConfirmation = false;
   private pendingConfirmation: PendingCloneConfirmation | null = null;
   private confirmationReturnFocus: HTMLElement | null = null;
@@ -108,6 +116,7 @@ export class RepositoriesPanel implements PanelTool {
       this.cloneActionPending = false;
       this.updateSuggestions();
       this.scheduleDestination();
+      this.scheduleDescription();
     });
     input.addEventListener("keydown", (event) => this.onSuggestionKeydown(event));
     input.addEventListener("blur", () => this.closeSuggestions());
@@ -125,6 +134,7 @@ export class RepositoriesPanel implements PanelTool {
     cloneToggle.textContent = "Clone…";
     cloneToggle.setAttribute("aria-haspopup", "menu");
     cloneToggle.setAttribute("aria-expanded", "false");
+    cloneToggle.disabled = true;
 
     const cloneMenu = document.createElement("div");
     cloneMenu.className = "repo-clone-menu";
@@ -142,6 +152,7 @@ export class RepositoriesPanel implements PanelTool {
     toFolder.className = "repo-clone-menu-action";
     toFolder.setAttribute("role", "menuitem");
     toFolder.textContent = "Clone to folder…";
+    toFolder.disabled = true;
     toFolder.addEventListener("click", () => this.requestFolderClone());
     cloneMenu.append(managed, toFolder);
     cloneToggle.addEventListener("click", () => this.toggleCloneMenu());
@@ -150,6 +161,12 @@ export class RepositoriesPanel implements PanelTool {
     destination.className = "repo-managed-destination";
     destination.setAttribute("role", "status");
     destination.hidden = true;
+
+    const description = document.createElement("output");
+    description.className = "repo-description";
+    description.setAttribute("role", "status");
+    description.setAttribute("aria-live", "polite");
+    description.hidden = true;
 
     const confirmation = document.createElement("div");
     confirmation.className = "repo-clone-confirmation";
@@ -191,7 +208,7 @@ export class RepositoriesPanel implements PanelTool {
       }
     });
 
-    form.append(input, cloneToggle, suggestions, cloneMenu, publicHint, destination);
+    form.append(input, cloneToggle, suggestions, cloneMenu, publicHint, description, destination);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.openCloneMenu();
@@ -213,7 +230,9 @@ export class RepositoriesPanel implements PanelTool {
     this.cloneMenuEl = cloneMenu;
     this.cloneToggleEl = cloneToggle;
     this.managedActionEl = managed;
+    this.folderActionEl = toFolder;
     this.destinationEl = destination;
+    this.descriptionEl = description;
     this.confirmationEl = confirmation;
     this.confirmationSummaryEl = confirmationSummary;
     this.confirmationSkipEl = confirmationSkip;
@@ -262,9 +281,33 @@ export class RepositoriesPanel implements PanelTool {
         : "Managed destination unavailable for this entry.";
       this.destinationEl.title = payload.path ?? "";
     }
-    if (this.managedActionEl !== null) {
-      this.managedActionEl.disabled = payload.path === undefined;
+    this.updateCloneAvailability();
+  }
+
+  setDescription(payload: RepoDescriptionPayload): void {
+    if (
+      payload.requestId !== this.descriptionRequestId ||
+      this.input?.value.trim() !== payload.url
+    ) {
+      return;
     }
+    this.descriptionReady = payload.state === "found" || payload.state === "private";
+    if (this.descriptionEl !== null) {
+      this.descriptionEl.hidden = false;
+      const description = payload.description?.trim();
+      if (payload.state === "notFound") {
+        this.descriptionEl.textContent = "Repository not found. Check owner/repository.";
+      } else if (payload.state === "error") {
+        this.descriptionEl.textContent =
+          "Couldn’t load the repository description. Check your connection and try again.";
+      } else {
+        const visibility = payload.state === "private" ? "Private repository · " : "";
+        this.descriptionEl.textContent = description
+          ? `${visibility}Description: ${description}`
+          : `${visibility}No description provided.`;
+      }
+    }
+    this.updateCloneAvailability();
   }
 
   private executeClone(url: string, action: (url: string) => void): void {
@@ -279,6 +322,7 @@ export class RepositoriesPanel implements PanelTool {
     this.input.value = "";
     this.closeSuggestions();
     this.scheduleDestination();
+    this.scheduleDescription();
     this.closeCloneMenu();
     this.cloneActionPending = true;
     action(url);
@@ -382,9 +426,7 @@ export class RepositoriesPanel implements PanelTool {
     }
     this.destinationRequestId++;
     this.managedDestination = null;
-    if (this.managedActionEl !== null) {
-      this.managedActionEl.disabled = true;
-    }
+    this.updateCloneAvailability();
     const url = this.input?.value.trim() ?? "";
     if (url === "") {
       if (this.destinationEl !== null) {
@@ -402,6 +444,45 @@ export class RepositoriesPanel implements PanelTool {
       this.destinationTimer = null;
       this.callbacks.onDestinationRequest(url, requestId);
     }, 120);
+  }
+
+  private scheduleDescription(): void {
+    if (this.descriptionTimer !== null) {
+      window.clearTimeout(this.descriptionTimer);
+      this.descriptionTimer = null;
+    }
+    this.descriptionRequestId++;
+    this.descriptionReady = false;
+    this.closeCloneMenu();
+    this.updateCloneAvailability();
+    const url = this.input?.value.trim() ?? "";
+    if (url === "") {
+      if (this.descriptionEl !== null) {
+        this.descriptionEl.hidden = true;
+      }
+      return;
+    }
+    if (this.descriptionEl !== null) {
+      this.descriptionEl.hidden = false;
+      this.descriptionEl.textContent = "Repository description: loading…";
+    }
+    const requestId = this.descriptionRequestId;
+    this.descriptionTimer = window.setTimeout(() => {
+      this.descriptionTimer = null;
+      this.callbacks.onDescriptionRequest(url, requestId);
+    }, 220);
+  }
+
+  private updateCloneAvailability(): void {
+    if (this.cloneToggleEl !== null) {
+      this.cloneToggleEl.disabled = !this.descriptionReady;
+    }
+    if (this.managedActionEl !== null) {
+      this.managedActionEl.disabled = !this.descriptionReady || this.managedDestination === null;
+    }
+    if (this.folderActionEl !== null) {
+      this.folderActionEl.disabled = !this.descriptionReady;
+    }
   }
 
   private toggleCloneMenu(): void {
@@ -508,6 +589,7 @@ export class RepositoriesPanel implements PanelTool {
     this.input.value = suggestion.fullName;
     this.closeSuggestions();
     this.scheduleDestination();
+    this.scheduleDescription();
   }
 
   private closeSuggestions(): void {

@@ -2072,7 +2072,8 @@ button {
   font: 12px / 1.35 var(--font-ui);
 }
 
-.repo-managed-destination {
+.repo-managed-destination,
+.repo-description {
   flex-basis: 100%;
   padding: 0.15rem 0.1rem 0;
   overflow: hidden;
@@ -2080,6 +2081,10 @@ button {
   font: 12px / 1.35 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.repo-description {
+  white-space: normal;
 }
 
 .repo-clone-confirmation {

@@ -31,6 +31,19 @@ test("a public owner/repository outside suggestions remains available", async ({
       path: "C:\\SpecDesk\\repos\\outside_public-specs",
     },
   });
+  await waitForSent(page, "repo.description.request");
+  const descriptionRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.description.request",
+  );
+  await emit(page, {
+    kind: "repo.description",
+    payload: {
+      url: "outside/public-specs",
+      requestId: (descriptionRequest?.payload as { requestId: number }).requestId,
+      state: "found",
+      description: "Public product specifications",
+    },
+  });
   await expect(page.locator(".repo-public-hint")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("public-repository.png"), fullPage: true });
   await page.locator(".repo-register-add").click();

@@ -35,6 +35,7 @@ import {
   type PrSuggestedPayload,
   type RegisteredRepo,
   type RepoCloneDestinationPayload,
+  type RepoDescriptionPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -311,6 +312,25 @@ export function parseRepoCloneDestination(value: unknown): RepoCloneDestinationP
   return value.path === undefined
     ? { url: value.url, requestId: value.requestId }
     : { url: value.url, requestId: value.requestId, path: value.path };
+}
+
+export function parseRepoDescription(value: unknown): RepoDescriptionPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.url) ||
+    !isNumber(value.requestId) ||
+    !isString(value.state) ||
+    !["found", "private", "notFound", "error"].includes(value.state)
+  ) {
+    return null;
+  }
+  if (value.description !== undefined && !isString(value.description)) {
+    return null;
+  }
+  const state = value.state as RepoDescriptionPayload["state"];
+  return value.description === undefined
+    ? { url: value.url, requestId: value.requestId, state }
+    : { url: value.url, requestId: value.requestId, state, description: value.description };
 }
 
 export function parseImageInserted(value: unknown): ImageInsertedPayload | null {

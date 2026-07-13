@@ -20,6 +20,7 @@ function ready() {
   const onCloneManaged = vi.fn<(url: string, destinationPath: string) => void>();
   const onCloneToFolder = vi.fn<(url: string) => void>();
   const onDestinationRequest = vi.fn<(url: string, requestId: number) => void>();
+  const onDescriptionRequest = vi.fn<(url: string, requestId: number) => void>();
   const onUnregister = vi.fn<(id: string) => void>();
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
@@ -29,6 +30,7 @@ function ready() {
     onCloneManaged,
     onCloneToFolder,
     onDestinationRequest,
+    onDescriptionRequest,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
@@ -51,12 +53,22 @@ function ready() {
     onCloneManaged,
     onCloneToFolder,
     onDestinationRequest,
+    onDescriptionRequest,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
     onClone,
     onToggleFavorite,
   };
+}
+
+function resolveDescription(
+  panel: RepositoriesPanel,
+  url: string,
+  requestId = 0,
+  state: "found" | "private" = "found",
+): void {
+  panel.setDescription({ url, requestId, state, description: "Repository description" });
 }
 
 describe("RepositoriesPanel", () => {
@@ -77,6 +89,7 @@ describe("RepositoriesPanel", () => {
       requestId: 0,
       path: "C:\\managed\\owner_name",
     });
+    resolveDescription(panel, "owner/name");
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
@@ -136,6 +149,7 @@ describe("RepositoriesPanel", () => {
       requestId: 3,
       path: "C:\\managed\\outside_public",
     });
+    resolveDescription(panel, "outside/public", 3);
     body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
@@ -157,6 +171,7 @@ describe("RepositoriesPanel", () => {
       requestId: 1,
       path: "C:\\managed\\outside_public-specs",
     });
+    resolveDescription(panel, "outside/public-specs", 1);
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
@@ -174,6 +189,7 @@ describe("RepositoriesPanel", () => {
       requestId: 0,
       path: "C:\\managed\\owner_managed",
     });
+    resolveDescription(panel, "owner/managed");
     add.click();
     const actions = body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
     expect([...actions].map((action) => action.textContent)).toEqual([
@@ -189,6 +205,7 @@ describe("RepositoriesPanel", () => {
 
     input.value = "owner/folder";
     input.dispatchEvent(new Event("input"));
+    resolveDescription(panel, "owner/folder", 2);
     add.click();
     actions[1]?.click();
     actions[1]?.click();
@@ -206,6 +223,7 @@ describe("RepositoriesPanel", () => {
       requestId: 0,
       path: "C:\\managed\\owner_cancelled",
     });
+    resolveDescription(panel, "owner/cancelled");
     add.click();
     body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     const confirmation = body.querySelector<HTMLElement>(".repo-clone-confirmation");
@@ -235,6 +253,7 @@ describe("RepositoriesPanel", () => {
       requestId: 0,
       path: "C:\\managed\\owner_first",
     });
+    resolveDescription(first.panel, "owner/first");
     first.add.click();
     first.body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     const skip = first.body.querySelector<HTMLInputElement>(".repo-clone-confirm-skip input");
@@ -246,6 +265,7 @@ describe("RepositoriesPanel", () => {
 
     const second = ready();
     second.input.value = "owner/second";
+    resolveDescription(second.panel, "owner/second");
     second.add.click();
     second.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]?.click();
     expect(second.onCloneToFolder).toHaveBeenCalledWith("owner/second");
@@ -271,10 +291,74 @@ describe("RepositoriesPanel", () => {
       requestId: 2,
       path: "C:\\managed\\owner_current",
     });
+    resolveDescription(panel, "owner/current", 2);
     const destination = body.querySelector<HTMLElement>(".repo-managed-destination");
     expect(destination?.textContent).toBe("Managed destination: C:\\managed\\owner_current");
     expect(destination?.title).toBe("C:\\managed\\owner_current");
     expect(body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.disabled).toBe(false);
+  });
+
+  it("debounces description requests and ignores stale responses", () => {
+    vi.useFakeTimers();
+    try {
+      const { panel, body, input, add, onDescriptionRequest } = ready();
+      input.value = "owner/old";
+      input.dispatchEvent(new Event("input"));
+      input.value = "owner/current";
+      input.dispatchEvent(new Event("input"));
+
+      expect(body.querySelector(".repo-description")?.textContent).toContain("loading");
+      expect(add.disabled).toBe(true);
+      vi.advanceTimersByTime(219);
+      expect(onDescriptionRequest).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onDescriptionRequest).toHaveBeenCalledOnce();
+      expect(onDescriptionRequest).toHaveBeenCalledWith("owner/current", 2);
+
+      panel.setDescription({
+        url: "owner/old",
+        requestId: 1,
+        state: "found",
+        description: "Stale description",
+      });
+      expect(body.querySelector(".repo-description")?.textContent).toContain("loading");
+      panel.setDescription({
+        url: "owner/current",
+        requestId: 2,
+        state: "found",
+        description: "Current description",
+      });
+      expect(body.querySelector(".repo-description")?.textContent).toBe(
+        "Description: Current description",
+      );
+      expect(add.disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows private, not-found, and error description states explicitly", () => {
+    const { panel, body, input, add } = ready();
+    input.value = "owner/repository";
+
+    panel.setDescription({
+      url: "owner/repository",
+      requestId: 0,
+      state: "private",
+      description: "Internal specifications",
+    });
+    expect(body.querySelector(".repo-description")?.textContent).toBe(
+      "Private repository · Description: Internal specifications",
+    );
+    expect(add.disabled).toBe(false);
+
+    panel.setDescription({ url: "owner/repository", requestId: 0, state: "notFound" });
+    expect(body.querySelector(".repo-description")?.textContent).toContain("not found");
+    expect(add.disabled).toBe(true);
+
+    panel.setDescription({ url: "owner/repository", requestId: 0, state: "error" });
+    expect(body.querySelector(".repo-description")?.textContent).toContain("Couldn’t load");
+    expect(add.disabled).toBe(true);
   });
 
   it("does not claim that an unverified owner/repository is public", () => {

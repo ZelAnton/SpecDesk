@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Logging;
 using SpecDesk.AppInfo;
 using SpecDesk.Contracts;
@@ -333,6 +334,122 @@ public sealed partial class HostController
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoCloneDestination,
 			new RepoCloneDestinationPayload(payload.Url, payload.RequestId, destination)));
+	}
+
+	private void OnRepositoryDescriptionRequest(IpcMessage message)
+	{
+		RepoDescriptionRequestPayload? payload = SafeGetPayload<RepoDescriptionRequestPayload>(message);
+		if (payload is null)
+		{
+			return;
+		}
+
+		CancellationTokenSource cts;
+		long generation;
+		lock (_repositoryDescriptionPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return;
+				}
+				_repositoryDescriptionCts?.Cancel();
+				cts = new CancellationTokenSource();
+				_repositoryDescriptionCts = cts;
+				generation = ++_repositoryDescriptionGeneration;
+			}
+		}
+
+		if (!TryParseGitHubRepo(payload.Url, out string owner, out string name))
+		{
+			PublishRepositoryDescriptionIfCurrent(
+				cts, generation, payload, RepoDescriptionStates.NotFound, description: null);
+			lock (_sync)
+			{
+				if (ReferenceEquals(_repositoryDescriptionCts, cts))
+				{
+					_repositoryDescriptionCts = null;
+				}
+			}
+			cts.Dispose();
+			return;
+		}
+
+		CancellationToken cancellationToken = cts.Token;
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				if (_repositoryCatalog is null)
+				{
+					PublishRepositoryDescriptionIfCurrent(
+						cts, generation, payload, RepoDescriptionStates.Error, description: null);
+					return;
+				}
+				GitHubRepositoryMetadata metadata = _auth?.IsSignedIn() == true
+					? await _auth.WithAccessTokenAsync(
+						(token, ct) => _repositoryCatalog.GetMetadataAsync(owner, name, token, ct),
+						cancellationToken)
+					: await _repositoryCatalog.GetPublicMetadataAsync(owner, name, cancellationToken);
+				PublishRepositoryDescriptionIfCurrent(
+					cts,
+					generation,
+					payload,
+					metadata.IsPrivate ? RepoDescriptionStates.Private : RepoDescriptionStates.Found,
+					metadata.Description);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				// A newer repository entry owns the description line now.
+			}
+			catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+			{
+				PublishRepositoryDescriptionIfCurrent(
+					cts, generation, payload, RepoDescriptionStates.NotFound, description: null);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogWarning(ex, "Could not load the repository description");
+				PublishRepositoryDescriptionIfCurrent(
+					cts, generation, payload, RepoDescriptionStates.Error, description: null);
+			}
+			finally
+			{
+				lock (_sync)
+				{
+					if (ReferenceEquals(_repositoryDescriptionCts, cts))
+					{
+						_repositoryDescriptionCts = null;
+					}
+				}
+				cts.Dispose();
+			}
+		});
+	}
+
+	private void PublishRepositoryDescriptionIfCurrent(
+		CancellationTokenSource cts,
+		long generation,
+		RepoDescriptionRequestPayload request,
+		string state,
+		string? description)
+	{
+		lock (_repositoryDescriptionPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed
+					|| generation != _repositoryDescriptionGeneration
+					|| !ReferenceEquals(_repositoryDescriptionCts, cts))
+				{
+					return;
+				}
+			}
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoDescription,
+				new RepoDescriptionPayload(request.Url, request.RequestId, state, description)));
+		}
 	}
 
 	private void OnCloneRepoToFolder(IpcMessage message)

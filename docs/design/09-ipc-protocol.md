@@ -62,6 +62,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `repo.cloneToFolder` | `{ url }` | choose a parent folder and clone the GitHub repository into a new, non-colliding child folder |
 | `repo.cloneManaged` | `{ url, destinationPath }` | create a new copy at the managed path the author reviewed |
 | `repo.cloneDestination.request` | `{ url, requestId }` | resolve the exact managed destination before enabling Clone |
+| `repo.description.request` | `{ url, requestId }` | resolve the repository description and visibility before enabling clone actions |
 | `repo.unregister` | `{ id }` | remove a registered repo by its `owner/name` id; host re-emits `workspace.state` |
 | `repo.open` | `{ url }` | open a GitHub repo (`owner/name` or a GitHub URL): clone it into a managed local folder under the app data root (or reuse an existing clone) and open that folder as the workspace — a `tree` follows; an unparseable value comes back as `error`. Registers the repo too (re-emits `workspace.state`) |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
@@ -97,6 +98,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `github.account` | `{ available, signedIn, login?, message?, organizations? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` is the authorized organization-login list after it loads; `message` is a transient/failed sign-in line) |
 | `github.repositories` | `{ repositories: { fullName, description? }[] }` | case-insensitively de-duplicated repositories available to the connected account for owner/name autocomplete |
 | `repo.cloneDestination` | `{ url, requestId, path? }` | exact managed clone path; `requestId` lets the webview ignore a stale response |
+| `repo.description` | `{ url, requestId, state, description? }` | description lookup result (`found`, `private`, `notFound`, or `error`); correlation fields let the webview ignore stale responses |
 | `confirm.request` | `{ id, action, summary }` | ask the author to confirm a mutating action |
 
 ## Ordering & correctness rules
@@ -110,9 +112,11 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
   (`editor.changed` → `preview.html`,
   `diff.request` → `diff.result`): a newer edit supersedes any in-flight result. Unsolicited
   events (status, toast, chat.delta) carry neither.
-- **Debounce/throttle:** `editor.changed` ~120 ms; `scroll.sync` throttled to animation frame.
+- **Debounce/throttle:** `editor.changed` ~120 ms; repository-description lookup ~220 ms;
+  `scroll.sync` throttled to animation frame.
 - **Cancellation:** a new `editor.changed` cancels the in-flight parse/preview for the prior
-  version.
+  version; a newer repository-description request cancels the prior lookup and stale correlated
+  responses are ignored by the webview.
 - **Confirmation gate:** any agent- or button-triggered mutating action emits
   `confirm.request`; native performs the side effect only after the webview returns the
   matching confirmation. This is how the agent-safety rule in

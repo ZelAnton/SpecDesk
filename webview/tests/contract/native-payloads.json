@@ -127,6 +127,12 @@
     "requestId": 7,
     "path": "C:\\SpecDesk\\repos\\acme_specs"
   },
+  "repo.description": {
+    "url": "acme/specs",
+    "requestId": 8,
+    "state": "found",
+    "description": "Product specifications"
+  },
   "chat.delta": {
     "text": "Here is a summary of the change: "
   },

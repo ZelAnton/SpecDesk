@@ -49,6 +49,7 @@ public static class MessageKinds
 	public const string RepoCloneManaged = "repo.cloneManaged";
 	public const string RepoCloneToFolder = "repo.cloneToFolder";
 	public const string RepoCloneDestinationRequest = "repo.cloneDestination.request";
+	public const string RepoDescriptionRequest = "repo.description.request";
 	public const string RepoBrowse = "repo.browse";
 
 	// native → webview
@@ -73,6 +74,7 @@ public static class MessageKinds
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
 	public const string RepoCloneDestination = "repo.cloneDestination";
+	public const string RepoDescription = "repo.description";
 	public const string WorkspaceContext = "workspace.context";
 }
 
@@ -502,5 +504,21 @@ public sealed record RepoCloneToFolderPayload(string Url);
 public sealed record RepoCloneDestinationRequestPayload(string Url, long RequestId);
 
 public sealed record RepoCloneDestinationPayload(string Url, long RequestId, string? Path);
+
+public static class RepoDescriptionStates
+{
+	public const string Found = "found";
+	public const string Private = "private";
+	public const string NotFound = "notFound";
+	public const string Error = "error";
+}
+
+public sealed record RepoDescriptionRequestPayload(string Url, long RequestId);
+
+public sealed record RepoDescriptionPayload(
+	string Url,
+	long RequestId,
+	string State,
+	string? Description = null);
 
 public sealed record RepoBrowsePayload(string Id, string? Branch = null);

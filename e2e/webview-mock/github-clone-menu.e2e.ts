@@ -26,6 +26,19 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
       path: "C:\\SpecDesk\\repos\\outside_public-specs",
     },
   });
+  await waitForSent(page, "repo.description.request");
+  const descriptionRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.description.request",
+  );
+  await emit(page, {
+    kind: "repo.description",
+    payload: {
+      url: "outside/public-specs",
+      requestId: (descriptionRequest?.payload as { requestId: number }).requestId,
+      state: "found",
+      description: "Public product specifications",
+    },
+  });
   await expect(page.locator(".repo-managed-destination")).toHaveText(
     "Managed destination: C:\\SpecDesk\\repos\\outside_public-specs",
   );

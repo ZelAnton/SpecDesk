@@ -4,7 +4,10 @@ using System.Text.Json;
 
 namespace SpecDesk.GitHub;
 
-public sealed record GitHubRepositoryMetadata(string DefaultBranch);
+public sealed record GitHubRepositoryMetadata(
+	string DefaultBranch,
+	string? Description = null,
+	bool IsPrivate = false);
 public sealed record GitHubRepositoryEntry(string Path, bool IsDirectory, long Size);
 public sealed record GitHubRepositoryOption(string FullName, string? Description);
 
@@ -20,6 +23,10 @@ public interface IGitHubRepositoryCatalog
 
 	Task<GitHubRepositoryMetadata> GetMetadataAsync(
 		string owner, string name, string accessToken, CancellationToken cancellationToken = default);
+
+	Task<GitHubRepositoryMetadata> GetPublicMetadataAsync(
+		string owner, string name, CancellationToken cancellationToken = default) =>
+		GetMetadataAsync(owner, name, string.Empty, cancellationToken);
 
 	Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
 		string owner, string name, string branch, string accessToken,
@@ -164,7 +171,13 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 			throw new InvalidDataException("GitHub returned no default branch.");
 		}
 
-		return new GitHubRepositoryMetadata(branch.GetString()!);
+		string? description = json.RootElement.TryGetProperty("description", out JsonElement descriptionValue)
+			&& descriptionValue.ValueKind == JsonValueKind.String
+			? descriptionValue.GetString()
+			: null;
+		bool isPrivate = json.RootElement.TryGetProperty("private", out JsonElement privateValue)
+			&& privateValue.ValueKind == JsonValueKind.True;
+		return new GitHubRepositoryMetadata(branch.GetString()!, description, isPrivate);
 	}
 
 	public async Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
@@ -268,7 +281,10 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 		HttpRequestMessage request = new(HttpMethod.Get, url);
 		request.Headers.UserAgent.ParseAdd("SpecDesk/1.0");
 		request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-		request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+		if (!string.IsNullOrWhiteSpace(accessToken))
+		{
+			request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+		}
 		request.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
 		return request;
 	}

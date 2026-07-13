@@ -198,6 +198,9 @@ public sealed partial class HostController : IDisposable
 	private CancellationTokenSource? _signInCts;
 	private CancellationTokenSource? _accountDetailsCts;
 	private long _accountDetailsGeneration;
+	private CancellationTokenSource? _repositoryDescriptionCts;
+	private long _repositoryDescriptionGeneration;
+	private readonly object _repositoryDescriptionPublishSync = new();
 
 	private string _text = string.Empty;
 	private string? _currentPath;
@@ -275,7 +278,9 @@ public sealed partial class HostController : IDisposable
 		{
 			lock (_clonePublishSync)
 			{
-				lock (_remotePublishSync)
+			lock (_remotePublishSync)
+			{
+				lock (_repositoryDescriptionPublishSync)
 				{
 					lock (_sync)
 					{
@@ -287,6 +292,9 @@ public sealed partial class HostController : IDisposable
 						_accountDetailsGeneration++;
 						_accountDetailsCts?.Cancel();
 						_accountDetailsCts = null;
+						_repositoryDescriptionGeneration++;
+						_repositoryDescriptionCts?.Cancel();
+						_repositoryDescriptionCts = null;
 						TakePendingRepoActions();
 						_chatCts?.Cancel();
 						_chatCts = null;
@@ -308,6 +316,7 @@ public sealed partial class HostController : IDisposable
 						_remoteFileRepoId = null;
 					}
 				}
+			}
 			}
 		}
 	}
@@ -488,6 +497,9 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.RepoCloneDestinationRequest:
 				OnCloneDestinationRequest(message);
+				break;
+			case MessageKinds.RepoDescriptionRequest:
+				OnRepositoryDescriptionRequest(message);
 				break;
 			case MessageKinds.RepoBrowse:
 				OnBrowseRepo(message);
