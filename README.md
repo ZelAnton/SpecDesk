@@ -82,7 +82,8 @@ groups any number of managed local copies beneath each repository and shows only
 each copy. Repository entry suggests the connected user's personal and organization repositories, displays
 each choice as `owner/repository`, and matches text against the repository name without requiring the owner.
 You can also enter any public `owner/repository` directly when it is not in the suggestions.
-**Copy locally** creates another copy in SpecDesk's managed repositories folder.
+The **Clone…** menu either creates a copy in SpecDesk-managed storage or lets you choose a parent folder;
+an occupied same-name destination is never reused. **Copy locally** creates another managed copy.
 
 Selecting the repository itself browses its files directly from GitHub, so a local copy is optional. Online
 files open as read-only previews; select **Copy locally** before editing. Local repository trees show all files

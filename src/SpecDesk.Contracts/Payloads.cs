@@ -46,6 +46,8 @@ public static class MessageKinds
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
 	public const string RepoClone = "repo.clone";
+	public const string RepoCloneManaged = "repo.cloneManaged";
+	public const string RepoCloneToFolder = "repo.cloneToFolder";
 	public const string RepoBrowse = "repo.browse";
 
 	// native → webview
@@ -488,5 +490,11 @@ public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
 
 /// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
 public sealed record RepoClonePayload(string Id);
+
+/// <summary>Payload of <c>repo.cloneManaged</c>: clone these coordinates into managed storage.</summary>
+public sealed record RepoCloneManagedPayload(string Url);
+
+/// <summary>Payload of <c>repo.cloneToFolder</c>: choose a parent folder and clone this GitHub repository.</summary>
+public sealed record RepoCloneToFolderPayload(string Url);
 
 public sealed record RepoBrowsePayload(string Id, string? Branch = null);

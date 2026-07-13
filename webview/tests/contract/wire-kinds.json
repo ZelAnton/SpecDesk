@@ -40,6 +40,8 @@
   "ready",
   "repo.browse",
   "repo.clone",
+  "repo.cloneManaged",
+  "repo.cloneToFolder",
   "repo.open",
   "repo.register",
   "repo.unregister",

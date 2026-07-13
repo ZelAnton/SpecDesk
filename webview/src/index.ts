@@ -1271,7 +1271,8 @@ function wire(): void {
     // The Repositories panel: register from an owner/name or URL, remove by id, and open a repo — the host
     // clones it into a managed folder and opens it as the workspace (A6). The primary click clones-and-opens.
     const repositories = new RepositoriesPanel({
-      onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
+      onCloneManaged: (url) => ipc.send(Kinds.repoCloneManaged, { url }),
+      onCloneToFolder: (url) => ipc.send(Kinds.repoCloneToFolder, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
       onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),

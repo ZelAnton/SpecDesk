@@ -2099,6 +2099,36 @@ button {
   background: var(--accent-hover);
 }
 
+.repo-clone-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% - 0.4rem);
+  right: 0.5rem;
+  display: flex;
+  min-width: 12rem;
+  flex-direction: column;
+  padding: 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.repo-clone-menu button {
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+#left-dock .repo-clone-menu-action:hover,
+#left-dock .repo-clone-menu-action:focus-visible {
+  background: var(--accent-soft);
+}
+
 .repo-list {
   margin: 0;
   padding: 0;

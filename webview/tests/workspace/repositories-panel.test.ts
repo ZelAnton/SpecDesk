@@ -13,14 +13,16 @@ const REPO: RegisteredRepo = {
 const STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [REPO] };
 
 function ready() {
-  const onRegister = vi.fn<(url: string) => void>();
+  const onCloneManaged = vi.fn<(url: string) => void>();
+  const onCloneToFolder = vi.fn<(url: string) => void>();
   const onUnregister = vi.fn<(id: string) => void>();
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
   const onClone = vi.fn<(repo: RegisteredRepo) => void>();
   const onToggleFavorite = vi.fn<(repo: RegisteredRepo, favorite: boolean) => void>();
   const panel = new RepositoriesPanel({
-    onRegister,
+    onCloneManaged,
+    onCloneToFolder,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
@@ -40,7 +42,8 @@ function ready() {
     body,
     input,
     add,
-    onRegister,
+    onCloneManaged,
+    onCloneToFolder,
     onUnregister,
     onBrowseRepo,
     onOpenClone,
@@ -59,23 +62,25 @@ describe("RepositoriesPanel", () => {
     expect(body.querySelector<HTMLElement>(".repo-list")?.hidden).toBe(true);
   });
 
-  it("registers the typed repo on submit and clears the field", () => {
-    const { input, add, onRegister } = ready();
+  it("clones the typed repo to managed storage and clears the field", () => {
+    const { body, input, add, onCloneManaged } = ready();
     input.value = "  owner/name  ";
-    add.click(); // a submit button inside the form fires its submit handler
-    expect(onRegister).toHaveBeenCalledWith("owner/name"); // trimmed
+    add.click();
+    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    expect(onCloneManaged).toHaveBeenCalledWith("owner/name");
     expect(input.value).toBe(""); // cleared for the next entry
   });
 
   it("ignores a blank register submit", () => {
-    const { input, add, onRegister } = ready();
+    const { input, add, onCloneManaged, onCloneToFolder } = ready();
     input.value = "   ";
     add.click();
-    expect(onRegister).not.toHaveBeenCalled();
+    expect(onCloneManaged).not.toHaveBeenCalled();
+    expect(onCloneToFolder).not.toHaveBeenCalled();
   });
 
   it("suggests full owner/name values while matching the repository segment", () => {
-    const { panel, body, input, onRegister } = ready();
+    const { panel, body, input, onCloneManaged, onCloneToFolder } = ready();
     panel.setSuggestions([
       { fullName: "acme/specifications" },
       { fullName: "octocat/notes" },
@@ -92,12 +97,13 @@ describe("RepositoriesPanel", () => {
 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(input.value).toBe("acme/specifications");
-    expect(onRegister).not.toHaveBeenCalled();
+    expect(onCloneManaged).not.toHaveBeenCalled();
+    expect(onCloneToFolder).not.toHaveBeenCalled();
     expect(input.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("supports arrow navigation and mouse selection without blocking arbitrary input", () => {
-    const { panel, body, input, onRegister } = ready();
+    const { panel, body, input, onCloneManaged, onCloneToFolder } = ready();
     panel.setSuggestions([{ fullName: "acme/specs" }, { fullName: "octo/specs" }]);
     input.value = "specs";
     input.dispatchEvent(new Event("input"));
@@ -107,15 +113,17 @@ describe("RepositoriesPanel", () => {
     const first = body.querySelector<HTMLElement>('[role="option"]');
     first?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     expect(input.value).toBe("acme/specs");
-    expect(onRegister).not.toHaveBeenCalled();
+    expect(onCloneManaged).not.toHaveBeenCalled();
+    expect(onCloneToFolder).not.toHaveBeenCalled();
 
     input.value = "outside/public";
     body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
-    expect(onRegister).toHaveBeenCalledWith("outside/public");
+    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    expect(onCloneManaged).toHaveBeenCalledWith("outside/public");
   });
 
   it("identifies a valid public owner/repository outside the connected account list", () => {
-    const { panel, body, input, add, onRegister } = ready();
+    const { panel, body, input, add, onCloneManaged } = ready();
     panel.setSuggestions([{ fullName: "acme/specs" }]);
     input.value = "outside/public-specs";
     input.dispatchEvent(new Event("input"));
@@ -125,7 +133,30 @@ describe("RepositoriesPanel", () => {
       "you can still use a public",
     );
     add.click();
-    expect(onRegister).toHaveBeenCalledWith("outside/public-specs");
+    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    expect(onCloneManaged).toHaveBeenCalledWith("outside/public-specs");
+  });
+
+  it("offers both clone destinations and suppresses double submission", () => {
+    const { body, input, add, onCloneManaged, onCloneToFolder } = ready();
+    input.value = "owner/managed";
+    add.click();
+    const actions = body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
+    expect([...actions].map((action) => action.textContent)).toEqual([
+      "Clone…",
+      "Clone to folder…",
+    ]);
+    actions[0]?.click();
+    actions[0]?.click();
+    expect(onCloneManaged).toHaveBeenCalledTimes(1);
+
+    input.value = "owner/folder";
+    input.dispatchEvent(new Event("input"));
+    add.click();
+    actions[1]?.click();
+    actions[1]?.click();
+    expect(onCloneToFolder).toHaveBeenCalledTimes(1);
+    expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder");
   });
 
   it("does not claim that an unverified owner/repository is public", () => {

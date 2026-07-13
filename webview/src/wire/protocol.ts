@@ -41,6 +41,8 @@ export const Kinds = {
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
   repoClone: "repo.clone",
+  repoCloneManaged: "repo.cloneManaged",
+  repoCloneToFolder: "repo.cloneToFolder",
   repoBrowse: "repo.browse",
   // native → webview
   docLoaded: "doc.loaded",
@@ -568,4 +570,8 @@ export interface UnregisterRepoPayload {
 export interface RepoOpenPayload {
   url: string;
   clonePath?: string;
+}
+
+export interface RepoCloneToFolderPayload {
+  url: string;
 }

@@ -32,5 +32,9 @@ test("repository autocomplete matches by repo name and keeps selection non-mutat
 
   await input.press("Enter");
   await expect(input).toHaveValue("acme/specifications");
-  expect((await sentFrames(page)).some((frame) => frame.kind === "repo.register")).toBe(false);
+  expect(
+    (await sentFrames(page)).some((frame) =>
+      ["repo.cloneManaged", "repo.cloneToFolder"].includes(frame.kind),
+    ),
+  ).toBe(false);
 });

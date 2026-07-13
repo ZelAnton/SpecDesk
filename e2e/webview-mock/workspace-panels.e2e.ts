@@ -83,11 +83,12 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   const repos = page.locator('#left-dock [data-tool="repositories"]');
   await expect(repos.locator(".repo-open")).toHaveText(["acme/specs"]);
 
-  // The register form sends `repo.register` with the typed value (done first: opening a repo below reveals
+  // The clone menu sends `repo.cloneManaged` with the typed value (done first: opening a repo below reveals
   // the Files navigator and switches the left dock away from Repositories).
   await repos.locator(".repo-register-input").fill("owner/name");
   await repos.locator(".repo-register-add").click();
-  expect((await sentFrames(page)).find((f) => f.kind === "repo.register")?.payload).toMatchObject({
+  await repos.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
+  expect((await sentFrames(page)).find((f) => f.kind === "repo.cloneManaged")?.payload).toMatchObject({
     url: "owner/name",
   });
 

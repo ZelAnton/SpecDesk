@@ -480,6 +480,12 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.RepoClone:
 				OnCloneRepo(message);
 				break;
+			case MessageKinds.RepoCloneManaged:
+				OnCloneRepoManaged(message);
+				break;
+			case MessageKinds.RepoCloneToFolder:
+				OnCloneRepoToFolder(message);
+				break;
 			case MessageKinds.RepoBrowse:
 				OnBrowseRepo(message);
 				break;

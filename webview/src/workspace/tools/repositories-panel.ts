@@ -21,8 +21,10 @@ import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
 export interface RepositoriesCallbacks {
-  /** Register the repository named by `url` (an `owner/name` or a GitHub URL); the host validates it. */
-  onRegister(url: string): void;
+  /** Clone into SpecDesk-managed storage. */
+  onCloneManaged(url: string): void;
+  /** Ask the host for a parent folder, then clone there. */
+  onCloneToFolder(url: string): void;
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
@@ -42,6 +44,8 @@ export class RepositoriesPanel implements PanelTool {
   private input: HTMLInputElement | null = null;
   private suggestionsEl: HTMLUListElement | null = null;
   private publicHintEl: HTMLElement | null = null;
+  private cloneMenuEl: HTMLElement | null = null;
+  private cloneToggleEl: HTMLButtonElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
@@ -49,6 +53,7 @@ export class RepositoriesPanel implements PanelTool {
   private suggestions: readonly GitHubRepositoryOptionPayload[] = [];
   private filteredSuggestions: readonly GitHubRepositoryOptionPayload[] = [];
   private activeSuggestion = -1;
+  private cloneActionPending = false;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -76,7 +81,10 @@ export class RepositoriesPanel implements PanelTool {
     suggestions.setAttribute("aria-label", "Available GitHub repositories");
     suggestions.hidden = true;
     input.setAttribute("aria-controls", suggestions.id);
-    input.addEventListener("input", () => this.updateSuggestions());
+    input.addEventListener("input", () => {
+      this.cloneActionPending = false;
+      this.updateSuggestions();
+    });
     input.addEventListener("keydown", (event) => this.onSuggestionKeydown(event));
     input.addEventListener("blur", () => this.closeSuggestions());
 
@@ -87,15 +95,36 @@ export class RepositoriesPanel implements PanelTool {
       "Not in your suggestions — you can still use a public owner/repository.";
     publicHint.hidden = true;
 
-    const add = document.createElement("button");
-    add.type = "submit";
-    add.className = "repo-register-add";
-    add.textContent = "Add";
+    const cloneToggle = document.createElement("button");
+    cloneToggle.type = "button";
+    cloneToggle.className = "repo-register-add";
+    cloneToggle.textContent = "Clone…";
+    cloneToggle.setAttribute("aria-haspopup", "menu");
+    cloneToggle.setAttribute("aria-expanded", "false");
 
-    form.append(input, add, suggestions, publicHint);
+    const cloneMenu = document.createElement("div");
+    cloneMenu.className = "repo-clone-menu";
+    cloneMenu.setAttribute("role", "menu");
+    cloneMenu.hidden = true;
+    const managed = document.createElement("button");
+    managed.type = "button";
+    managed.className = "repo-clone-menu-action";
+    managed.setAttribute("role", "menuitem");
+    managed.textContent = "Clone…";
+    managed.addEventListener("click", () => this.runClone(this.callbacks.onCloneManaged));
+    const toFolder = document.createElement("button");
+    toFolder.type = "button";
+    toFolder.className = "repo-clone-menu-action";
+    toFolder.setAttribute("role", "menuitem");
+    toFolder.textContent = "Clone to folder…";
+    toFolder.addEventListener("click", () => this.runClone(this.callbacks.onCloneToFolder));
+    cloneMenu.append(managed, toFolder);
+    cloneToggle.addEventListener("click", () => this.toggleCloneMenu());
+
+    form.append(input, cloneToggle, suggestions, cloneMenu, publicHint);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.submit();
+      this.openCloneMenu();
     });
 
     const empty = document.createElement("p");
@@ -111,6 +140,8 @@ export class RepositoriesPanel implements PanelTool {
     this.input = input;
     this.suggestionsEl = suggestions;
     this.publicHintEl = publicHint;
+    this.cloneMenuEl = cloneMenu;
+    this.cloneToggleEl = cloneToggle;
     this.emptyEl = empty;
     this.listEl = list;
     this.render();
@@ -138,19 +169,44 @@ export class RepositoriesPanel implements PanelTool {
     this.updateSuggestions();
   }
 
-  private submit(): void {
+  private runClone(action: (url: string) => void): void {
     if (this.input === null) {
       return;
     }
     const url = this.input.value.trim();
-    if (url === "") {
+    if (url === "" || this.cloneActionPending) {
       return;
     }
     // Clear immediately: the host validates and either adds it (a `workspace.state` follows and rebuilds
     // the list) or emits an `error` the app surfaces — either way the field is ready for the next entry.
     this.input.value = "";
     this.closeSuggestions();
-    this.callbacks.onRegister(url);
+    this.closeCloneMenu();
+    this.cloneActionPending = true;
+    action(url);
+  }
+
+  private toggleCloneMenu(): void {
+    if (this.cloneMenuEl?.hidden === false) {
+      this.closeCloneMenu();
+    } else {
+      this.openCloneMenu();
+    }
+  }
+
+  private openCloneMenu(): void {
+    if (this.input?.value.trim() === "" || this.cloneMenuEl === null) {
+      return;
+    }
+    this.cloneMenuEl.hidden = false;
+    this.cloneToggleEl?.setAttribute("aria-expanded", "true");
+  }
+
+  private closeCloneMenu(): void {
+    if (this.cloneMenuEl !== null) {
+      this.cloneMenuEl.hidden = true;
+    }
+    this.cloneToggleEl?.setAttribute("aria-expanded", "false");
   }
 
   private updateSuggestions(): void {

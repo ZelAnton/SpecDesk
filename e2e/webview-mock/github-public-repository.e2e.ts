@@ -22,7 +22,8 @@ test("a public owner/repository outside suggestions remains available", async ({
   await expect(page.locator(".repo-public-hint")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("public-repository.png"), fullPage: true });
   await page.locator(".repo-register-add").click();
-  expect((await sentFrames(page)).find((frame) => frame.kind === "repo.register")?.payload).toEqual({
+  await page.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
+  expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneManaged")?.payload).toEqual({
     url: "outside/public-specs",
   });
 });

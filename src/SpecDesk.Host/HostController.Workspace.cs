@@ -22,6 +22,7 @@ public sealed partial class HostController
 		Register,
 		Open,
 		Clone,
+		CloneToFolder,
 		Browse,
 		File,
 	}
@@ -33,7 +34,8 @@ public sealed partial class HostController
 		long NavigationGeneration = 0,
 		string? Branch = null,
 		string? Path = null,
-		string? WirePath = null);
+		string? WirePath = null,
+		string? LocalDestination = null);
 	private sealed record PendingRepoActions(
 		PendingRepoAction[] Registrations,
 		PendingRepoAction? Open);
@@ -280,7 +282,70 @@ public sealed partial class HostController
 		OpenRepoCore(owner, name, forceNewClone: true);
 	}
 
-	private void OpenRepoCore(string owner, string name, bool forceNewClone)
+	private void OnCloneRepoManaged(IpcMessage message)
+	{
+		RepoCloneManagedPayload? payload = SafeGetPayload<RepoCloneManagedPayload>(message);
+		if (payload is null || !TryParseGitHubRepo(payload.Url, out string owner, out string name))
+		{
+			SendError("That doesn't look like a GitHub repository.");
+			return;
+		}
+		if (_cloner is null
+			|| !EnsureGitHubAccess(new PendingRepoAction(PendingRepoActionKind.Clone, owner, name)))
+		{
+			return;
+		}
+
+		OpenRepoCore(owner, name, forceNewClone: true);
+	}
+
+	private void OnCloneRepoToFolder(IpcMessage message)
+	{
+		RepoCloneToFolderPayload? payload = SafeGetPayload<RepoCloneToFolderPayload>(message);
+		if (payload is null || !TryParseGitHubRepo(payload.Url, out string owner, out string name))
+		{
+			SendError("That doesn't look like a GitHub repository.");
+			return;
+		}
+		if (_cloner is null)
+		{
+			return;
+		}
+
+		string? parentFolder = _dialogs.PickOpenFolder();
+		if (string.IsNullOrWhiteSpace(parentFolder))
+		{
+			return;
+		}
+		string destination = NextFolderClonePath(Path.GetFullPath(parentFolder), name);
+		if (!EnsureGitHubAccess(new PendingRepoAction(
+			PendingRepoActionKind.CloneToFolder,
+			owner,
+			name,
+			LocalDestination: destination)))
+		{
+			return;
+		}
+
+		OpenRepoCore(owner, name, forceNewClone: true, requestedDestination: destination);
+	}
+
+	private static string NextFolderClonePath(string parentFolder, string repositoryName)
+	{
+		for (int copy = 1; copy <= 10_000; copy++)
+		{
+			string suffix = copy == 1 ? string.Empty : $"-{copy}";
+			string candidate = Path.Combine(parentFolder, repositoryName + suffix);
+			if (!Directory.Exists(candidate) && !File.Exists(candidate))
+			{
+				return candidate;
+			}
+		}
+		throw new IOException("No available destination folder could be allocated for the repository.");
+	}
+
+	private void OpenRepoCore(
+		string owner, string name, bool forceNewClone, string? requestedDestination = null)
 	{
 		IRepositoryCloner? cloner = _cloner;
 		if (cloner is null)
@@ -316,10 +381,12 @@ public sealed partial class HostController
 		{
 			existingClone = legacyManagedPath;
 		}
-		localPath = !forceNewClone && existingClone is not null
+		localPath = requestedDestination ?? (!forceNewClone && existingClone is not null
 			? existingClone
-			: NextClonePath(owner, name, descriptor?.Clones ?? []);
+			: NextClonePath(owner, name, descriptor?.Clones ?? []));
 		bool isCloned = cloner.IsCloned(localPath);
+		bool requestedDestinationOccupied = requestedDestination is not null
+			&& (Directory.Exists(localPath) || File.Exists(localPath));
 
 		lock (_clonePublishSync)
 		{
@@ -328,6 +395,11 @@ public sealed partial class HostController
 				RegisteredRepo? currentDescriptor = _workspace?.FindRepo(repoId);
 				if (_disposed || (requireStillRegistered && !ReferenceEquals(currentDescriptor, descriptor)))
 				{
+					return;
+				}
+				if (requestedDestinationOccupied)
+				{
+					SendError("That destination became unavailable. Choose another folder and try again.");
 					return;
 				}
 				if (!isCloned)
@@ -367,6 +439,11 @@ public sealed partial class HostController
 		{
 			try
 			{
+				if (requestedDestination is not null
+					&& (Directory.Exists(localPath) || File.Exists(localPath)))
+				{
+					throw new IOException("The requested clone destination became unavailable.");
+				}
 				// A signed-in session clones with the access token so a private repo authenticates (the token
 				// is confined to WithAccessTokenAsync's scope); otherwise clone anonymously (public repos). The
 				// clone itself is synchronous, so it runs on its own Task.Run inside the token scope.
@@ -552,7 +629,8 @@ public sealed partial class HostController
 				OpenRepoCore(
 					actions.Open.Owner,
 					actions.Open.Name,
-					forceNewClone: actions.Open.Kind == PendingRepoActionKind.Clone);
+					forceNewClone: actions.Open.Kind is PendingRepoActionKind.Clone or PendingRepoActionKind.CloneToFolder,
+					requestedDestination: actions.Open.LocalDestination);
 			}
 		}
 	}
