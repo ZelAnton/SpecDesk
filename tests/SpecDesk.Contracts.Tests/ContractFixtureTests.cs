@@ -72,6 +72,11 @@ public sealed class ContractFixtureTests
 				Login: "octocat",
 				Message: null,
 				Organizations: ["acme", "octo-labs"])),
+		(MessageKinds.GitHubRepositories, new GitHubRepositoriesPayload(
+		[
+			new GitHubRepositoryOptionPayload("acme/specs", "Product specifications"),
+			new GitHubRepositoryOptionPayload("octocat/notes", null),
+		])),
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
 		(MessageKinds.ChatDelta, new ChatDeltaPayload("Here is a summary of the change: ")),
 		(MessageKinds.ChatDone, new ChatDonePayload("7")),

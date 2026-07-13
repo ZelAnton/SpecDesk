@@ -23,6 +23,8 @@ import {
   type ErrorPayload,
   type GitHubAccountPayload,
   type GitHubCodePayload,
+  type GitHubRepositoriesPayload,
+  type GitHubRepositoryOptionPayload,
   type ImageInsertedPayload,
   isReviewState,
   type LineSpan,
@@ -276,6 +278,26 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
     payload.organizations = value.organizations;
   }
   return payload;
+}
+
+function parseGitHubRepositoryOption(value: unknown): GitHubRepositoryOptionPayload | null {
+  if (!isRecord(value) || !isString(value.fullName)) {
+    return null;
+  }
+  if (value.description !== undefined && !isString(value.description)) {
+    return null;
+  }
+  return value.description === undefined
+    ? { fullName: value.fullName }
+    : { fullName: value.fullName, description: value.description };
+}
+
+export function parseGitHubRepositories(value: unknown): GitHubRepositoriesPayload | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const repositories = parseArray(value.repositories, parseGitHubRepositoryOption);
+  return repositories === null ? null : { repositories };
 }
 
 export function parseImageInserted(value: unknown): ImageInsertedPayload | null {

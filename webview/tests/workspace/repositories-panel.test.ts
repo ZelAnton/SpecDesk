@@ -74,6 +74,46 @@ describe("RepositoriesPanel", () => {
     expect(onRegister).not.toHaveBeenCalled();
   });
 
+  it("suggests full owner/name values while matching the repository segment", () => {
+    const { panel, body, input, onRegister } = ready();
+    panel.setSuggestions([
+      { fullName: "acme/specifications" },
+      { fullName: "octocat/notes" },
+      { fullName: "ACME/SPECIFICATIONS" },
+    ]);
+    input.value = "spec";
+    input.dispatchEvent(new Event("input"));
+
+    const options = body.querySelectorAll<HTMLElement>('[role="option"]');
+    expect(options).toHaveLength(1);
+    expect(options[0]?.textContent).toBe("acme/specifications");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    expect(input.getAttribute("aria-activedescendant")).toBe(options[0]?.id);
+
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(input.value).toBe("acme/specifications");
+    expect(onRegister).not.toHaveBeenCalled();
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("supports arrow navigation and mouse selection without blocking arbitrary input", () => {
+    const { panel, body, input, onRegister } = ready();
+    panel.setSuggestions([{ fullName: "acme/specs" }, { fullName: "octo/specs" }]);
+    input.value = "specs";
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(body.querySelector('[aria-selected="true"]')?.textContent).toBe("octo/specs");
+
+    const first = body.querySelector<HTMLElement>('[role="option"]');
+    first?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(input.value).toBe("acme/specs");
+    expect(onRegister).not.toHaveBeenCalled();
+
+    input.value = "outside/public";
+    body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
+    expect(onRegister).toHaveBeenCalledWith("outside/public");
+  });
+
   it("renders repo rows: clicking opens the repo, the trailing × removes it", () => {
     const { panel, body, onUnregister, onBrowseRepo } = ready();
     panel.setState(STATE);

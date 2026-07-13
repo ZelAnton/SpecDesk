@@ -69,6 +69,43 @@ public sealed class GitHubRepositoryCatalogTests
 	}
 
 	[Test]
+	public async Task Repositories_paginate_deduplicate_case_insensitively_and_keep_full_names()
+	{
+		int requests = 0;
+		string? firstQuery = null;
+		Handler handler = new(request =>
+		{
+			requests++;
+			if (requests == 1)
+			{
+				firstQuery = request.RequestUri?.Query;
+				string items = string.Join(',', Enumerable.Range(0, 100)
+					.Select(index => $$"""{"full_name":"acme/repo{{index}}","description":"Repo {{index}}"}"""));
+				HttpResponseMessage response = Json($"[{items}]");
+				response.Headers.TryAddWithoutValidation(
+					"Link", "<https://api.github.com/user/repos?per_page=100&page=2>; rel=\"next\"");
+				return response;
+			}
+			return Json("""[{"full_name":"ACME/REPO1"},{"full_name":"octocat/notes","description":null}]""");
+		});
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		IReadOnlyList<GitHubRepositoryOption> repositories = await catalog.GetRepositoriesAsync("secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(requests, Is.EqualTo(2));
+			Assert.That(repositories, Has.Count.EqualTo(101));
+			Assert.That(repositories.Count(repository =>
+				string.Equals(repository.FullName, "acme/repo1", StringComparison.OrdinalIgnoreCase)), Is.EqualTo(1));
+			Assert.That(repositories, Has.Some.Property("FullName").EqualTo("octocat/notes"));
+			Assert.That(firstQuery,
+				Does.Contain("affiliation=owner,collaborator,organization_member"));
+		});
+	}
+
+	[Test]
 	public async Task Tree_decodes_directories_and_files()
 	{
 		Handler handler = new(_ => Json(

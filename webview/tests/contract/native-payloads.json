@@ -111,6 +111,17 @@
       "octo-labs"
     ]
   },
+  "github.repositories": {
+    "repositories": [
+      {
+        "fullName": "acme/specs",
+        "description": "Product specifications"
+      },
+      {
+        "fullName": "octocat/notes"
+      }
+    ]
+  },
   "chat.delta": {
     "text": "Here is a summary of the change: "
   },

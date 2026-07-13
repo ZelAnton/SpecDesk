@@ -32,6 +32,7 @@ import {
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
+  parseGitHubRepositories,
   parseImageInserted,
   parsePreview,
   parsePrList,
@@ -1312,6 +1313,12 @@ function wire(): void {
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
     });
     pullRequestsPanel = pullRequests;
+    ipc.on(Kinds.githubRepositories, (message) => {
+      const payload = parseGitHubRepositories(message.payload);
+      if (payload) {
+        repositories.setSuggestions(payload.repositories);
+      }
+    });
 
     const workspace = setupWorkspace(
       {

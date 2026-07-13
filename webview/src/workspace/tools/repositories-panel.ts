@@ -11,7 +11,12 @@
  * "Remove", not clone/branch/remote.
  */
 
-import type { RegisteredRepo, WorkspaceItem, WorkspaceStatePayload } from "../../wire/protocol.js";
+import type {
+  GitHubRepositoryOptionPayload,
+  RegisteredRepo,
+  WorkspaceItem,
+  WorkspaceStatePayload,
+} from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -27,16 +32,22 @@ export interface RepositoriesCallbacks {
   onToggleFavorite?(repo: RegisteredRepo, favorite: boolean): void;
 }
 
+let suggestionListSequence = 0;
+
 export class RepositoriesPanel implements PanelTool {
   readonly id = "repositories";
   readonly label = "Repositories";
   readonly icon = icon("repositories");
 
   private input: HTMLInputElement | null = null;
+  private suggestionsEl: HTMLUListElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
   private repos: readonly RegisteredRepo[] = [];
   private favorites: readonly WorkspaceItem[] = [];
+  private suggestions: readonly GitHubRepositoryOptionPayload[] = [];
+  private filteredSuggestions: readonly GitHubRepositoryOptionPayload[] = [];
+  private activeSuggestion = -1;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -53,13 +64,27 @@ export class RepositoriesPanel implements PanelTool {
     input.className = "repo-register-input";
     input.setAttribute("aria-label", "Repository owner/name or GitHub URL");
     input.placeholder = "e.g. acme/specs or a GitHub link";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-expanded", "false");
+
+    const suggestions = document.createElement("ul");
+    suggestions.id = `repo-suggestions-${++suggestionListSequence}`;
+    suggestions.className = "repo-suggestions";
+    suggestions.setAttribute("role", "listbox");
+    suggestions.setAttribute("aria-label", "Available GitHub repositories");
+    suggestions.hidden = true;
+    input.setAttribute("aria-controls", suggestions.id);
+    input.addEventListener("input", () => this.updateSuggestions());
+    input.addEventListener("keydown", (event) => this.onSuggestionKeydown(event));
+    input.addEventListener("blur", () => this.closeSuggestions());
 
     const add = document.createElement("button");
     add.type = "submit";
     add.className = "repo-register-add";
     add.textContent = "Add";
 
-    form.append(input, add);
+    form.append(input, add, suggestions);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.submit();
@@ -76,6 +101,7 @@ export class RepositoriesPanel implements PanelTool {
     root.append(form, empty, list);
     body.appendChild(root);
     this.input = input;
+    this.suggestionsEl = suggestions;
     this.emptyEl = empty;
     this.listEl = list;
     this.render();
@@ -86,6 +112,21 @@ export class RepositoriesPanel implements PanelTool {
     this.repos = state.repositories;
     this.favorites = state.favorites;
     this.render();
+  }
+
+  /** Replace the connected account's repository autocomplete choices. */
+  setSuggestions(suggestions: readonly GitHubRepositoryOptionPayload[]): void {
+    const unique = new Map<string, GitHubRepositoryOptionPayload>();
+    for (const suggestion of suggestions) {
+      const key = suggestion.fullName.toLocaleLowerCase();
+      if (!unique.has(key)) {
+        unique.set(key, suggestion);
+      }
+    }
+    this.suggestions = [...unique.values()].sort((left, right) =>
+      left.fullName.localeCompare(right.fullName, undefined, { sensitivity: "base" }),
+    );
+    this.updateSuggestions();
   }
 
   private submit(): void {
@@ -99,7 +140,97 @@ export class RepositoriesPanel implements PanelTool {
     // Clear immediately: the host validates and either adds it (a `workspace.state` follows and rebuilds
     // the list) or emits an `error` the app surfaces — either way the field is ready for the next entry.
     this.input.value = "";
+    this.closeSuggestions();
     this.callbacks.onRegister(url);
+  }
+
+  private updateSuggestions(): void {
+    if (this.input === null || this.suggestionsEl === null) {
+      return;
+    }
+    const query = this.input.value.trim().toLocaleLowerCase();
+    if (query === "") {
+      this.closeSuggestions();
+      return;
+    }
+    this.filteredSuggestions = this.suggestions
+      .filter((suggestion) => {
+        const fullName = suggestion.fullName.toLocaleLowerCase();
+        const repoName = fullName.slice(fullName.lastIndexOf("/") + 1);
+        return fullName.includes(query) || repoName.includes(query);
+      })
+      .slice(0, 8);
+    this.activeSuggestion = this.filteredSuggestions.length > 0 ? 0 : -1;
+    this.renderSuggestions();
+  }
+
+  private renderSuggestions(): void {
+    if (this.input === null || this.suggestionsEl === null) {
+      return;
+    }
+    this.suggestionsEl.replaceChildren();
+    this.suggestionsEl.hidden = this.filteredSuggestions.length === 0;
+    this.input.setAttribute("aria-expanded", String(this.filteredSuggestions.length > 0));
+    this.input.removeAttribute("aria-activedescendant");
+    for (const [index, suggestion] of this.filteredSuggestions.entries()) {
+      const option = document.createElement("li");
+      option.id = `${this.suggestionsEl.id}-option-${index}`;
+      option.className = "repo-suggestion";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(index === this.activeSuggestion));
+      option.textContent = suggestion.fullName;
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        this.chooseSuggestion(index);
+      });
+      this.suggestionsEl.append(option);
+      if (index === this.activeSuggestion) {
+        this.input.setAttribute("aria-activedescendant", option.id);
+      }
+    }
+  }
+
+  private onSuggestionKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      this.closeSuggestions();
+      return;
+    }
+    if (this.filteredSuggestions.length === 0) {
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      this.activeSuggestion =
+        (this.activeSuggestion + direction + this.filteredSuggestions.length) %
+        this.filteredSuggestions.length;
+      this.renderSuggestions();
+      return;
+    }
+    if (event.key === "Enter" && this.activeSuggestion >= 0) {
+      event.preventDefault();
+      this.chooseSuggestion(this.activeSuggestion);
+    }
+  }
+
+  private chooseSuggestion(index: number): void {
+    const suggestion = this.filteredSuggestions[index];
+    if (suggestion === undefined || this.input === null) {
+      return;
+    }
+    this.input.value = suggestion.fullName;
+    this.closeSuggestions();
+  }
+
+  private closeSuggestions(): void {
+    this.filteredSuggestions = [];
+    this.activeSuggestion = -1;
+    if (this.suggestionsEl !== null) {
+      this.suggestionsEl.hidden = true;
+      this.suggestionsEl.replaceChildren();
+    }
+    this.input?.setAttribute("aria-expanded", "false");
+    this.input?.removeAttribute("aria-activedescendant");
   }
 
   private render(): void {

@@ -23,6 +23,7 @@
   "folder.open",
   "github.account",
   "github.code",
+  "github.repositories",
   "github.signIn",
   "github.signInCancel",
   "github.signOut",

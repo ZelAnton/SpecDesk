@@ -19,6 +19,7 @@ import {
   parseError,
   parseGitHubAccount,
   parseGitHubCode,
+  parseGitHubRepositories,
   parseImageInserted,
   parsePreview,
   parsePrList,
@@ -157,6 +158,16 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(
       parseGitHubAccount({ available: true, signedIn: true, organizations: ["acme", 7] }),
     ).toBeNull();
+  });
+
+  it("github.repositories", () => {
+    const payload = parseGitHubRepositories(fixture["github.repositories"]);
+    expect(payload?.repositories.map((repository) => repository.fullName)).toEqual([
+      "acme/specs",
+      "octocat/notes",
+    ]);
+    expect(payload?.repositories[1]?.description).toBeUndefined();
+    expect(parseGitHubRepositories({ repositories: [{ fullName: 7 }] })).toBeNull();
   });
 
   it("chat.delta", () => {

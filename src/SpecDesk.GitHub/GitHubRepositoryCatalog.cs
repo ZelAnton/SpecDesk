@@ -6,12 +6,17 @@ namespace SpecDesk.GitHub;
 
 public sealed record GitHubRepositoryMetadata(string DefaultBranch);
 public sealed record GitHubRepositoryEntry(string Path, bool IsDirectory, long Size);
+public sealed record GitHubRepositoryOption(string FullName, string? Description);
 
 public interface IGitHubRepositoryCatalog
 {
 	Task<IReadOnlyList<string>> GetOrganizationsAsync(
 		string accessToken, CancellationToken cancellationToken = default) =>
 		Task.FromResult<IReadOnlyList<string>>([]);
+
+	Task<IReadOnlyList<GitHubRepositoryOption>> GetRepositoriesAsync(
+		string accessToken, CancellationToken cancellationToken = default) =>
+		Task.FromResult<IReadOnlyList<GitHubRepositoryOption>>([]);
 
 	Task<GitHubRepositoryMetadata> GetMetadataAsync(
 		string owner, string name, string accessToken, CancellationToken cancellationToken = default);
@@ -32,6 +37,7 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	private const int MaxTreeEntries = 5000;
 	private const int MaxTreeBytes = 8 * 1024 * 1024;
 	private const int MaxOrganizationPages = 100;
+	private const int MaxRepositoryPages = 100;
 
 	public async Task<IReadOnlyList<string>> GetOrganizationsAsync(
 		string accessToken, CancellationToken cancellationToken = default)
@@ -69,6 +75,77 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 		}
 
 		return organizations.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray();
+	}
+
+	public async Task<IReadOnlyList<GitHubRepositoryOption>> GetRepositoriesAsync(
+		string accessToken, CancellationToken cancellationToken = default)
+	{
+		Dictionary<string, GitHubRepositoryOption> repositories = new(StringComparer.OrdinalIgnoreCase);
+		string? pageUrl =
+			"https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member&sort=full_name&per_page=100";
+		for (int page = 1; pageUrl is not null && page <= MaxRepositoryPages; page++)
+		{
+			using HttpRequestMessage request = CreateRequest(pageUrl, accessToken);
+			using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+			response.EnsureSuccessStatusCode();
+			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+			using JsonDocument json = JsonDocument.Parse(
+				await response.Content.ReadAsStreamAsync(cancellationToken));
+			if (json.RootElement.ValueKind != JsonValueKind.Array)
+			{
+				throw new InvalidDataException("GitHub returned an invalid repository list.");
+			}
+
+			foreach (JsonElement item in json.RootElement.EnumerateArray())
+			{
+				string? fullName = item.TryGetProperty("full_name", out JsonElement nameValue)
+					&& nameValue.ValueKind == JsonValueKind.String
+					? nameValue.GetString()
+					: null;
+				if (string.IsNullOrWhiteSpace(fullName))
+				{
+					continue;
+				}
+				string? description = item.TryGetProperty("description", out JsonElement descriptionValue)
+					&& descriptionValue.ValueKind == JsonValueKind.String
+					? descriptionValue.GetString()
+					: null;
+				repositories.TryAdd(fullName, new GitHubRepositoryOption(fullName, description));
+			}
+			pageUrl = NextPageUrl(response);
+			if (pageUrl is null)
+			{
+				break;
+			}
+		}
+
+		return repositories.Values
+			.OrderBy(repository => repository.FullName, StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+	}
+
+	private static string? NextPageUrl(HttpResponseMessage response)
+	{
+		if (!response.Headers.TryGetValues("Link", out IEnumerable<string>? values))
+		{
+			return null;
+		}
+		foreach (string link in values.SelectMany(value => value.Split(',')))
+		{
+			if (!link.Contains("rel=\"next\"", StringComparison.OrdinalIgnoreCase))
+			{
+				continue;
+			}
+			int start = link.IndexOf('<');
+			int end = link.IndexOf('>', start + 1);
+			if (start >= 0 && end > start
+				&& Uri.TryCreate(link[(start + 1)..end], UriKind.Absolute, out Uri? uri)
+				&& string.Equals(uri.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+			{
+				return uri.AbsoluteUri;
+			}
+		}
+		return null;
 	}
 
 	public async Task<GitHubRepositoryMetadata> GetMetadataAsync(

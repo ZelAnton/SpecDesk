@@ -79,7 +79,9 @@ shows the GitHub username and organizations visible to the authorization; new au
 
 Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
 groups any number of managed local copies beneath each repository and shows only non-default branches under
-each copy. **Copy locally** creates another copy in SpecDesk's managed repositories folder.
+each copy. Repository entry suggests the connected user's personal and organization repositories, displays
+each choice as `owner/repository`, and matches text against the repository name without requiring the owner.
+**Copy locally** creates another copy in SpecDesk's managed repositories folder.
 
 Selecting the repository itself browses its files directly from GitHub, so a local copy is optional. Online
 files open as read-only previews; select **Copy locally** before editing. Local repository trees show all files

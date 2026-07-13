@@ -61,6 +61,7 @@ public static class MessageKinds
 	public const string DiffResult = "diff.result";
 	public const string GitHubCode = "github.code";
 	public const string GitHubAccount = "github.account";
+	public const string GitHubRepositories = "github.repositories";
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
 	public const string ChatAttachmentPicked = "chat.attachment.picked";
@@ -361,6 +362,12 @@ public sealed record GitHubAccountPayload(
 	string? Login,
 	string? Message,
 	IReadOnlyList<string>? Organizations = null);
+
+/// <summary>One repository available to the connected GitHub account.</summary>
+public sealed record GitHubRepositoryOptionPayload(string FullName, string? Description);
+
+/// <summary>Payload of <c>github.repositories</c>: repositories available to the connected account.</summary>
+public sealed record GitHubRepositoriesPayload(IReadOnlyList<GitHubRepositoryOptionPayload> Repositories);
 
 /// <summary>Payload of <c>chat.send</c> (webview→native): the author's message to the AI assistant
 /// (see docs/design/08-ai-agent.md). The host streams the reply back as <see cref="ChatDeltaPayload"/>

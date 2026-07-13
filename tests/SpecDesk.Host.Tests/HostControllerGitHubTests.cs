@@ -10,6 +10,7 @@ namespace SpecDesk.Host.Tests;
 public sealed class HostControllerGitHubTests
 {
 	private static readonly string[] AuthorizedOrganizations = ["acme", "octo-labs"];
+	private static readonly string[] AccessibleRepositoryNames = ["acme/specs", "octocat/notes"];
 
     private sealed class NoDialogs : IFileDialogs
     {
@@ -40,6 +41,14 @@ public sealed class HostControllerGitHubTests
 			string accessToken, CancellationToken cancellationToken = default) =>
 			Task.FromResult<IReadOnlyList<string>>(["acme", "octo-labs"]);
 
+		public Task<IReadOnlyList<GitHubRepositoryOption>> GetRepositoriesAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<GitHubRepositoryOption>>(
+			[
+				new("acme/specs", "Product specifications"),
+				new("octocat/notes", null),
+			]);
+
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
 			throw new NotSupportedException();
@@ -58,6 +67,42 @@ public sealed class HostControllerGitHubTests
 		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
 			string accessToken, CancellationToken cancellationToken = default) =>
 			Task.FromException<IReadOnlyList<string>>(new HttpRequestException("offline"));
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException();
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+	}
+
+	private sealed class RacingAccountCatalog : IGitHubRepositoryCatalog
+	{
+		private int _repositoryRequests;
+
+		public TaskCompletionSource FirstStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource ReleaseFirst { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<string>>([]);
+
+		public async Task<IReadOnlyList<GitHubRepositoryOption>> GetRepositoriesAsync(
+			string accessToken, CancellationToken cancellationToken = default)
+		{
+			if (Interlocked.Increment(ref _repositoryRequests) == 1)
+			{
+				FirstStarted.SetResult();
+				await ReleaseFirst.Task;
+				return [new("stale/old", null)];
+			}
+			return [new("fresh/current", null)];
+		}
 
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
@@ -445,6 +490,60 @@ public sealed class HostControllerGitHubTests
 			}
 
 			Assert.That(account?.Organizations, Is.EqualTo(AuthorizedOrganizations));
+		}
+	}
+
+	[Test]
+	public void Ready_publishes_accessible_repositories_for_autocomplete()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+		};
+		(HostController controller, List<string> sent, object gate) =
+			Build(auth, repositoryCatalog: new AccountCatalog());
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+			IpcMessage? message = WaitForKind(sent, gate, MessageKinds.GitHubRepositories);
+			GitHubRepositoriesPayload? payload = message?.GetPayload<GitHubRepositoriesPayload>();
+			Assert.That(payload?.Repositories.Select(repository => repository.FullName),
+				Is.EqualTo(AccessibleRepositoryNames));
+		}
+	}
+
+	[Test]
+	public void A_stale_repository_catalog_result_cannot_replace_a_newer_refresh()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+		};
+		RacingAccountCatalog catalog = new();
+		(HostController controller, List<string> sent, object gate) = Build(auth, repositoryCatalog: catalog);
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+			Assert.That(catalog.FirstStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+			IpcMessage? current = WaitForKind(sent, gate, MessageKinds.GitHubRepositories);
+			Assert.That(current?.GetPayload<GitHubRepositoriesPayload>()?.Repositories[0].FullName,
+				Is.EqualTo("fresh/current"));
+
+			catalog.ReleaseFirst.SetResult();
+			Thread.Sleep(100);
+			lock (gate)
+			{
+				string[] names = sent.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message?.Kind == MessageKinds.GitHubRepositories)
+					.SelectMany(message => message!.GetPayload<GitHubRepositoriesPayload>()!.Repositories)
+					.Select(repository => repository.FullName)
+					.ToArray();
+				Assert.That(names, Has.Length.EqualTo(1));
+				Assert.That(names[0], Is.EqualTo("fresh/current"));
+			}
 		}
 	}
 

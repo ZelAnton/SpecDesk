@@ -250,23 +250,13 @@ public sealed partial class HostController
 		{
 			try
 			{
-				IReadOnlyList<string> organizations = await _auth.WithAccessTokenAsync(
-					(token, ct) => _repositoryCatalog.GetOrganizationsAsync(token, ct),
-					cancellationToken);
-				PublishAccountOrganizationsIfCurrent(generation, login, organizations, message: null);
+				await Task.WhenAll(
+					RefreshAccountOrganizationsAsync(generation, login, cancellationToken),
+					RefreshAccountRepositoriesAsync(generation, cancellationToken));
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
 				// A newer account state owns the status bar now.
-			}
-			catch (Exception ex)
-			{
-				_logger.LogWarning(ex, "Could not load GitHub organizations for the account status");
-				PublishAccountOrganizationsIfCurrent(
-					generation,
-					login,
-					[],
-					"Organizations unavailable — check your connection or reconnect GitHub to refresh access.");
 			}
 			finally
 			{
@@ -280,6 +270,51 @@ public sealed partial class HostController
 				cts.Dispose();
 			}
 		});
+	}
+
+	private async Task RefreshAccountOrganizationsAsync(
+		long generation, string? login, CancellationToken cancellationToken)
+	{
+		try
+		{
+			IReadOnlyList<string> organizations = await _auth!.WithAccessTokenAsync(
+				(token, ct) => _repositoryCatalog!.GetOrganizationsAsync(token, ct),
+				cancellationToken);
+			PublishAccountOrganizationsIfCurrent(generation, login, organizations, message: null);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Could not load GitHub organizations for the account status");
+			PublishAccountOrganizationsIfCurrent(
+				generation,
+				login,
+				[],
+				"Organizations unavailable — check your connection or reconnect GitHub to refresh access.");
+		}
+	}
+
+	private async Task RefreshAccountRepositoriesAsync(long generation, CancellationToken cancellationToken)
+	{
+		try
+		{
+			IReadOnlyList<GitHubRepositoryOption> repositories = await _auth!.WithAccessTokenAsync(
+				(token, ct) => _repositoryCatalog!.GetRepositoriesAsync(token, ct),
+				cancellationToken);
+			PublishAccountRepositoriesIfCurrent(generation, repositories);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Could not load repositories for GitHub autocomplete");
+			PublishAccountRepositoriesIfCurrent(generation, []);
+		}
 	}
 
 	private void PublishAccountOrganizationsIfCurrent(
@@ -305,6 +340,22 @@ public sealed partial class HostController
 		}
 	}
 
+	private void PublishAccountRepositoriesIfCurrent(
+		long generation, IReadOnlyList<GitHubRepositoryOption> repositories)
+	{
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed || generation != _accountDetailsGeneration || _auth?.IsSignedIn() != true)
+				{
+					return;
+				}
+			}
+			SendRepositories(repositories);
+		}
+	}
+
 	private void InvalidateAccountDetails()
 	{
 		lock (_sync)
@@ -320,10 +371,25 @@ public sealed partial class HostController
 		string? login,
 		string? message,
 		bool available = true,
-		IReadOnlyList<string>? organizations = null) =>
+		IReadOnlyList<string>? organizations = null)
+	{
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.GitHubAccount,
 			new GitHubAccountPayload(available, signedIn, login, message, organizations)));
+		if (!signedIn)
+		{
+			SendRepositories([]);
+		}
+	}
+
+	private void SendRepositories(IReadOnlyList<GitHubRepositoryOption> repositories) =>
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.GitHubRepositories,
+			new GitHubRepositoriesPayload(repositories
+				.Select(repository => new GitHubRepositoryOptionPayload(
+					repository.FullName,
+					repository.Description))
+				.ToArray())));
 
 	private static string SignInMessage(SignInOutcome outcome) => outcome switch
 	{

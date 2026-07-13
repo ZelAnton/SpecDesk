@@ -2028,8 +2028,41 @@ button {
 
 .repo-register {
   display: flex;
+  position: relative;
   gap: 0.35rem;
   padding: 0.25rem 0.5rem 0.55rem;
+}
+
+.repo-suggestions {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% - 0.4rem);
+  right: 0.5rem;
+  left: 0.5rem;
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  list-style: none;
+}
+
+.repo-suggestion {
+  padding: 0.4rem 0.5rem;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.repo-suggestion:hover,
+.repo-suggestion[aria-selected="true"] {
+  background: var(--accent-soft);
 }
 
 .repo-register-input {

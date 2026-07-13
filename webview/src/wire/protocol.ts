@@ -55,6 +55,7 @@ export const Kinds = {
   diffResult: "diff.result",
   githubCode: "github.code",
   githubAccount: "github.account",
+  githubRepositories: "github.repositories",
   chatDelta: "chat.delta",
   chatDone: "chat.done",
   chatAttachmentPicked: "chat.attachment.picked",
@@ -372,6 +373,15 @@ export interface GitHubAccountPayload {
   message?: string;
   /** Organizations visible to this authorization, after the host finishes loading them. */
   organizations?: string[];
+}
+
+export interface GitHubRepositoryOptionPayload {
+  fullName: string;
+  description?: string;
+}
+
+export interface GitHubRepositoriesPayload {
+  repositories: GitHubRepositoryOptionPayload[];
 }
 
 /** Payload of `chat.send` (webview→native): the author's message to the AI assistant. */
