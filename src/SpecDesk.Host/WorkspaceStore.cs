@@ -207,7 +207,8 @@ public sealed class WorkspaceStore
 	{
 		lock (_sync)
 		{
-			if (_repositories.RemoveAll(existing => string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0)
+			if (_repositories.RemoveAll(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0)
 			{
 				Save();
 			}

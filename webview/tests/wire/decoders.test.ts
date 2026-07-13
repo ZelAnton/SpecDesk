@@ -14,10 +14,11 @@ import {
 
 describe("IPC payload decoders (the native→webview JSON boundary)", () => {
   it("parseDocLoaded accepts a well-formed payload and rejects malformed ones", () => {
-    expect(parseDocLoaded({ path: "a.md", text: "x", docDir: "" })).toEqual({
+    expect(parseDocLoaded({ path: "a.md", text: "x", docDir: "", readOnly: false })).toEqual({
       path: "a.md",
       text: "x",
       docDir: "",
+      readOnly: false,
     });
     expect(parseDocLoaded({ path: "a.md", text: "x" })).toBeNull(); // missing docDir
     expect(parseDocLoaded({ path: 1, text: "x", docDir: "" })).toBeNull(); // wrong type

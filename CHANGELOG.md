@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Selecting a registered repository now browses its complete folder/file tree directly from GitHub even
+  without a local copy; selecting a text file opens a read-only preview, while local trees now include all files.
 - Registered repositories now show their managed local copies and each copy's non-default working branches;
   you can create more than one local copy, and SpecDesk remembers the repository's actual default branch.
 - Adding or opening a GitHub repository while disconnected now starts sign-in, opens GitHub's

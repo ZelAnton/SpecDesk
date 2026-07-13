@@ -37,6 +37,7 @@ export class LifecycleChrome {
   private readonly deps: LifecycleChromeDeps;
   private state: StatusState = "published";
   private githubAvailable = false;
+  private documentReadOnly = false;
 
   constructor(deps: LifecycleChromeDeps) {
     this.deps = deps;
@@ -58,21 +59,29 @@ export class LifecycleChrome {
    */
   setLifecycle(state: StatusState): void {
     this.state = state;
-    const editing = state !== "published";
+    const editing = state !== "published" && !this.documentReadOnly;
     this.deps.setPaneEditable(editing);
     if (this.deps.formatBar) {
       this.deps.formatBar.hidden = !editing;
     }
     if (this.deps.editBtn) {
-      this.deps.editBtn.hidden = editing;
+      this.deps.editBtn.hidden = editing || this.documentReadOnly;
     }
     if (this.deps.saveVersionBtn) {
       this.deps.saveVersionBtn.hidden = !editing;
     }
     if (this.deps.discardBtn) {
-      this.deps.discardBtn.hidden = state !== "draft";
+      this.deps.discardBtn.hidden = this.documentReadOnly || state !== "draft";
+    }
+    if (this.deps.saveBtn) {
+      this.deps.saveBtn.hidden = this.documentReadOnly;
     }
     this.applyReviewButtons();
+  }
+
+  setDocumentReadOnly(readOnly: boolean): void {
+    this.documentReadOnly = readOnly;
+    this.setLifecycle(this.state);
   }
 
   /**
@@ -87,10 +96,12 @@ export class LifecycleChrome {
 
   private applyReviewButtons(): void {
     if (this.deps.sendForReviewBtn) {
-      this.deps.sendForReviewBtn.hidden = !(this.state === "draft" && this.githubAvailable);
+      this.deps.sendForReviewBtn.hidden =
+        this.documentReadOnly || !(this.state === "draft" && this.githubAvailable);
     }
     if (this.deps.updateReviewBtn) {
-      this.deps.updateReviewBtn.hidden = !(isReviewState(this.state) && this.githubAvailable);
+      this.deps.updateReviewBtn.hidden =
+        this.documentReadOnly || !(isReviewState(this.state) && this.githubAvailable);
     }
   }
 }

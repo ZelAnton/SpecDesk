@@ -193,6 +193,7 @@ public sealed partial class HostController : IDisposable
 	private string _text = string.Empty;
 	private string? _currentPath;
 	private string? _repoRoot;
+	private RemoteDocumentContext? _remoteDocument;
 	// The folder opened as the left-rail file navigator's root (a plain disk folder, or a repo the author
 	// opened). Independent of _repoRoot (the versioning root of the OPEN document): the author can browse one
 	// folder's tree while editing a document elsewhere. Guarded by _sync like the other document fields.
@@ -264,25 +265,35 @@ public sealed partial class HostController : IDisposable
 		{
 			lock (_clonePublishSync)
 			{
-				lock (_sync)
+				lock (_remotePublishSync)
 				{
-					_disposed = true;
-					_autosaveTimer?.Dispose();
-					_autosaveTimer = null;
-					_signInCts?.Cancel();
-					_signInCts = null;
-					TakePendingRepoActions();
-					_chatCts?.Cancel();
-					_chatCts = null;
-					_cloneGeneration++;
-					_cloneCts?.Cancel();
-					_cloneCts = null;
-					_cloneRepoId = null;
-					foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+					lock (_sync)
 					{
-						lookup.Cts.Cancel();
+						_disposed = true;
+						_autosaveTimer?.Dispose();
+						_autosaveTimer = null;
+						_signInCts?.Cancel();
+						_signInCts = null;
+						TakePendingRepoActions();
+						_chatCts?.Cancel();
+						_chatCts = null;
+						_cloneGeneration++;
+						_cloneCts?.Cancel();
+						_cloneCts = null;
+						_cloneRepoId = null;
+						foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
+						{
+							lookup.Cts.Cancel();
+						}
+						_repoMetadataLookups.Clear();
+						_remoteBrowseCts?.Cancel();
+						_remoteBrowseCts = null;
+						_remoteBrowseRepoId = null;
+						_remoteBrowseIntentRepoId = null;
+						_remoteFileCts?.Cancel();
+						_remoteFileCts = null;
+						_remoteFileRepoId = null;
 					}
-					_repoMetadataLookups.Clear();
 				}
 			}
 		}
@@ -319,6 +330,24 @@ public sealed partial class HostController : IDisposable
 			_logger.LogWarning("Dropped a malformed IPC frame ({Length} chars)", json.Length);
 			return;
 		}
+
+		bool mutationGuard = IsRemoteMutation(message.Kind);
+		if (mutationGuard)
+		{
+			Monitor.Enter(_remotePublishSync);
+		}
+		try
+		{
+			bool remote;
+			lock (_sync)
+			{
+				remote = _remoteDocument is not null;
+			}
+			if (remote && mutationGuard)
+			{
+				SendError("This is an online preview. Copy the repository locally before editing or saving.");
+				return;
+			}
 
 		// The webview log channel is high-volume and logs itself; don't echo its routing.
 		if (message.Kind != MessageKinds.Log)
@@ -432,11 +461,32 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.RepoClone:
 				OnCloneRepo(message);
 				break;
+			case MessageKinds.RepoBrowse:
+				OnBrowseRepo(message);
+				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
 				break;
 		}
+		}
+		finally
+		{
+			if (mutationGuard)
+			{
+				Monitor.Exit(_remotePublishSync);
+			}
+		}
 	}
+
+	private static bool IsRemoteMutation(string kind) => kind is
+		MessageKinds.EditorChanged
+		or MessageKinds.DocSave
+		or MessageKinds.DocEdit
+		or MessageKinds.DocSaveVersion
+		or MessageKinds.DocSendForReview
+		or MessageKinds.DocUpdateReview
+		or MessageKinds.DocDiscard
+		or MessageKinds.ImagePaste;
 
 	private void SendLifecycleStatus()
 	{

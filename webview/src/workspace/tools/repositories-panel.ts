@@ -21,7 +21,7 @@ export interface RepositoriesCallbacks {
   /** Remove the registered repository whose id is `id`. */
   onUnregister(id: string): void;
   /** Open the repository as the workspace — the host clones it into a managed folder (if needed) and opens it. */
-  onOpenRepo(repo: RegisteredRepo): void;
+  onBrowseRepo(repo: RegisteredRepo): void;
   onOpenClone(repo: RegisteredRepo, clonePath: string): void;
   onClone(repo: RegisteredRepo): void;
 }
@@ -129,7 +129,7 @@ export class RepositoriesPanel implements PanelTool {
     open.className = "repo-open";
     open.title = repo.url;
     open.textContent = repo.name;
-    open.addEventListener("click", () => this.callbacks.onOpenRepo(repo));
+    open.addEventListener("click", () => this.callbacks.onBrowseRepo(repo));
 
     // The trailing remove control (an ×, like the dock's collapse button); the aria-label carries the
     // accessible name so a screen reader announces which repository it removes.

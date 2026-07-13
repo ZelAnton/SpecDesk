@@ -76,11 +76,27 @@ export function parseDocLoaded(value: unknown): DocLoadedPayload | null {
     !isRecord(value) ||
     !isString(value.path) ||
     !isString(value.text) ||
-    !isString(value.docDir)
+    !isString(value.docDir) ||
+    !isBoolean(value.readOnly)
   ) {
     return null;
   }
-  return { path: value.path, text: value.text, docDir: value.docDir };
+  if (
+    (value.repository !== undefined && !isString(value.repository)) ||
+    (value.branch !== undefined && !isString(value.branch)) ||
+    (value.repositoryPath !== undefined && !isString(value.repositoryPath))
+  ) {
+    return null;
+  }
+  return {
+    path: value.path,
+    text: value.text,
+    docDir: value.docDir,
+    readOnly: value.readOnly,
+    ...(isString(value.repository) ? { repository: value.repository } : {}),
+    ...(isString(value.branch) ? { branch: value.branch } : {}),
+    ...(isString(value.repositoryPath) ? { repositoryPath: value.repositoryPath } : {}),
+  };
 }
 
 function parseLineSpan(value: unknown): LineSpan | null {

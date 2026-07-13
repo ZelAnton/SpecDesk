@@ -39,6 +39,16 @@ public sealed class HostControllerWorkspaceTests
 			}
 			return new GitHubRepositoryMetadata("trunk");
 		}
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException("Repository browsing is not exercised by this fake.");
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException("Repository browsing is not exercised by this fake.");
 	}
 	private sealed class NoDialogs : IFileDialogs
 	{

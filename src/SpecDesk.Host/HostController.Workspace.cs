@@ -22,9 +22,11 @@ public sealed partial class HostController
 		Register,
 		Open,
 		Clone,
+		Browse,
 	}
 
-	private sealed record PendingRepoAction(PendingRepoActionKind Kind, string Owner, string Name);
+	private sealed record PendingRepoAction(
+		PendingRepoActionKind Kind, string Owner, string Name, long NavigationGeneration = 0);
 	private sealed record PendingRepoActions(
 		PendingRepoAction[] Registrations,
 		PendingRepoAction? Open);
@@ -123,8 +125,16 @@ public sealed partial class HostController
 					_cloneCts = null;
 					_cloneRepoId = null;
 				}
+				if (_pendingRepoOpen?.Kind == PendingRepoActionKind.Browse
+					&& string.Equals(
+						$"{_pendingRepoOpen.Owner}/{_pendingRepoOpen.Name}", payload.Id,
+						StringComparison.OrdinalIgnoreCase))
+				{
+					_pendingRepoOpen = null;
+				}
 				_workspace?.UnregisterRepo(payload.Id);
 			}
+			InvalidateRemoteRepository(payload.Id);
 			EmitWorkspaceState();
 		}
 	}
@@ -445,10 +455,18 @@ public sealed partial class HostController
 
 		if (actions.Open is not null)
 		{
-			OpenRepoCore(
-				actions.Open.Owner,
-				actions.Open.Name,
-				forceNewClone: actions.Open.Kind == PendingRepoActionKind.Clone);
+			if (actions.Open.Kind == PendingRepoActionKind.Browse)
+			{
+				BrowseRepoCore(
+					actions.Open.Owner, actions.Open.Name, actions.Open.NavigationGeneration);
+			}
+			else
+			{
+				OpenRepoCore(
+					actions.Open.Owner,
+					actions.Open.Name,
+					forceNewClone: actions.Open.Kind == PendingRepoActionKind.Clone);
+			}
 		}
 	}
 

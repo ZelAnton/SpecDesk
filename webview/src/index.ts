@@ -693,6 +693,7 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(text);
+        lifecycleChrome.setDocumentReadOnly(payload.readOnly);
         // Refresh the outline for the freshly loaded document.
         updateOutline(text);
         // Keep the left-rail file navigator relevant: highlight the freshly opened document, and ask for the
@@ -700,7 +701,9 @@ function wire(): void {
         // loaded document's own folder. A `tree` event comes back and feeds the navigator (its collapse state
         // is preserved across the re-render, and the highlight lands when the tree containing it arrives).
         fileTree?.setActiveFile(payload.path);
-        ipc.send(Kinds.treeRequest);
+        if (!payload.readOnly) {
+          ipc.send(Kinds.treeRequest);
+        }
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
         // arbitrary depth for a shorter old doc, or the browser's clamp for a longer one, and the two
@@ -721,7 +724,9 @@ function wire(): void {
         syncReviewPolling();
         lifecycleChrome.setLifecycle("published");
         // The path is not a lifecycle state — show it plainly (clears the dot's state colour).
-        showPlainStatus(payload.path);
+        showPlainStatus(
+          payload.readOnly && payload.repositoryPath ? payload.repositoryPath : payload.path,
+        );
         dialogs.closeAll();
         // If we just returned from a non-editor central view, move focus into the freshly shown editing
         // surface so a keyboard user isn't left on the now-hidden Start screen (and lands ready to edit).
@@ -1125,7 +1130,7 @@ function wire(): void {
     const repositories = new RepositoriesPanel({
       onRegister: (url) => ipc.send(Kinds.repoRegister, { url }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
-      onOpenRepo: (repo) => openRepo(repo.url),
+      onBrowseRepo: (repo) => ipc.send(Kinds.repoBrowse, { id: repo.id }),
       onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
       onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
     });

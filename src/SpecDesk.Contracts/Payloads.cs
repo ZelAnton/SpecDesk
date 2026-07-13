@@ -44,6 +44,7 @@ public static class MessageKinds
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
 	public const string RepoClone = "repo.clone";
+	public const string RepoBrowse = "repo.browse";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
@@ -78,9 +79,17 @@ public sealed record PreviewPayload(string Html, IReadOnlyList<LineSpan> LineMap
 /// Payload of <c>doc.loaded</c> (native→webview): a file opened from disk. <c>DocDir</c> is the
 /// document's directory relative to the repo root (forward slashes, "" at root) — the webview uses
 /// it to resolve relative image links to <c>app://repo/…</c> in the formatted (WYSIWYG) view, the
-/// same rewrite the native preview renderer applies.
+/// same rewrite the native preview renderer applies. <c>ReadOnly</c> marks an online preview that is not
+/// backed by a writable local copy.
 /// </summary>
-public sealed record DocLoadedPayload(string Path, string Text, string DocDir);
+public sealed record DocLoadedPayload(
+	string Path,
+	string Text,
+	string DocDir,
+	bool ReadOnly = false,
+	string? Repository = null,
+	string? Branch = null,
+	string? RepositoryPath = null);
 
 /// <summary>
 /// Payload of <c>doc.open</c> (webview→native). <c>Path</c> opens that specific file directly (the Start
@@ -402,3 +411,5 @@ public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
 
 /// <summary>Payload of <c>repo.clone</c>: create another managed local copy of a registered repository.</summary>
 public sealed record RepoClonePayload(string Id);
+
+public sealed record RepoBrowsePayload(string Id);

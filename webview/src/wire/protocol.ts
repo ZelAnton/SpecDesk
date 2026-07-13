@@ -39,6 +39,7 @@ export const Kinds = {
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
   repoClone: "repo.clone",
+  repoBrowse: "repo.browse",
   // native → webview
   docLoaded: "doc.loaded",
   previewHtml: "preview.html",
@@ -227,6 +228,10 @@ export interface DocLoadedPayload {
   /** Document directory relative to the repo root (forward slashes, "" at root) — for resolving
    *  relative image links to `app://repo/…` in the formatted view (mirrors the native preview). */
   docDir: string;
+  readOnly: boolean;
+  repository?: string;
+  branch?: string;
+  repositoryPath?: string;
 }
 
 /** Payload of `error` (native→webview). */

@@ -2,7 +2,8 @@
   "doc.loaded": {
     "path": "specs/billing.md",
     "text": "# Billing\n\nThe refund window is 30 days.\n",
-    "docDir": "specs"
+    "docDir": "specs",
+    "readOnly": false
   },
   "preview.html": {
     "html": "\u003Ch1\u003EBilling\u003C/h1\u003E",
