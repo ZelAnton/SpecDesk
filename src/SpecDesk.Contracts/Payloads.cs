@@ -187,7 +187,8 @@ public sealed record WorkspaceContextPayload(
 	string? Branch,
 	string BranchState,
 	string? DefaultBranch,
-	string Path);
+	string Path,
+	string? LocalCopy = null);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);
@@ -401,14 +402,16 @@ public sealed record GitHubCodePayload(string UserCode, string VerificationUri);
 /// GitHub handle, possibly empty if it couldn't be looked up) means connected. <paramref name="Message"/>
 /// is an author-facing line for a transient account-state failure (e.g. "Sign-in code expired"); never
 /// jargon. <paramref name="Organizations"/> is absent while details load and then contains the organization
-/// logins visible to this authorization.
+/// logins visible to this authorization. <paramref name="AvatarUrl"/> is GitHub's HTTPS profile image URL;
+/// it remains absent while account details load or when GitHub does not provide one.
 /// </summary>
 public sealed record GitHubAccountPayload(
 	bool Available,
 	bool SignedIn,
 	string? Login,
 	string? Message,
-	IReadOnlyList<string>? Organizations = null);
+	IReadOnlyList<string>? Organizations = null,
+	string? AvatarUrl = null);
 
 /// <summary>One repository available to the connected GitHub account.</summary>
 public sealed record GitHubRepositoryOptionPayload(string FullName, string? Description);

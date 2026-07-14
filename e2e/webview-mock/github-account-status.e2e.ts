@@ -7,7 +7,7 @@ test.beforeEach(async ({ context }) => {
   await installMockHost(context);
 });
 
-test("GitHub authorization stays in the main toolbar and identity is visible in the status bar", async ({
+test("GitHub sign-in, avatar identity, and account status use their dedicated chrome", async ({
   page,
 }, testInfo) => {
   await page.goto(BASE_URL);
@@ -20,15 +20,30 @@ test("GitHub authorization stays in the main toolbar and identity is visible in 
       signedIn: true,
       login: "octocat",
       organizations: ["acme", "octo-labs"],
+      avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
     },
   });
 
-  const account = page.locator("#toolbar #github-auth-btn");
-  await expect(account).toBeVisible();
-  await expect(account).toHaveText("Sign out @octocat");
+  const signIn = page.locator("#toolbar #github-auth-btn");
+  await expect(signIn).toBeHidden();
+  const avatar = page.locator("#account-avatar");
+  await expect(avatar).toBeVisible();
+  await expect(avatar).toHaveAttribute("alt", "GitHub avatar for @octocat");
+  await expect(page.locator("#account-notification-count")).toBeHidden();
+  await page.locator("#github-btn").click();
+  await expect(page.locator("#account-signout")).toBeVisible();
+  await expect(page.locator("#account-notifications")).toBeVisible();
   const status = page.locator("#status-bar #github-account-status");
   await expect(status).toBeVisible();
   await expect(status).toHaveText("GitHub: @octocat · Organizations: acme, octo-labs");
+
+  await emit(page, {
+    kind: "github.account",
+    payload: { available: true, signedIn: false },
+  });
+  await expect(signIn).toBeVisible();
+  await expect(signIn).toHaveText("Sign in");
+  await expect(page.locator("#account-avatar-fallback")).toBeVisible();
 
   await page.screenshot({ path: testInfo.outputPath("final.png"), fullPage: true });
 });

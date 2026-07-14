@@ -73,7 +73,8 @@ public sealed class ContractFixtureTests
 				SignedIn: true,
 				Login: "octocat",
 				Message: null,
-				Organizations: ["acme", "octo-labs"])),
+				Organizations: ["acme", "octo-labs"],
+				AvatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4")),
 		(MessageKinds.GitHubRepositories, new GitHubRepositoriesPayload(
 		[
 			new GitHubRepositoryOptionPayload("acme/specs", "Product specifications"),
@@ -130,7 +131,8 @@ public sealed class ContractFixtureTests
 			new TreeNode("README.md", @"C:\specs\billing-repo\README.md", IsDirectory: false, []),
 		])),
 		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
-			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md")),
+			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md",
+			"billing-repo")),
 		(MessageKinds.WindowState, new WindowStatePayload(Maximized: true)),
 		(MessageKinds.WindowCloseRequested, new WindowCloseRequestedPayload(RequestId: 23)),
 		(MessageKinds.WindowCloseCompleted, new WindowCloseCompletedPayload(RequestId: 23, Succeeded: false)),

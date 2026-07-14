@@ -61,7 +61,8 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   expect(collapsedPixels.byteLength).toBeGreaterThan(1_000);
 
   // Task 11: Notifications substitutes the central view and exposes the deliberate list stub.
-  await page.locator("#notifications-btn").click();
+  await page.locator("#github-btn").click();
+  await page.locator("#account-notifications").click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "notifications");
   await expect(page.getByRole("heading", { name: "Notifications" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Notifications" })).toContainText(

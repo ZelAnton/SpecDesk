@@ -117,7 +117,8 @@
     "organizations": [
       "acme",
       "octo-labs"
-    ]
+    ],
+    "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4"
   },
   "github.repositories": {
     "repositories": [
@@ -245,7 +246,8 @@
     "branch": "spec/billing-refunds",
     "branchState": "named",
     "defaultBranch": "main",
-    "path": "specs/billing.md"
+    "path": "specs/billing.md",
+    "localCopy": "billing-repo"
   },
   "window.state": {
     "maximized": true

@@ -41,12 +41,26 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
   await titlebar.dblclick();
   let restore = page.getByRole("button", { name: "Restore" });
   await expect(restore).toHaveAttribute("aria-pressed", "true");
+  const maximizedGeometry = readNativeWindowGeometry(requireProcessId(ctx));
+  expect(maximizedGeometry.window).toEqual(maximizedGeometry.workArea);
   await page.screenshot({
     path: testInfo.outputPath("chromeless-titlebar-maximized.png"),
     fullPage: true,
   });
   await titlebar.dblclick();
   await expect(maximize).toHaveAttribute("aria-pressed", "false");
+  const restoredGeometry = readNativeWindowGeometry(requireProcessId(ctx));
+  const verticalMiddle = Math.trunc((restoredGeometry.window.top + restoredGeometry.window.bottom) / 2);
+  expect(
+    nativeHitTest(requireProcessId(ctx), restoredGeometry.window.left + 1, verticalMiddle),
+  ).toBe(10);
+  expect(
+    nativeHitTest(
+      requireProcessId(ctx),
+      restoredGeometry.window.right - 1,
+      restoredGeometry.window.bottom - 1,
+    ),
+  ).toBe(17);
 
   // Keep the explicit button route covered independently from the titlebar gesture.
   await maximize.click();
@@ -133,4 +147,97 @@ if (-not [SpecDeskNativeWindowTest]::MoveWindow($handle, 120, 100, $Width, $Heig
     ["-NoProfile", "-NonInteractive", "-Command", script],
     { stdio: "pipe" },
   );
+}
+
+interface NativeRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function readNativeWindowGeometry(processId: number): {
+  window: NativeRect;
+  workArea: NativeRect;
+} {
+  const script = `
+& {
+param([int]$TargetProcessId)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class SpecDeskNativeWindowGeometry {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO {
+    public uint Size; public RECT Monitor; public RECT Work; public uint Flags;
+  }
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool GetWindowRect(IntPtr handle, out RECT rect);
+  [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr handle, uint flags);
+  [DllImport("user32.dll", EntryPoint="GetMonitorInfoW")] [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+}
+"@
+$handle = (Get-Process -Id $TargetProcessId).MainWindowHandle
+$rect = [SpecDeskNativeWindowGeometry+RECT]::new()
+if (-not [SpecDeskNativeWindowGeometry]::GetWindowRect($handle, [ref]$rect)) { throw "GetWindowRect failed." }
+$info = [SpecDeskNativeWindowGeometry+MONITORINFO]::new()
+$info.Size = [Runtime.InteropServices.Marshal]::SizeOf([type][SpecDeskNativeWindowGeometry+MONITORINFO])
+$monitor = [SpecDeskNativeWindowGeometry]::MonitorFromWindow($handle, 2)
+if (-not [SpecDeskNativeWindowGeometry]::GetMonitorInfo($monitor, [ref]$info)) { throw "GetMonitorInfo failed." }
+Write-Output "$($rect.Left),$($rect.Top),$($rect.Right),$($rect.Bottom),$($info.Work.Left),$($info.Work.Top),$($info.Work.Right),$($info.Work.Bottom)"
+} -TargetProcessId ${processId}
+`;
+  const output = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
+  const values = output.split(",").map(Number);
+  if (values.length !== 8 || values.some((value) => !Number.isFinite(value))) {
+    throw new Error(`Unexpected native geometry: ${output}`);
+  }
+  const [left, top, right, bottom, workLeft, workTop, workRight, workBottom] = values as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  return {
+    window: { left, top, right, bottom },
+    workArea: { left: workLeft, top: workTop, right: workRight, bottom: workBottom },
+  };
+}
+
+function nativeHitTest(processId: number, x: number, y: number): number {
+  const script = `
+& {
+param([int]$TargetProcessId, [int]$X, [int]$Y)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class SpecDeskNativeHitTest {
+  [DllImport("user32.dll", EntryPoint="SendMessageW")]
+  public static extern IntPtr SendMessage(IntPtr handle, uint message, UIntPtr wParam, IntPtr lParam);
+}
+"@
+$handle = (Get-Process -Id $TargetProcessId).MainWindowHandle
+$packed = (($Y -band 0xffff) -shl 16) -bor ($X -band 0xffff)
+[SpecDeskNativeHitTest]::SendMessage($handle, 0x84, [UIntPtr]::Zero, [IntPtr]$packed).ToInt64()
+} -TargetProcessId ${processId} -X ${x} -Y ${y}
+`;
+  const output = execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  ).trim();
+  const result = Number(output);
+  if (!Number.isFinite(result)) {
+    throw new Error(`Unexpected native hit test: ${output}`);
+  }
+  return result;
 }

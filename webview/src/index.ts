@@ -253,7 +253,6 @@ function wire(): void {
   const currentPathEl = document.querySelector<HTMLElement>("#current-path");
   const toolbarSearch = document.querySelector<HTMLInputElement>("#toolbar-search");
   const toolbarEl = document.querySelector<HTMLElement>("#toolbar");
-  const notificationsBtn = document.querySelector<HTMLButtonElement>("#notifications-btn");
   const toolbarAnnouncer = document.querySelector<HTMLElement>("#toolbar-announcer");
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
   const editBtn = document.querySelector<HTMLButtonElement>("#edit-btn");
@@ -307,13 +306,24 @@ function wire(): void {
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
+  const accountAvatar = document.querySelector<HTMLImageElement>("#account-avatar");
+  const accountAvatarFallback = document.querySelector<HTMLElement>("#account-avatar-fallback");
+  const accountNotificationCount = document.querySelector<HTMLElement>(
+    "#account-notification-count",
+  );
   const githubAuthBtn = document.querySelector<HTMLButtonElement>("#github-auth-btn");
   const githubAccountStatus = document.querySelector<HTMLElement>("#github-account-status");
   const accountMenu = document.querySelector<HTMLElement>("#account-menu");
   const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
   const accountSignOutBtn = document.querySelector<HTMLButtonElement>("#account-signout");
+  const accountNotificationsBtn =
+    document.querySelector<HTMLButtonElement>("#account-notifications");
   const accountSettingsBtn = document.querySelector<HTMLButtonElement>("#account-settings");
   const accountHelpBtn = document.querySelector<HTMLButtonElement>("#account-help");
+  const workspaceContextStatus = document.querySelector<HTMLElement>("#workspace-context-status");
+  const statusLocalCopy = document.querySelector<HTMLElement>("#status-local-copy");
+  const statusBranch = document.querySelector<HTMLElement>("#status-branch");
+  const statusFile = document.querySelector<HTMLElement>("#status-file");
   const githubSigninBar = document.querySelector<HTMLElement>("#github-signin-bar");
   const githubSigninText = document.querySelector<HTMLElement>("#github-signin-text");
   const githubUserCode = document.querySelector<HTMLElement>("#github-user-code");
@@ -1180,6 +1190,24 @@ function wire(): void {
         currentBranchEl.title = `${branch} (default: ${payload.defaultBranch})`;
       }
       setContext(currentPathEl, payload.path.length > 0 ? payload.path : "No document");
+      const fileName = payload.path.replaceAll("\\", "/").split("/").at(-1) ?? "";
+      setContext(statusLocalCopy, payload.localCopy ?? "");
+      setContext(statusBranch, payload.branchState === "named" ? (payload.branch ?? "") : "");
+      setContext(statusFile, fileName);
+      const localVisible = (payload.localCopy?.length ?? 0) > 0;
+      const branchVisible = payload.branchState === "named" && (payload.branch?.length ?? 0) > 0;
+      const fileVisible = fileName.length > 0;
+      if (statusLocalCopy) statusLocalCopy.hidden = !localVisible;
+      if (statusBranch) statusBranch.hidden = !branchVisible;
+      if (statusFile) statusFile.hidden = !fileVisible;
+      const separators = workspaceContextStatus?.querySelectorAll<HTMLElement>(
+        ".status-context-separator",
+      );
+      if (separators?.[0]) separators[0].hidden = !(localVisible && (branchVisible || fileVisible));
+      if (separators?.[1]) separators[1].hidden = !(branchVisible && fileVisible);
+      if (workspaceContextStatus) {
+        workspaceContextStatus.hidden = !(localVisible || branchVisible || fileVisible);
+      }
     });
   }
 
@@ -1201,6 +1229,9 @@ function wire(): void {
     // bar via github.code (the one-time code to display) and github.account (the connection state).
     const signInController = new SignInController({
       accountBtn: githubBtn,
+      avatar: accountAvatar,
+      avatarFallback: accountAvatarFallback,
+      notificationCount: accountNotificationCount,
       authBtn: githubAuthBtn,
       accountStatus: githubAccountStatus,
       menu: accountMenu,
@@ -1223,6 +1254,7 @@ function wire(): void {
         await navigator.clipboard.writeText(text);
       },
     });
+    signInController.setNotificationCount(0);
 
     accountSettingsBtn?.addEventListener("click", () => {
       if (accountMenu) {
@@ -1239,6 +1271,9 @@ function wire(): void {
       }
       githubBtn?.setAttribute("aria-expanded", "false");
       ipc.send(Kinds.linkOpen, { url: "https://github.com/ZelAnton/SpecDesk#readme" });
+    });
+    accountNotificationsBtn?.addEventListener("click", () => {
+      centralFrame?.show(CENTRAL_VIEW_NOTIFICATIONS);
     });
 
     // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
@@ -1484,10 +1519,6 @@ function wire(): void {
       if (toolbarAnnouncer) {
         toolbarAnnouncer.textContent = found ? `Found ${query}.` : `${query} was not found.`;
       }
-    });
-
-    notificationsBtn?.addEventListener("click", () => {
-      centralFrame?.show(CENTRAL_VIEW_NOTIFICATIONS);
     });
 
     exportLogBtn?.addEventListener("click", () => {

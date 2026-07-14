@@ -72,7 +72,7 @@ test("real Host packages Copilot 1.0.6 and exposes the honest signed-out chat bo
   // The real native account frame reaches the real WebView2. A fresh disposable profile must not claim a
   // connection: the toolbar offers Connect and the Copilot composer is disabled with a truthful reason.
   await expect(page.locator("#github-auth-btn")).toBeVisible();
-  await expect(page.locator("#github-auth-btn")).toHaveText("Connect to GitHub");
+  await expect(page.locator("#github-auth-btn")).toHaveText("Sign in");
   await expect.poll(() => visibleRightTools(page)).toEqual([
     "Assistant",
     "Outline",

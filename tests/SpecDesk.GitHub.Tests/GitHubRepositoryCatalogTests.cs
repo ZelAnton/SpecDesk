@@ -19,6 +19,36 @@ public sealed class GitHubRepositoryCatalogTests
 		}
 	}
 
+	[Test]
+	public async Task Avatar_uses_only_a_trusted_https_GitHub_image_url()
+	{
+		Handler handler = new(_ => Json(
+			"""{"avatar_url":"https://avatars.githubusercontent.com/u/583231?v=4"}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		string? avatar = await catalog.GetAvatarUrlAsync("secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(avatar, Is.EqualTo("https://avatars.githubusercontent.com/u/583231?v=4"));
+			Assert.That(handler.LastRequest?.RequestUri?.AbsoluteUri, Is.EqualTo("https://api.github.com/user"));
+			Assert.That(handler.LastRequest?.Headers.Authorization?.Parameter, Is.EqualTo("secret"));
+		});
+	}
+
+	[TestCase("http://avatars.githubusercontent.com/u/1")]
+	[TestCase("https://example.test/avatar.png")]
+	[TestCase("not-a-url")]
+	public async Task Avatar_rejects_untrusted_or_non_https_urls(string url)
+	{
+		Handler handler = new(_ => Json($$"""{"avatar_url":"{{url}}"}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		Assert.That(await catalog.GetAvatarUrlAsync("secret"), Is.Null);
+	}
+
 	[TestCase("master")]
 	[TestCase("trunk")]
 	public async Task Metadata_preserves_the_remote_default_branch(string defaultBranch)

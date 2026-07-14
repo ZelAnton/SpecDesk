@@ -2247,7 +2247,9 @@ public sealed partial class HostController
 				branch,
 				branchState,
 				defaultBranch,
-				relative));
+				relative,
+				_workspace?.FindCloneName(repoRoot)
+					?? Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot))));
 	}
 
 	/// <summary>Explicit context publication path shared by local documents and remote-only document

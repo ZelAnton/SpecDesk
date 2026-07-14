@@ -439,7 +439,8 @@ public sealed partial class HostController
 				signedIn: true,
 				login: login,
 				message: "Organizations are unavailable in this build.",
-				organizations: []);
+				organizations: [],
+				avatarUrl: null);
 			return;
 		}
 
@@ -465,7 +466,7 @@ public sealed partial class HostController
 			try
 			{
 				await Task.WhenAll(
-					RefreshAccountOrganizationsAsync(generation, login, cancellationToken),
+					RefreshAccountDetailsAsync(generation, login, cancellationToken),
 					RefreshAccountRepositoriesAsync(generation, cancellationToken));
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -486,15 +487,23 @@ public sealed partial class HostController
 		});
 	}
 
-	private async Task RefreshAccountOrganizationsAsync(
+	private async Task RefreshAccountDetailsAsync(
 		long generation, string? login, CancellationToken cancellationToken)
 	{
 		try
 		{
-			IReadOnlyList<string> organizations = await _auth!.WithAccessTokenAsync(
-				(token, ct) => _repositoryCatalog!.GetOrganizationsAsync(token, ct),
+			(IReadOnlyList<string> Organizations, string? AvatarUrl) details =
+				await _auth!.WithAccessTokenAsync(async (token, ct) =>
+				{
+					Task<IReadOnlyList<string>> organizations =
+						_repositoryCatalog!.GetOrganizationsAsync(token, ct);
+					Task<string?> avatar = TryLoadAccountAvatarAsync(token, ct);
+					await Task.WhenAll(organizations, avatar);
+					return (await organizations, await avatar);
+				},
 				cancellationToken);
-			PublishAccountOrganizationsIfCurrent(generation, login, organizations, message: null);
+			PublishAccountDetailsIfCurrent(
+				generation, login, details.Organizations, details.AvatarUrl, message: null);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
@@ -503,11 +512,29 @@ public sealed partial class HostController
 		catch (Exception ex)
 		{
 			_logger.LogWarning(ex, "Could not load GitHub organizations for the account status");
-			PublishAccountOrganizationsIfCurrent(
+			PublishAccountDetailsIfCurrent(
 				generation,
 				login,
 				[],
+				null,
 				"Organizations unavailable — check your connection or reconnect GitHub to refresh access.");
+		}
+	}
+
+	private async Task<string?> TryLoadAccountAvatarAsync(string token, CancellationToken cancellationToken)
+	{
+		try
+		{
+			return await _repositoryCatalog!.GetAvatarUrlAsync(token, cancellationToken);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Could not load the GitHub account avatar");
+			return null;
 		}
 	}
 
@@ -531,10 +558,11 @@ public sealed partial class HostController
 		}
 	}
 
-	private void PublishAccountOrganizationsIfCurrent(
+	private void PublishAccountDetailsIfCurrent(
 		long generation,
 		string? login,
 		IReadOnlyList<string> organizations,
+		string? avatarUrl,
 		string? message)
 	{
 		lock (_signInPublishSync)
@@ -550,7 +578,8 @@ public sealed partial class HostController
 				signedIn: true,
 				login: login,
 				message: message,
-				organizations: organizations);
+				organizations: organizations,
+				avatarUrl: avatarUrl);
 		}
 	}
 
@@ -587,11 +616,12 @@ public sealed partial class HostController
 		string? login,
 		string? message,
 		bool available = true,
-		IReadOnlyList<string>? organizations = null)
+		IReadOnlyList<string>? organizations = null,
+		string? avatarUrl = null)
 	{
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.GitHubAccount,
-			new GitHubAccountPayload(available, signedIn, login, message, organizations)));
+			new GitHubAccountPayload(available, signedIn, login, message, organizations, avatarUrl)));
 		if (!signedIn)
 		{
 			SendRepositories([]);

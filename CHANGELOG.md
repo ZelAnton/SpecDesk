@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
+- The right panel now ends at the bottom panel instead of overlapping its workspace.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
 - Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The status bar now identifies the active local copy, working line, and filename without repeating the full path.
+- The account avatar now shows the connected GitHub profile image with a neutral signed-out fallback and carries the notification-count badge.
 - Each local copy now offers plain-language Get updates and Share changes actions for its current working line.
 - Local copies and working lines now show available upstream updates and known conflicts alongside local-work indicators.
 - Repositories now has one Refresh action that checks every registered local copy for upstream updates.
@@ -170,6 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Signing out and opening Notifications now live in the avatar menu alongside Help and honest placeholders for Settings and updates; the standalone signed-in actions are gone.
+- Side, bottom, status, and panel toolbars now use lighter, role-specific chrome tones in every theme.
 - Switching between Markdown view modes now preserves edits that are still waiting to synchronize from either pane.
 
 - Local copies now provide safe Get updates and Share actions: updates are fast-forward-only, local work is

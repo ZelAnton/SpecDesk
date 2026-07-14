@@ -22,18 +22,24 @@
       </nav>
       <label class="sr-only" for="toolbar-search">Search</label>
       <input id="toolbar-search" type="search" autocomplete="off" placeholder="Search" />
-      <button id="notifications-btn" class="toolbar-icon" type="button" aria-label="Notifications, none" title="Notifications">♢</button>
-		<button id="github-auth-btn" type="button" hidden>Connect to GitHub</button>
+		<button id="github-auth-btn" type="button" hidden>Sign in</button>
       <div id="account-control">
-        <button id="github-btn" class="toolbar-icon" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" aria-label="Account">●</button>
+        <button id="github-btn" class="toolbar-icon" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" aria-label="Account">
+          <img id="account-avatar" alt="" hidden />
+			<span id="account-avatar-fallback" class="account-avatar-fallback" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0H5Z" /></svg>
+          </span>
+          <span id="account-notification-count" aria-hidden="true" hidden>0</span>
+        </button>
         <div id="account-menu" role="menu" aria-label="Account" hidden>
-          <button id="account-settings" type="button" role="menuitem">Settings</button>
+          <button id="account-notifications" type="button" role="menuitem">Notifications</button>
+          <button id="account-settings" type="button" role="menuitem" disabled>Settings (coming soon)</button>
           <button id="reviews-btn" type="button" role="menuitem" hidden>My reviews</button>
           <button id="theme-btn" type="button" role="menuitemcheckbox" aria-checked="false">Dark theme</button>
           <button id="export-log-btn" type="button" role="menuitem">Export diagnostic log…</button>
           <button id="account-help" type="button" role="menuitem">Help</button>
+          <button id="account-updates" type="button" role="menuitem" disabled>Check for updates (coming soon)</button>
           <hr class="account-menu-separator" />
-          <button id="account-connect" type="button" role="menuitem" hidden>Connect to GitHub</button>
           <button id="account-signout" type="button" role="menuitem" hidden>Sign out</button>
         </div>
       </div>
@@ -197,6 +203,13 @@
     </div>
     <footer id="status-bar">
       <span id="github-account-status" role="status" aria-live="polite" hidden></span>
+      <span id="workspace-context-status" role="status" aria-live="polite" hidden>
+        <span id="status-local-copy"></span>
+        <span class="status-context-separator" aria-hidden="true">·</span>
+        <span id="status-branch"></span>
+        <span class="status-context-separator" aria-hidden="true">·</span>
+        <span id="status-file"></span>
+      </span>
     </footer>
 
     <script type="module" src="./webview.js"></script>

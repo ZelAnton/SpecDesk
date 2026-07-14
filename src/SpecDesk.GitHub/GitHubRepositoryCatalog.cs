@@ -13,6 +13,10 @@ public sealed record GitHubRepositoryOption(string FullName, string? Description
 
 public interface IGitHubRepositoryCatalog
 {
+	Task<string?> GetAvatarUrlAsync(
+		string accessToken, CancellationToken cancellationToken = default) =>
+		Task.FromResult<string?>(null);
+
 	Task<IReadOnlyList<string>> GetOrganizationsAsync(
 		string accessToken, CancellationToken cancellationToken = default) =>
 		Task.FromResult<IReadOnlyList<string>>([]);
@@ -45,6 +49,27 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	private const int MaxTreeBytes = 8 * 1024 * 1024;
 	private const int MaxOrganizationPages = 100;
 	private const int MaxRepositoryPages = 100;
+
+	public async Task<string?> GetAvatarUrlAsync(
+		string accessToken, CancellationToken cancellationToken = default)
+	{
+		using HttpRequestMessage request = CreateRequest("https://api.github.com/user", accessToken);
+		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		response.EnsureSuccessStatusCode();
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+		using JsonDocument json = JsonDocument.Parse(
+			await response.Content.ReadAsStreamAsync(cancellationToken));
+		string? avatarUrl = json.RootElement.TryGetProperty("avatar_url", out JsonElement avatar)
+			&& avatar.ValueKind == JsonValueKind.String
+			? avatar.GetString()
+			: null;
+		return Uri.TryCreate(avatarUrl, UriKind.Absolute, out Uri? uri)
+			&& uri.Scheme == Uri.UriSchemeHttps
+			&& (string.Equals(uri.Host, "avatars.githubusercontent.com", StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+				? uri.AbsoluteUri
+				: null;
+	}
 
 	public async Task<IReadOnlyList<string>> GetOrganizationsAsync(
 		string accessToken, CancellationToken cancellationToken = default)

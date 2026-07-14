@@ -423,6 +423,8 @@ export interface GitHubAccountPayload {
   message?: string;
   /** Organizations visible to this authorization, after the host finishes loading them. */
   organizations?: string[];
+  /** GitHub's HTTPS profile image URL, after account details load. */
+  avatarUrl?: string;
 }
 
 export interface GitHubRepositoryOptionPayload {
@@ -557,6 +559,8 @@ export interface WorkspaceContextPayload {
   branchState: "named" | "detached" | "unavailable";
   defaultBranch: string | null;
   path: string;
+  /** Display name of the local clone that owns the document; absent for remote-only/outside files. */
+  localCopy?: string | null;
 }
 
 /** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). Local paths are absolute;

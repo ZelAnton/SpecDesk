@@ -157,7 +157,8 @@ test("local copies and branches open their files directly", async ({ page }, tes
       organizations: ["acme", "octo-labs"],
     },
   });
-  await expect(page.locator("#toolbar #github-auth-btn")).toHaveText("Sign out @octocat");
+  await expect(page.locator("#toolbar #github-auth-btn")).toBeHidden();
+  await expect(page.locator("#github-btn")).toHaveAttribute("aria-label", /@octocat/);
   await expect(page.locator("#status-bar #github-account-status")).toHaveText(
     "GitHub: @octocat · Organizations: acme, octo-labs",
   );

@@ -183,6 +183,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.login).toBe("octocat");
     expect(payload?.message).toBeUndefined();
     expect(payload?.organizations).toEqual(["acme", "octo-labs"]);
+    expect(payload?.avatarUrl).toBe("https://avatars.githubusercontent.com/u/583231?v=4");
     expect(
       parseGitHubAccount({ available: true, signedIn: true, organizations: ["acme", 7] }),
     ).toBeNull();
@@ -357,6 +358,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       branchState: "named",
       defaultBranch: "main",
       path: "specs/billing.md",
+      localCopy: "billing-repo",
     });
   });
 
@@ -410,6 +412,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       branchState: "named",
       defaultBranch: null,
       path: "docs/guide.md",
+      localCopy: null,
     });
     expect(parseWorkspaceContext({ branchState: "unavailable", path: "outside.md" })).toEqual({
       repository: null,
@@ -418,6 +421,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       branchState: "unavailable",
       defaultBranch: null,
       path: "outside.md",
+      localCopy: null,
     });
   });
 });

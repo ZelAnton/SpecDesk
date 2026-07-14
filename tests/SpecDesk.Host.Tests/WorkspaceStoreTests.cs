@@ -144,6 +144,25 @@ public sealed class WorkspaceStoreTests
 				Is.EqualTo(["main", "draft"]));
 		});
 	}
+
+	[Test]
+	public void FindCloneName_UsesTheRegisteredNameInsteadOfTheFolderName()
+	{
+		WorkspaceStore store = new(_path);
+		string clonePath = Path.Combine(_dir, "folder-name");
+		RegisteredClone clone = new("Manager copy", clonePath, ["main"]);
+		store.RegisterRepo(new RegisteredRepo(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", [clone]));
+
+		string pathWithTrailingSeparator = clonePath + Path.DirectorySeparatorChar;
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(store.FindCloneName(pathWithTrailingSeparator), Is.EqualTo("Manager copy"));
+			Assert.That(store.FindCloneName(Path.Combine(_dir, "other")), Is.Null);
+		});
+	}
+
 	[Test]
 	public void RegisterRepo_DedupesById_AndUnregisterRemovesIt()
 	{
