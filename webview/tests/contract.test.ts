@@ -295,17 +295,18 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.remote[0]?.id).toBe("team-style");
   });
 
-  it("tree (nested folder + files)", () => {
+  it("tree (correlated lazy directory level)", () => {
     const payload = parseTree(fixture.tree);
     expect(payload).not.toBeNull();
     expect(payload?.root).toBe("C:\\specs\\billing-repo");
     expect(payload?.nodes.map((n) => n.name)).toEqual(["specs", "README.md"]);
     const specs = payload?.nodes[0];
     expect(specs?.isDirectory).toBe(true);
-    expect(specs?.children.map((n) => n.name)).toEqual(["billing.md"]);
-    expect(specs?.children[0]?.isDirectory).toBe(false);
+    expect(specs?.hasChildren).toBe(true);
+    expect(specs?.children).toEqual([]);
     expect(payload?.nodes[1]?.isDirectory).toBe(false);
     expect(payload?.nodes[1]?.children).toEqual([]);
+    expect(payload?.requestId).toBe(31);
   });
 
   it("workspace.state (recent file + favorite folder + registered repo)", () => {

@@ -423,6 +423,7 @@ public sealed partial class HostController
 	private void PublishWorkspaceFolder(WorkspaceRootPublication publication)
 	{
 		WorkspaceRootPublishingForTest?.Invoke(publication.Root);
+		WorkspaceContextPayload? folderContext = TryBuildWorkspaceFolderContext(publication.Root);
 		lock (_workspaceRootPublicationSync)
 		{
 			WorkspaceRootRemoteInvalidationStartingForTest?.Invoke(publication.Root);
@@ -458,6 +459,10 @@ public sealed partial class HostController
 				}
 				RecordRecent(publication.Root, isFolder: true);
 				Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, tree));
+				if (folderContext is not null)
+				{
+					SendWorkspaceContext(folderContext);
+				}
 			}
 			_logger.LogInformation("Opened workspace folder {Root}", publication.Root);
 		}
@@ -470,18 +475,86 @@ public sealed partial class HostController
 		&& _workspaceRoot is not null
 		&& SameFullPath(_workspaceRoot, publication.Root);
 
-	// Serve the Markdown file tree for the navigator. An explicit path scopes it; otherwise the current
-	// workspace folder, else the open document's folder — so requesting the tree without a prior "open
-	// folder" still shows something useful (the folder the open document lives in).
+	private WorkspaceContextPayload? TryBuildWorkspaceFolderContext(string repoRoot)
+	{
+		try
+		{
+			if (!IsRepoVersioned(repoRoot))
+			{
+				return null;
+			}
+			string? branch;
+			string branchState;
+			string? defaultBranch;
+			string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+			string? configured = WorkflowConfig.defaultBaseForHost(WorkflowSeeds.TryReadRepoToml(repoRoot));
+			lock (_repoGate)
+			{
+				CurrentBranchInfo current = _versioning.DescribeCurrentBranch(repoRoot);
+				branch = current.Name;
+				branchState = current.IsDetached ? "detached" : current.Name is null ? "unavailable" : "named";
+				defaultBranch = _versioning.DefaultBranch(repoRoot, configured);
+				GitHubRepo? remote = _publishing is null
+					? null
+					: GitHubRemote.TryParse(_publishing.RemoteUrl(repoRoot));
+				if (remote is not null)
+				{
+					repository = $"{remote.Owner}/{remote.Name}";
+				}
+			}
+			return new WorkspaceContextPayload(
+				repository, repoRoot, branch, branchState, defaultBranch, string.Empty);
+		}
+		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+		{
+			_logger.LogWarning(ex, "Could not read workspace repository context for {Root}", repoRoot);
+			return null;
+		}
+	}
+
+	// Serve one Folder-panel level. An explicit path is accepted only below the current workspace (or the
+	// open document's folder when no workspace exists); otherwise the webview could enumerate arbitrary disk
+	// locations. A request without a path uses that same authoritative root.
 	private void OnTreeRequest(IpcMessage message)
 	{
-		InvalidateRemoteNavigation(browse: true, file: false);
 		TreeRequestPayload? payload = SafeGetPayload<TreeRequestPayload>(message);
+		if (!string.IsNullOrWhiteSpace(payload?.Path)
+			&& TryRequestRemoteLevel(payload.Path, payload.RequestId))
+		{
+			return;
+		}
+		InvalidateRemoteNavigation(browse: true, file: false);
 		string? root;
 		WorkspaceTreeRequestPublication? publication = null;
 		if (!string.IsNullOrWhiteSpace(payload?.Path))
 		{
-			root = payload.Path;
+			string? authorizedRoot;
+			lock (_sync)
+			{
+				authorizedRoot = _workspaceRoot
+					?? (_currentPath is not null ? Path.GetDirectoryName(_currentPath) : null);
+			}
+			try
+			{
+				root = Path.GetFullPath(payload.Path);
+				string? authorizedFull = authorizedRoot is null ? null : Path.GetFullPath(authorizedRoot);
+				if (authorizedFull is null
+					|| (!SameFullPath(authorizedFull, root) && !AppAssetResolver.IsInside(
+						Path.TrimEndingDirectorySeparator(authorizedFull), root))
+					|| AppAssetResolver.HasReparseTraversal(authorizedFull, root))
+				{
+					Emit(IpcSerializer.SerializeEvent(
+						MessageKinds.Tree, new TreePayload(payload.Path, [], payload.RequestId)));
+					return;
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+				or ArgumentException or NotSupportedException)
+			{
+				_logger.LogWarning(ex, "Rejected an invalid Folder tree path");
+				SendError("That folder could not be read.");
+				return;
+			}
 		}
 		else
 		{
@@ -497,7 +570,7 @@ public sealed partial class HostController
 		if (string.IsNullOrEmpty(root))
 		{
 			// Nothing to show yet (no folder opened, no document loaded) — an empty tree, not an error.
-			TreePayload emptyTree = new(string.Empty, []);
+			TreePayload emptyTree = new(string.Empty, [], payload?.RequestId ?? 0);
 			if (publication is { } emptyPublication)
 			{
 				EmitWorkspaceTreeRequest(emptyTree, emptyPublication);
@@ -509,15 +582,18 @@ public sealed partial class HostController
 			return;
 		}
 
-		EmitTree(root, publication);
+		EmitTree(root, payload?.RequestId ?? 0, publication);
 	}
 
-	private void EmitTree(string root, WorkspaceTreeRequestPublication? publication = null)
+	private void EmitTree(
+		string root,
+		long requestId = 0,
+		WorkspaceTreeRequestPublication? publication = null)
 	{
 		TreePayload tree;
 		try
 		{
-			tree = FileTreeBuilder.Build(root);
+			tree = FileTreeBuilder.Build(root, requestId);
 		}
 		catch (Exception ex) when (
 			ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)

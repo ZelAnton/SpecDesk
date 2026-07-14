@@ -222,22 +222,18 @@
         "name": "specs",
         "path": "C:\\specs\\billing-repo\\specs",
         "isDirectory": true,
-        "children": [
-          {
-            "name": "billing.md",
-            "path": "C:\\specs\\billing-repo\\specs\\billing.md",
-            "isDirectory": false,
-            "children": []
-          }
-        ]
+        "children": [],
+        "hasChildren": true
       },
       {
         "name": "README.md",
         "path": "C:\\specs\\billing-repo\\README.md",
         "isDirectory": false,
-        "children": []
+        "children": [],
+        "hasChildren": false
       }
-    ]
+    ],
+    "requestId": 31
   },
   "workspace.context": {
     "repository": "billing-repo",

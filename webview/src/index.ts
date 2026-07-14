@@ -469,7 +469,7 @@ function wire(): void {
   let centralFrame: CentralFrame | undefined;
   const isEditorCentral = (): boolean =>
     centralFrame === undefined || centralFrame.active() === CENTRAL_VIEW_EDITOR;
-  // The document-outline tool (right rail), assigned in wireWorkspace; fed the parsed headings whenever the
+  // The document-outline tool (left Editor mode), assigned in wireWorkspace; fed the parsed headings whenever the
   // document changes. Undefined before the workspace wires (or in the reduced-DOM tests).
   let outline: Outline | undefined;
   // Re-parse the document's headings and refresh the outline. Called on load and on every edit.
@@ -996,13 +996,16 @@ function wire(): void {
         updateOutline(text);
         // Keep the left-rail file navigator relevant: highlight the freshly opened document, and ask for the
         // tree with no path, so the host shows the current workspace folder if one is open, else the newly
-        // loaded document's own folder. A `tree` event comes back and feeds the navigator (its collapse state
-        // is preserved across the re-render, and the highlight lands when the tree containing it arrives).
+        // loaded document's own folder. A `tree` event comes back and feeds the navigator, and the highlight
+        // lands as the active file's lazy ancestor levels arrive.
         fileTree?.setActiveFile(payload.path);
+        if (documentCleared) {
+          fileTree?.setContext(null);
+        }
         invalidateActivityRequests();
         for (const panel of activityPanels) void panel.refresh();
         if (!payload.readOnly) {
-          ipc.send(Kinds.treeRequest);
+          fileTree?.requestRoot();
         }
         // Reset BOTH panes' scroll to the document's start: setText above only replaces content, it does
         // NOT reset scrollTop, so a pane keeps whatever position the PREVIOUS document left it at — an
@@ -1162,7 +1165,18 @@ function wire(): void {
       if (!payload) {
         return;
       }
-      applyActiveContext(activeContextModel.workspaceChanged(payload));
+      // An empty relative path identifies the independently browsed Folder workspace, not the active
+      // document. Keep its repository/branch label in that panel without replacing status-bar or right-tool
+      // context for a document that may intentionally be open from somewhere else.
+      if (payload.repository !== null && payload.path.length === 0) {
+        fileTree?.setContext(payload);
+        return;
+      }
+      const nextContext = activeContextModel.workspaceChanged(payload);
+      applyActiveContext(nextContext);
+      // The Folder panel owns a workspace tree, which may intentionally differ from the open document.
+      // It performs its own root/context match, while ActiveContextModel independently protects document tools.
+      fileTree?.setContext(payload);
       setContext(currentRepositoryEl, payload.repository ?? "No repository");
       if (currentRepositoryEl && payload.repositoryRoot) {
         currentRepositoryEl.title = payload.repositoryRoot;
@@ -1269,6 +1283,7 @@ function wire(): void {
         const nextIdentity = payload.available && payload.signedIn ? (payload.login ?? "") : null;
         if (nextIdentity !== githubAccountIdentity) {
           githubAccountIdentity = nextIdentity;
+          fileTree?.clearAccountState();
           repositoriesPanel?.clearAccountState();
           invalidateActivityRequests();
           for (const panel of activityPanels) {
@@ -1622,8 +1637,13 @@ function wire(): void {
     const files = new FileTree({
       onOpenFile: (path) => openDocument(path),
       onOpenFolder: () => openFolder(),
+      onRequestLevel: (path, requestId) =>
+        path === undefined
+          ? ipc.send(Kinds.treeRequest, { requestId })
+          : ipc.send(Kinds.treeRequest, { path, requestId }),
       onToggleFavorite: (item, favorite) =>
         ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
+      onShowEditor: () => centralFrame?.show(CENTRAL_VIEW_EDITOR),
     });
     fileTree = files;
 

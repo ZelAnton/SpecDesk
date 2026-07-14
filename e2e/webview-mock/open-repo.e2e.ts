@@ -7,8 +7,9 @@ const TREE = {
   kind: "tree",
   payload: {
     root: "C:\\specs\\repo",
+    requestId: 0,
     nodes: [
-      { name: "README.md", path: "C:\\specs\\repo\\README.md", isDirectory: false, children: [] },
+      { name: "README.md", path: "C:\\specs\\repo\\README.md", isDirectory: false, children: [], hasChildren: false },
     ],
   },
 };
@@ -103,12 +104,17 @@ test("a tree from a plain document load does NOT reveal the Files panel", async 
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
 
-  // Load a document (which makes the app request its folder's tree) — with the left dock collapsed and no
-  // folder/repo open initiated, the arriving tree must NOT force the Files panel open.
+  // Loading reveals the contextual Editor mode. A later tree must not replace it with Folders.
   await loadDoc(page, { path: "C:\\specs\\repo\\doc.md", text: "# Doc" });
-  await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
+  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Editor"]')).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await emit(page, TREE);
-  await expect(page.locator("#left-dock")).toHaveClass(/dock--collapsed/);
+  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]')).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
 });
 
 test("clicking a repository in the Repositories panel browses it", async ({ page }) => {

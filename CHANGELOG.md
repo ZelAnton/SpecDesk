@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Disconnecting or changing GitHub accounts now immediately closes private online documents and clears their Folder tree and context.
+- Online repository folders with more than 1,000 direct entries now load completely instead of silently hiding the remainder.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
 - Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.
@@ -42,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split view now mirrors the line or formatted block under the pointer in both panes with a distinct sand highlight.
 - The Copilot panel now uses a roomy VS Code-style composer card with context and template actions,
   assistant/model indicators, an icon send action, and live GitHub connection status in one compact footer.
-- The right panel now follows the active context: Chat is always available, Comments appears for a review, History for a repository branch, Outline for Markdown, and Versions for repository files.
+- The right panel now follows the active context: Chat is always available, Comments appears for a review, History for a repository branch, and Versions for repository files.
 - GitHub repository entry now suggests accessible personal and organization repositories by name.
 - Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
 - Repository entry now offers **Clone…** to managed storage and **Clone to folder…** with collision-safe destinations.
@@ -59,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   placeholder explains where review requests and mentions will appear as notification sources are added.
 - Repositories, folders, and files can now be starred as favorites and reopened later, including exact online
   branches and paths for repositories that have not been copied locally.
-- Selecting a registered repository now browses its complete folder/file tree directly from GitHub even
+- Selecting a registered repository now browses its folder/file tree on demand directly from GitHub even
   without a local copy; selecting a text file opens a read-only preview, while local trees now include all files.
 - Registered repositories now show their managed local copies and each copy's non-default working branches;
   you can create more than one local copy, and SpecDesk remembers the repository's actual default branch.
@@ -170,6 +172,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Navigator now starts directly with Start, while a contextual Editor mode owns the document outline and
+  Folders opens the editor beside an initially collapsed, one-level-at-a-time workspace tree.
+- Folders now identifies the opened repository or local copy and working line and filters the already loaded file tree
+  without scanning unopened directories.
 - Switching between Markdown view modes now preserves edits that are still waiting to synchronize from either pane.
 
 - Local copies now provide safe Get updates and Share actions: updates are fast-forward-only, local work is

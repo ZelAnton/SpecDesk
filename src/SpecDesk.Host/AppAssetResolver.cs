@@ -68,7 +68,7 @@ public static class AppAssetResolver
 		// (untrusted) opened repo could textually pass the check above yet point outside the tree. A
 		// spec repo has no reason to use links under it, so refuse to serve a path that traverses one
 		// rather than follow it out of the repo and leak an arbitrary file into the webview.
-		if (TraversesReparsePoint(rootFull, candidate))
+		if (HasReparseTraversal(rootFull, candidate))
 		{
 			return null;
 		}
@@ -91,7 +91,7 @@ public static class AppAssetResolver
 
 	// True when any existing path component between the root and the candidate is a reparse point
 	// (symlink/junction). Walks each segment and stats it; stops at the first non-existent component.
-	private static bool TraversesReparsePoint(string rootFull, string candidate)
+	internal static bool HasReparseTraversal(string rootFull, string candidate)
 	{
 		string relative = Path.GetRelativePath(rootFull, candidate);
 		string current = rootFull;

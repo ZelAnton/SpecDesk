@@ -1,22 +1,25 @@
-/**
- * The left-rail file navigator (design concept §9): the open workspace folder's Markdown tree. Folders
- * expand/collapse; clicking a file opens it (via the owner's onOpenFile → `doc.open {path}`). The tree data
- * comes from the host as a `tree` event ({@link FileTree.setTree}); an empty state offers to open a folder.
- *
- * The tree is rendered as nested `<ul>`/`<li>` with folders as `aria-expanded` toggle buttons and files as
- * plain buttons, so the hierarchy and expand state are programmatic (a screen reader announces both).
- */
+/** Lazy, one-level-at-a-time Folder navigator for the active workspace. */
 
-import type { TreeNode, TreePayload, WorkspaceItem } from "../../wire/protocol.js";
+import type {
+  TreeNode,
+  TreePayload,
+  WorkspaceContextPayload,
+  WorkspaceItem,
+} from "../../wire/protocol.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
 export interface FileTreeCallbacks {
-  /** Open the file at `path` (the owner maps this to `doc.open {path}`). */
   onOpenFile(path: string): void;
-  /** Open a folder as the workspace (the empty-state action; maps to `folder.open`). */
   onOpenFolder(): void;
+  onRequestLevel(path: string | undefined, requestId: number): void;
   onToggleFavorite?(item: WorkspaceItem, favorite: boolean): void;
+  onShowEditor?(): void;
+}
+
+interface PendingLevel {
+  readonly generation: number;
+  readonly path?: string;
 }
 
 export class FileTree implements PanelTool {
@@ -24,20 +27,22 @@ export class FileTree implements PanelTool {
   readonly label = "Folders";
   readonly icon = icon("files");
 
-  private headerEl: HTMLElement | null = null;
+  private rootEl: HTMLElement | null = null;
+  private branchEl: HTMLElement | null = null;
   private listEl: HTMLElement | null = null;
   private emptyEl: HTMLElement | null = null;
+  private filterEl: HTMLInputElement | null = null;
   private tree: TreePayload | null = null;
-  // Folder paths the author collapsed — folders default to expanded, so only the exceptions are tracked
-  // (and they survive a re-render from a fresh `tree` event, since the paths are stable). Pruned to the
-  // current tree on each setTree so it can't accumulate paths from folders/workspaces no longer shown.
-  private readonly collapsed = new Set<string>();
-  // The open document's path, highlighted in the tree so the author keeps their place (like the navigator
-  // highlighting the active view). null when nothing is open or the open file isn't in this tree.
   private activeFile: string | null = null;
   private favorites: readonly WorkspaceItem[] = [];
-  // Per-render counter for the folder→child-list `aria-controls` ids (reset at the top of each render).
+  private context: WorkspaceContextPayload | null = null;
+  private readonly expanded = new Set<string>();
+  private readonly loaded = new Set<string>();
+  private readonly pending = new Map<number, PendingLevel>();
+  private requestSequence = 0;
+  private generation = 0;
   private branchSeq = 0;
+  private filter = "";
 
   constructor(private readonly callbacks: FileTreeCallbacks) {}
 
@@ -45,8 +50,35 @@ export class FileTree implements PanelTool {
     const root = document.createElement("div");
     root.className = "file-tree";
 
-    const header = document.createElement("p");
-    header.className = "file-tree-root";
+    const identity = document.createElement("div");
+    identity.className = "file-tree-identity";
+    const heading = document.createElement("p");
+    heading.className = "file-tree-root";
+    const branch = document.createElement("p");
+    branch.className = "file-tree-branch-name";
+    identity.append(heading, branch);
+
+    const filterRow = document.createElement("div");
+    filterRow.className = "file-tree-filter-row";
+    const filter = document.createElement("input");
+    filter.type = "search";
+    filter.className = "file-tree-filter";
+    filter.placeholder = "Filter files and folders";
+    filter.setAttribute("aria-label", "Filter files and folders");
+    filter.autocomplete = "off";
+    filter.addEventListener("input", () => {
+      this.filter = filter.value.trim().toLocaleLowerCase();
+      this.render();
+    });
+    filter.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && filter.value.length > 0) {
+        event.preventDefault();
+        filter.value = "";
+        this.filter = "";
+        this.render();
+      }
+    });
+    filterRow.append(filter);
 
     const empty = document.createElement("div");
     empty.className = "file-tree-empty";
@@ -64,44 +96,65 @@ export class FileTree implements PanelTool {
     list.className = "file-tree-list";
     list.setAttribute("aria-label", "Workspace files");
 
-    root.append(header, empty, list);
+    root.append(identity, filterRow, empty, list);
     body.appendChild(root);
-    this.headerEl = header;
+    this.rootEl = heading;
+    this.branchEl = branch;
     this.emptyEl = empty;
     this.listEl = list;
+    this.filterEl = filter;
     this.render();
   }
 
-  /** Replace the tree with the host's latest `tree` payload. */
+  onShow(): void {
+    this.callbacks.onShowEditor?.();
+  }
+
+  /** Ask for the active workspace root. Only the matching response may replace the current tree. */
+  requestRoot(): void {
+    const requestId = ++this.requestSequence;
+    this.pending.set(requestId, { generation: this.generation });
+    this.callbacks.onRequestLevel(undefined, requestId);
+  }
+
+  /** Apply an unsolicited root publication or a correlated root/directory response. */
   setTree(tree: TreePayload): void {
-    this.tree = tree;
-    // Drop collapse state for folders no longer in the tree, so the set stays bounded to what's shown.
-    const present = new Set<string>();
-    collectFolderPaths(tree.nodes, present);
-    for (const path of [...this.collapsed]) {
-      if (!present.has(path)) {
-        this.collapsed.delete(path);
-      }
-    }
-    this.render();
-  }
-
-  /** Mark `path` as the currently-open document (highlighted in the tree); null clears the highlight. */
-  setActiveFile(path: string | null): void {
-    if (path === this.activeFile) {
+    if (tree.requestId === 0) {
+      this.replaceRoot(tree);
       return;
     }
-    this.activeFile = path;
-    // Reveal the active file: expand any collapsed ANCESTOR folder, so opening a file inside a folder the
-    // author had collapsed doesn't hide the very highlight meant to keep their place.
-    if (path !== null) {
-      for (const folder of [...this.collapsed]) {
-        if (path === folder || path.startsWith(`${folder}/`) || path.startsWith(`${folder}\\`)) {
-          this.collapsed.delete(folder);
-        }
-      }
+    const pending = this.pending.get(tree.requestId);
+    if (pending === undefined) return;
+    this.pending.delete(tree.requestId);
+    if (pending.generation !== this.generation) return;
+    if (tree.error !== undefined) {
+      if (pending.path !== undefined) this.expanded.delete(normalizePath(pending.path));
+      this.render();
+      return;
     }
+    if (pending.path === undefined) {
+      this.replaceRoot(tree);
+      return;
+    }
+    if (normalizePath(pending.path) !== normalizePath(tree.root) || this.tree === null) return;
+    const replaced = replaceChildren(this.tree.nodes, pending.path, tree.nodes);
+    if (!replaced) return;
+    this.loaded.add(normalizePath(pending.path));
+    this.expanded.add(normalizePath(pending.path));
     this.render();
+    this.revealActiveBranch();
+  }
+
+  setContext(context: WorkspaceContextPayload | null): void {
+    this.context = context;
+    this.render();
+  }
+
+  setActiveFile(path: string | null): void {
+    if (path === this.activeFile) return;
+    this.activeFile = path;
+    this.render();
+    this.revealActiveBranch();
   }
 
   setFavorites(favorites: readonly WorkspaceItem[]): void {
@@ -109,61 +162,148 @@ export class FileTree implements PanelTool {
     this.render();
   }
 
-  private render(): void {
-    if (this.headerEl === null || this.listEl === null || this.emptyEl === null) {
+  /** Retire only GitHub-backed Folder data at an account boundary; local folders remain usable. */
+  clearAccountState(): void {
+    const remoteContext =
+      this.context !== null &&
+      this.context.repository !== null &&
+      this.context.repositoryRoot === null;
+    const remoteTree =
+      this.tree?.remote === true || (this.tree?.nodes.some(nodeHasRemotePath) ?? false);
+    const remoteFile = this.activeFile?.startsWith("github://") ?? false;
+    if (!remoteContext && !remoteTree && !remoteFile) return;
+    this.generation++;
+    this.pending.clear();
+    this.expanded.clear();
+    this.loaded.clear();
+    this.tree = null;
+    this.context = null;
+    if (remoteFile) this.activeFile = null;
+    this.render();
+  }
+
+  focusFilter(): void {
+    this.filterEl?.focus();
+  }
+
+  private replaceRoot(tree: TreePayload): void {
+    this.generation++;
+    this.pending.clear();
+    this.expanded.clear();
+    this.loaded.clear();
+    this.tree = { ...tree, nodes: tree.nodes.map(cloneNode) };
+    this.loaded.add(normalizePath(tree.root));
+    this.render();
+    this.revealActiveBranch();
+  }
+
+  private requestDirectory(path: string): void {
+    const normalized = normalizePath(path);
+    if (
+      this.loaded.has(normalized) ||
+      [...this.pending.values()].some((item) => item.path === path)
+    ) {
       return;
     }
-    // Rebuilding the tree removes whatever button had focus (dropping it to <body>); remember the focused
-    // item so it can be restored after the rebuild — a keyboard user opening files keeps their place.
+    const requestId = ++this.requestSequence;
+    this.pending.set(requestId, { generation: this.generation, path });
+    this.callbacks.onRequestLevel(path, requestId);
+    this.render();
+  }
+
+  private revealActiveBranch(): void {
+    if (this.tree === null || this.activeFile === null) return;
+    const active = normalizePath(this.activeFile);
+    let nodes = this.tree.nodes;
+    while (true) {
+      const folder = nodes.find(
+        (node) => node.isDirectory && isDescendantOrSame(active, normalizePath(node.path)),
+      );
+      if (folder === undefined) return;
+      const path = normalizePath(folder.path);
+      this.expanded.add(path);
+      if (!this.loaded.has(path)) {
+        this.requestDirectory(folder.path);
+        return;
+      }
+      nodes = folder.children;
+    }
+  }
+
+  private render(): void {
+    if (
+      this.rootEl === null ||
+      this.branchEl === null ||
+      this.listEl === null ||
+      this.emptyEl === null
+    ) {
+      return;
+    }
     const focusedPath = this.focusedItemPath();
     this.branchSeq = 0;
-    // A tree with a non-empty root but zero nodes is a real (opened-but-Markdown-less) folder; a null tree
-    // (nothing opened yet) is the true empty state that offers the open-folder action.
     const tree = this.tree;
     const hasFolder = tree !== null && tree.root.length > 0;
     this.emptyEl.hidden = hasFolder;
-    this.headerEl.hidden = !hasFolder;
+    const identityEl = this.rootEl.parentElement;
+    const filterRowEl = this.filterEl?.parentElement;
+    if (identityEl !== null) identityEl.hidden = !hasFolder;
+    if (filterRowEl !== null && filterRowEl !== undefined) filterRowEl.hidden = !hasFolder;
     this.listEl.hidden = !hasFolder;
 
-    this.headerEl.textContent = tree !== null && hasFolder ? folderName(tree.root) : "";
-    this.headerEl.title = tree !== null && hasFolder ? tree.root : "";
+    const identity = this.folderIdentity(tree);
+    this.rootEl.textContent = identity.name;
+    this.rootEl.title = identity.title;
+    this.branchEl.textContent = identity.branch ?? "";
+    this.branchEl.hidden = identity.branch === null;
 
     this.listEl.replaceChildren();
-    if (tree === null || tree.nodes.length === 0) {
-      if (hasFolder) {
-        // An opened folder that holds no Markdown — say so rather than showing a blank pane.
-        const none = document.createElement("p");
-        none.className = "file-tree-none";
-        none.textContent = "No specs in this folder.";
-        this.listEl.appendChild(none);
-      }
+    if (tree === null) return;
+    if (tree.error !== undefined) {
+      const error = document.createElement("p");
+      error.className = "file-tree-error";
+      error.setAttribute("role", "alert");
+      error.textContent = tree.error;
+      this.listEl.appendChild(error);
       return;
     }
-    this.listEl.appendChild(this.buildList(tree.nodes));
+    const shown = this.filter.length === 0 ? tree.nodes : filterNodes(tree.nodes, this.filter);
+    if (shown.length === 0) {
+      const none = document.createElement("p");
+      none.className = "file-tree-none";
+      none.textContent =
+        this.filter.length > 0 ? "No loaded items match this filter." : "This folder is empty.";
+      this.listEl.appendChild(none);
+      return;
+    }
+    this.listEl.appendChild(this.buildList(shown));
     this.restoreFocus(focusedPath);
   }
 
-  /** The `path` of the focused tree item, or null if focus is elsewhere — captured before a rebuild. */
-  private focusedItemPath(): string | null {
-    const active = document.activeElement;
-    if (
-      active instanceof HTMLElement &&
-      this.listEl?.contains(active) &&
-      (active.classList.contains("file-tree-item") || active.classList.contains("file-tree-star"))
-    ) {
-      return active.dataset.path ?? null;
+  private folderIdentity(tree: TreePayload | null): {
+    name: string;
+    title: string;
+    branch: string | null;
+  } {
+    if (tree === null) return { name: "", title: "", branch: null };
+    const context = contextMatchesTree(this.context, tree.root) ? this.context : null;
+    if (context?.repository !== null && context?.repository !== undefined) {
+      const name = context.repositoryRoot ? folderName(context.repositoryRoot) : context.repository;
+      const branch = context.branchState === "named" ? context.branch : null;
+      return { name, title: context.repositoryRoot ?? context.repository, branch };
     }
-    return null;
+    return { name: folderName(tree.root), title: tree.root, branch: null };
   }
 
-  /** Re-focus the item at `path` after a rebuild (no-op if focus wasn't in the tree or the item is gone). */
+  private focusedItemPath(): string | null {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && this.listEl?.contains(active)
+      ? (active.dataset.path ?? null)
+      : null;
+  }
+
   private restoreFocus(path: string | null): void {
-    if (path === null || this.listEl === null) {
-      return;
-    }
-    for (const el of this.listEl.querySelectorAll<HTMLElement>(
-      ".file-tree-item, .file-tree-star",
-    )) {
+    if (path === null || this.listEl === null) return;
+    for (const el of this.listEl.querySelectorAll<HTMLElement>("[data-path]")) {
       if (el.dataset.path === path) {
         el.focus();
         return;
@@ -174,48 +314,46 @@ export class FileTree implements PanelTool {
   private buildList(nodes: readonly TreeNode[]): HTMLUListElement {
     const ul = document.createElement("ul");
     ul.className = "file-tree-branch";
-    for (const node of nodes) {
+    for (const node of nodes)
       ul.appendChild(node.isDirectory ? this.buildFolder(node) : this.buildFile(node));
-    }
     return ul;
   }
 
   private buildFolder(node: TreeNode): HTMLLIElement {
     const li = document.createElement("li");
-    const expanded = !this.collapsed.has(node.path);
+    const path = normalizePath(node.path);
+    const expanded = this.expanded.has(path);
+    const visiblyExpanded = expanded || (this.filter.length > 0 && node.children.length > 0);
+    const loading = [...this.pending.values()].some((pending) => pending.path === node.path);
     const row = document.createElement("div");
     row.className = "file-tree-row";
-
     const childList = this.buildList(node.children);
     const listId = `file-tree-branch-${this.branchSeq++}`;
     childList.id = listId;
-    childList.hidden = !expanded;
+    childList.hidden = !visiblyExpanded;
 
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "file-tree-item file-tree-folder";
     toggle.dataset.path = node.path;
-    toggle.setAttribute("aria-expanded", String(expanded));
+    toggle.setAttribute("aria-expanded", String(visiblyExpanded));
     toggle.setAttribute("aria-controls", listId);
+    toggle.setAttribute("aria-busy", String(loading));
     toggle.textContent = node.name;
-    toggle.title = node.name;
-    if (node.path === this.activeFile) {
-      toggle.classList.add("is-current");
-      toggle.setAttribute("aria-current", "true");
-    }
-
+    toggle.title = loading ? `Loading ${node.name}` : node.name;
+    this.markCurrent(toggle, node.path);
     toggle.addEventListener("click", () => {
-      // Collapsed ≡ present in the set; toggle membership and derive the new expanded state from it.
-      const willExpand = this.collapsed.has(node.path);
-      if (willExpand) {
-        this.collapsed.delete(node.path);
+      if (expanded) {
+        this.expanded.delete(path);
+        this.render();
+      } else if (!this.loaded.has(path)) {
+        this.expanded.add(path);
+        this.requestDirectory(node.path);
       } else {
-        this.collapsed.add(node.path);
+        this.expanded.add(path);
+        this.render();
       }
-      toggle.setAttribute("aria-expanded", String(willExpand));
-      childList.hidden = !willExpand;
     });
-
     row.append(toggle, this.favoriteButton(node));
     li.append(row, childList);
     return li;
@@ -231,14 +369,18 @@ export class FileTree implements PanelTool {
     button.dataset.path = node.path;
     button.textContent = node.name;
     button.title = node.name;
-    if (node.path === this.activeFile) {
-      button.classList.add("is-current");
-      button.setAttribute("aria-current", "true");
-    }
+    this.markCurrent(button, node.path);
     button.addEventListener("click", () => this.callbacks.onOpenFile(node.path));
     row.append(button, this.favoriteButton(node));
     li.append(row);
     return li;
+  }
+
+  private markCurrent(button: HTMLButtonElement, path: string): void {
+    if (normalizePath(path) === normalizePath(this.activeFile ?? "")) {
+      button.classList.add("is-current");
+      button.setAttribute("aria-current", "true");
+    }
   }
 
   private favoriteButton(node: TreeNode): HTMLButtonElement {
@@ -259,6 +401,36 @@ export class FileTree implements PanelTool {
     star.addEventListener("click", () => this.callbacks.onToggleFavorite?.(item, !favored));
     return star;
   }
+}
+
+function replaceChildren(nodes: TreeNode[], path: string, children: TreeNode[]): boolean {
+  for (const node of nodes) {
+    if (normalizePath(node.path) === normalizePath(path)) {
+      node.children = children.map(cloneNode);
+      node.hasChildren = children.length > 0;
+      return true;
+    }
+    if (replaceChildren(node.children, path, children)) return true;
+  }
+  return false;
+}
+
+function cloneNode(node: TreeNode): TreeNode {
+  return { ...node, children: node.children.map(cloneNode) };
+}
+
+function nodeHasRemotePath(node: TreeNode): boolean {
+  return node.path.startsWith("github://") || node.children.some(nodeHasRemotePath);
+}
+
+function filterNodes(nodes: readonly TreeNode[], query: string): TreeNode[] {
+  const result: TreeNode[] = [];
+  for (const node of nodes) {
+    const selfMatches = node.name.toLocaleLowerCase().includes(query);
+    const children = selfMatches ? node.children : filterNodes(node.children, query);
+    if (selfMatches || children.length > 0) result.push({ ...node, children });
+  }
+  return result;
 }
 
 function workspaceItemForNode(node: TreeNode): WorkspaceItem {
@@ -304,17 +476,24 @@ function sameWorkspaceItem(left: WorkspaceItem, right: WorkspaceItem): boolean {
     : left.path.toLowerCase() === right.path.toLowerCase();
 }
 
-/** Collect every directory node's path (recursively) into `into` — for pruning stale collapse state. */
-function collectFolderPaths(nodes: readonly TreeNode[], into: Set<string>): void {
-  for (const node of nodes) {
-    if (node.isDirectory) {
-      into.add(node.path);
-      collectFolderPaths(node.children, into);
-    }
-  }
+function isDescendantOrSame(candidate: string, parent: string): boolean {
+  return candidate === parent || candidate.startsWith(`${parent}/`);
 }
 
-/** The last path segment (the folder's display name), tolerant of a trailing separator and either slash. */
+function normalizePath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalized.startsWith("github://") ? normalized : normalized.toLocaleLowerCase();
+}
+
+function contextMatchesTree(context: WorkspaceContextPayload | null, root: string): boolean {
+  if (context?.repository === null || context?.repository === undefined) return true;
+  const normalizedRoot = normalizePath(root);
+  if (context.repositoryRoot !== null) {
+    return isDescendantOrSame(normalizedRoot, normalizePath(context.repositoryRoot));
+  }
+  return normalizedRoot === normalizePath(context.repository);
+}
+
 function folderName(path: string): string {
   const trimmed = path.replace(/[/\\]+$/, "");
   const segments = trimmed.split(/[/\\]/);

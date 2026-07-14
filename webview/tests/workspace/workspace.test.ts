@@ -38,12 +38,12 @@ describe("workspace right toolbar", () => {
     const labels = Array.from(rightDock.querySelectorAll<HTMLElement>(".dock-rail-btn")).map(
       (button) => button.getAttribute("aria-label"),
     );
-    expect(labels).toEqual(["Assistant", "Outline", "Versions", "Comments", "History"]);
+    expect(labels).toEqual(["Assistant", "Versions", "Comments", "History"]);
   });
 });
 
 describe("workspace left toolbar", () => {
-  it("keeps four manager-focused modes and nests favorites, history, and PR views", () => {
+  it("keeps global manager modes, nests history, and hides Editor until a document exists", () => {
     document.body.innerHTML = `
       <main id="central"><section id="editor"></section></main>
       <aside id="left"></aside>
@@ -74,15 +74,62 @@ describe("workspace left toolbar", () => {
       },
     );
 
-    const labels = Array.from(leftDock.querySelectorAll<HTMLElement>(".dock-rail-btn")).map(
-      (button) => button.getAttribute("aria-label"),
-    );
+    const labels = Array.from(
+      leftDock.querySelectorAll<HTMLElement>(".dock-rail-btn:not([hidden])"),
+    ).map((button) => button.getAttribute("aria-label"));
     expect(labels).toEqual(["Navigator", "Repositories", "Folders", "PRs"]);
     const navigatorPanel = leftDock.querySelector('.dock-tool[data-tool="navigator"]');
     const prsPanel = leftDock.querySelector('.dock-tool[data-tool="prs"]');
     expect(navigatorPanel?.textContent).toContain("Favorites");
     expect(navigatorPanel?.textContent).toContain("History");
+    expect(navigatorPanel?.textContent).not.toContain("GO TO");
+    expect(navigatorPanel?.textContent).not.toContain("Document");
     expect(prsPanel?.textContent).toContain("Needs your review");
     expect(prsPanel?.textContent).toContain("Your pull requests");
+  });
+
+  it("adds Editor immediately above Folders for an active document and moves Outline into it", () => {
+    document.body.innerHTML = `
+      <main id="central"><section id="editor"></section><section id="home"></section></main>
+      <aside id="left"></aside>
+    `;
+    const centralFrame = document.querySelector<HTMLElement>("#central");
+    const editorView = document.querySelector<HTMLElement>("#editor");
+    const homeView = document.querySelector<HTMLElement>("#home");
+    const leftDock = document.querySelector<HTMLElement>("#left");
+    if (centralFrame === null || editorView === null || homeView === null || leftDock === null) {
+      throw new Error("workspace fixture is incomplete");
+    }
+    const handle = setupWorkspace(
+      {
+        centralFrame,
+        editorView,
+        homeView,
+        notificationsView: null,
+        docks: { left: leftDock, right: null, bottom: null },
+      },
+      new DockStore(null),
+      {
+        onCentreResize: vi.fn(),
+        onCentralViewChange: vi.fn(),
+        onOpenFile: vi.fn(),
+        onOpenFolder: vi.fn(),
+        onOpenItem: vi.fn(),
+        onOutlineNavigate: vi.fn(),
+      },
+    );
+    handle.setActiveContext({
+      repository: null,
+      branch: null,
+      pullRequest: null,
+      file: { kind: "file", path: "C:\\notes\\spec.md", type: "markdown", repository: null },
+    });
+    const labels = Array.from(
+      leftDock.querySelectorAll<HTMLElement>(".dock-rail-btn:not([hidden])"),
+    ).map((button) => button.getAttribute("aria-label"));
+    expect(labels).toEqual(["Navigator", "Repositories", "Editor", "Folders", "PRs"]);
+    leftDock.querySelector<HTMLButtonElement>('.dock-rail-btn[aria-label="Editor"]')?.click();
+    expect(centralFrame.dataset.activeView).toBeUndefined();
+    expect(leftDock.querySelector('.dock-tool[data-tool="editor"] .outline-empty')).not.toBeNull();
   });
 });

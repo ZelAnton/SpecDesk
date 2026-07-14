@@ -152,30 +152,56 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
   it("parseTree accepts a nested tree and rejects malformed nodes", () => {
     const tree = parseTree({
       root: "/w",
+      requestId: 4,
       nodes: [
         {
           name: "docs",
           path: "/w/docs",
           isDirectory: true,
-          children: [{ name: "a.md", path: "/w/docs/a.md", isDirectory: false, children: [] }],
+          hasChildren: true,
+          children: [
+            {
+              name: "a.md",
+              path: "/w/docs/a.md",
+              isDirectory: false,
+              children: [],
+              hasChildren: false,
+            },
+          ],
         },
-        { name: "b.md", path: "/w/b.md", isDirectory: false, children: [] },
+        { name: "b.md", path: "/w/b.md", isDirectory: false, children: [], hasChildren: false },
       ],
     });
     expect(tree?.root).toBe("/w");
     expect(tree?.nodes[0]?.children[0]?.name).toBe("a.md");
     expect(tree?.nodes[1]?.isDirectory).toBe(false);
+    expect(
+      parseTree({ root: "/w/docs", requestId: 5, nodes: [], error: "Try again", remote: true }),
+    ).toEqual({
+      root: "/w/docs",
+      requestId: 5,
+      nodes: [],
+      error: "Try again",
+      remote: true,
+    });
 
-    expect(parseTree({ root: "/w" })).toBeNull(); // missing nodes
-    expect(parseTree({ root: 1, nodes: [] })).toBeNull(); // bad root type
+    expect(parseTree({ root: "/w", requestId: 4 })).toBeNull(); // missing nodes
+    expect(parseTree({ root: 1, requestId: 4, nodes: [] })).toBeNull(); // bad root type
+    expect(parseTree({ root: "/w", requestId: 4, nodes: [], error: 1 })).toBeNull();
+    expect(parseTree({ root: "/w", requestId: 4, nodes: [], remote: "yes" })).toBeNull();
     // A node missing `children` (or with a bad child) is drift — the whole payload rejects.
     expect(
-      parseTree({ root: "/w", nodes: [{ name: "x", path: "/w/x", isDirectory: true }] }),
+      parseTree({
+        root: "/w",
+        requestId: 4,
+        nodes: [{ name: "x", path: "/w/x", isDirectory: true }],
+      }),
     ).toBeNull();
     expect(
       parseTree({
         root: "/w",
-        nodes: [{ name: "x", path: "/w/x", isDirectory: "yes", children: [] }],
+        requestId: 4,
+        nodes: [{ name: "x", path: "/w/x", isDirectory: "yes", children: [], hasChildren: false }],
       }),
     ).toBeNull(); // isDirectory not a boolean
   });

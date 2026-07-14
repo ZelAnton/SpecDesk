@@ -19,6 +19,19 @@ public sealed class GitHubRepositoryCatalogTests
 		}
 	}
 
+	private sealed class AsyncHandler(
+		Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+	{
+		public int Requests { get; private set; }
+
+		protected override Task<HttpResponseMessage> SendAsync(
+			HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			Requests++;
+			return respond(request, cancellationToken);
+		}
+	}
+
 	[TestCase("master")]
 	[TestCase("trunk")]
 	public async Task Metadata_preserves_the_remote_default_branch(string defaultBranch)
@@ -157,6 +170,101 @@ public sealed class GitHubRepositoryCatalogTests
 			new GitHubRepositoryEntry("docs", true, 0),
 			new GitHubRepositoryEntry("docs/a.md", false, 12),
 		}));
+	}
+
+	[Test]
+	public async Task TreeLevel_TraversesTreeShasWithoutRecursiveTraversal()
+	{
+		List<string> requests = [];
+		Handler handler = new(request =>
+		{
+			requests.Add(request.RequestUri!.AbsoluteUri);
+			return requests.Count == 1
+				? Json("""{"tree":[{"path":"docs","type":"tree","sha":"docs-sha"}]}""")
+				: Json("""{"tree":[{"path":"images","type":"tree","sha":"images-sha"},{"path":"guide.md","type":"blob","sha":"guide-sha","size":12}]}""");
+		});
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		IReadOnlyList<GitHubRepositoryEntry> entries = await catalog.GetTreeLevelAsync(
+			"octo", "specs", "feature/docs", "docs", "secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(requests, Has.Count.EqualTo(2));
+			Assert.That(requests[0],
+				Is.EqualTo("https://api.github.com/repos/octo/specs/git/trees/feature%2Fdocs"));
+			Assert.That(requests[1],
+				Is.EqualTo("https://api.github.com/repos/octo/specs/git/trees/docs-sha"));
+			Assert.That(entries, Has.Count.EqualTo(2));
+			Assert.That(entries[0], Is.EqualTo(new GitHubRepositoryEntry("docs/images", true, 0)));
+			Assert.That(entries[1], Is.EqualTo(new GitHubRepositoryEntry("docs/guide.md", false, 12)));
+		});
+	}
+
+	[Test]
+	public async Task TreeLevel_ReturnsMoreThanContentsApiThousandEntryLimit()
+	{
+		string items = string.Join(',', Enumerable.Range(0, 1_001)
+			.Select(index => $$"""{"path":"spec-{{index:D4}}.md","type":"blob","sha":"sha-{{index}}","size":{{index}}}"""));
+		Handler handler = new(_ => Json($$"""{"truncated":false,"tree":[{{items}}]}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		IReadOnlyList<GitHubRepositoryEntry> entries = await catalog.GetTreeLevelAsync(
+			"octo", "specs", "main", string.Empty, "secret");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(entries, Has.Count.EqualTo(1_001));
+			Assert.That(entries[^1],
+				Is.EqualTo(new GitHubRepositoryEntry("spec-1000.md", false, 1_000)));
+			Assert.That(handler.LastRequest?.RequestUri?.Query, Is.Empty,
+				"the non-recursive Git Trees endpoint must not use the truncating Contents listing");
+		});
+	}
+
+	[Test]
+	public void TreeLevel_RejectsTruncatedGitTreeInsteadOfPublishingPartialFolder()
+	{
+		Handler handler = new(_ => Json(
+			"""{"truncated":true,"tree":[{"path":"partial.md","type":"blob","sha":"sha","size":1}]}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		Assert.That(async () => await catalog.GetTreeLevelAsync(
+			"octo", "specs", "main", string.Empty, "secret"),
+			Throws.TypeOf<InvalidDataException>());
+	}
+
+	[Test]
+	public void TreeLevel_AccountCancellationPreventsTheNextShaTraversalRequest()
+	{
+		TaskCompletionSource firstRequest = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		TaskCompletionSource<HttpResponseMessage> releaseFirst =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		AsyncHandler handler = new(async (_, _) =>
+		{
+			firstRequest.SetResult();
+			return await releaseFirst.Task;
+		});
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+		using CancellationTokenSource account = new();
+
+		Task<IReadOnlyList<GitHubRepositoryEntry>> operation = catalog.GetTreeLevelAsync(
+			"octo", "specs", "main", "private", "secret", account.Token);
+		Assert.That(firstRequest.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+		account.Cancel();
+		releaseFirst.SetResult(Json(
+			"""{"tree":[{"path":"private","type":"tree","sha":"private-sha"}]}"""));
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(async () => await operation, Throws.InstanceOf<OperationCanceledException>());
+			Assert.That(handler.Requests, Is.EqualTo(1),
+				"a retired account must not start the next private tree request");
+		});
 	}
 
 	[Test]

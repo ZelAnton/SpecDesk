@@ -32,6 +32,23 @@ public interface IGitHubRepositoryCatalog
 		string owner, string name, string branch, string accessToken,
 		CancellationToken cancellationToken = default);
 
+	async Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeLevelAsync(
+		string owner, string name, string branch, string path, string accessToken,
+		CancellationToken cancellationToken = default)
+	{
+		IReadOnlyList<GitHubRepositoryEntry> entries =
+			await GetTreeAsync(owner, name, branch, accessToken, cancellationToken);
+		string prefix = path.Length == 0 ? string.Empty : path.TrimEnd('/') + "/";
+		return entries.Where(entry =>
+		{
+			if (!entry.Path.StartsWith(prefix, StringComparison.Ordinal))
+			{
+				return false;
+			}
+			return !entry.Path[prefix.Length..].Contains('/');
+		}).ToArray();
+	}
+
 	Task<string> GetFileAsync(
 		string owner, string name, string branch, string path, string accessToken,
 		CancellationToken cancellationToken = default);
@@ -223,6 +240,104 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 
 		return entries;
 	}
+
+	public async Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeLevelAsync(
+		string owner,
+		string name,
+		string branch,
+		string path,
+		string accessToken,
+		CancellationToken cancellationToken = default)
+	{
+		string[] segments = path.Length == 0
+			? []
+			: path.Split('/');
+		if (segments.Any(segment => segment is "" or "." or ".."))
+		{
+			throw new ArgumentException("Repository path must identify a contained folder.", nameof(path));
+		}
+
+		string treeish = branch;
+		IReadOnlyList<GitTreeItem> level = await GetGitTreeLevelAsync(
+			owner, name, treeish, accessToken, cancellationToken);
+		foreach (string segment in segments)
+		{
+			GitTreeItem? directory = level.FirstOrDefault(item =>
+				item.Type == "tree" && string.Equals(item.Path, segment, StringComparison.Ordinal));
+			if (directory is null || string.IsNullOrWhiteSpace(directory.Sha))
+			{
+				throw new DirectoryNotFoundException("GitHub repository folder no longer exists.");
+			}
+			treeish = directory.Sha;
+			level = await GetGitTreeLevelAsync(owner, name, treeish, accessToken, cancellationToken);
+		}
+
+		string prefix = path.Length == 0 ? string.Empty : path + "/";
+		return level.Select(item => new GitHubRepositoryEntry(
+			prefix + item.Path,
+			item.Type == "tree",
+			item.Size)).ToArray();
+	}
+
+	private async Task<IReadOnlyList<GitTreeItem>> GetGitTreeLevelAsync(
+		string owner,
+		string name,
+		string treeish,
+		string accessToken,
+		CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		using HttpRequestMessage request = CreateRequest(
+			$"https://api.github.com/repos/{Escape(owner)}/{Escape(name)}/git/trees/{Escape(treeish)}",
+			accessToken);
+		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		response.EnsureSuccessStatusCode();
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+		if (!json.RootElement.TryGetProperty("tree", out JsonElement tree)
+			|| tree.ValueKind != JsonValueKind.Array)
+		{
+			throw new InvalidDataException("GitHub returned an invalid folder tree.");
+		}
+		if (json.RootElement.TryGetProperty("truncated", out JsonElement truncated)
+			&& truncated.ValueKind == JsonValueKind.True)
+		{
+			throw new InvalidDataException("GitHub folder tree is too large for a complete preview.");
+		}
+
+		List<GitTreeItem> entries = [];
+		foreach (JsonElement item in tree.EnumerateArray())
+		{
+			if (entries.Count >= MaxTreeEntries)
+			{
+				throw new InvalidDataException("GitHub folder tree is too large for a complete preview.");
+			}
+			string? itemPath = item.TryGetProperty("path", out JsonElement pathValue)
+				&& pathValue.ValueKind == JsonValueKind.String
+				? pathValue.GetString()
+				: null;
+			string? type = item.TryGetProperty("type", out JsonElement typeValue)
+				&& typeValue.ValueKind == JsonValueKind.String
+				? typeValue.GetString()
+				: null;
+			if (string.IsNullOrWhiteSpace(itemPath) || type is not ("tree" or "blob"))
+			{
+				continue;
+			}
+			string sha = item.TryGetProperty("sha", out JsonElement shaValue)
+				&& shaValue.ValueKind == JsonValueKind.String
+				? shaValue.GetString() ?? string.Empty
+				: string.Empty;
+			long size = item.TryGetProperty("size", out JsonElement sizeValue)
+				&& sizeValue.TryGetInt64(out long parsedSize)
+				? parsedSize
+				: 0;
+			entries.Add(new GitTreeItem(itemPath, type, sha, size));
+		}
+		return entries;
+	}
+
+	private sealed record GitTreeItem(string Path, string Type, string Sha, long Size);
 
 	public async Task<string> GetFileAsync(
 		string owner, string name, string branch, string path, string accessToken,

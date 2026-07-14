@@ -30,8 +30,8 @@ public sealed class HostControllerFilesystemTests
 	[SetUp]
 	public void SetUp()
 	{
-		// A small workspace: two Markdown files at the root, a nested folder with one, a non-Markdown file,
-		// and a dot-directory — the last two must never surface in the tree.
+		// A small workspace: Markdown and plain-text files, a nested folder, and a hidden metadata directory.
+		// The ordinary files surface at their direct level; the metadata directory never does.
 		_root = Path.Combine(Path.GetTempPath(), "specdesk-fs-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(Path.Combine(_root, "specs"));
 		Directory.CreateDirectory(Path.Combine(_root, ".git"));
@@ -221,12 +221,20 @@ public sealed class HostControllerFilesystemTests
 		Assert.That(tree!.Root, Is.EqualTo(Path.GetFullPath(_root)));
 		// Directories sort before files. Files of every type are visible; .git remains excluded.
 		string[] topLevel = ["specs", "notes.txt", "README.md"];
-		string[] specsChildren = ["billing.md"];
 		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(topLevel));
 		TreeNode specs = tree.Nodes[0];
 		Assert.That(specs.IsDirectory, Is.True);
-		Assert.That(specs.Children.Select(n => n.Name), Is.EqualTo(specsChildren));
+		Assert.That(specs.HasChildren, Is.True);
+		Assert.That(specs.Children, Is.Empty, "opening a folder reads only its root level");
 		Assert.That(tree.Nodes[1].IsDirectory, Is.False);
+		WorkspaceContextPayload? context = Find(MessageKinds.WorkspaceContext)
+			?.GetPayload<WorkspaceContextPayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(context?.RepositoryRoot, Is.EqualTo(Path.GetFullPath(_root)));
+			Assert.That(context?.Branch, Is.EqualTo("main"));
+			Assert.That(context?.BranchState, Is.EqualTo("named"));
+		});
 	}
 
 	[Test]
@@ -258,13 +266,127 @@ public sealed class HostControllerFilesystemTests
 	{
 		using HostController controller = NewController();
 		string specs = Path.Combine(_root, "specs");
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
+		Assert.That(WaitFor(MessageKinds.Tree), Is.Not.Null);
+		lock (_gate)
+		{
+			_sent.Clear();
+		}
 
-		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(specs)));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.TreeRequest, new TreeRequestPayload(specs, RequestId: 41)));
 
 		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(specs)));
+		Assert.That(tree?.RequestId, Is.EqualTo(41));
 		string[] justBilling = ["billing.md"];
 		Assert.That(tree!.Nodes.Select(n => n.Name), Is.EqualTo(justBilling));
+	}
+
+	[Test]
+	public void TreeRequest_WithAParentOrSiblingPrefixPath_DoesNotExposeThatDirectory()
+	{
+		using HostController controller = NewController();
+		string sibling = _root + "-sibling";
+		Directory.CreateDirectory(sibling);
+		File.WriteAllText(Path.Combine(sibling, "secret.md"), "# Secret");
+		try
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
+			Assert.That(WaitFor(MessageKinds.Tree), Is.Not.Null);
+			lock (_gate)
+			{
+				_sent.Clear();
+			}
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.TreeRequest, new TreeRequestPayload(sibling, RequestId: 42)));
+
+			TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
+			Assert.Multiple(() =>
+			{
+				Assert.That(tree?.RequestId, Is.EqualTo(42));
+				Assert.That(tree?.Nodes, Is.Empty);
+				Assert.That(tree?.Nodes.Select(node => node.Name), Does.Not.Contain("secret.md"));
+			});
+		}
+		finally
+		{
+			Directory.Delete(sibling, recursive: true);
+		}
+	}
+
+	[Test]
+	public void TreeRequest_WithAnAbsolutePathOutsideTheWorkspace_DoesNotExposeThatDirectory()
+	{
+		using HostController controller = NewController();
+		string outside = Path.GetDirectoryName(_root)!;
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
+		Assert.That(WaitFor(MessageKinds.Tree), Is.Not.Null);
+		lock (_gate)
+		{
+			_sent.Clear();
+		}
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.TreeRequest, new TreeRequestPayload(outside, RequestId: 43)));
+
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(tree?.RequestId, Is.EqualTo(43));
+			Assert.That(tree?.Nodes, Is.Empty);
+		});
+	}
+
+	[Test]
+	public void TreeRequest_ThroughAReparseDirectory_DoesNotExposeItsTarget()
+	{
+		using HostController controller = NewController();
+		string outside = _root + "-outside";
+		string link = Path.Combine(_root, "linked");
+		Directory.CreateDirectory(outside);
+		File.WriteAllText(Path.Combine(outside, "secret.md"), "# Secret");
+		try
+		{
+			try
+			{
+				Directory.CreateSymbolicLink(link, outside);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+				or PlatformNotSupportedException)
+			{
+				Assert.Ignore($"Symbolic links are unavailable on this platform: {ex.Message}");
+			}
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
+			Assert.That(WaitFor(MessageKinds.Tree), Is.Not.Null);
+			lock (_gate)
+			{
+				_sent.Clear();
+			}
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.TreeRequest, new TreeRequestPayload(link, RequestId: 44)));
+
+			TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
+			Assert.Multiple(() =>
+			{
+				Assert.That(tree?.RequestId, Is.EqualTo(44));
+				Assert.That(tree?.Nodes, Is.Empty);
+			});
+		}
+		finally
+		{
+			if (Directory.Exists(link))
+			{
+				Directory.Delete(link);
+			}
+			Directory.Delete(outside, recursive: true);
+		}
 	}
 
 	[Test]
@@ -338,12 +460,14 @@ public sealed class HostControllerFilesystemTests
 	{
 		using HostController controller = NewController();
 
-		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(null)));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.TreeRequest, new TreeRequestPayload(null, RequestId: 45)));
 
 		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree, Is.Not.Null);
 		Assert.That(tree!.Root, Is.Empty);
 		Assert.That(tree.Nodes, Is.Empty);
+		Assert.That(tree.RequestId, Is.EqualTo(45));
 		Assert.That(Find(MessageKinds.Error), Is.Null);
 	}
 }
