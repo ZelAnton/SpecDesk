@@ -73,6 +73,64 @@ public sealed class HostControllerRepositoryBrowseTests
 			CancellationToken cancellationToken = default) => Task.FromResult("text");
 	}
 
+	private sealed class AccountBoundaryLevelCatalog : IGitHubRepositoryCatalog
+	{
+		public TaskCompletionSource LevelStarted { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource ReleaseLevel { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult(new GitHubRepositoryMetadata("main"));
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<GitHubRepositoryEntry>>([new("private", true, 0)]);
+
+		public async Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeLevelAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default)
+		{
+			if (path.Length == 0)
+			{
+				return [new GitHubRepositoryEntry("private", true, 0)];
+			}
+			LevelStarted.SetResult();
+			await ReleaseLevel.Task;
+			return [new GitHubRepositoryEntry("private/secret.md", false, 1)];
+		}
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => Task.FromResult("# Secret");
+	}
+
+	private sealed class FailingLevelCatalog : IGitHubRepositoryCatalog
+	{
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult(new GitHubRepositoryMetadata("main"));
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<GitHubRepositoryEntry>>([new("large", true, 0)]);
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeLevelAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			path.Length == 0
+				? GetTreeAsync(owner, name, branch, accessToken, cancellationToken)
+				: Task.FromException<IReadOnlyList<GitHubRepositoryEntry>>(
+					new InvalidDataException("truncated"));
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => Task.FromResult("text");
+	}
+
 	private sealed class MetadataRacingCatalog : IGitHubRepositoryCatalog
 	{
 		public TaskCompletionSource MetadataStarted { get; } =
@@ -139,6 +197,30 @@ public sealed class HostControllerRepositoryBrowseTests
 		public void SignOut() => _signedIn = false;
 	}
 
+	private sealed class SwitchingAccountAuth : IGitHubAuth
+	{
+		private string _login = "old-user";
+
+		public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default) =>
+			Task.FromResult(new DeviceCodePrompt(
+				"CODE", new Uri("https://github.com/login/device"),
+				TimeSpan.FromMinutes(5), TimeSpan.FromSeconds(1), "device"));
+
+		public Task<SignInResult> AwaitAuthorizationAsync(
+			DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+		{
+			_login = "new-user";
+			return Task.FromResult(SignInResult.Authorized(_login));
+		}
+
+		public bool IsSignedIn() => true;
+		public string? SignedInLogin() => _login;
+		public Task<T> WithAccessTokenAsync<T>(
+			Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+			use(_login == "old-user" ? "old-token" : "new-token", cancellationToken);
+		public void SignOut() { }
+	}
+
 	private sealed class CountingCatalog : IGitHubRepositoryCatalog
 	{
 		public int TreeCalls { get; private set; }
@@ -172,6 +254,8 @@ public sealed class HostControllerRepositoryBrowseTests
 			new(TaskCreationOptions.RunContinuationsAsynchronously);
 		public TaskCompletionSource ReleaseFile { get; } =
 			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource FileReturned { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
@@ -192,6 +276,7 @@ public sealed class HostControllerRepositoryBrowseTests
 		{
 			FileStarted.SetResult();
 			await ReleaseFile.Task;
+			FileReturned.SetResult();
 			return "# A";
 		}
 	}
@@ -296,7 +381,21 @@ public sealed class HostControllerRepositoryBrowseTests
 			TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 			string[] expectedTree = ["docs", "README.md"];
 			Assert.That(tree.Nodes.Select(node => node.Name), Is.EqualTo(expectedTree));
-			TreeNode json = tree.Nodes.Single(node => node.Name == "docs").Children.Single();
+			WorkspaceContextPayload context = WaitFor<WorkspaceContextPayload>(
+				sent, gate, MessageKinds.WorkspaceContext)!;
+			Assert.Multiple(() =>
+			{
+				Assert.That(context.Repository, Is.EqualTo("octo/specs"));
+				Assert.That(context.RepositoryRoot, Is.Null);
+				Assert.That(context.Branch, Is.EqualTo("master"));
+				Assert.That(context.Path, Is.Empty);
+			});
+			TreeNode docs = tree.Nodes.Single(node => node.Name == "docs");
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.TreeRequest, new TreeRequestPayload(docs.Path, RequestId: 51)));
+			TreePayload docsLevel = WaitForTree(
+				sent, gate, candidate => candidate.RequestId == 51)!;
+			TreeNode json = docsLevel.Nodes.Single();
 
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.DocOpen, new DocOpenPayload(json.Path)));
@@ -344,6 +443,356 @@ public sealed class HostControllerRepositoryBrowseTests
 		}
 		finally
 		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteBrowse_AccountSwitchSuppressesOldPublishedTreeFromCancellationIgnoringTransport()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-browse-account-switch-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		IsolationCatalog catalog = new();
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new SwitchingAccountAuth(), workspace: store, repositoryCatalog: catalog);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			Assert.That(catalog.TreeStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+			Assert.That(SpinWait.SpinUntil(() =>
+			{
+				lock (gate)
+				{
+					return sent.Select(IpcSerializer.TryDeserialize).Any(message =>
+						message?.Kind == MessageKinds.GitHubAccount
+						&& message.GetPayload<GitHubAccountPayload>()?.Login == "new-user");
+				}
+			}, TimeSpan.FromSeconds(2)), Is.True);
+
+			catalog.ReleaseTree.SetResult();
+			Thread.Sleep(250);
+			lock (gate)
+			{
+				IpcMessage[] messages = sent.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null).Select(message => message!).ToArray();
+				int accountIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.GitHubAccount
+					&& message.GetPayload<GitHubAccountPayload>()?.Login == "new-user");
+				Assert.That(messages.Skip(accountIndex + 1).Any(message =>
+					message.Kind == MessageKinds.Tree
+					&& message.GetPayload<TreePayload>()?.Nodes.Count > 0), Is.False,
+					"the previous account's private root tree crossed the identity boundary");
+			}
+		}
+		finally
+		{
+			catalog.ReleaseTree.TrySetResult();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteLevel_FailureCompletesAsRetryableAndSurfacesAnError()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-level-failure-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new FailingLevelCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			TreePayload rootTree = WaitForTree(sent, gate, tree => tree.Nodes.Count > 0)!;
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.TreeRequest, new TreeRequestPayload(rootTree.Nodes[0].Path, RequestId: 76)));
+
+			TreePayload failure = WaitForTree(sent, gate, tree => tree.RequestId == 76)!;
+			Assert.Multiple(() =>
+			{
+				Assert.That(failure.Error, Is.EqualTo("Could not read that folder. Try again."));
+				Assert.That(failure.Nodes, Is.Empty);
+				Assert.That(WaitFor<ErrorPayload>(sent, gate, MessageKinds.Error)?.Message,
+					Is.EqualTo("Could not read that folder. Try again."));
+			});
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteTree_SignOutClearsAlreadyPublishedPrivateTreeAndFolderContext()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-published-remote-tree-account-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new CountingCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			Assert.That(WaitForTree(sent, gate, tree => tree.Nodes.Count > 0), Is.Not.Null);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+
+			Assert.That(WaitForTree(sent, gate, tree => tree.Root.Length == 0 && tree.Nodes.Count == 0), Is.Not.Null);
+			lock (gate)
+			{
+				IpcMessage[] messages = sent.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null).Select(message => message!).ToArray();
+				int clearIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.Tree
+					&& message.GetPayload<TreePayload>() is { Root.Length: 0, Nodes.Count: 0 });
+				int accountIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.GitHubAccount
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == false);
+				Assert.That(clearIndex, Is.GreaterThanOrEqualTo(0));
+				Assert.That(accountIndex, Is.GreaterThan(clearIndex),
+					"the private Folder tree must disappear before the signed-out account state is published");
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestCase(false)]
+	[TestCase(true)]
+	public void FailedRemoteRoot_AccountBoundaryClearsItsIdentityAndError(bool switchAccount)
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-failed-remote-root-account-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: switchAccount ? new SwitchingAccountAuth() : new FakeGitHubAuth(true),
+				workspace: store, repositoryCatalog: new FailingTreeCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			TreePayload failed = WaitForTree(sent, gate, tree => tree.Error is not null)!;
+			Assert.That(failed.Remote, Is.True);
+			lock (gate)
+			{
+				sent.Clear();
+			}
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				switchAccount ? MessageKinds.GitHubSignIn : MessageKinds.GitHubSignOut));
+
+			TreePayload? cleared = WaitForTree(sent, gate, tree =>
+				tree.Root.Length == 0 && tree.Nodes.Count == 0 && tree.Error is null);
+			Assert.Multiple(() =>
+			{
+				Assert.That(cleared, Is.Not.Null);
+				Assert.That(cleared!.Remote, Is.Null);
+			});
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteFile_SignOutClearsAlreadyPublishedPrivateDocumentAndContext()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-published-remote-file-account-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new CountingCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen,
+				new DocOpenPayload("github://octo/specs/main/private.md", 781)));
+			Assert.That(WaitFor<DocLoadedPayload>(sent, gate, MessageKinds.DocLoaded)?.Path,
+				Is.EqualTo("github://octo/specs/main/private.md"));
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+
+			Assert.That(SpinWait.SpinUntil(() =>
+			{
+				lock (gate)
+				{
+					return sent.Select(IpcSerializer.TryDeserialize).Any(message =>
+						message?.Kind == MessageKinds.DocLoaded
+						&& message.GetPayload<DocLoadedPayload>()?.Path.Length == 0);
+				}
+			}, TimeSpan.FromSeconds(2)), Is.True);
+			lock (gate)
+			{
+				IpcMessage[] messages = sent.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null).Select(message => message!).ToArray();
+				int clearIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.DocLoaded
+					&& message.GetPayload<DocLoadedPayload>()?.Path.Length == 0);
+				int contextIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.WorkspaceContext
+					&& message.GetPayload<WorkspaceContextPayload>() is { Repository: null, Path.Length: 0 });
+				int accountIndex = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.GitHubAccount
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == false);
+				Assert.That(clearIndex, Is.GreaterThanOrEqualTo(0));
+				Assert.That(contextIndex, Is.GreaterThan(clearIndex));
+				Assert.That(accountIndex, Is.GreaterThan(contextIndex),
+					"private document text and context must disappear before sign-out is rendered");
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteLevel_SignOutSuppressesLatePrivateTreeFromCancellationIgnoringTransport()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-level-account-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		AccountBoundaryLevelCatalog catalog = new();
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: catalog);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			TreePayload rootTree = WaitForTree(sent, gate, tree => tree.Nodes.Count > 0)!;
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.TreeRequest, new TreeRequestPayload(rootTree.Nodes[0].Path, RequestId: 77)));
+			Assert.That(catalog.LevelStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+			catalog.ReleaseLevel.SetResult();
+			Thread.Sleep(250);
+
+			lock (gate)
+			{
+				Assert.That(sent.Select(IpcSerializer.TryDeserialize).Any(message =>
+					message?.Kind == MessageKinds.Tree
+					&& message.GetPayload<TreePayload>()?.RequestId == 77), Is.False,
+					"a private directory response crossed the completed sign-out boundary");
+			}
+		}
+		finally
+		{
+			catalog.ReleaseLevel.TrySetResult();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteFile_SignOutSuppressesLatePrivateDocumentFromCancellationIgnoringTransport()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-file-account-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		IsolationCatalog catalog = new();
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: catalog);
+			const long requestId = 78;
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen,
+				new DocOpenPayload("github://octo/specs/main/private.md", requestId)));
+			Assert.That(catalog.FileStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+			catalog.ReleaseFile.SetResult();
+			Assert.That(catalog.FileReturned.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			Thread.Sleep(250);
+
+			lock (gate)
+			{
+				IpcMessage?[] messages = sent.Select(IpcSerializer.TryDeserialize).ToArray();
+				Assert.Multiple(() =>
+				{
+					Assert.That(messages.Any(message => message?.Kind == MessageKinds.DocLoaded), Is.False,
+						"private document text crossed the completed sign-out boundary");
+					Assert.That(messages.Any(message =>
+						message?.Kind == MessageKinds.DocOpenCompleted
+						&& message.GetPayload<DocOpenCompletedPayload>() is
+							{ RequestId: requestId, Succeeded: true }), Is.False,
+						"the retired private document request was reported as successful");
+				});
+			}
+		}
+		finally
+		{
+			catalog.ReleaseFile.TrySetResult();
 			Directory.Delete(root, recursive: true);
 		}
 	}
@@ -629,12 +1078,14 @@ public sealed class HostControllerRepositoryBrowseTests
 				auth: auth, workspace: store, repositoryCatalog: catalog);
 			using (controller)
 			{
+				using ManualResetEventSlim resumed = new();
+				controller.PendingRepoActionsResumedForTest = resumed;
 
 				controller.OnMessage(IpcSerializer.SerializeEvent(
 					MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
 				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 				auth.ReleaseAuthorization.SetResult();
-				Thread.Sleep(100);
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
 
 				Assert.That(catalog.TreeCalls, Is.Zero);
 				lock (gate)
@@ -644,10 +1095,11 @@ public sealed class HostControllerRepositoryBrowseTests
 						.Where(message => message?.Kind == MessageKinds.Tree)
 						.Select(message => message!.GetPayload<TreePayload>()!)
 						.ToArray();
-					Assert.That(trees, Has.Length.EqualTo(2));
+					Assert.That(trees, Has.Length.EqualTo(3));
 					Assert.That(trees[0].Root, Is.EqualTo("octo/specs"));
 					Assert.That(trees[0].Nodes, Is.Empty);
-					Assert.That(trees[1].Root, Is.EqualTo(Path.GetFullPath(root)));
+					Assert.That(trees[1].Root, Is.Empty);
+					Assert.That(trees[2].Root, Is.EqualTo(Path.GetFullPath(root)));
 				}
 			}
 		}
@@ -865,17 +1317,23 @@ public sealed class HostControllerRepositoryBrowseTests
 				auth: auth, workspace: store, repositoryCatalog: catalog);
 			using (controller)
 			{
+				using ManualResetEventSlim resumed = new();
+				controller.PendingRepoActionsResumedForTest = resumed;
 				controller.OnMessage(IpcSerializer.SerializeEvent(
 					MessageKinds.RepoBrowse, new RepoBrowsePayload(repoA.Id)));
 				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 				auth.ReleaseAuthorization.SetResult();
-				Thread.Sleep(100);
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
 
-				Assert.That(catalog.TreeCalls, Is.EqualTo(matching ? 0 : 1));
-				if (!matching)
+				if (matching)
+				{
+					Assert.That(catalog.TreeCalls, Is.Zero);
+				}
+				else
 				{
 					TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 					Assert.That(tree.Nodes.Single().Name, Is.EqualTo("remote.md"));
+					Assert.That(catalog.TreeCalls, Is.EqualTo(1));
 				}
 			}
 		}
@@ -945,7 +1403,7 @@ public sealed class HostControllerRepositoryBrowseTests
 	}
 
 	[Test]
-	public void FailedRemoteBrowse_ReplacesThePreviousLocalTreeWithAnEmptyRemoteTree()
+	public void FailedRemoteBrowse_ReplacesThePreviousLocalTreeWithAnExplicitRemoteError()
 	{
 		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-failure-tree-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(root);
@@ -987,9 +1445,13 @@ public sealed class HostControllerRepositoryBrowseTests
 					.Where(message => message.Kind == MessageKinds.Tree)
 					.Select(message => message.GetPayload<TreePayload>()!)
 					.ToArray();
-				Assert.That(trees, Has.Length.EqualTo(1));
-				Assert.That(trees[0].Root, Is.EqualTo("octo/specs"));
-				Assert.That(trees[0].Nodes, Is.Empty);
+				Assert.That(trees, Has.Length.EqualTo(2));
+				Assert.That(trees, Has.All.Property(nameof(TreePayload.Root)).EqualTo("octo/specs"));
+				Assert.That(trees, Has.All.Property(nameof(TreePayload.Nodes)).Empty);
+				Assert.That(trees[0].Error, Is.Null);
+				Assert.That(trees[1].Error,
+					Is.EqualTo("Could not read that repository. Check your connection and access, then try again."));
+				Assert.That(trees, Has.All.Property(nameof(TreePayload.Remote)).True);
 				Assert.That(messages[0].Kind, Is.EqualTo(MessageKinds.Tree));
 				Assert.That(messages[^1].Kind, Is.EqualTo(MessageKinds.Error));
 			}

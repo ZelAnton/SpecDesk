@@ -1,6 +1,6 @@
 /**
  * The document-outline tool (design concept §9): the open document's Markdown headings as a navigable
- * tree in the right rail. Clicking a heading scrolls the editor to it (via the owner's onNavigate). The
+ * tree in the left Editor mode. Clicking a heading scrolls the editor to it (via the owner's onNavigate). The
  * parser is pure (fenced code blocks excluded, ATX headings only) so it is unit-tested directly; the tool
  * renders and re-renders from {@link Outline.setItems} as the document changes.
  */

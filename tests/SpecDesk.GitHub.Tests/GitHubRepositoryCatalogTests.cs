@@ -49,6 +49,19 @@ public sealed class GitHubRepositoryCatalogTests
 		Assert.That(await catalog.GetAvatarUrlAsync("secret"), Is.Null);
 	}
 
+	private sealed class AsyncHandler(
+		Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> respond) : HttpMessageHandler
+	{
+		public int Requests { get; private set; }
+
+		protected override Task<HttpResponseMessage> SendAsync(
+			HttpRequestMessage request, CancellationToken cancellationToken)
+		{
+			Requests++;
+			return respond(request, cancellationToken);
+		}
+	}
+
 	[TestCase("master")]
 	[TestCase("trunk")]
 	public async Task Metadata_preserves_the_remote_default_branch(string defaultBranch)

@@ -15,6 +15,7 @@ public sealed partial class HostController
 	private CancellationTokenSource? _remoteFileCts;
 	private string? _remoteBrowseRepoId;
 	private string? _remoteFileRepoId;
+	private RemoteTreeLevelContext? _remoteTreeContext;
 	private long _remoteFileRequestId;
 	private readonly object _remotePublishSync = new();
 	private const int MaxRemotePathChars = 4096;
@@ -81,6 +82,7 @@ public sealed partial class HostController
 				browseCts = _remoteBrowseCts;
 				fileCts = _remoteFileCts;
 				_remoteBrowseRepoId = null;
+				_remoteTreeContext = null;
 				_remoteFileRepoId = null;
 				canceledRequestId = _remoteFileRequestId;
 				_remoteFileRequestId = 0;
@@ -91,7 +93,7 @@ public sealed partial class HostController
 				_workspaceRootGeneration++;
 				Emit(IpcSerializer.SerializeEvent(
 					MessageKinds.Tree,
-					new TreePayload(id, [])));
+					new TreePayload(id, [], Remote: true)));
 			}
 		}
 		browseCts?.Cancel();
@@ -106,7 +108,8 @@ public sealed partial class HostController
 		long navigationGeneration,
 		string? requestedBranch = null)
 	{
-		if (_repositoryCatalog is null || _auth is null)
+		if (_repositoryCatalog is null || _auth is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession))
 		{
 			return;
 		}
@@ -148,12 +151,16 @@ public sealed partial class HostController
 		previousBrowseCts?.Cancel();
 		previousFileCts?.Cancel();
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
-		CancellationToken cancellationToken = cts.Token;
+		CancellationTokenSource requestCts = CancellationTokenSource.CreateLinkedTokenSource(
+			cts.Token, accountSession.CancellationToken);
+		CancellationToken cancellationToken = requestCts.Token;
 		_ = Task.Run(async () =>
 		{
 			try
 			{
-				await _auth.WithAccessTokenAsync(async (token, ct) =>
+				Task<bool>? operation = null;
+				if (!StartForAccountSession(accountSession, () =>
+					operation = _auth.WithAccessTokenAsync(async (token, ct) =>
 				{
 					string branch = string.IsNullOrWhiteSpace(requestedBranch)
 						? descriptor.DefaultBranch
@@ -163,6 +170,36 @@ public sealed partial class HostController
 						GitHubRepositoryMetadata metadata =
 							await _repositoryCatalog.GetMetadataAsync(owner, name, token, ct);
 						branch = metadata.DefaultBranch;
+						bool metadataCurrent = false;
+						bool metadataPublished = PublishForAccountSession(accountSession, () =>
+						{
+							lock (_remotePublishSync)
+							{
+								lock (_sync)
+								{
+									bool current = !_disposed
+										&& generation == _remoteBrowseGeneration
+										&& navigationGeneration == _workspaceNavigationIntentGeneration
+										&& IsSameRegisteredRepository(id, descriptor.Url);
+									metadataCurrent = current;
+									if (current)
+									{
+										_workspace?.SetRepoDefaultBranch(descriptor, branch);
+										EmitWorkspaceState();
+									}
+								}
+							}
+						});
+						if (!metadataPublished || !metadataCurrent)
+						{
+							return false;
+						}
+					}
+
+					IReadOnlyList<GitHubRepositoryEntry> entries =
+						await _repositoryCatalog.GetTreeLevelAsync(owner, name, branch, string.Empty, token, ct);
+					PublishForAccountSession(accountSession, () =>
+					{
 						lock (_remotePublishSync)
 						{
 							lock (_sync)
@@ -171,36 +208,31 @@ public sealed partial class HostController
 									&& generation == _remoteBrowseGeneration
 									&& navigationGeneration == _workspaceNavigationIntentGeneration
 									&& IsSameRegisteredRepository(id, descriptor.Url);
-								if (!current)
+								if (current)
 								{
-									return false;
+									RemoteBrowseTerminalPublishingForTest?.Invoke();
+									_remoteTreeContext = new RemoteTreeLevelContext(
+										owner, name, branch, intentGeneration, navigationGeneration);
+									Emit(IpcSerializer.SerializeEvent(
+										MessageKinds.Tree,
+										BuildRemoteTreeLevel(owner, name, branch, string.Empty, entries, 0)));
+									SendWorkspaceContext(new WorkspaceContextPayload(
+										id,
+										null,
+										branch,
+										"named",
+										_workspace?.FindRepo(id)?.DefaultBranch,
+										string.Empty));
 								}
-								_workspace?.SetRepoDefaultBranch(descriptor, branch);
-								EmitWorkspaceState();
 							}
 						}
-					}
-
-					IReadOnlyList<GitHubRepositoryEntry> entries =
-						await _repositoryCatalog.GetTreeAsync(owner, name, branch, token, ct);
-					lock (_remotePublishSync)
-					{
-						lock (_sync)
-						{
-							bool current = !_disposed
-								&& generation == _remoteBrowseGeneration
-								&& navigationGeneration == _workspaceNavigationIntentGeneration
-								&& IsSameRegisteredRepository(id, descriptor.Url);
-							if (current)
-							{
-								RemoteBrowseTerminalPublishingForTest?.Invoke();
-								Emit(IpcSerializer.SerializeEvent(
-									MessageKinds.Tree, BuildRemoteTree(owner, name, branch, entries)));
-							}
-						}
-					}
+					});
 					return true;
-				}, cancellationToken);
+				}, cancellationToken)))
+				{
+					return;
+				}
+				await operation!;
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
@@ -210,6 +242,7 @@ public sealed partial class HostController
 			{
 				_logger.LogError(ex, "Could not browse GitHub repository {Repo}", id);
 				PublishRemoteBrowseErrorIfCurrent(
+					accountSession,
 					generation,
 					navigationGeneration,
 					id,
@@ -220,7 +253,8 @@ public sealed partial class HostController
 			{
 				_logger.LogError(ex, "Unexpected failure browsing GitHub repository {Repo}", id);
 				PublishRemoteBrowseErrorIfCurrent(
-					generation, navigationGeneration, id, descriptor, "Could not read that repository.");
+					accountSession, generation, navigationGeneration, id, descriptor,
+					"Could not read that repository.");
 			}
 			finally
 			{
@@ -232,6 +266,7 @@ public sealed partial class HostController
 						_remoteBrowseRepoId = null;
 					}
 				}
+				requestCts.Dispose();
 				cts.Dispose();
 			}
 		});
@@ -285,14 +320,149 @@ public sealed partial class HostController
 			}
 		}
 
-		return new TreePayload($"{owner}/{name}", ToWireNodes(root.Children.Values));
+		return new TreePayload($"{owner}/{name}", ToWireNodes(root.Children.Values), Remote: true);
 	}
 
 	private static TreeNode[] ToWireNodes(IEnumerable<RemoteTreeNode> nodes) => nodes
 		.OrderByDescending(node => node.IsDirectory)
 		.ThenBy(node => node.Name, StringComparer.OrdinalIgnoreCase)
-		.Select(node => new TreeNode(node.Name, node.Path, node.IsDirectory, ToWireNodes(node.Children.Values)))
+		.Select(node => new TreeNode(
+			node.Name,
+			node.Path,
+			node.IsDirectory,
+			ToWireNodes(node.Children.Values),
+			HasChildren: node.Children.Count > 0))
 		.ToArray();
+
+	private sealed record RemoteTreeLevelContext(
+		string Owner,
+		string Name,
+		string Branch,
+		long IntentGeneration,
+		long NavigationGeneration);
+
+	private static TreePayload BuildRemoteTreeLevel(
+		string owner,
+		string name,
+		string branch,
+		string relativePath,
+		IReadOnlyList<GitHubRepositoryEntry> entries,
+		long requestId)
+	{
+		string root = relativePath.Length == 0
+			? $"{owner}/{name}"
+			: RemotePath(owner, name, branch, relativePath);
+		TreeNode[] nodes = entries
+			.OrderByDescending(entry => entry.IsDirectory)
+			.ThenBy(entry => entry.Path, StringComparer.OrdinalIgnoreCase)
+			.Select(entry => new TreeNode(
+				entry.Path.Split('/').Last(),
+				RemotePath(owner, name, branch, entry.Path),
+				entry.IsDirectory,
+				[],
+				HasChildren: entry.IsDirectory))
+			.ToArray();
+		return new TreePayload(root, nodes, requestId, Remote: true);
+	}
+
+	private bool TryRequestRemoteLevel(string wirePath, long requestId)
+	{
+		if (!wirePath.StartsWith("github://", StringComparison.OrdinalIgnoreCase))
+		{
+			return false;
+		}
+		if (_repositoryCatalog is null || _auth is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession)
+			|| !TryParseRemotePath(wirePath, out string owner, out string name, out string branch, out string path))
+		{
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.Tree, new TreePayload(wirePath, [], requestId, Remote: true)));
+			return true;
+		}
+		RemoteTreeLevelContext? context;
+		lock (_sync)
+		{
+			context = _remoteTreeContext;
+		}
+		if (context is null
+			|| !string.Equals(context.Owner, owner, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(context.Name, name, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(context.Branch, branch, StringComparison.Ordinal))
+		{
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.Tree, new TreePayload(wirePath, [], requestId, Remote: true)));
+			return true;
+		}
+
+		_ = Task.Run(async () =>
+		{
+			try
+			{
+				Task<IReadOnlyList<GitHubRepositoryEntry>>? operation = null;
+				if (!StartForAccountSession(accountSession, () =>
+					operation = _auth.WithAccessTokenAsync(
+						(token, ct) => _repositoryCatalog.GetTreeLevelAsync(
+							owner, name, branch, path, token, ct),
+						accountSession.CancellationToken)))
+				{
+					return;
+				}
+				IReadOnlyList<GitHubRepositoryEntry> entries = await operation!;
+				PublishForAccountSession(accountSession, () =>
+				{
+					lock (_remotePublishSync)
+					{
+						lock (_sync)
+						{
+							if (_disposed || !Equals(_remoteTreeContext, context))
+							{
+								return;
+							}
+							Emit(IpcSerializer.SerializeEvent(
+								MessageKinds.Tree,
+								BuildRemoteTreeLevel(owner, name, branch, path, entries, requestId)));
+						}
+					}
+				});
+			}
+			catch (OperationCanceledException) when (accountSession.CancellationToken.IsCancellationRequested)
+			{
+				// Sign-out retired the account session; private repository data must not cross that boundary.
+			}
+			catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or InvalidOperationException)
+			{
+				_logger.LogError(ex, "Could not read remote folder {Path}", path);
+				PublishRemoteLevelErrorIfCurrent(accountSession, context, wirePath, requestId);
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Unexpected failure reading remote folder {Path}", path);
+				PublishRemoteLevelErrorIfCurrent(accountSession, context, wirePath, requestId);
+			}
+		});
+		return true;
+	}
+
+	private void PublishRemoteLevelErrorIfCurrent(
+		AccountSession accountSession,
+		RemoteTreeLevelContext context,
+		string wirePath,
+		long requestId)
+	{
+		PublishForAccountSession(accountSession, () =>
+		{
+			lock (_sync)
+			{
+				if (!_disposed && Equals(_remoteTreeContext, context))
+				{
+					const string message = "Could not read that folder. Try again.";
+					Emit(IpcSerializer.SerializeEvent(
+						MessageKinds.Tree, new TreePayload(wirePath, [], requestId, message, Remote: true)));
+					SendError(message);
+				}
+			}
+		});
+	}
 
 	private static string RemotePath(string owner, string name, string branch, string path) =>
 		$"github://{owner}/{name}/{Uri.EscapeDataString(branch)}/{Uri.EscapeDataString(path)}";
@@ -413,7 +583,8 @@ public sealed partial class HostController
 		long navigationGeneration,
 		long requestId)
 	{
-		if (_repositoryCatalog is null || _auth is null)
+		if (_repositoryCatalog is null || _auth is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession))
 		{
 			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
@@ -445,46 +616,58 @@ public sealed partial class HostController
 			return;
 		}
 		previousFileCts?.Cancel();
-		CancellationToken cancellationToken = cts.Token;
+		CancellationTokenSource requestCts = CancellationTokenSource.CreateLinkedTokenSource(
+			cts.Token, accountSession.CancellationToken);
+		CancellationToken cancellationToken = requestCts.Token;
 		_ = Task.Run(async () =>
 		{
 			try
 			{
-				string text = await _auth.WithAccessTokenAsync(
-					(token, ct) => _repositoryCatalog.GetFileAsync(owner, name, branch, path, token, ct),
-					cancellationToken);
-				bool published;
-				lock (_remotePublishSync)
+				Task<string>? operation = null;
+				if (!StartForAccountSession(accountSession, () =>
+					operation = _auth.WithAccessTokenAsync(
+						(token, ct) => _repositoryCatalog.GetFileAsync(owner, name, branch, path, token, ct),
+						cancellationToken)))
 				{
-					lock (_sync)
+					CompleteDocumentOpen(requestId, succeeded: false);
+					return;
+				}
+				string text = await operation!;
+				bool published = false;
+				bool accountCurrent = PublishForAccountSession(accountSession, () =>
+				{
+					lock (_remotePublishSync)
 					{
-						published = !_disposed
-							&& generation == _remoteFileGeneration
-							&& navigationGeneration == _workspaceNavigationIntentGeneration
-							&& _remoteFileRequestId == requestId;
-						if (published)
+						lock (_sync)
 						{
-							RemoteFileTerminalPublishingForTest?.Invoke();
-							CancelAutosave();
-							_text = text;
-							_currentPath = null;
-							_repoRoot = null;
-							_remoteDocument = new RemoteDocumentContext(owner, name, branch, path);
-							_session = new DraftSession(
-								Lifecycle.stateName(Lifecycle.State.Published), null, null, false, 0, 0,
-								Interlocked.Read(ref _draftGeneration));
-							_remoteFileRequestId = 0;
-							Emit(IpcSerializer.SerializeEvent(
-								MessageKinds.DocLoaded,
-								new DocLoadedPayload(
-									wirePath, text, string.Empty, ReadOnly: true,
-									Repository: $"{owner}/{name}", Branch: branch, RepositoryPath: path)));
-							SendWorkspaceContext();
-							CompleteDocumentOpen(requestId, succeeded: true);
+							published = !_disposed
+								&& generation == _remoteFileGeneration
+								&& navigationGeneration == _workspaceNavigationIntentGeneration
+								&& _remoteFileRequestId == requestId;
+							if (published)
+							{
+								RemoteFileTerminalPublishingForTest?.Invoke();
+								CancelAutosave();
+								_text = text;
+								_currentPath = null;
+								_repoRoot = null;
+								_remoteDocument = new RemoteDocumentContext(owner, name, branch, path);
+								_session = new DraftSession(
+									Lifecycle.stateName(Lifecycle.State.Published), null, null, false, 0, 0,
+									Interlocked.Read(ref _draftGeneration));
+								_remoteFileRequestId = 0;
+								Emit(IpcSerializer.SerializeEvent(
+									MessageKinds.DocLoaded,
+									new DocLoadedPayload(
+										wirePath, text, string.Empty, ReadOnly: true,
+										Repository: $"{owner}/{name}", Branch: branch, RepositoryPath: path)));
+								SendWorkspaceContext();
+								CompleteDocumentOpen(requestId, succeeded: true);
+							}
 						}
 					}
-				}
-				if (!published)
+				});
+				if (!accountCurrent || !published)
 				{
 					CompleteDocumentOpen(requestId, succeeded: false);
 				}
@@ -498,12 +681,14 @@ public sealed partial class HostController
 			catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or InvalidOperationException)
 			{
 				_logger.LogError(ex, "Could not preview remote file {Repo}/{Path}", $"{owner}/{name}", path);
-				PublishRemoteFileErrorIfCurrent(generation, navigationGeneration, requestId, "Could not preview that file.");
+				PublishRemoteFileErrorIfCurrent(
+					accountSession, generation, navigationGeneration, requestId, "Could not preview that file.");
 			}
 			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Unexpected failure previewing remote file {Repo}/{Path}", $"{owner}/{name}", path);
-				PublishRemoteFileErrorIfCurrent(generation, navigationGeneration, requestId, "Could not preview that file.");
+				PublishRemoteFileErrorIfCurrent(
+					accountSession, generation, navigationGeneration, requestId, "Could not preview that file.");
 			}
 			finally
 			{
@@ -515,6 +700,7 @@ public sealed partial class HostController
 						_remoteFileRepoId = null;
 					}
 				}
+				requestCts.Dispose();
 				cts.Dispose();
 			}
 		});
@@ -539,6 +725,7 @@ public sealed partial class HostController
 				_remoteBrowseGeneration++;
 				_remoteBrowseIntentGeneration++;
 				_remoteBrowseIntentRepoId = null;
+				_remoteTreeContext = null;
 				browseCts = _remoteBrowseCts;
 				_remoteBrowseRepoId = null;
 				_remoteFileGeneration++;
@@ -572,6 +759,7 @@ public sealed partial class HostController
 					_remoteBrowseGeneration++;
 					_remoteBrowseIntentGeneration++;
 					_remoteBrowseIntentRepoId = null;
+					_remoteTreeContext = null;
 					browseCts = _remoteBrowseCts;
 					_remoteBrowseRepoId = null;
 					if (_pendingRepoOpen?.Kind == PendingRepoActionKind.Browse)
@@ -612,11 +800,13 @@ public sealed partial class HostController
 					_remoteBrowseIntentGeneration++;
 					browseCts = _remoteBrowseCts;
 					_remoteBrowseRepoId = null;
+					_remoteTreeContext = null;
 				}
 				if (string.Equals(_remoteBrowseIntentRepoId, id, StringComparison.OrdinalIgnoreCase))
 				{
 					_remoteBrowseIntentGeneration++;
 					_remoteBrowseIntentRepoId = null;
+					_remoteTreeContext = null;
 				}
 				if (string.Equals(_remoteFileRepoId, id, StringComparison.OrdinalIgnoreCase))
 				{
@@ -641,26 +831,32 @@ public sealed partial class HostController
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 	}
 	private void PublishRemoteBrowseErrorIfCurrent(
+		AccountSession accountSession,
 		long generation,
 		long navigationGeneration,
 		string id,
 		RegisteredRepo descriptor,
 		string message)
 	{
-		lock (_remotePublishSync)
+		PublishForAccountSession(accountSession, () =>
 		{
-			lock (_sync)
+			lock (_remotePublishSync)
 			{
-				bool current = !_disposed
-					&& generation == _remoteBrowseGeneration
-					&& navigationGeneration == _workspaceNavigationIntentGeneration
-					&& IsSameRegisteredRepository(id, descriptor.Url);
-				if (current)
+				lock (_sync)
 				{
-					SendError(message);
+					bool current = !_disposed
+						&& generation == _remoteBrowseGeneration
+						&& navigationGeneration == _workspaceNavigationIntentGeneration
+						&& IsSameRegisteredRepository(id, descriptor.Url);
+					if (current)
+					{
+						Emit(IpcSerializer.SerializeEvent(
+							MessageKinds.Tree, new TreePayload(id, [], Error: message, Remote: true)));
+						SendError(message);
+					}
 				}
 			}
-		}
+		});
 	}
 
 	private bool IsSameRegisteredRepository(string id, string url)
@@ -670,23 +866,30 @@ public sealed partial class HostController
 	}
 
 	private void PublishRemoteFileErrorIfCurrent(
-		long generation, long navigationGeneration, long requestId, string message)
+		AccountSession accountSession,
+		long generation,
+		long navigationGeneration,
+		long requestId,
+		string message)
 	{
-		lock (_remotePublishSync)
+		PublishForAccountSession(accountSession, () =>
 		{
-			lock (_sync)
+			lock (_remotePublishSync)
 			{
-				bool current = !_disposed
-					&& generation == _remoteFileGeneration
-					&& navigationGeneration == _workspaceNavigationIntentGeneration
-					&& requestId == _remoteFileRequestId;
-				if (current)
+				lock (_sync)
 				{
-					_remoteFileRequestId = 0;
-					SendError(message);
-					CompleteDocumentOpen(requestId, succeeded: false);
+					bool current = !_disposed
+						&& generation == _remoteFileGeneration
+						&& navigationGeneration == _workspaceNavigationIntentGeneration
+						&& requestId == _remoteFileRequestId;
+					if (current)
+					{
+						_remoteFileRequestId = 0;
+						SendError(message);
+						CompleteDocumentOpen(requestId, succeeded: false);
+					}
 				}
 			}
-		}
+		});
 	}
 }

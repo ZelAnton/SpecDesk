@@ -215,7 +215,6 @@ export function rightToolsForContext(context: ActiveContext): ReadonlySet<string
   const ids = new Set<string>(["assistant"]);
   if (context.pullRequest !== null) ids.add("comments");
   if (context.branch !== null) ids.add("history");
-  if (context.file?.type === "markdown") ids.add("outline");
   if (context.file !== null && context.file.repository !== null) ids.add("versions");
   return ids;
 }

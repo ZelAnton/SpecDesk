@@ -165,23 +165,29 @@ public sealed record DocDiscardCompletedPayload(long RequestId, bool Succeeded);
 public sealed record FolderOpenPayload(string? Path);
 
 /// <summary>
-/// Payload of <c>tree.request</c> (webview→native): request the Markdown file tree. <c>Path</c> scopes it to
+/// Payload of <c>tree.request</c> (webview→native): request one file-tree level. <c>Path</c> scopes it to
 /// a folder; <c>null</c> uses the current workspace folder (else the open document's folder).
 /// </summary>
-public sealed record TreeRequestPayload(string? Path);
+public sealed record TreeRequestPayload(string? Path, long RequestId = 0);
 
 /// <summary>
-/// One node of the file tree (native→webview). A directory has <c>IsDirectory=true</c> and its
-/// <c>Children</c>; a file has no children (an empty list). <c>Path</c> is the absolute path (opened via
-/// <c>doc.open</c> when a file is clicked); <c>Name</c> is the display label (the file/folder name).
+/// One node of the file tree (native→webview). A directory has <c>IsDirectory=true</c>; lazy descendants
+/// are advertised by <c>HasChildren</c> and arrive in a later correlated response. A file has no children.
+/// <c>Path</c> is the local absolute path or GitHub wire path; <c>Name</c> is the display label.
 /// </summary>
-public sealed record TreeNode(string Name, string Path, bool IsDirectory, IReadOnlyList<TreeNode> Children);
+public sealed record TreeNode(
+	string Name,
+	string Path,
+	bool IsDirectory,
+	IReadOnlyList<TreeNode> Children,
+	bool HasChildren = false);
 
 /// <summary>
-/// Payload of <c>tree</c> (native→webview): the workspace folder's Markdown file tree. <c>Root</c> is the
-/// folder's absolute path (its display name is the last segment); <c>Nodes</c> are its top-level entries.
+/// Payload of <c>tree</c> (native→webview): one workspace folder level. <c>Root</c> identifies the local or
+/// remote folder; <c>Nodes</c> are its direct entries and <c>RequestId</c> correlates requested levels.
 /// </summary>
-public sealed record TreePayload(string Root, IReadOnlyList<TreeNode> Nodes);
+public sealed record TreePayload(
+	string Root, IReadOnlyList<TreeNode> Nodes, long RequestId = 0, string? Error = null, bool? Remote = null);
 
 /// <summary>Authoritative context for the open document. Repository fields come from the document's
 /// versioning root (never the independently browsed file-tree root); <c>Branch</c> is the actual named

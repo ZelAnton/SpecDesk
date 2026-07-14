@@ -5,6 +5,10 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class FileTreeBuilderTests
 {
+	private static readonly string[] RootLevelNames = ["sub", "alpha.markdown", "zeta.md"];
+	private static readonly string[] ChildLevelNames = ["inner", "visible.md"];
+	private static readonly string[] VisibleFileOnly = ["visible.md"];
+	private static readonly string[] RealFileOnly = ["real.md"];
 	private string _root = string.Empty;
 
 	[SetUp]
@@ -31,130 +35,100 @@ public sealed class FileTreeBuilderTests
 	}
 
 	[Test]
-	public void Build_ForAMissingFolder_ReturnsAnEmptyTreeRootedAtTheFullPath()
+	public void Build_ForAMissingFolder_ReturnsAnEmptyCorrelatedTree()
 	{
 		string missing = Path.Combine(_root, "nope");
-		TreePayload tree = FileTreeBuilder.Build(missing);
-		Assert.That(tree.Root, Is.EqualTo(Path.GetFullPath(missing)));
-		Assert.That(tree.Nodes, Is.Empty);
+		TreePayload tree = FileTreeBuilder.Build(missing, requestId: 17);
+		Assert.Multiple(() =>
+		{
+			Assert.That(tree.Root, Is.EqualTo(Path.GetFullPath(missing)));
+			Assert.That(tree.Nodes, Is.Empty);
+			Assert.That(tree.RequestId, Is.EqualTo(17));
+		});
 	}
 
 	[Test]
-	public void Build_IncludesAllFiles_DirectoriesFirst_Sorted()
+	public void Build_ReadsOnlyOneLevel_DirectoriesFirst_Sorted()
 	{
 		Touch("zeta.md");
 		Touch("alpha.markdown");
-		Touch("readme.txt");
-		Touch("sub", "b.md");
-		Touch("sub", "a.md");
+		Touch("sub", "nested", "deep.md");
 
 		TreePayload tree = FileTreeBuilder.Build(_root);
 
-		// Directory ("sub") before files ("alpha.markdown", "zeta.md"); files alphabetical (case-insensitive).
-		string[] topLevel = ["sub", "alpha.markdown", "readme.txt", "zeta.md"];
-		string[] subChildren = ["a.md", "b.md"];
-		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(topLevel));
+		Assert.That(tree.Nodes.Select(node => node.Name), Is.EqualTo(RootLevelNames));
 		TreeNode sub = tree.Nodes[0];
-		Assert.That(sub.IsDirectory, Is.True);
-		Assert.That(sub.Path, Is.EqualTo(Path.Combine(_root, "sub")));
-		Assert.That(sub.Children.Select(n => n.Name), Is.EqualTo(subChildren));
-		Assert.That(tree.Nodes[1].IsDirectory, Is.False);
-		Assert.That(tree.Nodes[1].Children, Is.Empty);
+		Assert.Multiple(() =>
+		{
+			Assert.That(sub.IsDirectory, Is.True);
+			Assert.That(sub.HasChildren, Is.True);
+			Assert.That(sub.Children, Is.Empty, "opening a root must not recursively scan descendants");
+			Assert.That(tree.Nodes.SelectMany(node => node.Children), Is.Empty);
+		});
 	}
 
 	[Test]
-	public void Build_KeepsDirectoriesWithAnyFilesBeneath()
+	public void Build_AnExplicitChildRequestReturnsOnlyThatChildrenLevel()
 	{
-		Touch("keep.md");
-		// Non-Markdown files are navigable too.
-		Touch("assets", "images", "logo.png");
-		Touch("empty-dir", "deeper", "data.json");
+		Touch("outer", "inner", "buried.md");
+		Touch("outer", "visible.md");
 
-		TreePayload tree = FileTreeBuilder.Build(_root);
+		TreePayload child = FileTreeBuilder.Build(Path.Combine(_root, "outer"), requestId: 8);
 
-		string[] expected = ["assets", "empty-dir", "keep.md"];
-		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(expected));
+		Assert.That(child.Nodes.Select(node => node.Name), Is.EqualTo(ChildLevelNames));
+		Assert.That(child.Nodes[0].Children, Is.Empty);
+		Assert.That(child.RequestId, Is.EqualTo(8));
 	}
 
 	[Test]
-	public void Build_SkipsDotDirectoriesAndNodeModules()
+	public void Build_ListsEmptyDirectoriesWithoutProbingThem()
+	{
+		Directory.CreateDirectory(Path.Combine(_root, "empty"));
+
+		TreeNode directory = FileTreeBuilder.Build(_root).Nodes.Single();
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(directory.Name, Is.EqualTo("empty"));
+			Assert.That(directory.HasChildren, Is.True);
+			Assert.That(directory.Children, Is.Empty);
+		});
+	}
+
+	[Test]
+	public void Build_SkipsDotDirectoriesAndNodeModulesAtTheRequestedLevel()
 	{
 		Touch("visible.md");
 		Touch(".git", "notes.md");
 		Touch("node_modules", "pkg", "readme.md");
 
-		TreePayload tree = FileTreeBuilder.Build(_root);
-
-		string[] onlyVisible = ["visible.md"];
-		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(onlyVisible));
+		Assert.That(FileTreeBuilder.Build(_root).Nodes.Select(node => node.Name), Is.EqualTo(VisibleFileOnly));
 	}
 
 	[Test]
-	public void Build_DoesNotDescendIntoASymlinkCycle()
+	public void Build_DoesNotExposeAReparsePoint()
 	{
 		Touch("real.md");
-		Directory.CreateDirectory(Path.Combine(_root, "sub"));
-		string loop = Path.Combine(_root, "sub", "loop");
+		string target = Path.Combine(Path.GetTempPath(), "specdesk-tree-target-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(target);
 		try
 		{
-			// A symlink pointing back at the root — descending into it would cycle forever without the guard.
-			Directory.CreateSymbolicLink(loop, _root);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
-		{
-			Assert.Ignore("Symbolic links can't be created here (needs privilege / OS support).");
-			return;
-		}
-
-		// The whole point: this returns (bounded) rather than hanging, and never lists the symlinked cycle.
-		TreePayload tree = FileTreeBuilder.Build(_root);
-
-		Assert.That(tree.Nodes.Select(n => n.Name), Does.Contain("real.md"));
-		// "sub" holds only the reparse-point "loop" (skipped), so it prunes away entirely.
-		Assert.That(tree.Nodes.Select(n => n.Name), Does.Not.Contain("sub"));
-	}
-
-	[Test]
-	public void Build_DoesNotExposeAFileSymlinkOutsideTheWorkspace()
-	{
-		string target = Path.Combine(Path.GetTempPath(), "specdesk-tree-target-" + Guid.NewGuid().ToString("N") + ".txt");
-		File.WriteAllText(target, "outside");
-		try
-		{
-			string link = Path.Combine(_root, "outside.txt");
+			string link = Path.Combine(_root, "outside");
 			try
 			{
-				File.CreateSymbolicLink(link, target);
+				Directory.CreateSymbolicLink(link, target);
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
 			{
-				Assert.Ignore("File symbolic links can't be created here (needs privilege / OS support).");
+				Assert.Ignore("Symbolic links cannot be created in this environment.");
 				return;
 			}
 
-			TreePayload tree = FileTreeBuilder.Build(_root);
-
-			Assert.That(tree.Nodes.Select(node => node.Name), Does.Not.Contain("outside.txt"));
+			Assert.That(FileTreeBuilder.Build(_root).Nodes.Select(node => node.Name), Is.EqualTo(RealFileOnly));
 		}
 		finally
 		{
-			File.Delete(target);
+			Directory.Delete(target, recursive: true);
 		}
-	}
-
-	[Test]
-	public void Build_KeepsADirectoryThatHasAFileOnlyDeepInside()
-	{
-		Touch("outer", "inner", "buried.md");
-
-		TreePayload tree = FileTreeBuilder.Build(_root);
-
-		string[] outerLevel = ["outer"];
-		string[] innerLevel = ["inner"];
-		string[] buriedLevel = ["buried.md"];
-		Assert.That(tree.Nodes.Select(n => n.Name), Is.EqualTo(outerLevel));
-		TreeNode outer = tree.Nodes[0];
-		Assert.That(outer.Children.Select(n => n.Name), Is.EqualTo(innerLevel));
-		Assert.That(outer.Children[0].Children.Select(n => n.Name), Is.EqualTo(buriedLevel));
 	}
 }

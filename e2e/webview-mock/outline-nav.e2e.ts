@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { installMockHost, loadDoc, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -23,7 +24,7 @@ function editorScrollTop(page: import("@playwright/test").Page): Promise<number>
 }
 
 async function openOutline(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator('#right-dock .dock-rail-btn[aria-label="Outline"]').click();
+  await openDockTool(page, "left", "Editor");
 }
 
 test("the outline lists the document headings and jumps the editor to a clicked heading", async ({
@@ -35,13 +36,13 @@ test("the outline lists the document headings and jumps the editor to a clicked 
   await openOutline(page);
 
   // The outline mirrors the document's ATX headings.
-  await expect(page.locator("#right-dock .outline-item")).toHaveText(["Title", "Deep Heading"]);
+  await expect(page.locator("#left-dock .outline-item")).toHaveText(["Title", "Deep Heading"]);
 
-  await page.locator("#right-dock .outline-item", { hasText: "Deep Heading" }).click();
+  await page.locator("#left-dock .outline-item", { hasText: "Deep Heading" }).click();
   await expect.poll(() => editorScrollTop(page)).toBeGreaterThan(100);
 });
 
-test("clicking an outline heading from the Start screen returns to the editor and scrolls to it", async ({
+test("the contextual Editor mode returns from Start and its outline scrolls to a heading", async ({
   page,
 }) => {
   await page.goto(BASE_URL);
@@ -49,13 +50,13 @@ test("clicking an outline heading from the Start screen returns to the editor an
   await loadDoc(page, { path: "doc.md", text: DOC });
   await openOutline(page);
 
-  // Leave the editor for the Start (home) screen — the panes go display:none while the outline stays.
+  // Leave the editor for Start, then choose its contextual Editor mode again.
   await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");
 
-  // Clicking a heading must both bring the editor back AND land on the heading (not a dead-end).
-  await page.locator("#right-dock .outline-item", { hasText: "Deep Heading" }).click();
+  await openOutline(page);
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "editor");
+  await page.locator("#left-dock .outline-item", { hasText: "Deep Heading" }).click();
   await expect.poll(() => editorScrollTop(page)).toBeGreaterThan(100);
 });

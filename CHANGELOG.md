@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
 - The right panel now ends at the bottom panel instead of overlapping its workspace.
 - Bounded pull-request histories now disclose when earlier commits are not shown instead of appearing complete.
+- Disconnecting or changing GitHub accounts now immediately closes private online documents and clears their Folder tree and context.
+- Online repository folders with more than 1,000 direct entries now load completely instead of silently hiding the remainder.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
 - Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.

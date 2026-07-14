@@ -1321,6 +1321,7 @@ function wire(): void {
         if (nextIdentity !== githubAccountIdentity) {
           githubAccountIdentity = nextIdentity;
           activityStream.clear();
+          fileTree?.clearAccountState();
           repositoriesPanel?.clearAccountState();
           invalidateActivityRequests();
           for (const panel of activityPanels) {

@@ -75,7 +75,6 @@ test("real Host packages Copilot 1.0.6 and exposes the honest signed-out chat bo
   await expect(page.locator("#github-auth-btn")).toHaveText("Sign in");
   await expect.poll(() => visibleRightTools(page)).toEqual([
     "Assistant",
-    "Outline",
     "Versions",
     "History",
   ]);
@@ -99,7 +98,6 @@ test("right tools keep Chat first and follow real named, detached, and file-type
   await openFile(page, "welcome.md");
   await expect.poll(() => visibleRightTools(page)).toEqual([
     "Assistant",
-    "Outline",
     "Versions",
     "History",
   ]);
@@ -124,7 +122,6 @@ test("right tools keep Chat first and follow real named, detached, and file-type
   await openFile(page, "welcome.md");
   await expect.poll(() => visibleRightTools(page)).toEqual([
     "Assistant",
-    "Outline",
     "Versions",
     "History",
   ]);

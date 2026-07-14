@@ -1,203 +1,302 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import type { TreePayload } from "../../src/wire/protocol.js";
+import type { TreePayload, WorkspaceContextPayload } from "../../src/wire/protocol.js";
 import { remoteWirePath } from "../../src/workspace/remote-path.js";
 import { FileTree } from "../../src/workspace/tools/file-tree.js";
 
 function ready() {
   const onOpenFile = vi.fn<(path: string) => void>();
   const onOpenFolder = vi.fn<() => void>();
+  const onRequestLevel = vi.fn<(path: string | undefined, requestId: number) => void>();
   const onToggleFavorite = vi.fn();
-  const tree = new FileTree({ onOpenFile, onOpenFolder, onToggleFavorite });
+  const onShowEditor = vi.fn();
+  const tree = new FileTree({
+    onOpenFile,
+    onOpenFolder,
+    onRequestLevel,
+    onToggleFavorite,
+    onShowEditor,
+  });
   const body = document.createElement("div");
   tree.mount(body);
-  return { tree, onOpenFile, onOpenFolder, onToggleFavorite, body };
+  return {
+    tree,
+    onOpenFile,
+    onOpenFolder,
+    onRequestLevel,
+    onToggleFavorite,
+    onShowEditor,
+    body,
+  };
 }
 
-const SAMPLE: TreePayload = {
+const ROOT: TreePayload = {
   root: "C:\\specs\\repo",
+  requestId: 0,
   nodes: [
     {
       name: "guides",
       path: "C:\\specs\\repo\\guides",
       isDirectory: true,
-      children: [
+      children: [],
+      hasChildren: true,
+    },
+    {
+      name: "README.md",
+      path: "C:\\specs\\repo\\README.md",
+      isDirectory: false,
+      children: [],
+      hasChildren: false,
+    },
+  ],
+};
+
+const CONTEXT: WorkspaceContextPayload = {
+  repository: "octo/specs",
+  repositoryRoot: "C:\\specs\\repo",
+  branch: "spec/refunds",
+  branchState: "named",
+  defaultBranch: "main",
+  path: "README.md",
+};
+
+describe("FileTree", () => {
+  it("shows the folder picker until a root arrives", () => {
+    const { body, onOpenFolder } = ready();
+    expect(body.querySelector<HTMLElement>(".file-tree-empty")?.hidden).toBe(false);
+    body.querySelector<HTMLButtonElement>(".file-tree-open-folder")?.click();
+    expect(onOpenFolder).toHaveBeenCalledOnce();
+  });
+
+  it("renders only the root level and requests a collapsed directory on first expansion", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+
+    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder");
+    expect(folder?.getAttribute("aria-expanded")).toBe("false");
+    expect(body.querySelectorAll(".file-tree-file")).toHaveLength(1);
+    folder?.click();
+    expect(body.querySelector(".file-tree-folder")?.getAttribute("aria-busy")).toBe("true");
+    expect(onRequestLevel).toHaveBeenCalledWith("C:\\specs\\repo\\guides", 1);
+
+    tree.setTree({
+      root: "C:\\specs\\repo\\guides",
+      requestId: 1,
+      nodes: [
         {
           name: "intro.md",
           path: "C:\\specs\\repo\\guides\\intro.md",
           isDirectory: false,
           children: [],
-        },
-      ],
-    },
-    { name: "README.md", path: "C:\\specs\\repo\\README.md", isDirectory: false, children: [] },
-  ],
-};
-
-describe("FileTree", () => {
-  it("shows the empty state until a tree is set, and its button opens a folder", () => {
-    const { body, onOpenFolder } = ready();
-    const empty = body.querySelector<HTMLElement>(".file-tree-empty");
-    expect(empty?.hidden).toBe(false);
-    expect(body.querySelector<HTMLElement>(".file-tree-root")?.hidden).toBe(true);
-    body.querySelector<HTMLButtonElement>(".file-tree-open-folder")?.click();
-    expect(onOpenFolder).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders the folder name and a nested folder/file tree, and opens a file on click", () => {
-    const { tree, body, onOpenFile } = ready();
-    tree.setTree(SAMPLE);
-
-    expect(body.querySelector<HTMLElement>(".file-tree-empty")?.hidden).toBe(true);
-    expect(body.querySelector(".file-tree-root")?.textContent).toBe("repo");
-
-    const folders = body.querySelectorAll<HTMLButtonElement>(".file-tree-folder");
-    const files = body.querySelectorAll<HTMLButtonElement>(".file-tree-file");
-    expect(Array.from(folders).map((f) => f.textContent)).toEqual(["guides"]);
-    expect(Array.from(files).map((f) => f.textContent)).toEqual(["intro.md", "README.md"]);
-    // intro.md is nested inside the "guides" folder's <li>.
-    expect(files[0]?.closest("li")?.parentElement?.closest("li")).toBe(folders[0]?.closest("li"));
-
-    files[1]?.click();
-    expect(onOpenFile).toHaveBeenCalledWith("C:\\specs\\repo\\README.md");
-  });
-
-  it("toggles a folder's children and keeps the collapse state across a re-render", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    const childList = () =>
-      folder?.closest(".file-tree-row")?.nextElementSibling as HTMLElement | null;
-
-    expect(folder?.getAttribute("aria-expanded")).toBe("true");
-    expect(childList()?.hidden).toBe(false);
-
-    folder?.click(); // collapse
-    expect(folder?.getAttribute("aria-expanded")).toBe("false");
-    expect(childList()?.hidden).toBe(true);
-
-    // A fresh tree event (same paths) must preserve the collapse.
-    tree.setTree(SAMPLE);
-    const folderAfter = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    expect(folderAfter?.getAttribute("aria-expanded")).toBe("false");
-    expect(
-      (folderAfter?.closest(".file-tree-row")?.nextElementSibling as HTMLElement | null)?.hidden,
-    ).toBe(true);
-  });
-
-  it("highlights the active file and moves the highlight when it changes", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    tree.setActiveFile("C:\\specs\\repo\\README.md");
-    const current = body.querySelectorAll<HTMLButtonElement>(".file-tree-file.is-current");
-    expect(current).toHaveLength(1);
-    expect(current[0]?.textContent).toBe("README.md");
-    expect(current[0]?.getAttribute("aria-current")).toBe("true");
-
-    tree.setActiveFile("C:\\specs\\repo\\guides\\intro.md");
-    const moved = body.querySelectorAll<HTMLButtonElement>(".file-tree-file.is-current");
-    expect(moved).toHaveLength(1);
-    expect(moved[0]?.textContent).toBe("intro.md");
-  });
-
-  it("expands a collapsed ancestor when a file inside it becomes active (so the highlight shows)", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    folder?.click(); // collapse "guides"
-    expect(folder?.getAttribute("aria-expanded")).toBe("false");
-
-    tree.setActiveFile("C:\\specs\\repo\\guides\\intro.md");
-    const folderAfter = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    expect(folderAfter?.getAttribute("aria-expanded")).toBe("true");
-    const current = body.querySelector<HTMLButtonElement>(".file-tree-file.is-current");
-    expect(current?.textContent).toBe("intro.md");
-    expect(
-      (folderAfter?.closest(".file-tree-row")?.nextElementSibling as HTMLElement | null)?.hidden,
-    ).toBe(false);
-  });
-
-  it("reveals and highlights a favorited folder path when its branch tree arrives", () => {
-    const { tree, body } = ready();
-    tree.setActiveFile("C:\\specs\\repo\\guides");
-    tree.setTree(SAMPLE);
-
-    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder.is-current");
-    expect(folder?.textContent).toBe("guides");
-    expect(folder?.getAttribute("aria-current")).toBe("true");
-    expect(folder?.getAttribute("aria-expanded")).toBe("true");
-    expect(
-      (folder?.closest(".file-tree-row")?.nextElementSibling as HTMLElement | null)?.hidden,
-    ).toBe(false);
-  });
-
-  it("matches .NET remote paths for folders containing RFC 3986 punctuation", () => {
-    const { tree, body } = ready();
-    const wirePath = "github://octo/specs/feature%2FDocs/Docs%2FAuthor%27s%20%28Draft%29";
-    tree.setActiveFile(remoteWirePath("octo/specs", "feature/Docs", "Docs/Author's (Draft)"));
-    tree.setTree({
-      root: "github://octo/specs/feature%2FDocs/",
-      nodes: [
-        {
-          name: "Author's (Draft)",
-          path: wirePath,
-          isDirectory: true,
-          children: [],
+          hasChildren: false,
         },
       ],
     });
-
+    expect(body.querySelectorAll(".file-tree-file")).toHaveLength(2);
     expect(
-      body.querySelector<HTMLButtonElement>(".file-tree-folder.is-current")?.dataset.path,
-    ).toBe(wirePath);
+      body.querySelector<HTMLButtonElement>(".file-tree-folder")?.getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    expect(onRequestLevel).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps keyboard focus on a tree item across a re-render", () => {
-    const { tree, body } = ready();
-    document.body.appendChild(body); // focus() needs the node in the document
-    tree.setTree(SAMPLE);
-    const readme = body.querySelector<HTMLButtonElement>('.file-tree-file[data-path$="README.md"]');
-    readme?.focus();
-    expect(document.activeElement).toBe(readme);
+  it("ignores a stale correlated level after an unsolicited root replacement", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    expect(onRequestLevel).toHaveBeenCalledOnce();
 
-    tree.setActiveFile("C:\\specs\\repo\\README.md"); // triggers a re-render
-    const readmeAfter = body.querySelector<HTMLButtonElement>(
-      '.file-tree-file[data-path$="README.md"]',
-    );
-    expect(readmeAfter).not.toBe(readme); // it was rebuilt
-    expect(document.activeElement).toBe(readmeAfter); // …but focus followed it
-    body.remove();
-  });
-
-  it("keeps keyboard focus on a favorite star across the authoritative state re-render", () => {
-    const { tree, body } = ready();
-    document.body.appendChild(body);
-    tree.setTree(SAMPLE);
-    const star = body.querySelector<HTMLButtonElement>(".file-tree-star");
-    star?.focus();
-    expect(document.activeElement).toBe(star);
-
-    tree.setFavorites([]);
-    const starAfter = body.querySelector<HTMLButtonElement>(".file-tree-star");
-    expect(starAfter).not.toBe(star);
-    expect(document.activeElement).toBe(starAfter);
-    body.remove();
-  });
-
-  it("favorites remote files with stable case-sensitive repository coordinates", () => {
-    const { tree, body, onToggleFavorite } = ready();
+    tree.setTree({ root: "C:\\other", requestId: 0, nodes: [] });
     tree.setTree({
-      root: "github://Octo/Specs/feature%2FDocs/",
+      root: "C:\\specs\\repo\\guides",
+      requestId: 1,
       nodes: [
         {
-          name: "Guide.md",
-          path: "github://Octo/Specs/feature%2FDocs/Docs%2FGuide.md",
+          name: "stale.md",
+          path: "C:\\specs\\repo\\guides\\stale.md",
           isDirectory: false,
           children: [],
+          hasChildren: false,
         },
       ],
     });
+    expect(body.textContent).not.toContain("stale.md");
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("other");
+  });
 
+  it("correlates an explicit root refresh and rejects an unknown response", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    tree.requestRoot();
+    expect(onRequestLevel).toHaveBeenCalledWith(undefined, 1);
+    tree.setTree({ root: "C:\\wrong", requestId: 99, nodes: [] });
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("repo");
+    tree.setTree({ root: "C:\\fresh", requestId: 1, nodes: [] });
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("fresh");
+  });
+
+  it("keeps a failed lazy folder retryable instead of presenting it as empty", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    tree.setTree({
+      root: "C:\\specs\\repo\\guides",
+      requestId: 1,
+      nodes: [],
+      error: "Could not read that folder. Try again.",
+    });
+
+    expect(
+      body.querySelector<HTMLButtonElement>(".file-tree-folder")?.getAttribute("aria-busy"),
+    ).toBe("false");
+    expect(
+      body.querySelector<HTMLButtonElement>(".file-tree-folder")?.getAttribute("aria-expanded"),
+    ).toBe("false");
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    expect(onRequestLevel).toHaveBeenLastCalledWith("C:\\specs\\repo\\guides", 2);
+  });
+
+  it("renders an authoritative root failure instead of calling the repository empty", () => {
+    const { tree, body } = ready();
+    tree.setTree({
+      root: "octo/specs",
+      requestId: 0,
+      nodes: [],
+      error: "This repository is too large for a complete preview.",
+      remote: true,
+    });
+
+    expect(body.querySelector(".file-tree-error")?.textContent).toContain("too large");
+    expect(body.querySelector(".file-tree-error")?.getAttribute("role")).toBe("alert");
+    expect(body.textContent).not.toContain("This folder is empty");
+
+    tree.clearAccountState();
+    expect(body.textContent).not.toContain("too large");
+    expect(body.querySelector<HTMLElement>(".file-tree-empty")?.hidden).toBe(false);
+  });
+
+  it("opens files and preserves keyboard focus across an authoritative render", () => {
+    const { tree, body, onOpenFile } = ready();
+    document.body.append(body);
+    tree.setTree(ROOT);
+    const readme = body.querySelector<HTMLButtonElement>(".file-tree-file");
+    readme?.focus();
+    tree.setFavorites([]);
+    const refreshed = body.querySelector<HTMLButtonElement>(".file-tree-file");
+    expect(document.activeElement).toBe(refreshed);
+    refreshed?.click();
+    expect(onOpenFile).toHaveBeenCalledWith("C:\\specs\\repo\\README.md");
+    body.remove();
+  });
+
+  it("shows local-copy and branch identity from authoritative workspace context", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    tree.setContext(CONTEXT);
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("repo");
+    expect(body.querySelector(".file-tree-branch-name")?.textContent).toBe("spec/refunds");
+    tree.setContext({
+      ...CONTEXT,
+      repository: null,
+      repositoryRoot: null,
+      branch: null,
+      branchState: "unavailable",
+    });
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("repo");
+    expect(body.querySelector<HTMLElement>(".file-tree-branch-name")?.hidden).toBe(true);
+  });
+
+  it("drops a previous repository identity when an unrelated root replaces the tree", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    tree.setContext(CONTEXT);
+    tree.setTree({ root: "C:\\other", requestId: 0, nodes: [] });
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("other");
+    expect(body.querySelector<HTMLElement>(".file-tree-branch-name")?.hidden).toBe(true);
+  });
+
+  it("rejects a late repository identity that does not own the visible tree", () => {
+    const { tree, body } = ready();
+    tree.setTree({ root: "C:\\other", requestId: 0, nodes: [] });
+    tree.setContext(CONTEXT);
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("other");
+    expect(body.querySelector<HTMLElement>(".file-tree-branch-name")?.hidden).toBe(true);
+  });
+
+  it("applies repository identity when its matching tree arrives after the context", () => {
+    const { tree, body } = ready();
+    tree.setTree({ root: "C:\\other", requestId: 0, nodes: [] });
+    tree.setContext(CONTEXT);
+    tree.setTree(ROOT);
+    expect(body.querySelector(".file-tree-root")?.textContent).toBe("repo");
+    expect(body.querySelector(".file-tree-branch-name")?.textContent).toBe("spec/refunds");
+  });
+
+  it("filters only loaded nodes, keeps ancestors, clears on Escape, and sends no request", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    const filter = body.querySelector<HTMLInputElement>(".file-tree-filter");
+    if (filter === null) throw new Error("missing filter");
+    filter.value = "read";
+    filter.dispatchEvent(new Event("input"));
+    expect(body.querySelectorAll(".file-tree-file")).toHaveLength(1);
+    expect(body.querySelectorAll(".file-tree-folder")).toHaveLength(0);
+    filter.value = "guid";
+    filter.dispatchEvent(new Event("input"));
+    expect(body.querySelector(".file-tree-folder")?.textContent).toBe("guides");
+    expect(onRequestLevel).not.toHaveBeenCalled();
+    filter.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(filter.value).toBe("");
+    expect(body.querySelectorAll(".file-tree-file")).toHaveLength(1);
+  });
+
+  it("reveals a loaded descendant that matches the filter even after its folder was collapsed", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    tree.setTree({
+      root: "C:\\specs\\repo\\guides",
+      requestId: 1,
+      nodes: [
+        {
+          name: "intro.md",
+          path: "C:\\specs\\repo\\guides\\intro.md",
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    });
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+
+    const filter = body.querySelector<HTMLInputElement>(".file-tree-filter");
+    if (filter === null) throw new Error("missing filter");
+    filter.value = "intro";
+    filter.dispatchEvent(new Event("input"));
+
+    expect(
+      body.querySelector<HTMLButtonElement>(".file-tree-folder")?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(body.querySelector<HTMLButtonElement>(".file-tree-file")?.textContent).toBe("intro.md");
+  });
+
+  it("loads the active file's ancestor one level at a time", () => {
+    const { tree, onRequestLevel } = ready();
+    tree.setActiveFile("C:\\specs\\repo\\guides\\intro.md");
+    tree.setTree(ROOT);
+    expect(onRequestLevel).toHaveBeenCalledWith("C:\\specs\\repo\\guides", 1);
+  });
+
+  it("favorites remote files with stable repository coordinates", () => {
+    const { tree, body, onToggleFavorite } = ready();
+    const path = remoteWirePath("Octo/Specs", "feature/Docs", "Docs/Guide.md");
+    tree.setTree({
+      root: "Octo/Specs",
+      requestId: 0,
+      nodes: [{ name: "Guide.md", path, isDirectory: false, children: [], hasChildren: false }],
+    });
     body.querySelector<HTMLButtonElement>(".file-tree-star")?.click();
     expect(onToggleFavorite).toHaveBeenCalledWith(
       {
@@ -210,66 +309,76 @@ describe("FileTree", () => {
       },
       true,
     );
-
-    tree.setFavorites([
-      {
-        path: "docs/guide.md",
-        label: "guide.md",
-        isFolder: false,
-        kind: "remote",
-        repositoryId: "octo/specs",
-        branch: "feature/Docs",
-      },
-    ]);
-    expect(body.querySelector(".file-tree-star")?.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("keeps each folder star in the folder row before its child tree", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    const row = folder?.closest(".file-tree-row");
-    const star = row?.querySelector<HTMLButtonElement>(".file-tree-star");
-
-    expect(row?.children[0]).toBe(folder);
-    expect(row?.children[1]).toBe(star);
-    expect(row?.nextElementSibling?.classList.contains("file-tree-branch")).toBe(true);
-  });
-
-  it("points each folder toggle at the child list it controls (aria-controls)", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    const folder = body.querySelector<HTMLButtonElement>(".file-tree-folder");
-    const controls = folder?.getAttribute("aria-controls");
-    expect(controls).toBeTruthy();
-    expect(body.querySelector(`#${controls}`)).toBe(
-      folder?.closest(".file-tree-row")?.nextElementSibling,
-    );
-  });
-
-  it("forgets collapse state for folders no longer in the tree", () => {
-    const { tree, body } = ready();
-    tree.setTree(SAMPLE);
-    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click(); // collapse "guides"
-
-    // A tree without "guides" prunes its collapse state; a later tree that has it again defaults to expanded.
+  it("keeps case-distinct GitHub folders independent", () => {
+    const { tree, body, onRequestLevel } = ready();
+    const upper = remoteWirePath("octo/specs", "main", "Docs");
+    const lower = remoteWirePath("octo/specs", "main", "docs");
     tree.setTree({
-      root: "C:\\specs\\repo",
+      root: "octo/specs",
+      requestId: 0,
       nodes: [
-        { name: "README.md", path: "C:\\specs\\repo\\README.md", isDirectory: false, children: [] },
+        { name: "Docs", path: upper, isDirectory: true, children: [], hasChildren: true },
+        { name: "docs", path: lower, isDirectory: true, children: [], hasChildren: true },
       ],
     });
-    tree.setTree(SAMPLE);
+
+    const folders = body.querySelectorAll<HTMLButtonElement>(".file-tree-folder");
+    folders[1]?.click();
+
+    expect(folders[0]?.getAttribute("aria-expanded")).toBe("false");
     expect(
-      body.querySelector<HTMLButtonElement>(".file-tree-folder")?.getAttribute("aria-expanded"),
+      body
+        .querySelectorAll<HTMLButtonElement>(".file-tree-folder")[1]
+        ?.getAttribute("aria-expanded"),
     ).toBe("true");
+    expect(onRequestLevel).toHaveBeenCalledWith(lower, 1);
   });
 
-  it("says so when an opened folder holds no specs", () => {
-    const { tree, body } = ready();
-    tree.setTree({ root: "C:\\empty", nodes: [] });
-    expect(body.querySelector<HTMLElement>(".file-tree-empty")?.hidden).toBe(true);
-    expect(body.querySelector(".file-tree-root")?.textContent).toBe("empty");
-    expect(body.querySelector(".file-tree-none")?.textContent).toBe("No specs in this folder.");
+  it("clears published GitHub Folder data at an account boundary but preserves local folders", () => {
+    const remote = ready();
+    const privateFolder = remoteWirePath("octo/specs", "main", "private");
+    remote.tree.setContext({
+      repository: "octo/specs",
+      repositoryRoot: null,
+      branch: "main",
+      branchState: "named",
+      defaultBranch: "main",
+      path: "",
+    });
+    remote.tree.setTree({
+      root: "octo/specs",
+      requestId: 0,
+      nodes: [
+        {
+          name: "private",
+          path: privateFolder,
+          isDirectory: true,
+          children: [],
+          hasChildren: true,
+        },
+      ],
+    });
+    remote.body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    remote.tree.clearAccountState();
+    expect(remote.body.textContent).not.toContain("private");
+    expect(remote.body.querySelector<HTMLElement>(".file-tree-empty")?.hidden).toBe(false);
+
+    remote.tree.setTree({ root: privateFolder, requestId: 1, nodes: [] });
+    expect(remote.body.textContent).not.toContain("private");
+
+    const local = ready();
+    local.tree.setTree(ROOT);
+    local.tree.setContext(CONTEXT);
+    local.tree.clearAccountState();
+    expect(local.body.querySelector(".file-tree-root")?.textContent).toBe("repo");
+    expect(local.body.textContent).toContain("README.md");
+  });
+
+  it("opens the editor whenever the Folders mode is shown", () => {
+    const { tree, onShowEditor } = ready();
+    tree.onShow();
+    expect(onShowEditor).toHaveBeenCalledOnce();
   });
 });

@@ -2162,9 +2162,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
   color: var(--text-muted);
 }
 
-/* ---- Document outline (workspace/tools/outline.ts) ----
-   The open document's headings as nested <ul>/<li> lists (the hierarchy is programmatic, not just visual);
-   each nesting level indents further. */
+/* ---- Editor outline (left contextual Editor mode; workspace/tools/outline.ts) ---- */
 .outline-list {
   display: block;
   padding: 0.4rem 0.4rem 0.6rem;
@@ -2225,16 +2223,44 @@ body:not([data-central-view="editor"]) #toolbar-search {
   padding: 0.4rem 0.4rem 0.6rem;
 }
 
+.file-tree-identity {
+  min-width: 0;
+  padding: 0.1rem 0.5rem 0.35rem;
+}
+
 .file-tree-root {
-  margin: 0 0 0.35rem;
-  padding: 0.1rem 0.5rem;
-  font: 600 11px var(--font-ui);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  margin: 0;
+  padding: 0;
+  font: 600 13px var(--font-ui);
+  color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.file-tree-branch-name {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+  font: 12px var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-filter-row {
+  padding: 0 0.35rem 0.4rem;
+}
+
+.file-tree-filter {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
 }
 
 .file-tree-list {
@@ -2335,6 +2361,12 @@ body:not([data-central-view="editor"]) #toolbar-search {
   color: var(--text-muted);
 }
 
+.file-tree-error {
+  margin: var(--space-3);
+  color: var(--danger-fg);
+  line-height: 1.45;
+}
+
 .file-tree-empty {
   padding: 0.85rem 0.9rem;
 }
@@ -2359,7 +2391,8 @@ body:not([data-central-view="editor"]) #toolbar-search {
   background: var(--surface-sunken);
 }
 
-.file-tree-root[hidden],
+.file-tree-identity[hidden],
+.file-tree-filter-row[hidden],
 .file-tree-list[hidden],
 .file-tree-empty[hidden],
 .file-tree-branch[hidden] {

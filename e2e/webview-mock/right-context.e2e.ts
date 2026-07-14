@@ -53,7 +53,6 @@ test("right-panel modes follow named, detached, and review context", async ({ pa
   });
   await expect.poll(() => labels(page)).toEqual([
     "Assistant",
-    "Outline",
     "Versions",
     "Comments",
     "History",

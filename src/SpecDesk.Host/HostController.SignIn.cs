@@ -217,18 +217,30 @@ public sealed partial class HostController
 		CancellationTokenSource? retiredAccountSession = null;
 		lock (_signInPublishSync)
 		{
-			lock (_sync)
+			lock (_remotePublishSync)
 			{
-				if (_disposed || !ReferenceEquals(_signInCts, cts))
+				lock (_sync)
 				{
-					return;
+					if (_disposed || !ReferenceEquals(_signInCts, cts))
+					{
+						return;
+					}
+					actions = TakePendingRepoActions();
+					if (signedIn)
+					{
+						retiredAccountSession = RotateAccountSessionLocked();
+						bool clearRemoteTree = _remoteTreeContext is not null
+							|| _remoteBrowseIntentRepoId is not null;
+						_remoteTreeContext = null;
+						bool clearRemoteDocument = _remoteDocument is not null;
+						if (clearRemoteDocument)
+						{
+							ClearActiveDocumentStateLocked();
+						}
+						PublishRetiredRemoteAccountState(clearRemoteTree, clearRemoteDocument);
+					}
+					_signInCts = null;
 				}
-				actions = TakePendingRepoActions();
-				if (signedIn)
-				{
-					retiredAccountSession = RotateAccountSessionLocked();
-				}
-				_signInCts = null;
 			}
 		}
 		if (actions is not null)
@@ -341,6 +353,15 @@ public sealed partial class HostController
 							_remoteBrowseGeneration++;
 							_remoteBrowseIntentGeneration++;
 							_remoteFileGeneration++;
+							bool clearRemoteTree = _remoteTreeContext is not null
+								|| _remoteBrowseIntentRepoId is not null;
+							_remoteTreeContext = null;
+							bool clearRemoteDocument = _remoteDocument is not null;
+							if (clearRemoteDocument)
+							{
+								ClearActiveDocumentStateLocked();
+							}
+							PublishRetiredRemoteAccountState(clearRemoteTree, clearRemoteDocument);
 							if (_remoteBrowseCts is not null) cancellations.Add(_remoteBrowseCts);
 							_remoteBrowseCts = null;
 							_remoteBrowseRepoId = null;
@@ -385,6 +406,18 @@ public sealed partial class HostController
 		{
 			InvalidateAccountDetails();
 			SendAccount(signedIn: false, login: null, persistenceMessage);
+		}
+	}
+
+	private void PublishRetiredRemoteAccountState(bool clearTree, bool clearDocument)
+	{
+		if (clearTree)
+		{
+			Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, new TreePayload(string.Empty, [])));
+		}
+		if (clearDocument)
+		{
+			PublishActiveDocumentCleared();
 		}
 	}
 	private void SendCurrentAccount()

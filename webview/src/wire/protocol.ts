@@ -586,10 +586,11 @@ export interface FolderOpenPayload {
   path?: string;
 }
 
-/** Payload of `tree.request` (webview→native): request the Markdown file tree, optionally scoped to `path`
+/** Payload of `tree.request` (webview→native): request one file-tree level, optionally scoped to `path`
  *  (absent → the current workspace folder, else the open document's folder). */
 export interface TreeRequestPayload {
   path?: string;
+  requestId: number;
 }
 
 /** One node of the file tree (native→webview, inside {@link TreePayload}). A directory has
@@ -600,13 +601,20 @@ export interface TreeNode {
   path: string;
   isDirectory: boolean;
   children: TreeNode[];
+  /** True when this directory has descendants that are not included in this one-level response. */
+  hasChildren: boolean;
 }
 
-/** Payload of `tree` (native→webview): the workspace folder's Markdown file tree. `root` is the folder's
- *  absolute path (its display name is the last segment); `nodes` are its top-level entries. */
+/** Payload of `tree` (native→webview): one local or remote folder level and its direct entries. */
 export interface TreePayload {
   root: string;
   nodes: TreeNode[];
+  /** Correlates a requested root/directory level; zero denotes an unsolicited root publication. */
+  requestId: number;
+  /** A requested level failed and remains retryable; absent on successful publications. */
+  error?: string;
+  /** Explicit origin for empty/error GitHub levels that have no node path from which to infer it. */
+  remote?: boolean;
 }
 
 /** Authoritative repository/version/path context for the open document. The file-tree root is separate. */

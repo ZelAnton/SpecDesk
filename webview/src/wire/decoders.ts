@@ -824,18 +824,36 @@ function parseTreeNode(value: unknown): TreeNode | null {
   if (children === null) {
     return null;
   }
-  return { name: value.name, path: value.path, isDirectory: value.isDirectory, children };
+  if (!isBoolean(value.hasChildren)) {
+    return null;
+  }
+  return {
+    name: value.name,
+    path: value.path,
+    isDirectory: value.isDirectory,
+    children,
+    hasChildren: value.hasChildren,
+  };
 }
 
 export function parseTree(value: unknown): TreePayload | null {
-  if (!isRecord(value) || !isString(value.root)) {
+  if (
+    !isRecord(value) ||
+    !isString(value.root) ||
+    !isNumber(value.requestId) ||
+    !(value.error === undefined || isString(value.error)) ||
+    !(value.remote === undefined || isBoolean(value.remote))
+  ) {
     return null;
   }
   const nodes = parseArray(value.nodes, parseTreeNode);
   if (nodes === null) {
     return null;
   }
-  return { root: value.root, nodes };
+  const payload: TreePayload = { root: value.root, nodes, requestId: value.requestId };
+  if (value.error !== undefined) payload.error = value.error;
+  if (value.remote !== undefined) payload.remote = value.remote;
+  return payload;
 }
 
 export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload | null {

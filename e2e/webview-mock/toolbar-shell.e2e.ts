@@ -43,6 +43,8 @@ test("global context and Markdown controls live in the correct toolbars and rema
   }
   const leftActive = page.locator('#left-dock .dock-rail-btn[aria-checked="true"]');
   await expect(leftActive).toBeVisible();
+  await expect(leftActive).toHaveAttribute("aria-expanded", "true");
+  await leftActive.click();
   await expect(leftActive).toHaveAttribute("aria-expanded", "false");
   await leftActive.click();
   await expect(leftActive).toHaveAttribute("aria-expanded", "true");

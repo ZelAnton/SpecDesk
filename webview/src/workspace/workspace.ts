@@ -37,9 +37,8 @@ export const CENTRAL_VIEW_HOME = "home";
 /** The central Notifications list opened from the global toolbar. */
 export const CENTRAL_VIEW_NOTIFICATIONS = "notifications";
 
-/** The navigator's destinations, in list order: the document editor and the Start screen. */
+/** Start is the Navigator's first action. The editor has its own contextual rail mode. */
 const NAV_DESTINATIONS: readonly NavDestination[] = [
-  { id: CENTRAL_VIEW_EDITOR, label: "Document", hint: "The spec you're editing" },
   { id: CENTRAL_VIEW_HOME, label: "Start", hint: "Open or pick a spec" },
 ];
 
@@ -109,7 +108,7 @@ export interface WorkspaceTools {
 }
 
 interface GroupedSection {
-  readonly label: string;
+  readonly label?: string;
   readonly tool: PanelTool;
 }
 
@@ -130,14 +129,17 @@ function groupedTool(
       for (const section of sections) {
         const sectionEl = document.createElement("section");
         sectionEl.className = "grouped-panel-section";
-        const heading = document.createElement("h3");
-        heading.className = "grouped-panel-heading";
-        heading.textContent = section.label;
         const content = document.createElement("div");
         content.className = "grouped-panel-content";
         content.dataset.tool = section.tool.id;
         section.tool.mount(content);
-        sectionEl.append(heading, content);
+        if (section.label !== undefined) {
+          const heading = document.createElement("h3");
+          heading.className = "grouped-panel-heading";
+          heading.textContent = section.label;
+          sectionEl.append(heading);
+        }
+        sectionEl.append(content);
         root.append(sectionEl);
       }
       body.append(root);
@@ -173,9 +175,16 @@ export function setupWorkspace(
   // assigned once the docks exist later in this synchronous setup.
   let revealRepositories: () => void = () => {};
   const navigator = new Navigator(NAV_DESTINATIONS, (id) => centralFrame.show(id));
-  // The document-outline tool (right rail): index.ts feeds it headings via the returned handle, and a click
-  // scrolls the editor through onOutlineNavigate.
+  // The document-outline tool is the contextual Editor mode on the left rail. index.ts feeds it headings,
+  // and a click scrolls the editor through onOutlineNavigate.
   const outline = new Outline((line) => callbacks.onOutlineNavigate(line));
+  const editorOutline: PanelTool = {
+    id: "editor",
+    label: "Editor",
+    icon: icon("outline"),
+    mount: (body) => outline.mount(body),
+    onShow: () => centralFrame.show(CENTRAL_VIEW_EDITOR),
+  };
 
   centralFrame = new CentralFrame(elements.centralFrame, (id) => {
     navigator.setActive(id);
@@ -223,7 +232,7 @@ export function setupWorkspace(
       "Star a repository, local copy, branch, file, or folder to keep it here.",
     );
   const navigatorHub = groupedTool("navigator", "Navigator", navigator.icon, [
-    { label: "Go to", tool: navigator },
+    { tool: navigator },
     { label: "Favorites", tool: favorites },
     { label: "History", tool: recent },
   ]);
@@ -258,6 +267,7 @@ export function setupWorkspace(
           icon("repositories"),
           "Register a repository to keep it handy.",
         ),
+      editorOutline,
       // The real workspace folder navigator when index.ts wired it; a placeholder in a reduced DOM.
       tools.files ??
         placeholderTool(
@@ -277,7 +287,6 @@ export function setupWorkspace(
           icon("assistant"),
           "Tools that act on the active document will appear here, starting with an AI assistant.",
         ),
-      outline,
       tools.versions ??
         placeholderTool(
           "versions",
@@ -338,6 +347,7 @@ export function setupWorkspace(
 
   // Before the first document frame only the globally useful Assistant applies.
   docks.get("right")?.setAvailableTools(rightToolsForContext(EMPTY_ACTIVE_CONTEXT));
+  docks.get("left")?.setAvailableTools(new Set(["navigator", "repositories", "files", "prs"]));
 
   // A dock open/close/resize changes the centre's box; observing it (rather than each dock) catches all
   // three uniformly and coalesces a live drag into one re-measure per frame. Guarded for jsdom, which has
@@ -364,6 +374,9 @@ export function setupWorkspace(
   };
   const setActiveContext = (context: ActiveContext): void => {
     docks.get("right")?.setAvailableTools(rightToolsForContext(context));
+    const left = new Set(["navigator", "repositories", "files", "prs"]);
+    if (context.file !== null) left.add("editor");
+    docks.get("left")?.setAvailableTools(left);
   };
 
   // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it

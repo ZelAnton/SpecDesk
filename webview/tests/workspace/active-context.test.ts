@@ -39,13 +39,7 @@ describe("active workspace context", () => {
     expect(fromStatusFirst).toEqual(fromDocumentFirst);
     expect(fromStatusFirst.pullRequest?.branch).toBe(fromStatusFirst.branch);
     expect(fromStatusFirst.branch?.name).toBe("spec/proposal");
-    expect(tools(fromStatusFirst)).toEqual([
-      "assistant",
-      "comments",
-      "history",
-      "outline",
-      "versions",
-    ]);
+    expect(tools(fromStatusFirst)).toEqual(["assistant", "comments", "history", "versions"]);
   });
 
   it.each([
@@ -59,7 +53,7 @@ describe("active workspace context", () => {
     expect(context.repository).not.toBeNull();
     expect(context.branch).toBeNull();
     expect(context.pullRequest).toBeNull();
-    expect(tools(context)).toEqual(["assistant", "outline", "versions"]);
+    expect(tools(context)).toEqual(["assistant", "versions"]);
   });
 
   it("keeps Versions for a non-Markdown repository file on detached HEAD", () => {
@@ -89,7 +83,7 @@ describe("active workspace context", () => {
     });
     const context = model.documentLoaded("C:\\notes\\outside.md");
     expect(context.file).toMatchObject({ type: "markdown", repository: null });
-    expect(tools(context)).toEqual(["assistant", "outline"]);
+    expect(tools(context)).toEqual(["assistant"]);
   });
 
   it("does not apply a stale repository context to a newly loaded document", () => {
@@ -110,7 +104,7 @@ describe("active workspace context", () => {
     const stale = model.statusChanged(review);
     expect(stale.branch?.name).toBe("spec/next");
     expect(stale.pullRequest).toBeNull();
-    expect(tools(stale)).toEqual(["assistant", "history", "outline", "versions"]);
+    expect(tools(stale)).toEqual(["assistant", "history", "versions"]);
 
     const matched = model.statusChanged({ ...review, branch: "spec/next" });
     expect(matched.pullRequest?.branch.name).toBe("spec/next");
@@ -174,7 +168,7 @@ describe("active workspace context", () => {
     });
 
     expect(stale.repository).toBeNull();
-    expect(tools(stale)).toEqual(["assistant", "outline"]);
+    expect(tools(stale)).toEqual(["assistant"]);
   });
 
   it("clears document and repository context when the active local copy is removed", () => {
