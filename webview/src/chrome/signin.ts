@@ -6,6 +6,9 @@ import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.j
 export interface SignInDeps {
   /** The global account-menu trigger. */
   accountBtn: HTMLButtonElement | null;
+  avatar?: HTMLImageElement | null;
+  avatarFallback?: HTMLElement | null;
+  notificationCount?: HTMLElement | null;
   /** The direct GitHub Connect/Sign out action on the main toolbar. */
   authBtn: HTMLButtonElement | null;
   /** Read-only GitHub identity in the bottom status bar. */
@@ -46,6 +49,9 @@ function atHandle(login: string): string {
 export class SignInController {
   private readonly accountBtn: HTMLButtonElement | null;
   private readonly authBtn: HTMLButtonElement | null;
+  private readonly avatar: HTMLImageElement | null;
+  private readonly avatarFallback: HTMLElement | null;
+  private readonly notificationCount: HTMLElement | null;
   private readonly accountStatus: HTMLElement | null;
   private readonly menu: HTMLElement | null;
   private readonly connectBtn: HTMLButtonElement | null;
@@ -56,6 +62,8 @@ export class SignInController {
   private readonly openBtn: HTMLButtonElement | null;
   private readonly status: HTMLElement | null;
   private readonly cancelBtn: HTMLButtonElement | null;
+  private accountLabel = "Account";
+  private notifications = 0;
   private verificationUri = "";
   private codeGeneration = 0;
   private available = false;
@@ -64,6 +72,9 @@ export class SignInController {
   constructor(private readonly deps: SignInDeps) {
     this.accountBtn = deps.accountBtn;
     this.authBtn = deps.authBtn;
+    this.avatar = deps.avatar ?? null;
+    this.avatarFallback = deps.avatarFallback ?? null;
+    this.notificationCount = deps.notificationCount ?? null;
     this.accountStatus = deps.accountStatus;
     this.menu = deps.menu;
     this.connectBtn = deps.connectBtn;
@@ -74,6 +85,7 @@ export class SignInController {
     this.openBtn = deps.openBtn;
     this.status = deps.status;
     this.cancelBtn = deps.cancelBtn;
+    this.avatar?.addEventListener("error", () => this.showAvatarFallback());
 
     this.accountBtn?.addEventListener("click", () => {
       this.setMenuOpen(this.menu === null || this.menu.hidden === true, true);
@@ -207,23 +219,18 @@ export class SignInController {
     this.available = payload.available;
     this.signedIn = payload.available && payload.signedIn;
     setHidden(this.accountBtn, false);
-    setHidden(this.authBtn, !payload.available);
+    setHidden(this.authBtn, !payload.available || payload.signedIn);
     setHidden(this.accountStatus, !payload.available || !payload.signedIn);
     const handle = payload.login && payload.login.length > 0 ? atHandle(payload.login) : "";
-    const authLabel = payload.signedIn
-      ? handle
-        ? `Sign out ${handle}`
-        : "Sign out of GitHub"
-      : "Connect to GitHub";
+    const authLabel = "Sign in";
     setText(this.authBtn, authLabel);
     this.authBtn?.setAttribute("aria-label", authLabel);
     if (this.authBtn !== null) {
       this.authBtn.title = authLabel;
     }
-    this.accountBtn?.setAttribute(
-      "aria-label",
-      payload.signedIn && handle ? `Account, signed in as ${handle}` : "Account",
-    );
+    this.accountLabel = payload.signedIn && handle ? `Account, signed in as ${handle}` : "Account";
+    this.updateAccountLabel();
+    this.applyAvatar(payload, handle);
     setHidden(this.connectBtn, !payload.available || payload.signedIn);
     setHidden(this.signOutBtn, !payload.available || !payload.signedIn);
     setText(this.signOutBtn, handle ? `Sign out ${handle}` : "Sign out");
@@ -261,6 +268,45 @@ export class SignInController {
     } else {
       setHidden(this.bar, true);
     }
+  }
+
+  /** Notification transport lands separately; zero keeps the badge out of the way. */
+  setNotificationCount(count: number): void {
+    const normalized = Math.max(0, Math.trunc(count));
+    this.notifications = normalized;
+    setText(this.notificationCount, normalized > 99 ? "99+" : String(normalized));
+    setHidden(this.notificationCount, normalized === 0);
+    this.updateAccountLabel();
+  }
+
+  private updateAccountLabel(): void {
+    const suffix =
+      this.notifications > 0
+        ? `, ${this.notifications} ${this.notifications === 1 ? "notification" : "notifications"}`
+        : "";
+    this.accountBtn?.setAttribute("aria-label", `${this.accountLabel}${suffix}`);
+  }
+
+  private applyAvatar(payload: GitHubAccountPayload, handle: string): void {
+    if (!payload.signedIn || payload.avatarUrl === undefined || payload.avatarUrl.length === 0) {
+      this.showAvatarFallback();
+      return;
+    }
+    if (this.avatar !== null) {
+      this.avatar.alt = handle ? `GitHub avatar for ${handle}` : "GitHub account avatar";
+      this.avatar.src = payload.avatarUrl;
+      setHidden(this.avatar, false);
+    }
+    setHidden(this.avatarFallback, true);
+  }
+
+  private showAvatarFallback(): void {
+    if (this.avatar !== null) {
+      this.avatar.removeAttribute("src");
+      this.avatar.alt = "";
+      setHidden(this.avatar, true);
+    }
+    setHidden(this.avatarFallback, false);
   }
 
   private setMenuOpen(open: boolean, focusFirst = false): void {

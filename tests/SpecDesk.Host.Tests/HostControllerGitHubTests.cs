@@ -40,6 +40,10 @@ public sealed class HostControllerGitHubTests
 
 	private sealed class AccountCatalog : IGitHubRepositoryCatalog
 	{
+		public Task<string?> GetAvatarUrlAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<string?>("https://avatars.githubusercontent.com/u/583231?v=4");
+
 		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
 			string accessToken, CancellationToken cancellationToken = default) =>
 			Task.FromResult<IReadOnlyList<string>>(["acme", "octo-labs"]);
@@ -527,7 +531,12 @@ public sealed class HostControllerGitHubTests
 				Thread.Sleep(20);
 			}
 
-			Assert.That(account?.Organizations, Is.EqualTo(AuthorizedOrganizations));
+			Assert.Multiple(() =>
+			{
+				Assert.That(account?.Organizations, Is.EqualTo(AuthorizedOrganizations));
+				Assert.That(account?.AvatarUrl,
+					Is.EqualTo("https://avatars.githubusercontent.com/u/583231?v=4"));
+			});
 		}
 	}
 

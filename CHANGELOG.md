@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
+- The right panel now ends at the bottom panel instead of overlapping its workspace.
 - Bounded pull-request histories now disclose when earlier commits are not shown instead of appearing complete.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
@@ -29,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The status bar now identifies the active local copy, working line, and filename without repeating the full path.
+- The account avatar now shows the connected GitHub profile image with a neutral signed-out fallback and carries the notification-count badge.
 - Pull requests now open as in-app review documents with their description, author, reviewers, conversation, commits, checks, and draft state.
 - Pull-request conversations now combine general and file-review comments with replies, editing your own comments, and a focused bottom-panel reader.
 - The bottom Log now records bounded GitHub requests, view changes, context changes, and user actions without recording message contents or credentials.

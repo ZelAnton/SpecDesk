@@ -153,6 +153,22 @@ public sealed class WorkspaceStore
 		}
 	}
 
+	internal string? FindCloneName(string path)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return null;
+		}
+
+		lock (_sync)
+		{
+			return _repositories
+				.SelectMany(repo => repo.Clones)
+				.FirstOrDefault(clone => SameCanonicalPath(clone.Path, path))
+				?.Id;
+		}
+	}
+
 	internal RepositoryRegistrationSnapshot CaptureRepoRegistration(string id)
 	{
 		lock (_sync)
@@ -719,6 +735,20 @@ public sealed class WorkspaceStore
 	// Windows filesystem paths are case-insensitive, and the same file/folder can reach the store under
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+	private static bool SameCanonicalPath(string a, string b)
+	{
+		try
+		{
+			return SamePath(
+				Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)),
+				Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)));
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			return false;
+		}
+	}
 
 	private static bool PathIsInside(string candidate, string root)
 	{

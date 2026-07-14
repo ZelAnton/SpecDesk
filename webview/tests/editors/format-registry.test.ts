@@ -137,7 +137,7 @@ describe("the shipped workspace chrome", () => {
       "current-branch",
       "current-path",
       "toolbar-search",
-      "notifications-btn",
+      "account-notifications",
       "github-btn",
     ]) {
       expect(primary?.querySelector(`#${id}`), id).not.toBeNull();

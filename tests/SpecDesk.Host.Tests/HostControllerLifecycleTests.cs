@@ -199,6 +199,7 @@ public sealed class HostControllerLifecycleTests
             Assert.That(context, Is.Not.Null);
             Assert.That(context!.Repository, Is.EqualTo(Path.GetFileName(_tempDir)));
             Assert.That(context.RepositoryRoot, Is.EqualTo(_tempDir));
+            Assert.That(context.LocalCopy, Is.EqualTo(Path.GetFileName(_tempDir)));
             Assert.That(context.Branch, Is.EqualTo("master"));
             Assert.That(context.BranchState, Is.EqualTo("named"));
             Assert.That(context.DefaultBranch, Is.EqualTo("master"));
@@ -310,6 +311,7 @@ public sealed class HostControllerLifecycleTests
         {
             Assert.That(context, Is.Not.Null);
             Assert.That(context!.RepositoryRoot, Is.EqualTo(cloneRoot));
+            Assert.That(context.LocalCopy, Is.EqualTo("managed-clone"));
             Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
         });
     }
@@ -341,6 +343,7 @@ public sealed class HostControllerLifecycleTests
         {
             Assert.That(context, Is.Not.Null);
             Assert.That(context!.RepositoryRoot, Is.EqualTo(cloneRoot));
+            Assert.That(context.LocalCopy, Is.EqualTo("copy-2"));
             Assert.That(context.Path, Is.EqualTo("docs/guide.md"));
         });
     }

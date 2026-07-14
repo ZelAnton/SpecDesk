@@ -5,6 +5,36 @@ namespace SpecDesk.Host.Tests;
 [TestFixture]
 public sealed class WindowChromeControllerTests
 {
+	[TestCase(100, 100, WindowHitTest.TopLeft)]
+	[TestCase(899, 100, WindowHitTest.TopRight)]
+	[TestCase(100, 699, WindowHitTest.BottomLeft)]
+	[TestCase(899, 699, WindowHitTest.BottomRight)]
+	[TestCase(500, 101, WindowHitTest.Top)]
+	[TestCase(101, 400, WindowHitTest.Left)]
+	[TestCase(898, 400, WindowHitTest.Right)]
+	[TestCase(500, 698, WindowHitTest.Bottom)]
+	[TestCase(500, 400, WindowHitTest.Client)]
+	public void ChromelessHitTestReturnsStandardResizeEdges(int x, int y, int expected)
+	{
+		WindowHitTest actual = WindowChromeGeometry.HitTest(
+			new WindowRect(100, 100, 900, 700),
+			new WindowPoint(x, y),
+			horizontalBorder: 8,
+			verticalBorder: 8);
+
+		Assert.That((int)actual, Is.EqualTo(expected));
+	}
+
+	[Test]
+	public void MaximizedBoundsUseMonitorRelativeWorkArea()
+	{
+		MaximizedWindowBounds bounds = WindowChromeGeometry.MaximizedBounds(
+			new WindowRect(-1920, 0, 0, 1080),
+			new WindowRect(-1920, 0, 0, 1040));
+
+		Assert.That(bounds, Is.EqualTo(new MaximizedWindowBounds(0, 0, 1920, 1040)));
+	}
+
 	[TestCase(MessageKinds.WindowMinimize, 0)]
 	[TestCase(MessageKinds.WindowToggleMaximize, 1)]
 	[TestCase(MessageKinds.WindowClose, 2)]

@@ -83,7 +83,9 @@ test("panel surfaces keep a visible, accessible grey hierarchy in light and dark
     const colours = await panelColours(page);
     expect(colours.header).not.toBe(colours.panel);
     expect(colours.rail).not.toBe(colours.panel);
-    expect(luminance(parseRgb(colours.rail))).toBeLessThan(luminance(parseRgb(colours.panel)));
+    expect(
+      Math.abs(luminance(parseRgb(colours.rail)) - luminance(parseRgb(colours.panel))),
+    ).toBeGreaterThanOrEqual(0.02);
     expect(contrast(parseRgb(colours.titleText), parseRgb(colours.header))).toBeGreaterThanOrEqual(4.5);
     const normalBackground = colours.normalBackground === "rgba(0, 0, 0, 0)" ? colours.rail : colours.normalBackground;
     expect(contrast(parseRgb(colours.normalText), parseRgb(normalBackground))).toBeGreaterThanOrEqual(4.5);

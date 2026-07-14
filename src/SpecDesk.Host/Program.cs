@@ -129,6 +129,7 @@ internal static class Program
 		// Photino's version default; a shipped app exposes neither.
 		string? devToolsEnv = Environment.GetEnvironmentVariable("SPECDESK_DEVTOOLS")?.Trim().ToLowerInvariant();
 		bool devTools = devToolsEnv is "1" or "true" or "yes" or "on";
+		NativeWindowChrome? nativeWindowChrome = null;
 
 		WindowCloseCoordinator closeCoordinator = new(
 			requestEditorFlush: requestId => window!.SendWebMessage(IpcSerializer.SerializeEvent(
@@ -159,6 +160,11 @@ internal static class Program
 			.SetDevToolsEnabled(devTools)
 			.SetContextMenuEnabled(devTools)
 			.Center()
+			// Photino creates its native HWND inside WaitForClose; WindowHandle throws before this callback.
+			// Attach while the created window is still on its owning UI thread and keep the delegate rooted
+			// until the message loop has ended.
+			.RegisterWindowCreatedHandler((_, _) =>
+				nativeWindowChrome = NativeWindowChrome.Attach(window!.WindowHandle))
 			// Fires synchronously on the UI thread as soon as WM_CLOSE is dispatched, ahead of the
 			// native window (and its message queue) being torn down — see DialogClosingGrace above.
 			// The first close is deferred while the webview flushes and the host persists; the coordinator's
@@ -197,7 +203,14 @@ internal static class Program
 			// to a temp dir), so a CWD-relative path would not find wwwroot/.
 			.Load(Path.Combine(AppContext.BaseDirectory, "wwwroot", "index.html"));
 
-		window.WaitForClose();
+		try
+		{
+			window.WaitForClose();
+		}
+		finally
+		{
+			nativeWindowChrome?.Dispose();
+		}
 		startup.LogInformation("SpecDesk closing");
 		Serilog.Log.CloseAndFlush();
 	}

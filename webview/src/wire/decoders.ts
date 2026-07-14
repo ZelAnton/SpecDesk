@@ -326,6 +326,9 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   ) {
     return null;
   }
+  if (value.avatarUrl !== undefined && !isString(value.avatarUrl)) {
+    return null;
+  }
   // login / message are optional (exactOptionalPropertyTypes forbids an explicit undefined), so add them
   // only when present.
   const payload: GitHubAccountPayload = { available: value.available, signedIn: value.signedIn };
@@ -337,6 +340,9 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   }
   if (value.organizations !== undefined) {
     payload.organizations = value.organizations;
+  }
+  if (value.avatarUrl !== undefined) {
+    payload.avatarUrl = value.avatarUrl;
   }
   return payload;
 }
@@ -842,6 +848,7 @@ export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload |
       isString(value.repositoryRoot)
     ) ||
     !(value.branch === undefined || value.branch === null || isString(value.branch)) ||
+    !(value.localCopy === undefined || value.localCopy === null || isString(value.localCopy)) ||
     !(
       value.branchState === "named" ||
       value.branchState === "detached" ||
@@ -863,9 +870,11 @@ export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload |
   const repositoryRoot = value.repositoryRoot ?? null;
   const branch = value.branch ?? null;
   const defaultBranch = value.defaultBranch ?? null;
+  const localCopy = value.localCopy ?? null;
   if (
     (value.branchState === "named" && !isString(branch)) ||
     (value.branchState !== "named" && branch !== null) ||
+    (localCopy !== null && repositoryRoot === null) ||
     (repository === null &&
       (repositoryRoot !== null ||
         branch !== null ||
@@ -881,6 +890,7 @@ export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload |
     branchState: value.branchState,
     defaultBranch,
     path: value.path,
+    localCopy,
   };
 }
 

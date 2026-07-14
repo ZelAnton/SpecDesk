@@ -26,6 +26,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
       branchState: "named",
       defaultBranch: "master",
       path: "guides/intro.md",
+      localCopy: "specs-manager",
     },
   });
   await expect(page.locator("body")).toHaveAttribute("data-central-view", "editor");
@@ -70,8 +71,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
   );
   const statusBar = page.locator("#status-bar");
   const leftRail = page.locator("#left-dock .dock-rail");
-  await expect(statusBar).toHaveCSS(
-    "background-color",
+  expect(await statusBar.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe(
     await leftRail.evaluate((element) => getComputedStyle(element).backgroundColor),
   );
   await expect(statusBar).toHaveCSS(
@@ -79,14 +79,15 @@ test("global context and Markdown controls live in the correct toolbars and rema
     await filesMode.evaluate((element) => getComputedStyle(element).color),
   );
 
-  // The bottom panel owns only the workspace column. The right rail spans both rows and therefore remains
-  // unobscured whether the bottom panel is expanded or collapsed.
+  // The bottom panel owns the full shell width. The right panel ends exactly where the bottom begins.
   const bottomBox = await page.locator("#bottom-dock").boundingBox();
   const rightBox = await page.locator("#right-dock").boundingBox();
   if (bottomBox === null || rightBox === null) {
     throw new Error("The bottom and right docks must both participate in layout");
   }
-  expect(bottomBox.x + bottomBox.width).toBeLessThanOrEqual(rightBox.x);
+  expect(rightBox.y + rightBox.height).toBeLessThanOrEqual(bottomBox.y);
+  expect(bottomBox.x).toBeLessThanOrEqual(rightBox.x);
+  expect(bottomBox.x + bottomBox.width).toBeGreaterThanOrEqual(rightBox.x + rightBox.width);
   await page.screenshot({ path: testInfo.outputPath("panels-expanded.png"), fullPage: true });
   await bottomActive.click();
   await expect(page.locator("#bottom-dock .dock-rail")).toHaveCSS("flex-direction", "row");
@@ -94,6 +95,9 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(page.locator("#current-repository")).toHaveText("acme/specs");
   await expect(page.locator("#current-branch")).toHaveText("spec/navigation");
   await expect(page.locator("#current-path")).toHaveText("guides/intro.md");
+  await expect(page.locator("#workspace-context-status")).toHaveText(
+    /specs-manager\s*·\s*spec\/navigation\s*·\s*intro\.md/,
+  );
 
   await emit(page, {
     kind: "workspace.context",
@@ -141,7 +145,8 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(page.locator("#toolbar-announcer")).toHaveText("Found target.");
   await expect(page.locator('#panes[data-mode="formatted"]')).toHaveCount(1);
 
-  await page.locator("#notifications-btn").click();
+  await page.locator("#github-btn").click();
+  await page.locator("#account-notifications").click();
   await expect(page.locator("#app-title")).toBeVisible();
   await expect(page.locator("#repository-context")).toBeHidden();
   await expect(page.locator("#toolbar-search")).toBeHidden();
@@ -159,7 +164,9 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(account).toHaveAttribute("aria-label", "Account, signed in as @octocat");
   await account.click();
   await expect(page.locator("#account-menu")).toBeVisible();
-  await expect(page.locator("#account-settings")).toHaveText("Settings");
+  await expect(page.locator("#account-settings")).toBeDisabled();
+  await expect(page.locator("#account-settings")).toHaveText("Settings (coming soon)");
+  await expect(page.locator("#account-updates")).toBeDisabled();
   await expect(page.locator("#account-help")).toHaveText("Help");
   const theme = page.getByRole("menuitemcheckbox", { name: "Dark theme" });
   await expect(theme).toHaveAttribute("aria-checked", "false");
