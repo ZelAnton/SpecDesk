@@ -119,14 +119,17 @@ export class ActiveContextModel {
   private documentPath: string | null = null;
   private workspace: WorkspaceContextPayload | null = null;
   private status: StatusPayload = PUBLISHED;
+  private explicitPullRequest: ActiveContext | null = null;
 
   documentLoaded(path: string): ActiveContext {
+    this.explicitPullRequest = null;
     if (this.documentPath !== null) this.status = PUBLISHED;
     this.documentPath = path;
     return this.current();
   }
 
   documentCleared(): ActiveContext {
+    this.explicitPullRequest = null;
     this.documentPath = null;
     this.workspace = null;
     this.status = PUBLISHED;
@@ -142,7 +145,35 @@ export class ActiveContextModel {
     return this.current();
   }
 
+  pullRequestOpened(repositoryId: string, branchName: string): ActiveContext {
+    const repository: RepositoryContext = {
+      kind: "repository",
+      id: repositoryId,
+      root: null,
+      defaultBranch: null,
+    };
+    const branch: BranchContext = { kind: "branch", repository, name: branchName };
+    this.explicitPullRequest = {
+      repository,
+      branch,
+      pullRequest: { kind: "pullRequest", branch },
+      file: null,
+    };
+    return this.explicitPullRequest;
+  }
+
+  pullRequestLoading(): ActiveContext {
+    this.explicitPullRequest = EMPTY_ACTIVE_CONTEXT;
+    return this.explicitPullRequest;
+  }
+
+  pullRequestClosed(): ActiveContext {
+    this.explicitPullRequest = null;
+    return this.current();
+  }
+
   current(): ActiveContext {
+    if (this.explicitPullRequest !== null) return this.explicitPullRequest;
     if (this.documentPath === null) return EMPTY_ACTIVE_CONTEXT;
 
     const workspace =

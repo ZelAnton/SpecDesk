@@ -8,13 +8,13 @@ namespace SpecDesk.GitHub.Tests;
 [TestFixture]
 public sealed class GitHubReviewTests
 {
-	private sealed class OversizedCommentsHandler : HttpMessageHandler
+	private sealed class OversizedCommentsHandler(int bytes = 1_048_577) : HttpMessageHandler
 	{
 		protected override Task<HttpResponseMessage> SendAsync(
 			HttpRequestMessage request, CancellationToken cancellationToken) =>
 			Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
 			{
-				Content = new UnknownLengthContent(1_048_577),
+				Content = new UnknownLengthContent(bytes),
 			});
 	}
 
@@ -50,6 +50,15 @@ public sealed class GitHubReviewTests
 	}
 
 	[Test]
+	public void GetPullRequestDetailsAsync_RejectsAnOversizedGraphQlResponse()
+	{
+		using HttpClient http = new(new OversizedCommentsHandler(4_194_305));
+		GitHubReviewClient client = new(http);
+		Assert.ThrowsAsync<InvalidDataException>(async () =>
+			await client.GetPullRequestDetailsAsync("token", "owner", "repo", 42));
+	}
+
+	[Test]
 	public async Task ListReviewCommentsAsync_RequestsNewestBoundedPageAndTruncatesBodies()
 	{
 		string body = "[{\"id\":123,\"path\":\"specs/billing.md\",\"body\":\""
@@ -71,6 +80,162 @@ public sealed class GitHubReviewTests
 			Assert.That(comments[0].Body, Has.Length.EqualTo(4_001));
 			Assert.That(comments[0].Body, Does.EndWith("…"));
 		});
+	}
+
+	[Test]
+	public async Task GetPullRequestDetailsAsync_MapsConversationReviewersCommitsAndChecks()
+	{
+		const string response = """
+			{"data":{"viewer":{"login":"octo"},"repository":{"pullRequest":{"number":42,"title":"Clarify refunds","body":"Explain the window.",
+			"url":"https://github.com/octo/spec/pull/42","state":"OPEN","isDraft":true,"baseRefName":"main",
+			"headRefName":"spec/refunds","author":{"login":"alex","avatarUrl":"https://img/alex"},
+			"reviewRequests":{"nodes":[{"requestedReviewer":{"login":"sam","avatarUrl":"https://img/sam"}}]},
+			"latestReviews":{"nodes":[{"author":{"login":"completed","avatarUrl":"https://img/completed"}}]},
+			"commits":{"totalCount":51,"nodes":[{"commit":{"oid":"abcdef","abbreviatedOid":"abcdef0",
+			"messageHeadline":"Clarify window","committedDate":"2026-07-14T09:00:00Z",
+			"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}
+			""";
+		string longOwnComment = new('x', 9_000);
+		string conversation = JsonSerializer.Serialize(new[]
+		{
+			new
+			{
+				id = 9,
+				body = longOwnComment,
+				created_at = "2026-07-14T10:00:00Z",
+				updated_at = "2026-07-14T10:01:00Z",
+				user = new { login = "octo", avatar_url = "https://img/octo" },
+			},
+		});
+		const string inline = """
+			[{"id":10,"path":"spec.md","body":"Inline note","created_at":"2026-07-14T10:02:00Z",
+			"updated_at":"2026-07-14T10:02:00Z","user":{"login":"reviewer","avatar_url":""}}]
+			""";
+		using ScriptedHttpMessageHandler handler = new(
+			(HttpStatusCode.OK, response),
+			(HttpStatusCode.OK, conversation),
+			(HttpStatusCode.OK, inline));
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		PullRequestDetails details = await client.GetPullRequestDetailsAsync("token", "octo", "spec", 42);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(details.Title, Is.EqualTo("Clarify refunds"));
+			Assert.That(details.IsDraft, Is.True);
+			Assert.That(details.Reviewers, Has.Count.EqualTo(2));
+			Assert.That(details.Reviewers.Select(item => item.Login), Does.Contain("sam"));
+			Assert.That(details.Reviewers.Select(item => item.Login), Does.Contain("completed"));
+			Assert.That(details.Comments, Has.Count.EqualTo(2));
+			Assert.That(details.Comments[0].Kind, Is.EqualTo("conversation"));
+			Assert.That(details.Comments[0].Body, Has.Length.EqualTo(9_000));
+			Assert.That(details.Comments[0].ViewerDidAuthor, Is.True);
+			Assert.That(details.Comments[1].Path, Is.EqualTo("spec.md"));
+			Assert.That(details.Commits.Single().CheckState, Is.EqualTo("success"));
+			Assert.That(details.CommitsIncomplete, Is.True);
+			Assert.That(handler.Requests[0], Is.EqualTo(new Uri("https://api.github.com/graphql")));
+			Assert.That(handler.Requests[1].AbsolutePath, Is.EqualTo("/repos/octo/spec/issues/42/comments"));
+			Assert.That(handler.Requests[2].AbsolutePath, Is.EqualTo("/repos/octo/spec/pulls/42/comments"));
+		});
+	}
+
+	[Test]
+	public async Task GetPullRequestDetailsAsync_MarksCommentsIncompleteAtThePagingSafetyLimit()
+	{
+		const string metadata = """
+			{"data":{"viewer":{"login":"octo"},"repository":{"pullRequest":{"number":42,
+			"title":"Review","body":"","url":"https://github.com/octo/spec/pull/42","state":"OPEN",
+			"isDraft":false,"baseRefName":"main","headRefName":"spec/review","author":{"login":"octo"},
+			"reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"commits":{"nodes":[]}}}}}
+			""";
+		string fullPage = JsonSerializer.Serialize(
+			Enumerable.Range(1, 100).Select(index => new
+			{
+				id = index,
+				body = "Comment",
+				created_at = "2026-07-14T10:00:00Z",
+				updated_at = "2026-07-14T10:00:00Z",
+				user = new { login = "octo" },
+			}));
+		var responses = new List<(HttpStatusCode Status, string Body)> { (HttpStatusCode.OK, metadata) };
+		responses.AddRange(Enumerable.Repeat((HttpStatusCode.OK, fullPage), 20));
+		using ScriptedHttpMessageHandler handler = new([.. responses]);
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		PullRequestDetails details = await client.GetPullRequestDetailsAsync("token", "octo", "spec", 42);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(details.CommentsIncomplete, Is.True);
+			Assert.That(details.Comments, Has.Count.EqualTo(2_000));
+			Assert.That(handler.Requests, Has.Count.EqualTo(21));
+		});
+	}
+
+	[Test]
+	public async Task GetPullRequestDetailsAsync_BoundsTheCombinedCommentTextWithoutTruncatingEditableItems()
+	{
+		const string metadata = """
+			{"data":{"viewer":{"login":"octo"},"repository":{"pullRequest":{"number":42,
+			"title":"Review","body":"","url":"https://github.com/octo/spec/pull/42","state":"OPEN",
+			"isDraft":false,"baseRefName":"main","headRefName":"spec/review","author":{"login":"octo"},
+			"reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"commits":{"nodes":[]}}}}}
+			""";
+		string commentBody = new('x', 50_000);
+		string oversizedPage = JsonSerializer.Serialize(
+			Enumerable.Range(1, 100).Select(index => new
+			{
+				id = index,
+				body = commentBody,
+				created_at = "2026-07-14T10:00:00Z",
+				updated_at = "2026-07-14T10:00:00Z",
+				user = new { login = "octo" },
+			}));
+		using ScriptedHttpMessageHandler handler = new(
+			(HttpStatusCode.OK, metadata),
+			(HttpStatusCode.OK, oversizedPage));
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		PullRequestDetails details = await client.GetPullRequestDetailsAsync("token", "octo", "spec", 42);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(details.CommentsIncomplete, Is.True);
+			Assert.That(details.Comments, Has.Count.EqualTo(83));
+			Assert.That(details.Comments, Has.All.Property(nameof(PullRequestComment.Body)).Length.EqualTo(50_000));
+			Assert.That(handler.Requests, Has.Count.EqualTo(2));
+		});
+	}
+
+	[Test]
+	public async Task PullRequestCommentMutations_UseIssueConversationEndpointsAndBoundedBodies()
+	{
+		using StubHttpMessageHandler create = new(HttpStatusCode.Created, "{}");
+		using HttpClient createHttp = new(create);
+		GitHubReviewClient createClient = new(createHttp);
+		await createClient.CreatePullRequestCommentAsync("token", "octo", "spec", 42, "Hello");
+
+		using StubHttpMessageHandler update = new(HttpStatusCode.OK, "{}");
+		using HttpClient updateHttp = new(update);
+		GitHubReviewClient updateClient = new(updateHttp);
+		await updateClient.UpdatePullRequestCommentAsync("token", "octo", "spec", 9, "Updated");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(create.LastRequest?.Method, Is.EqualTo(HttpMethod.Post));
+			Assert.That(create.LastRequest?.RequestUri?.AbsolutePath,
+				Is.EqualTo("/repos/octo/spec/issues/42/comments"));
+			Assert.That(create.LastRequestBody, Does.Contain("Hello"));
+			Assert.That(update.LastRequest?.Method, Is.EqualTo(HttpMethod.Patch));
+			Assert.That(update.LastRequest?.RequestUri?.AbsolutePath,
+				Is.EqualTo("/repos/octo/spec/issues/comments/9"));
+			Assert.That(update.LastRequestBody, Does.Contain("Updated"));
+		});
+		Assert.ThrowsAsync<ArgumentException>(async () =>
+			await createClient.CreatePullRequestCommentAsync("token", "octo", "spec", 42, " "));
 	}
     private static async Task<PullRequest> Open(StubHttpMessageHandler handler)
     {

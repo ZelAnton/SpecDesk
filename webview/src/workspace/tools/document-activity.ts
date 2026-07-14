@@ -8,6 +8,7 @@ export class DocumentActivityPanel implements PanelTool {
   readonly icon: string;
   private body: HTMLElement | null = null;
   private payload: DocumentActivityPayload | null = null;
+  private contextMessage: string | null = null;
   private requestGeneration = 0;
 
   constructor(
@@ -20,10 +21,12 @@ export class DocumentActivityPanel implements PanelTool {
 
   mount(body: HTMLElement): void {
     this.body = body;
-    void this.refresh();
+    if (this.contextMessage === null) void this.refresh();
+    else this.render();
   }
 
   async refresh(): Promise<void> {
+    this.contextMessage = null;
     const generation = ++this.requestGeneration;
     const payload = await this.requestActivity();
     if (generation !== this.requestGeneration) return;
@@ -35,12 +38,27 @@ export class DocumentActivityPanel implements PanelTool {
   clear(): void {
     this.requestGeneration++;
     this.payload = null;
+    this.contextMessage = null;
     this.body?.replaceChildren();
   }
 
+  showMessage(message: string): void {
+    this.clear();
+    this.contextMessage = message;
+    this.render();
+  }
+
   private render(): void {
-    if (!this.body || !this.payload) return;
+    if (!this.body) return;
     this.body.replaceChildren();
+    if (this.contextMessage !== null) {
+      const notice = document.createElement("p");
+      notice.className = "document-activity-empty";
+      notice.textContent = this.contextMessage;
+      this.body.appendChild(notice);
+      return;
+    }
+    if (!this.payload) return;
     const root = document.createElement("div");
     root.className = "document-activity";
     const documentName = document.createElement("p");

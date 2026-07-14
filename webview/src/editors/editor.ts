@@ -549,6 +549,9 @@ export class MarkdownEditor {
   // lands mid-measure (posAtCoords returns null, e.g. during a layout rebuild) so a transient miss
   // does not report line 0 and yank the passive Split pane back to the top of the document.
   private lastTopVisibleLineExact = 0;
+  private readonly selectionToolbar: HTMLDivElement;
+  private selectionToolbarHovered = false;
+  private selectionToolbarAnchor: { x: number; y: number } | null = null;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -585,6 +588,9 @@ export class MarkdownEditor {
         cursorLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
         cursorNavigated = !update.docChanged;
         reportCursor();
+        this.selectionToolbarHovered = false;
+        this.selectionToolbarAnchor = null;
+        this.updateSelectionToolbar();
       }
       // The editor relaid out for a reason other than a content edit or our own spacer dispatch →
       // re-equalize. Two cases matter: a real relayout transaction (a wrap toggle), AND — with no
@@ -604,6 +610,7 @@ export class MarkdownEditor {
         !update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setSpacersEffect)))
       ) {
         this.onGeometryChange();
+        this.updateSelectionToolbar();
       }
     });
 
@@ -669,6 +676,42 @@ export class MarkdownEditor {
       }),
     });
 
+    this.selectionToolbar = document.createElement("div");
+    this.selectionToolbar.className = "selection-format-popover selection-format-popover--code";
+    this.selectionToolbar.setAttribute("role", "toolbar");
+    this.selectionToolbar.setAttribute("aria-label", "Format selected Markdown");
+    this.selectionToolbar.hidden = true;
+    this.selectionToolbar.addEventListener("pointerenter", () => {
+      this.selectionToolbarHovered = true;
+    });
+    this.selectionToolbar.addEventListener("pointerleave", () => {
+      this.selectionToolbarHovered = false;
+      this.selectionToolbarAnchor = null;
+      this.updateSelectionToolbar();
+    });
+    const miniCommands: readonly FormatCommand[] = [
+      "bold",
+      "italic",
+      "strike",
+      "inlineCode",
+      "link",
+      "bullet",
+      "quote",
+    ];
+    for (const command of miniCommands) {
+      const definition = FORMAT_REGISTRY.find((item) => item.id === command);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.format = command;
+      button.title = definition?.label ?? command;
+      button.setAttribute("aria-label", definition?.label ?? command);
+      button.textContent = (definition?.label ?? command).slice(0, 1);
+      button.addEventListener("pointerdown", (event) => event.preventDefault());
+      button.addEventListener("click", () => this.applyFormat(command));
+      this.selectionToolbar.appendChild(button);
+    }
+    parent.appendChild(this.selectionToolbar);
+
     // Live sync runs every frame (sub-line precise). When scrolling stops, fire a settle callback
     // so the preview can be re-snapped exactly to the editor's top — the live frames can lag a
     // momentum scroll's final resting position by a frame.
@@ -677,7 +720,13 @@ export class MarkdownEditor {
     this.view.scrollDOM.addEventListener("scroll", () => {
       reportScroll();
       reportScrollSettle();
+      this.selectionToolbarHovered = false;
+      this.selectionToolbarAnchor = null;
+      this.updateSelectionToolbar();
     });
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => this.updateSelectionToolbar()).observe(parent);
+    }
 
     let hoverX = 0;
     let hoverY = 0;
@@ -688,9 +737,25 @@ export class MarkdownEditor {
     this.view.scrollDOM.addEventListener("mousemove", (event) => {
       hoverX = event.clientX;
       hoverY = event.clientY;
+      const pos = this.view.posAtCoords({ x: hoverX, y: hoverY });
+      const { from, to } = this.view.state.selection.main;
+      this.selectionToolbarHovered = pos !== null && from !== to && pos >= from && pos <= to;
+      this.selectionToolbarAnchor = this.selectionToolbarHovered ? { x: hoverX, y: hoverY } : null;
+      this.updateSelectionToolbar();
       reportHover();
     });
-    this.view.scrollDOM.addEventListener("mouseleave", () => this.onHover(null));
+    this.view.scrollDOM.addEventListener("mouseleave", (event) => {
+      this.onHover(null);
+      if (
+        event.relatedTarget instanceof Node &&
+        this.selectionToolbar.contains(event.relatedTarget)
+      ) {
+        return;
+      }
+      this.selectionToolbarHovered = false;
+      this.selectionToolbarAnchor = null;
+      this.updateSelectionToolbar();
+    });
 
     // A `beforeinput` only fires for modifying actions (typing, deletion, paste) — never for caret
     // navigation. While read-only the change is blocked anyway, so we use it purely as the signal
@@ -703,6 +768,38 @@ export class MarkdownEditor {
 
     // Report focus so the formatting toolbar can route to this pane when it is the active one in Split.
     this.view.contentDOM.addEventListener("focus", () => this.onFocus());
+  }
+
+  private updateSelectionToolbar(): void {
+    if (this.selectionToolbar === undefined) return;
+    const { from, to } = this.view.state.selection.main;
+    const anchor = this.selectionToolbarAnchor;
+    if (from === to || !this.selectionToolbarHovered || anchor === null) {
+      this.selectionToolbar.hidden = true;
+      return;
+    }
+    const parentRect = this.selectionToolbar.parentElement?.getBoundingClientRect();
+    if (parentRect === undefined) {
+      this.selectionToolbar.hidden = true;
+      return;
+    }
+    this.selectionToolbar.hidden = false;
+    if (
+      anchor.x < parentRect.left ||
+      anchor.x > parentRect.right ||
+      anchor.y < parentRect.top ||
+      anchor.y > parentRect.bottom
+    ) {
+      this.selectionToolbar.hidden = true;
+      return;
+    }
+    const toolbarRect = this.selectionToolbar.getBoundingClientRect();
+    const maximumLeft = Math.max(8, parentRect.width - toolbarRect.width - 8);
+    const maximumTop = Math.max(8, parentRect.height - toolbarRect.height - 8);
+    const desiredTop = anchor.y - parentRect.top - toolbarRect.height - 8;
+    const fallbackTop = anchor.y - parentRect.top + 8;
+    this.selectionToolbar.style.left = `${Math.min(maximumLeft, Math.max(8, anchor.x - parentRect.left))}px`;
+    this.selectionToolbar.style.top = `${Math.min(maximumTop, Math.max(8, desiredTop >= 8 ? desiredTop : fallbackTop))}px`;
   }
 
   /**

@@ -36,8 +36,10 @@ import {
   parseGitHubCode,
   parseGitHubRepositories,
   parseImageInserted,
+  parsePrDetails,
   parsePreview,
   parsePrList,
+  parsePrMutationCompleted,
   parsePrSuggested,
   parseRepoCloneConflict,
   parseRepoCloneDestination,
@@ -59,17 +61,26 @@ import {
   type DocumentActivityPayload,
   isReviewState,
   Kinds,
+  type PrListItemPayload,
   type WorkspaceItem,
 } from "./wire/protocol.js";
 import { type ActiveContext, ActiveContextModel } from "./workspace/active-context.js";
+import { activityStream } from "./workspace/activity-stream.js";
 import { CENTRAL_VIEW_EDITOR, type CentralFrame } from "./workspace/central-frame.js";
 import { browserDockStore } from "./workspace/dock-store.js";
 import { remoteWirePath } from "./workspace/remote-path.js";
+import { ActivityLogPanel } from "./workspace/tools/activity-log.js";
 import { AssistantChat } from "./workspace/tools/assistant-chat.js";
 import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
+import {
+  CommentDetailPanel,
+  PrCommentsPanel,
+  type PullRequestMutations,
+  PullRequestView,
+} from "./workspace/tools/pull-request-experience.js";
 import { PullRequestsPanel } from "./workspace/tools/pull-requests-panel.js";
 import {
   nextRepositoryOperationRequestId,
@@ -487,6 +498,9 @@ function wire(): void {
   // The left Review mode is created with the workspace, then receives account state from wireGitHub.
   let reviewRequestsPanel: ReviewRequestsPanel | undefined;
   let pullRequestsPanel: PullRequestsPanel | undefined;
+  let pullRequestView: PullRequestView | undefined;
+  let prCommentsPanel: PrCommentsPanel | undefined;
+  let selectedCommentPanel: CommentDetailPanel | undefined;
   // Reveals the Files navigator (opens the left dock + switches to it). Assigned once the workspace wires;
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
@@ -498,6 +512,8 @@ function wire(): void {
   const applyActiveContext = (context: ActiveContext): void => {
     activeContext = context;
     setWorkspaceContext(context);
+    const summary = context.file?.path ?? context.branch?.name ?? context.repository?.id ?? "Start";
+    activityStream.add("Context", `Active context: ${summary}`);
   };
   const setContext = (element: HTMLElement | null, text: string): void => {
     if (element) {
@@ -1269,6 +1285,7 @@ function wire(): void {
         const nextIdentity = payload.available && payload.signedIn ? (payload.login ?? "") : null;
         if (nextIdentity !== githubAccountIdentity) {
           githubAccountIdentity = nextIdentity;
+          activityStream.clear();
           repositoriesPanel?.clearAccountState();
           invalidateActivityRequests();
           for (const panel of activityPanels) {
@@ -1276,6 +1293,13 @@ function wire(): void {
             if (nextIdentity !== null) {
               void panel.refresh();
             }
+          }
+          pullRequestView?.clear();
+          prCommentsPanel?.setDetails(null);
+          selectedCommentPanel?.clear();
+          applyActiveContext(activeContextModel.pullRequestClosed());
+          if (centralFrame?.active() === "pull-request") {
+            centralFrame.show(CENTRAL_VIEW_HOME);
           }
         }
         signInController.applyAccount(payload);
@@ -1598,9 +1622,9 @@ function wire(): void {
       return request;
     };
     const versions = new DocumentActivityPanel("versions", "Versions", requestActivity);
-    const comments = new DocumentActivityPanel("comments", "Comments", requestActivity);
+    const documentComments = new DocumentActivityPanel("comments", "Comments", requestActivity);
     const history = new DocumentActivityPanel("history", "History", requestActivity);
-    activityPanels = [versions, comments, history];
+    activityPanels = [versions, documentComments, history];
     // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
     // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
     ipc.on(Kinds.chatDelta, (message) => {
@@ -1780,6 +1804,61 @@ function wire(): void {
       },
     });
     repositoriesPanel = repositories;
+    const selectedComment = new CommentDetailPanel();
+    let revealSelectedComment = (): void => {};
+    const mutatePullRequest = async (kind: string, payload: unknown): Promise<void> => {
+      const reply = await ipc.request(kind, payload);
+      const result = parsePrMutationCompleted(reply.payload);
+      if (result === null || !result.succeeded) {
+        const message = result?.error ?? "GitHub couldn't save that change. Try again.";
+        showPlainStatus(message);
+        activityStream.add("GitHub", message, "failed");
+        throw new Error(message);
+      }
+      activityStream.add("GitHub", "Saved pull request change", "succeeded");
+    };
+    const prMutations: PullRequestMutations = {
+      create: (repo, number, body) =>
+        mutatePullRequest(Kinds.prCommentCreate, { repo, number, body }),
+      reply: (repo, number, comment, body) =>
+        mutatePullRequest(Kinds.prCommentReply, {
+          repo,
+          number,
+          commentId: comment.id,
+          kind: comment.kind,
+          author: comment.author,
+          body,
+        }),
+      update: (repo, number, comment, body) =>
+        mutatePullRequest(Kinds.prCommentUpdate, {
+          repo,
+          number,
+          commentId: comment.id,
+          kind: comment.kind,
+          body,
+        }),
+      reviewers: (repo, number, reviewers) =>
+        mutatePullRequest(Kinds.prReviewersRequest, { repo, number, reviewers }),
+    };
+    const prComments = new PrCommentsPanel(
+      prMutations,
+      (comment) => {
+        selectedComment.select(comment);
+        revealSelectedComment();
+      },
+      async () => {
+        await pullRequestView?.refresh();
+      },
+    );
+    prCommentsPanel = prComments;
+    selectedCommentPanel = selectedComment;
+    const activityLog = new ActivityLogPanel();
+    const openReview = (item: PrListItemPayload): void => {
+      if (pullRequestView === undefined || centralFrame === undefined) return;
+      void pullRequestView.open(item, centralFrame);
+      applyActiveContext(activeContextModel.pullRequestLoading());
+    };
+
     const reviewRequests = new ReviewRequestsPanel({
       request: () =>
         requestSuggestion(
@@ -1792,6 +1871,7 @@ function wire(): void {
           { scope: "reviewRequests" },
         ),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+      openReview,
     });
     reviewRequestsPanel = reviewRequests;
     const pullRequests = new PullRequestsPanel({
@@ -1806,6 +1886,7 @@ function wire(): void {
           { scope: "pullRequests" },
         ),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+      openReview,
     });
     pullRequestsPanel = pullRequests;
     ipc.on(Kinds.githubRepositories, (message) => {
@@ -1860,7 +1941,20 @@ function wire(): void {
         // The view-mode switch only applies to the editor view: disable it while a non-editor central view
         // is shown, and re-measure the editor when it returns (it was hidden, so its geometry went stale).
         onCentralViewChange: (viewId) => {
+          const previousView = document.body.dataset.centralView;
           document.body.dataset.centralView = viewId;
+          activityStream.add("View", `Central view: ${viewId}`);
+          if (previousView === "pull-request" && viewId !== "pull-request") {
+            pullRequestView?.clear();
+            prComments.setDetails(null);
+            selectedComment.clear();
+            invalidateActivityRequests();
+            for (const panel of activityPanels) {
+              panel.clear();
+              void panel.refresh();
+            }
+            applyActiveContext(activeContextModel.pullRequestClosed());
+          }
           const editorActive = viewId === CENTRAL_VIEW_EDITOR;
           viewModeControl.setDisabled(!editorActive);
           if (editorActive) {
@@ -1875,7 +1969,7 @@ function wire(): void {
       {
         assistant: chat,
         versions,
-        comments,
+        comments: prComments,
         history,
         files,
         recent,
@@ -1883,9 +1977,49 @@ function wire(): void {
         repositories,
         reviews: reviewRequests,
         pullRequests,
+        log: activityLog,
+        selectedComment,
       },
     );
     centralFrame = workspace.centralFrame;
+    pullRequestView = new PullRequestView(
+      centralFrameEl,
+      workspace.centralFrame,
+      (repo, number) =>
+        requestSuggestion(
+          Kinds.prDetailsRequest,
+          parsePrDetails,
+          {
+            number,
+            repo,
+            title: "",
+            body: "",
+            url: "",
+            state: "unknown",
+            isDraft: false,
+            author: "",
+            authorAvatarUrl: "",
+            baseBranch: "",
+            headBranch: "",
+            reviewers: [],
+            comments: [],
+            commits: [],
+            commentsIncomplete: false,
+            commitsIncomplete: false,
+            error: "Couldn't load this review. Check your connection and try again.",
+          },
+          { repo, number },
+        ),
+      prMutations,
+      prComments,
+      (repository, branch) => {
+        invalidateActivityRequests();
+        for (const panel of activityPanels) panel.clear();
+        history.showMessage("Review history is shown in the review document.");
+        applyActiveContext(activeContextModel.pullRequestOpened(repository, branch));
+      },
+    );
+    revealSelectedComment = () => workspace.revealTool("bottom", "comment");
     document.body.dataset.centralView = centralFrame.active() ?? "home";
     outline = workspace.outline;
     home = workspace.home;

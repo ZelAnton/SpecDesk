@@ -51,6 +51,28 @@ public sealed record ReviewSummary(
 public sealed record ReviewComment(
     string Id, string Path, string Author, string Body, DateTimeOffset When);
 
+/// <summary>One person or team participating in a pull-request review.</summary>
+public sealed record PullRequestParticipant(string Login, string AvatarUrl, string Kind);
+
+/// <summary>One conversation comment attached to the pull request as a whole.</summary>
+public sealed record PullRequestComment(
+    long Id, string Kind, string Path, string Author, string AvatarUrl, string Body, DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt, bool ViewerDidAuthor);
+
+/// <summary>One commit in a pull request, with its latest combined GitHub checks result.</summary>
+public sealed record PullRequestCommit(
+    string Oid, string ShortOid, string Title, DateTimeOffset When, string CheckState);
+
+/// <summary>The bounded pull-request document shown inside SpecDesk.</summary>
+public sealed record PullRequestDetails(
+    int Number, string Repo, string Title, string Body, string Url, string State, bool IsDraft,
+    string Author, string AuthorAvatarUrl, string BaseBranch, string HeadBranch,
+    IReadOnlyList<PullRequestParticipant> Reviewers,
+    IReadOnlyList<PullRequestComment> Comments,
+    IReadOnlyList<PullRequestCommit> Commits,
+    bool CommentsIncomplete = false,
+    bool CommitsIncomplete = false);
+
 /// <summary>
 /// The GitHub review operations behind the "Send for review" flow. The access token is passed in (the host
 /// gets it transiently via <see cref="IGitHubAuth.WithAccessTokenAsync{T}"/>) and used only as the Bearer
@@ -129,6 +151,47 @@ public interface IGitHubReview
         string repo,
         int pullNumber,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Load the bounded pull-request document used by the in-app review view.</summary>
+    Task<PullRequestDetails> GetPullRequestDetailsAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Pull-request details are not available from this provider.");
+
+    /// <summary>Create a conversation comment that is not anchored to a file.</summary>
+    Task CreatePullRequestCommentAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        string body,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Pull-request comments are not available from this provider.");
+
+    /// <summary>Update a conversation comment. GitHub enforces ownership for the token.</summary>
+    Task UpdatePullRequestCommentAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        long commentId,
+        string body,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Pull-request comments are not available from this provider.");
+
+    /// <summary>Reply to an inline review comment using GitHub's native review thread.</summary>
+    Task ReplyToReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, long commentId, string body,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Review comment replies are not available from this provider.");
+
+    /// <summary>Update an inline review comment. GitHub enforces ownership for the token.</summary>
+    Task UpdateReviewCommentAsync(
+        string accessToken, string owner, string repo, long commentId, string body,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Review comments are not available from this provider.");
 }
 
 /// <summary>
@@ -138,6 +201,10 @@ public interface IGitHubReview
 public sealed class GitHubReviewClient : IGitHubReview
 {
     private const int MaxReviewCommentsResponseBytes = 1_048_576;
+    private const int MaxGraphQlResponseBytes = 4_194_304;
+    private const int MaxPullRequestCommentsPageBytes = 8_388_608;
+    private const int MaxPullRequestCommentsTotalCharacters = 4_194_304;
+    private const int MaxPullRequestCommentPages = 10;
     private readonly HttpClient _http;
 
     public GitHubReviewClient(HttpClient http) => _http = http;
@@ -290,12 +357,281 @@ public sealed class GitHubReviewClient : IGitHubReview
         return comments;
     }
 
+    private const string PullRequestDetailsQuery =
+        "query($owner:String!,$repo:String!,$number:Int!){viewer{login}repository(owner:$owner,name:$repo){"
+        + "pullRequest(number:$number){number title body url state isDraft createdAt updatedAt baseRefName "
+        + "headRefName author{login avatarUrl} reviewRequests(first:50){nodes{requestedReviewer{"
+        + "... on User{login avatarUrl} ... on Team{name slug organization{login}}}}}"
+        + "latestReviews(first:100){nodes{author{login avatarUrl}}}"
+        + "commits(last:50){totalCount nodes{commit{oid abbreviatedOid messageHeadline committedDate "
+        + "statusCheckRollup{state}}}}}}}}";
+
+    public async Task<PullRequestDetails> GetPullRequestDetailsAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        using JsonDocument document = await PostGraphQlAsync(
+            accessToken,
+            new { query = PullRequestDetailsQuery, variables = new { owner, repo, number = pullNumber } },
+            "pull-request details",
+            timeout.Token);
+        JsonElement root = document.RootElement;
+        if (HasGraphQlErrors(root)
+            || !TryProperty(root, "data", out JsonElement data)
+            || !TryProperty(data, "repository", out JsonElement repository)
+            || !TryProperty(repository, "pullRequest", out JsonElement pull)
+            || pull.ValueKind != JsonValueKind.Object)
+        {
+            throw new HttpRequestException("GitHub returned no usable pull-request details.");
+        }
+
+        Dictionary<string, PullRequestParticipant> reviewers = new(StringComparer.OrdinalIgnoreCase);
+        if (TryProperty(pull, "reviewRequests", out JsonElement reviewRequests)
+            && TryProperty(reviewRequests, "nodes", out JsonElement reviewNodes)
+            && reviewNodes.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement node in reviewNodes.EnumerateArray())
+            {
+                if (!TryProperty(node, "requestedReviewer", out JsonElement reviewer))
+                {
+                    continue;
+                }
+                string login = GitHubHttp.StringOf(reviewer, "login");
+                string kind = "user";
+                if (login.Length == 0)
+                {
+                    string slug = GitHubHttp.StringOf(reviewer, "slug");
+                    string org = TryProperty(reviewer, "organization", out JsonElement organization)
+                        ? GitHubHttp.StringOf(organization, "login")
+                        : string.Empty;
+                    login = org.Length > 0 && slug.Length > 0 ? $"{org}/{slug}" : GitHubHttp.StringOf(reviewer, "name");
+                    kind = "team";
+                }
+                if (login.Length > 0)
+                {
+                    reviewers[login] = new PullRequestParticipant(
+                        login, GitHubHttp.StringOf(reviewer, "avatarUrl"), kind);
+                }
+            }
+        }
+        if (TryProperty(pull, "latestReviews", out JsonElement reviewConnection)
+            && TryProperty(reviewConnection, "nodes", out JsonElement submittedReviewNodes)
+            && submittedReviewNodes.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement reviewNode in submittedReviewNodes.EnumerateArray())
+            {
+                if (!TryProperty(reviewNode, "author", out JsonElement reviewer))
+                {
+                    continue;
+                }
+                string login = GitHubHttp.StringOf(reviewer, "login");
+                if (login.Length > 0)
+                {
+                    reviewers[login] = new PullRequestParticipant(
+                        login, GitHubHttp.StringOf(reviewer, "avatarUrl"), "user");
+                }
+            }
+        }
+
+        string viewer = TryProperty(root, "data", out JsonElement rootData)
+            && TryProperty(rootData, "viewer", out JsonElement viewerNode)
+            ? GitHubHttp.StringOf(viewerNode, "login")
+            : string.Empty;
+        (IReadOnlyList<PullRequestComment> comments, bool commentsIncomplete) =
+            await ListPullRequestCommentsAsync(
+                accessToken, owner, repo, pullNumber, viewer, timeout.Token);
+
+        List<PullRequestCommit> commits = [];
+        bool commitsIncomplete = false;
+        if (TryProperty(pull, "commits", out JsonElement commitConnection)
+            && TryProperty(commitConnection, "nodes", out JsonElement commitNodes)
+            && commitNodes.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement node in commitNodes.EnumerateArray())
+            {
+                if (!TryProperty(node, "commit", out JsonElement commit))
+                {
+                    continue;
+                }
+                string checks = TryProperty(commit, "statusCheckRollup", out JsonElement rollup)
+                    ? GitHubHttp.StringOf(rollup, "state").ToLowerInvariant()
+                    : "unknown";
+                commits.Add(new PullRequestCommit(
+                    GitHubHttp.StringOf(commit, "oid"), GitHubHttp.StringOf(commit, "abbreviatedOid"),
+                    GitHubHttp.StringOf(commit, "messageHeadline"), DateOf(commit, "committedDate"), checks));
+            }
+            commitsIncomplete = GitHubHttp.NumberOf(commitConnection, "totalCount") > commits.Count;
+        }
+
+        JsonElement authorElement = TryProperty(pull, "author", out JsonElement pullAuthor) ? pullAuthor : default;
+        return new PullRequestDetails(
+            GitHubHttp.NumberOf(pull, "number"), $"{owner}/{repo}", GitHubHttp.StringOf(pull, "title"),
+            GitHubHttp.StringOf(pull, "body"), GitHubHttp.StringOf(pull, "url"),
+            GitHubHttp.StringOf(pull, "state").ToLowerInvariant(),
+            pull.TryGetProperty("isDraft", out JsonElement draft) && draft.ValueKind == JsonValueKind.True,
+            GitHubHttp.StringOf(authorElement, "login"), GitHubHttp.StringOf(authorElement, "avatarUrl"),
+            GitHubHttp.StringOf(pull, "baseRefName"), GitHubHttp.StringOf(pull, "headRefName"),
+            [.. reviewers.Values.OrderBy(item => item.Login, StringComparer.OrdinalIgnoreCase)],
+            comments, commits, commentsIncomplete, commitsIncomplete);
+    }
+
+    private async Task<(IReadOnlyList<PullRequestComment> Comments, bool Incomplete)>
+        ListPullRequestCommentsAsync(
+            string accessToken, string owner, string repo, int pullNumber, string viewer,
+            CancellationToken cancellationToken)
+    {
+        List<PullRequestComment> comments = [];
+        bool incomplete = false;
+        bool reachedTotalCap = false;
+        int totalCharacters = 0;
+        foreach (string kind in new[] { "conversation", "review" })
+        {
+            for (int page = 1; page <= MaxPullRequestCommentPages; page++)
+            {
+                string segment = kind == "conversation"
+                    ? $"issues/{pullNumber}/comments"
+                    : $"pulls/{pullNumber}/comments";
+                Uri endpoint = new(
+                    $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/{segment}?per_page=100&page={page}&sort=created&direction=desc");
+                using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+                using HttpResponseMessage response = await _http.SendAsync(
+                    request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException(
+                        $"GitHub rejected the pull-request comments request (HTTP {(int)response.StatusCode}).");
+                }
+                byte[] responseBody = await ReadBoundedAsync(
+                    response.Content, MaxPullRequestCommentsPageBytes, cancellationToken);
+                using JsonDocument pageDocument = JsonDocument.Parse(responseBody);
+                if (pageDocument.RootElement.ValueKind != JsonValueKind.Array)
+                {
+                    throw new HttpRequestException("GitHub returned malformed pull-request comments.");
+                }
+                int count = 0;
+                foreach (JsonElement item in pageDocument.RootElement.EnumerateArray())
+                {
+                    count++;
+                    string body = GitHubHttp.StringOf(item, "body");
+                    if (body.Length == 0)
+                    {
+                        continue;
+                    }
+                    if (totalCharacters + body.Length > MaxPullRequestCommentsTotalCharacters)
+                    {
+                        incomplete = true;
+                        reachedTotalCap = true;
+                        break;
+                    }
+                    totalCharacters += body.Length;
+                    JsonElement authorNode = TryProperty(item, "user", out JsonElement author) ? author : default;
+                    string authorLogin = GitHubHttp.StringOf(authorNode, "login");
+                    comments.Add(new PullRequestComment(
+                        item.TryGetProperty("id", out JsonElement id) && id.TryGetInt64(out long parsedId)
+                            ? parsedId : 0,
+                        kind,
+                        kind == "review" ? GitHubHttp.StringOf(item, "path") : string.Empty,
+                        authorLogin,
+                        GitHubHttp.StringOf(authorNode, "avatar_url"),
+                        body.Length <= 65_536 ? body : body[..65_536],
+                        DateOf(item, "created_at"),
+                        DateOf(item, "updated_at"),
+                        viewer.Length > 0 && string.Equals(viewer, authorLogin, StringComparison.OrdinalIgnoreCase)));
+                }
+                if (reachedTotalCap)
+                {
+                    break;
+                }
+                if (count < 100)
+                {
+                    break;
+                }
+                if (page == MaxPullRequestCommentPages)
+                {
+                    incomplete = true;
+                }
+            }
+            if (reachedTotalCap)
+            {
+                break;
+            }
+        }
+        comments.Sort((left, right) => left.CreatedAt.CompareTo(right.CreatedAt));
+        return (comments, incomplete);
+    }
+
+    public Task CreatePullRequestCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, string body,
+        CancellationToken cancellationToken = default) =>
+        SendCommentMutationAsync(
+            HttpMethod.Post,
+            new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/issues/{pullNumber}/comments"),
+            accessToken,
+            body,
+            "create comment",
+            cancellationToken);
+
+    public Task UpdatePullRequestCommentAsync(
+        string accessToken, string owner, string repo, long commentId, string body,
+        CancellationToken cancellationToken = default) =>
+        SendCommentMutationAsync(
+            HttpMethod.Patch,
+            new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/issues/comments/{commentId}"),
+            accessToken,
+            body,
+            "update comment",
+            cancellationToken);
+
+    public Task ReplyToReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, long commentId, string body,
+        CancellationToken cancellationToken = default) =>
+        SendCommentMutationAsync(
+            HttpMethod.Post,
+            new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/comments/{commentId}/replies"),
+            accessToken, body, "reply to review comment", cancellationToken);
+
+    public Task UpdateReviewCommentAsync(
+        string accessToken, string owner, string repo, long commentId, string body,
+        CancellationToken cancellationToken = default) =>
+        SendCommentMutationAsync(
+            HttpMethod.Patch,
+            new Uri($"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/comments/{commentId}"),
+            accessToken, body, "update review comment", cancellationToken);
+
+    private async Task SendCommentMutationAsync(
+        HttpMethod method, Uri endpoint, string accessToken, string body, string what,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 65_536)
+        {
+            throw new ArgumentException("Comment text must be between 1 and 65,536 characters.", nameof(body));
+        }
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        using HttpRequestMessage request = NewRequest(method, endpoint, accessToken);
+        request.Content = new StringContent(JsonSerializer.Serialize(new { body }), Encoding.UTF8, "application/json");
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"GitHub rejected the {what} request (HTTP {(int)response.StatusCode}).");
+        }
+    }
+
+    private static DateTimeOffset DateOf(JsonElement element, string property)
+    {
+        string value = GitHubHttp.StringOf(element, property);
+        return DateTimeOffset.TryParse(value, out DateTimeOffset parsed) ? parsed : DateTimeOffset.UnixEpoch;
+    }
+
     private static async Task<byte[]> ReadBoundedAsync(
         HttpContent content, int maxBytes, CancellationToken cancellationToken)
     {
         if (content.Headers.ContentLength is long length && length > maxBytes)
         {
-            throw new InvalidDataException("GitHub review comments response exceeded the size limit.");
+            throw new InvalidDataException("GitHub response exceeded the size limit.");
         }
         await using Stream source = await content.ReadAsStreamAsync(cancellationToken);
         using MemoryStream destination = new(capacity: Math.Min(maxBytes, 64 * 1024));
@@ -309,7 +645,7 @@ public sealed class GitHubReviewClient : IGitHubReview
             }
             if (destination.Length + read > maxBytes)
             {
-                throw new InvalidDataException("GitHub review comments response exceeded the size limit.");
+                throw new InvalidDataException("GitHub response exceeded the size limit.");
             }
             destination.Write(buffer, 0, read);
         }
@@ -711,13 +1047,15 @@ public sealed class GitHubReviewClient : IGitHubReview
         using HttpRequestMessage request = NewRequest(HttpMethod.Post, GraphQlEndpoint, accessToken);
         request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
-        string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
+        using HttpResponseMessage response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException($"GitHub rejected the {what} query (HTTP {(int)response.StatusCode}).");
         }
 
+        byte[] responseBody = await ReadBoundedAsync(
+            response.Content, MaxGraphQlResponseBytes, timeout.Token);
         return JsonDocument.Parse(responseBody);
     }
 

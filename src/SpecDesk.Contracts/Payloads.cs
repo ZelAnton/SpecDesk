@@ -26,6 +26,11 @@ public static class MessageKinds
 	public const string VersionNoteRequest = "version.note.request";
 	public const string PrSuggestedRequest = "pr.suggested.request";
 	public const string PrListRequest = "pr.list.request";
+	public const string PrDetailsRequest = "pr.details.request";
+	public const string PrReviewersRequest = "pr.reviewers.request";
+	public const string PrCommentCreate = "pr.comment.create";
+	public const string PrCommentReply = "pr.comment.reply";
+	public const string PrCommentUpdate = "pr.comment.update";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
@@ -73,6 +78,8 @@ public static class MessageKinds
 	public const string VersionNoteSuggested = "version.note.suggested";
 	public const string PrSuggested = "pr.suggested";
 	public const string PrList = "pr.list";
+	public const string PrDetails = "pr.details";
+	public const string PrMutationCompleted = "pr.mutationCompleted";
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
@@ -258,6 +265,50 @@ public sealed record PrListRequestPayload(string? Scope);
 /// first. <paramref name="Error"/> is a plain-language reason the list couldn't be loaded (not connected, a
 /// transport failure) — non-null means <paramref name="Items"/> is empty and the webview shows the reason.</summary>
 public sealed record PrListPayload(IReadOnlyList<PrListItemPayload> Items, string? Error);
+
+/// <summary>Identifies one GitHub pull request for an in-app details request.</summary>
+public sealed record PrDetailsRequestPayload(string Repo, int Number);
+
+/// <summary>Requests one or more user/team handles as reviewers, then refreshes the PR document.</summary>
+public sealed record PrReviewersRequestPayload(string Repo, int Number, IReadOnlyList<string> Reviewers);
+
+/// <summary>Creates a general pull-request conversation comment.</summary>
+public sealed record PrCommentCreatePayload(string Repo, int Number, string Body);
+
+/// <summary>Replies in the general conversation. GitHub issue comments are not threaded, so the host
+/// creates a new comment prefixed with the addressed author.</summary>
+public sealed record PrCommentReplyPayload(
+	string Repo, int Number, long CommentId, string Kind, string Author, string Body);
+
+/// <summary>Updates one of the signed-in viewer's general pull-request comments.</summary>
+public sealed record PrCommentUpdatePayload(
+	string Repo, int Number, long CommentId, string Kind, string Body);
+
+/// <summary>One requested reviewer shown in the pull-request document.</summary>
+public sealed record PrParticipantPayload(string Login, string AvatarUrl, string Kind);
+
+/// <summary>One general pull-request conversation comment.</summary>
+public sealed record PrCommentPayload(
+	long Id, string Kind, string Path, string Author, string AvatarUrl, string Body, DateTimeOffset CreatedAt,
+	DateTimeOffset UpdatedAt, bool ViewerDidAuthor);
+
+/// <summary>One pull-request commit and its combined CI state.</summary>
+public sealed record PrCommitPayload(
+	string Oid, string ShortOid, string Title, DateTimeOffset When, string CheckState);
+
+/// <summary>The bounded in-app pull-request document.</summary>
+public sealed record PrDetailsPayload(
+	int Number, string Repo, string Title, string Body, string Url, string State, bool IsDraft,
+	string Author, string AuthorAvatarUrl, string BaseBranch, string HeadBranch,
+	IReadOnlyList<PrParticipantPayload> Reviewers,
+	IReadOnlyList<PrCommentPayload> Comments,
+	IReadOnlyList<PrCommitPayload> Commits,
+	bool CommentsIncomplete,
+	bool CommitsIncomplete,
+	string? Error);
+
+/// <summary>Terminal acknowledgement for a pull-request mutation. The webview refreshes details after success.</summary>
+public sealed record PrMutationCompletedPayload(bool Succeeded, string? Error);
 
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>

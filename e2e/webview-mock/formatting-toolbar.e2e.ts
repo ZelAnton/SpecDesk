@@ -36,11 +36,63 @@ test("the complete formatting toolbar stays discoverable and edits source Markdo
   }
 
   await page.locator("#mode-code").click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
   const source = page.locator("#editor .cm-content");
   await source.click();
   await page.keyboard.press("Control+A");
-  await page.getByRole("button", { name: "Insert link (Ctrl+K)" }).click();
+  const selectionToolbar = page.getByRole("toolbar", { name: "Format selected Markdown" });
+  await expect(selectionToolbar).toBeHidden();
+  await page.locator("#editor .cm-selectionBackground").first().hover();
+  await expect(selectionToolbar).toBeVisible();
+  const editorBox = await page.locator("#editor").boundingBox();
+  const selectionBox = await selectionToolbar.boundingBox();
+  if (editorBox === null || selectionBox === null) throw new Error("missing editor geometry");
+  expect(selectionBox.x).toBeGreaterThanOrEqual(editorBox.x);
+  expect(selectionBox.y).toBeGreaterThanOrEqual(editorBox.y);
+  expect(selectionBox.x + selectionBox.width).toBeLessThanOrEqual(editorBox.x + editorBox.width);
+  expect(selectionBox.y + selectionBox.height).toBeLessThanOrEqual(editorBox.y + editorBox.height);
+  await toolbar.getByRole("button", { name: "Insert link (Ctrl+K)" }).click();
   await expect(source).toContainText("[Title](https://)");
+
+  await page.setViewportSize({ width: 720, height: 700 });
+  await page.getByRole("button", { name: "Wrap: on" }).click();
+  await source.click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(`${"long source text ".repeat(12)}target`);
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Control+Shift+ArrowLeft");
+  await expect(selectionToolbar).toBeHidden();
+  await page.locator("#editor .cm-selectionBackground").last().hover();
+  await expect(selectionToolbar).toBeVisible();
+  const narrowEditorBox = await page.locator("#editor").boundingBox();
+  const narrowSelectionBox = await selectionToolbar.boundingBox();
+  if (narrowEditorBox === null || narrowSelectionBox === null) {
+    throw new Error("missing narrow editor geometry");
+  }
+  expect(narrowSelectionBox.x).toBeGreaterThanOrEqual(narrowEditorBox.x);
+  expect(narrowSelectionBox.x + narrowSelectionBox.width).toBeLessThanOrEqual(
+    narrowEditorBox.x + narrowEditorBox.width,
+  );
+  expect(narrowSelectionBox.y + narrowSelectionBox.height).toBeLessThanOrEqual(
+    narrowEditorBox.y + narrowEditorBox.height,
+  );
+
+  await source.click();
+  await page.keyboard.press("Control+A");
+  await page.keyboard.type(Array.from({ length: 80 }, (_, index) => `line ${index}`).join("\n"));
+  await page.keyboard.press("Control+A");
+  await page.locator("#editor .cm-scroller").evaluate((scroller) => {
+    scroller.scrollTop = scroller.scrollHeight;
+  });
+  await expect(selectionToolbar).toBeHidden();
+  await page.locator("#editor .cm-selectionBackground").last().hover();
+  await expect(selectionToolbar).toBeVisible();
+  const scrolledSelectionBox = await selectionToolbar.boundingBox();
+  if (scrolledSelectionBox === null) throw new Error("missing scrolled selection geometry");
+  expect(scrolledSelectionBox.y).toBeGreaterThanOrEqual(narrowEditorBox.y);
+  expect(scrolledSelectionBox.y + scrolledSelectionBox.height).toBeLessThanOrEqual(
+    narrowEditorBox.y + narrowEditorBox.height,
+  );
 
   await page.screenshot({ path: testInfo.outputPath("complete-formatting-toolbar.png"), fullPage: true });
 });

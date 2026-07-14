@@ -194,4 +194,56 @@ internal sealed class FakeGitHubReview : IGitHubReview
         }
         return Task.FromResult(CommentsValue);
     }
+
+    public PullRequestDetails DetailsValue { get; set; } = new(
+        42, "octo/spec", "Review", "Body", "https://github.com/octo/spec/pull/42", "open", false,
+        "octo", string.Empty, "main", "spec/review", [], [], []);
+
+    public int GetPullRequestDetailsCalls { get; private set; }
+
+    public Task<PullRequestDetails> GetPullRequestDetailsAsync(
+        string accessToken, string owner, string repo, int pullNumber,
+        CancellationToken cancellationToken = default)
+    {
+        GetPullRequestDetailsCalls++;
+        return Task.FromResult(DetailsValue);
+    }
+
+    public List<string> CreatedComments { get; } = [];
+
+    public Task CreatePullRequestCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, string body,
+        CancellationToken cancellationToken = default)
+    {
+        CreatedComments.Add(body);
+        return Task.CompletedTask;
+    }
+
+    public List<(long Id, string Body)> UpdatedComments { get; } = [];
+
+    public Task UpdatePullRequestCommentAsync(
+        string accessToken, string owner, string repo, long commentId, string body,
+        CancellationToken cancellationToken = default)
+    {
+        UpdatedComments.Add((commentId, body));
+        return Task.CompletedTask;
+    }
+
+    public List<(long Id, string Body)> ReviewReplies { get; } = [];
+
+    public Task ReplyToReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, long commentId, string body,
+        CancellationToken cancellationToken = default)
+    {
+        ReviewReplies.Add((commentId, body));
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateReviewCommentAsync(
+        string accessToken, string owner, string repo, long commentId, string body,
+        CancellationToken cancellationToken = default)
+    {
+        UpdatedComments.Add((commentId, body));
+        return Task.CompletedTask;
+    }
 }

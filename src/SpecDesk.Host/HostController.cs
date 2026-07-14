@@ -530,6 +530,21 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.PrListRequest:
 				OnListReviews(message);
 				break;
+			case MessageKinds.PrDetailsRequest:
+				OnPrDetails(message);
+				break;
+			case MessageKinds.PrReviewersRequest:
+				OnPrReviewers(message);
+				break;
+			case MessageKinds.PrCommentCreate:
+				OnPrCommentCreate(message);
+				break;
+			case MessageKinds.PrCommentReply:
+				OnPrCommentReply(message);
+				break;
+			case MessageKinds.PrCommentUpdate:
+				OnPrCommentUpdate(message);
+				break;
 			case MessageKinds.BranchNameRequest:
 				OnSuggestBranchName(message);
 				break;

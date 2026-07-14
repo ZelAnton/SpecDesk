@@ -50,6 +50,18 @@ public sealed class ContractFixtureTests
 			new PrListItemPayload(7, "Payment terms", "https://github.com/octo/other/pull/7",
 				"octo/other", "reviewer", "inReview", "In review"),
 		], null)),
+		(MessageKinds.PrDetails, new PrDetailsPayload(
+			42, "octo/spec-repo", "Clarify refunds", "Explain the refund window.",
+			"https://github.com/octo/spec-repo/pull/42", "open", false, "alex", "https://img/alex",
+			"main", "spec/refunds",
+			[new PrParticipantPayload("sam", "https://img/sam", "user")],
+			[new PrCommentPayload(9, "conversation", "", "sam", "https://img/sam", "Please clarify.",
+				DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, false)],
+			[new PrCommitPayload("abcdef", "abcdef0", "Clarify the window", DateTimeOffset.UnixEpoch, "success")],
+			false,
+			false,
+			null)),
+		(MessageKinds.PrMutationCompleted, new PrMutationCompletedPayload(true, null)),
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.

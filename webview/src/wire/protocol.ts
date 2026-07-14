@@ -20,6 +20,11 @@ export const Kinds = {
   versionNoteRequest: "version.note.request",
   prSuggestedRequest: "pr.suggested.request",
   prListRequest: "pr.list.request",
+  prDetailsRequest: "pr.details.request",
+  prReviewersRequest: "pr.reviewers.request",
+  prCommentCreate: "pr.comment.create",
+  prCommentReply: "pr.comment.reply",
+  prCommentUpdate: "pr.comment.update",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -66,6 +71,8 @@ export const Kinds = {
   versionNoteSuggested: "version.note.suggested",
   prSuggested: "pr.suggested",
   prList: "pr.list",
+  prDetails: "pr.details",
+  prMutationCompleted: "pr.mutationCompleted",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -393,6 +400,57 @@ export interface PrListItemPayload {
  *  connected / transport failure) — present means `items` is empty and the panel shows the reason. */
 export interface PrListPayload {
   items: PrListItemPayload[];
+  error?: string;
+}
+
+export interface PrParticipantPayload {
+  login: string;
+  avatarUrl: string;
+  kind: "user" | "team";
+}
+
+export interface PrCommentPayload {
+  id: number;
+  kind: "conversation" | "review";
+  path: string;
+  author: string;
+  avatarUrl: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  viewerDidAuthor: boolean;
+}
+
+export interface PrCommitPayload {
+  oid: string;
+  shortOid: string;
+  title: string;
+  when: string;
+  checkState: string;
+}
+
+export interface PrDetailsPayload {
+  number: number;
+  repo: string;
+  title: string;
+  body: string;
+  url: string;
+  state: string;
+  isDraft: boolean;
+  author: string;
+  authorAvatarUrl: string;
+  baseBranch: string;
+  headBranch: string;
+  reviewers: PrParticipantPayload[];
+  comments: PrCommentPayload[];
+  commits: PrCommitPayload[];
+  commentsIncomplete: boolean;
+  commitsIncomplete: boolean;
+  error?: string;
+}
+
+export interface PrMutationCompletedPayload {
+  succeeded: boolean;
   error?: string;
 }
 

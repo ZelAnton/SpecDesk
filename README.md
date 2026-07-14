@@ -86,7 +86,14 @@ Choosing **Open Repository** also places keyboard focus in repository search, re
 The left-panel Review mode shows open review requests assigned to the connected account, including requests
 for GitHub teams whose membership is visible to SpecDesk.
 Pull Requests shows the connected user's active work: open requests they authored or otherwise participated
-in. Closed and merged requests are intentionally excluded from this working list.
+in. Selecting one opens a review document inside SpecDesk with its description, participants, conversation,
+commits, checks, and draft/readiness state. The Comments panel brings together general conversation and
+existing file review threads; it supports general comments, replies, and editing comments authored by the connected user. Selecting a comment opens its complete text in
+the bottom panel. Closed and merged requests are intentionally excluded from this working list.
+
+The bottom Log is a bounded session activity feed for GitHub requests, context and view changes, and user
+operations. It records action names and outcomes only; document contents, comment bodies, and credentials are
+never copied into the feed.
 
 The notification icon switches the main workspace to a Notifications list. The current list is a
 placeholder for future review-request and mention events.

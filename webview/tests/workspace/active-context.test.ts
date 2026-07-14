@@ -187,6 +187,41 @@ describe("active workspace context", () => {
     expect(cleared).toBe(EMPTY_ACTIVE_CONTEXT);
     expect(tools(cleared)).toEqual(["assistant"]);
   });
+  it("keeps an explicitly opened review authoritative across late document events", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo\\docs\\proposal.md");
+    model.workspaceChanged(named);
+
+    const opened = model.pullRequestOpened("acme/review", "spec/review");
+    expect(opened.pullRequest?.branch.name).toBe("spec/review");
+
+    expect(model.workspaceChanged(named)).toBe(opened);
+    expect(model.statusChanged({ state: "published", label: "Published" })).toBe(opened);
+    expect(model.current()).toBe(opened);
+  });
+
+  it("releases an explicitly opened review when a document loads", () => {
+    const model = new ActiveContextModel();
+    model.pullRequestOpened("acme/review", "spec/review");
+
+    const document = model.documentLoaded("C:\\notes\\next.md");
+
+    expect(document.pullRequest).toBeNull();
+    expect(document.file?.path).toBe("C:\\notes\\next.md");
+  });
+
+  it("uses no fabricated repository or branch while review details are loading", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo\\docs\\proposal.md");
+    model.workspaceChanged(named);
+
+    const loading = model.pullRequestLoading();
+
+    expect(loading).toBe(EMPTY_ACTIVE_CONTEXT);
+    expect(model.workspaceChanged(named)).toBe(loading);
+    expect(model.pullRequestClosed().file?.path).toBe("C:\\repo\\docs\\proposal.md");
+  });
+
   it("has only the global assistant before a document is active", () => {
     expect(new ActiveContextModel().current()).toBe(EMPTY_ACTIVE_CONTEXT);
     expect(tools(EMPTY_ACTIVE_CONTEXT)).toEqual(["assistant"]);

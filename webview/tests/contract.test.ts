@@ -23,8 +23,10 @@ import {
   parseGitHubCode,
   parseGitHubRepositories,
   parseImageInserted,
+  parsePrDetails,
   parsePreview,
   parsePrList,
+  parsePrMutationCompleted,
   parsePrSuggested,
   parseRepoCloneConflict,
   parseRepoCloneDestination,
@@ -128,6 +130,16 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       status: "changesRequested",
     });
     expect(payload?.items[1]).toMatchObject({ role: "reviewer", status: "inReview" });
+  });
+
+  it("pr.details and mutation acknowledgement", () => {
+    const details = parsePrDetails(fixture["pr.details"]);
+    expect(details).not.toBeNull();
+    expect(details?.repo).toBe("octo/spec-repo");
+    expect(details?.reviewers[0]?.login).toBe("sam");
+    expect(details?.comments[0]?.viewerDidAuthor).toBe(false);
+    expect(details?.commits[0]?.checkState).toBe("success");
+    expect(parsePrMutationCompleted(fixture["pr.mutationCompleted"])).toEqual({ succeeded: true });
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {

@@ -142,6 +142,17 @@ describe("DocumentActivityPanel", () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(body.textContent).toContain("Clarify refunds");
   });
+  it("keeps a PR-specific history notice without requesting the previous document", () => {
+    const request = vi.fn<() => Promise<DocumentActivityPayload>>().mockResolvedValue(payload);
+    const panel = new DocumentActivityPanel("history", "History", request);
+    panel.showMessage("Review history is shown in the review document.");
+    const body = document.createElement("div");
+
+    panel.mount(body);
+
+    expect(request).not.toHaveBeenCalled();
+    expect(body.textContent).toContain("Review history is shown in the review document");
+  });
   it("clears private comments and rejects a late old-account response", async () => {
     let resolveOld!: (value: DocumentActivityPayload) => void;
     const old = new Promise<DocumentActivityPayload>((resolve) => {

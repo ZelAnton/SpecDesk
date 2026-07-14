@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bounded pull-request histories now disclose when earlier commits are not shown instead of appearing complete.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
 - Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.
@@ -28,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pull requests now open as in-app review documents with their description, author, reviewers, conversation, commits, checks, and draft state.
+- Pull-request conversations now combine general and file-review comments with replies, editing your own comments, and a focused bottom-panel reader.
+- The bottom Log now records bounded GitHub requests, view changes, context changes, and user actions without recording message contents or credentials.
+- Hovering selected text in Code and comment editors now offers an anchored compact Markdown formatting palette.
 - Each local copy now offers plain-language Get updates and Share changes actions for its current working line.
 - Local copies and working lines now show available upstream updates and known conflicts alongside local-work indicators.
 - Repositories now has one Refresh action that checks every registered local copy for upstream updates.

@@ -262,6 +262,211 @@ button {
   white-space: nowrap;
 }
 
+.selection-format-popover {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+  z-index: 20;
+}
+
+.selection-format-popover[hidden] {
+  display: none;
+}
+
+.selection-format-popover--code {
+  position: absolute;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  flex-wrap: wrap;
+}
+
+.selection-format-popover:not(.selection-format-popover--code) {
+  position: absolute;
+  max-width: calc(100% - 16px);
+  box-sizing: border-box;
+  flex-wrap: wrap;
+}
+
+.selection-format-popover button {
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0 4px;
+}
+
+.markdown-compose {
+  display: grid;
+  gap: 8px;
+  margin: 12px;
+  position: relative;
+}
+
+.markdown-compose textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 5rem;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.markdown-compose > button,
+.pr-comment-actions button,
+.pr-reviewer-form button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+}
+
+.markdown-compose > button:hover,
+.pr-comment-actions button:hover,
+.pr-reviewer-form button:hover {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.pull-request-view {
+  min-width: 0;
+  overflow: auto;
+  background: var(--canvas);
+}
+
+.pr-view-header,
+.pr-view-body {
+  width: min(58rem, calc(100% - 3rem));
+  margin-inline: auto;
+}
+
+.pr-view-header {
+  padding: 32px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-view-header h1 {
+  margin: 8px 0;
+}
+
+.pr-view-eyebrow,
+.pr-view-author,
+.pr-view-badges,
+.pr-timeline span {
+  color: var(--text-muted);
+}
+
+.pr-view-badges,
+.pr-reviewer-form,
+.pr-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pr-view-body {
+  display: grid;
+  gap: 24px;
+  padding: 24px 0 40px;
+}
+
+.pr-view-body > section {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.pr-timeline,
+.pr-comments-list,
+.activity-log {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pr-timeline li,
+.pr-comment-row,
+.activity-log-entry {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pr-comment-open {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  white-space: normal;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+}
+
+.pr-comment-open:hover strong {
+  color: var(--accent);
+}
+
+.pr-reviewer-form input {
+  min-width: 12rem;
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.pr-comment-open span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.activity-log {
+  padding: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.activity-log-entry {
+  grid-template-columns: 5rem 4.5rem minmax(0, 1fr);
+}
+
+.activity-log-entry[data-outcome="failed"] {
+  color: var(--danger-fg);
+}
+
+.selected-pr-comment {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  padding: 16px;
+}
+
+.selected-pr-comment p {
+  grid-column: 1 / -1;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 /* ---- §7 components — toolbar + buttons ---- */
 #toolbar {
   display: flex;
@@ -3058,6 +3263,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 /* CodeMirror manages its own scroller, so the outer pane must not scroll too. */
 #editor {
+  position: relative;
   overflow: hidden;
   border-right: 1px solid var(--border);
 }

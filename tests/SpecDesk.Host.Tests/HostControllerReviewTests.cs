@@ -1168,6 +1168,108 @@ public sealed class HostControllerReviewTests
         });
     }
 
+    [Test]
+    public void PullRequestDetails_are_correlated_and_mapped_for_the_in_app_document()
+    {
+        FakeGitHubReview review = new()
+        {
+            DetailsValue = new PullRequestDetails(
+                42, "octo/spec", "Clarify refunds", "Description", "https://github.com/octo/spec/pull/42",
+                "open", false, "alex", "avatar", "main", "spec/refunds",
+                [new PullRequestParticipant("sam", "avatar", "user")],
+				[new PullRequestComment(9, "conversation", "", "sam", "avatar", "Please clarify", DateTimeOffset.UnixEpoch,
+                    DateTimeOffset.UnixEpoch, false)],
+                [new PullRequestCommit("abcdef", "abcdef0", "Clarify", DateTimeOffset.UnixEpoch, "success")],
+				true, true),
+        };
+        using HostController controller =
+            Build(new FakeVersioning(), new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.PrDetailsRequest, new PrDetailsRequestPayload("octo/spec", 42), id: "details"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrDetails);
+        PrDetailsPayload? payload = reply?.GetPayload<PrDetailsPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply?.Id, Is.EqualTo("details"));
+            Assert.That(review.GetPullRequestDetailsCalls, Is.EqualTo(1));
+            Assert.That(payload?.Title, Is.EqualTo("Clarify refunds"));
+            Assert.That(payload?.Comments.Single().Id, Is.EqualTo(9));
+            Assert.That(payload?.Commits.Single().CheckState, Is.EqualTo("success"));
+			Assert.That(payload?.CommentsIncomplete, Is.True);
+			Assert.That(payload?.CommitsIncomplete, Is.True);
+        });
+    }
+
+	[Test]
+	public void PullRequestReviewers_normalizes_bounded_handles_before_calling_GitHub()
+	{
+		FakeGitHubReview review = new();
+		using HostController controller =
+			Build(new FakeVersioning(), new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.PrReviewersRequest,
+			new PrReviewersRequestPayload("octo/spec", 42, [" @Alice ", "octo/team", "alice"]),
+			id: "reviewers"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.PrMutationCompleted);
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply?.GetPayload<PrMutationCompletedPayload>()?.Succeeded, Is.True);
+			Assert.That(review.RequestReviewersCalls, Is.EqualTo(1));
+			Assert.That(review.RequestedReviewers, Has.Count.EqualTo(2));
+			Assert.That(review.RequestedReviewers, Does.Contain("Alice"));
+			Assert.That(review.RequestedReviewers, Does.Contain("octo/team"));
+		});
+	}
+
+	[Test]
+	public void PullRequestReviewers_rejects_unbounded_or_malformed_lists_before_calling_GitHub()
+	{
+		FakeGitHubReview review = new();
+		using HostController controller =
+			Build(new FakeVersioning(), new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.PrReviewersRequest,
+			new PrReviewersRequestPayload("octo/spec", 42, [.. Enumerable.Repeat("reviewer", 16)]),
+			id: "too-many"));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.PrReviewersRequest,
+			new PrReviewersRequestPayload("octo/spec", 42, ["org/team/extra"]),
+			id: "malformed"));
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(review.RequestReviewersCalls, Is.Zero);
+			Assert.That(_sent.Count(json =>
+				IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.PrMutationCompleted), Is.EqualTo(2));
+		});
+	}
+
+    [Test]
+    public void PullRequestComment_reply_mentions_the_selected_author_and_acknowledges_the_mutation()
+    {
+        FakeGitHubReview review = new();
+        using HostController controller =
+            Build(new FakeVersioning(), new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.PrCommentReply,
+            new PrCommentReplyPayload("octo/spec", 42, 9, "conversation", "@sam", "Thanks"),
+            id: "reply"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrMutationCompleted);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply?.Id, Is.EqualTo("reply"));
+            Assert.That(reply?.GetPayload<PrMutationCompletedPayload>()?.Succeeded, Is.True);
+            Assert.That(review.CreatedComments.Single(), Is.EqualTo("@sam Thanks"));
+        });
+    }
+
     private bool WaitForStatusState(string state) => WaitUntil(() => LatestStatus()?.State == state);
 
     private static bool WaitUntil(Func<bool> condition)

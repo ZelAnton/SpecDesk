@@ -8,6 +8,7 @@
  */
 
 import { trace } from "../util/trace.js";
+import { activityStream } from "../workspace/activity-stream.js";
 import { isNumber, isRecord, isString } from "./decoders.js";
 import { Kinds } from "./protocol.js";
 
@@ -110,6 +111,13 @@ export class IpcClient {
       version: message.version,
       bytes: raw.length,
     });
+    if (
+      message.kind.startsWith("github.") ||
+      message.kind.startsWith("pr.") ||
+      message.kind.startsWith("repo.")
+    ) {
+      activityStream.add("GitHub", `Received ${message.kind}`, "succeeded");
+    }
     if (message.id !== undefined) {
       // id-bearing frames are correlated replies, routed to whoever is waiting on that id (or
       // dropped if unawaited). `pending` entries are NOT removed here: request() below is a
@@ -139,6 +147,7 @@ export class IpcClient {
     if (kind !== Kinds.log && kind !== Kinds.traceDump) {
       trace("ipc", "ipc.send", { kind, version: message.version });
     }
+    this.recordAction(kind);
     this.external.sendMessage(JSON.stringify(message));
     return true;
   }
@@ -159,6 +168,7 @@ export class IpcClient {
     if (kind !== Kinds.log && kind !== Kinds.traceDump) {
       trace("ipc", "ipc.send", { kind, id });
     }
+    this.recordAction(kind);
     return new Promise<IpcMessage>((resolve, reject) => {
       const timer =
         timeoutMs > 0
@@ -178,6 +188,15 @@ export class IpcClient {
       });
       send(JSON.stringify(message));
     });
+  }
+
+  private recordAction(kind: string): void {
+    if (kind === Kinds.log || kind === Kinds.traceDump || kind === Kinds.editorChanged) return;
+    const category =
+      kind.startsWith("github.") || kind.startsWith("pr.") || kind.startsWith("repo.")
+        ? "GitHub"
+        : "Action";
+    activityStream.add(category, `Requested ${kind}`, "started");
   }
 
   /**

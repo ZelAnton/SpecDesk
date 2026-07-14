@@ -633,6 +633,47 @@ describe("MarkdownEditor.applyFormat at caret position 0 (jsdom, S-15)", () => {
   }
 });
 
+describe("MarkdownEditor selected-text formatting palette", () => {
+  it("uses the shared Markdown command path for a selected Code span", () => {
+    const { ed, host } = mount();
+    ed.setText("hello");
+    ed.setEditable(true);
+    viewOf(ed).dispatch({ selection: { anchor: 0, head: 5 } });
+
+    const toolbar = host.querySelector<HTMLElement>(".selection-format-popover--code");
+    expect(toolbar?.hidden).toBe(true);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      right: 200,
+      top: 0,
+      bottom: 100,
+      width: 200,
+      height: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const view = viewOf(ed);
+    const position = vi.spyOn(view, "posAtCoords").mockReturnValue(2);
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({
+      left: 10,
+      right: 11,
+      top: 10,
+      bottom: 20,
+    });
+    view.scrollDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: 10, clientY: 10 }));
+    expect(position).toHaveBeenCalled();
+    expect(toolbar?.hidden).toBe(false);
+    const bold = host.querySelector<HTMLButtonElement>(
+      '.selection-format-popover--code [data-format="bold"]',
+    );
+    expect(bold).not.toBeNull();
+    bold?.click();
+
+    expect(ed.getText()).toBe("**hello**");
+  });
+});
+
 describe("MarkdownEditor formatting keymap (jsdom, T-095)", () => {
   it("routes Ctrl+B through applyFormat in the source editor", () => {
     const { ed } = mount();

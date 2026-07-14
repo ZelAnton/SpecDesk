@@ -30,10 +30,15 @@ import {
   type ImageInsertedPayload,
   isReviewState,
   type LineSpan,
+  type PrCommentPayload,
+  type PrCommitPayload,
+  type PrDetailsPayload,
   type PreviewPayload,
   type PrListItemPayload,
   type PrListPayload,
+  type PrMutationCompletedPayload,
   type PromptTemplate,
+  type PrParticipantPayload,
   type PrSuggestedPayload,
   type RegisteredRepo,
   type RepoCloneConflictPayload,
@@ -548,6 +553,132 @@ export function parsePrList(value: unknown): PrListPayload | null {
   // `error` is optional (exactOptionalPropertyTypes forbids an explicit undefined), so add it only when it's
   // a real (non-null) string.
   return isString(value.error) ? { items, error: value.error } : { items };
+}
+
+function parsePrParticipant(value: unknown): PrParticipantPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.login) ||
+    !isString(value.avatarUrl) ||
+    (value.kind !== "user" && value.kind !== "team")
+  ) {
+    return null;
+  }
+  return { login: value.login, avatarUrl: value.avatarUrl, kind: value.kind };
+}
+
+function parsePrComment(value: unknown): PrCommentPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.id) ||
+    (value.kind !== "conversation" && value.kind !== "review") ||
+    !isString(value.path) ||
+    !isString(value.author) ||
+    !isString(value.avatarUrl) ||
+    !isString(value.body) ||
+    !isString(value.createdAt) ||
+    !isString(value.updatedAt) ||
+    typeof value.viewerDidAuthor !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    id: value.id,
+    kind: value.kind,
+    path: value.path,
+    author: value.author,
+    avatarUrl: value.avatarUrl,
+    body: value.body,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    viewerDidAuthor: value.viewerDidAuthor,
+  };
+}
+
+function parsePrCommit(value: unknown): PrCommitPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.oid) ||
+    !isString(value.shortOid) ||
+    !isString(value.title) ||
+    !isString(value.when) ||
+    !isString(value.checkState)
+  ) {
+    return null;
+  }
+  return {
+    oid: value.oid,
+    shortOid: value.shortOid,
+    title: value.title,
+    when: value.when,
+    checkState: value.checkState,
+  };
+}
+
+export function parsePrDetails(value: unknown): PrDetailsPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.number) ||
+    !isString(value.repo) ||
+    !isString(value.title) ||
+    !isString(value.body) ||
+    !isString(value.url) ||
+    !isString(value.state) ||
+    typeof value.isDraft !== "boolean" ||
+    !isString(value.author) ||
+    !isString(value.authorAvatarUrl) ||
+    !isString(value.baseBranch) ||
+    !isString(value.headBranch) ||
+    !Array.isArray(value.reviewers) ||
+    !Array.isArray(value.comments) ||
+    !Array.isArray(value.commits) ||
+    typeof value.commentsIncomplete !== "boolean" ||
+    typeof value.commitsIncomplete !== "boolean" ||
+    (value.error !== undefined && value.error !== null && !isString(value.error))
+  ) {
+    return null;
+  }
+  const reviewers = value.reviewers.map(parsePrParticipant);
+  const comments = value.comments.map(parsePrComment);
+  const commits = value.commits.map(parsePrCommit);
+  if (reviewers.includes(null) || comments.includes(null) || commits.includes(null)) {
+    return null;
+  }
+  const result: PrDetailsPayload = {
+    number: value.number,
+    repo: value.repo,
+    title: value.title,
+    body: value.body,
+    url: value.url,
+    state: value.state,
+    isDraft: value.isDraft,
+    author: value.author,
+    authorAvatarUrl: value.authorAvatarUrl,
+    baseBranch: value.baseBranch,
+    headBranch: value.headBranch,
+    reviewers: reviewers as PrParticipantPayload[],
+    comments: comments as PrCommentPayload[],
+    commits: commits as PrCommitPayload[],
+    commentsIncomplete: value.commentsIncomplete,
+    commitsIncomplete: value.commitsIncomplete,
+  };
+  if (isString(value.error)) {
+    result.error = value.error;
+  }
+  return result;
+}
+
+export function parsePrMutationCompleted(value: unknown): PrMutationCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    typeof value.succeeded !== "boolean" ||
+    (value.error !== undefined && value.error !== null && !isString(value.error))
+  ) {
+    return null;
+  }
+  return isString(value.error)
+    ? { succeeded: value.succeeded, error: value.error }
+    : { succeeded: value.succeeded };
 }
 
 export function parseChatDelta(value: unknown): ChatDeltaPayload | null {

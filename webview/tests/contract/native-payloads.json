@@ -69,6 +69,53 @@
       }
     ]
   },
+  "pr.details": {
+    "number": 42,
+    "repo": "octo/spec-repo",
+    "title": "Clarify refunds",
+    "body": "Explain the refund window.",
+    "url": "https://github.com/octo/spec-repo/pull/42",
+    "state": "open",
+    "isDraft": false,
+    "author": "alex",
+    "authorAvatarUrl": "https://img/alex",
+    "baseBranch": "main",
+    "headBranch": "spec/refunds",
+    "reviewers": [
+      {
+        "login": "sam",
+        "avatarUrl": "https://img/sam",
+        "kind": "user"
+      }
+    ],
+    "comments": [
+      {
+        "id": 9,
+        "kind": "conversation",
+        "path": "",
+        "author": "sam",
+        "avatarUrl": "https://img/sam",
+        "body": "Please clarify.",
+        "createdAt": "1970-01-01T00:00:00\u002B00:00",
+        "updatedAt": "1970-01-01T00:00:00\u002B00:00",
+        "viewerDidAuthor": false
+      }
+    ],
+    "commits": [
+      {
+        "oid": "abcdef",
+        "shortOid": "abcdef0",
+        "title": "Clarify the window",
+        "when": "1970-01-01T00:00:00\u002B00:00",
+        "checkState": "success"
+      }
+    ],
+    "commentsIncomplete": false,
+    "commitsIncomplete": false
+  },
+  "pr.mutationCompleted": {
+    "succeeded": true
+  },
   "diff.result": {
     "entries": [
       {

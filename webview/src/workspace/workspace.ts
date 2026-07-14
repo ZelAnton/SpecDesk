@@ -103,6 +103,9 @@ export interface WorkspaceTools {
   readonly reviews?: PanelTool;
   /** Open pull requests authored by or otherwise involving the signed-in user. */
   readonly pullRequests?: PanelTool;
+  /** Bottom activity stream and selected pull-request comment. */
+  readonly log?: PanelTool;
+  readonly selectedComment?: PanelTool;
 }
 
 interface GroupedSection {
@@ -293,18 +296,20 @@ export function setupWorkspace(
         placeholderTool("history", "History", icon("history"), "Saved changes will appear here."),
     ],
     bottom: [
-      placeholderTool(
-        "log",
-        "Log",
-        icon("log"),
-        "Large output will appear here — logs and other long text that doesn't fit inline in the editor.",
-      ),
-      placeholderTool(
-        "comment",
-        "Comment",
-        icon("comment"),
-        "The full text of a selected comment will appear here.",
-      ),
+      tools.log ??
+        placeholderTool(
+          "log",
+          "Log",
+          icon("log"),
+          "Large output will appear here — logs and other long text that doesn't fit inline in the editor.",
+        ),
+      tools.selectedComment ??
+        placeholderTool(
+          "comment",
+          "Comment",
+          icon("comment"),
+          "The full text of a selected comment will appear here.",
+        ),
     ],
   };
 
