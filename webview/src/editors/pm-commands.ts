@@ -7,9 +7,9 @@
  */
 
 import { setBlockType, toggleMark, wrapIn } from "prosemirror-commands";
-import type { MarkType, NodeType, ResolvedPos } from "prosemirror-model";
+import type { MarkType, NodeType, Node as PmNode, ResolvedPos } from "prosemirror-model";
 import { liftListItem, wrapInList } from "prosemirror-schema-list";
-import type { Command, EditorState } from "prosemirror-state";
+import { type Command, type EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import { liftTarget } from "prosemirror-transform";
 import { assertNever } from "../util/assert.js";
 import {
@@ -111,6 +111,49 @@ function toggleQuote(): Command {
   };
 }
 
+function insertLink(): Command {
+  return (state, dispatch) => {
+    const link = markType("link");
+    if (!state.selection.empty) {
+      return toggleMark(link, { href: "https://", title: null })(state, dispatch);
+    }
+    if (dispatch) {
+      const from = state.selection.from;
+      const text = schema.text("link text", [link.create({ href: "https://", title: null })]);
+      const transaction = state.tr.replaceSelectionWith(text);
+      dispatch(
+        transaction
+          .setSelection(TextSelection.create(transaction.doc, from, from + text.nodeSize))
+          .scrollIntoView(),
+      );
+    }
+    return true;
+  };
+}
+
+function insertNode(node: PmNode): Command {
+  return (state, dispatch) => {
+    try {
+      const transaction = state.tr.replaceSelectionWith(node);
+      dispatch?.(transaction.scrollIntoView());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+function starterTable(): PmNode {
+  const cell = nodeType("table_cell");
+  const row = nodeType("table_row");
+  const makeCell = (text: string, header: boolean): PmNode =>
+    cell.create({ header, align: null }, schema.text(text));
+  return nodeType("table").create(null, [
+    row.create(null, [makeCell("Column 1", true), makeCell("Column 2", true)]),
+    row.create(null, [makeCell("Value", false), makeCell("Value", false)]),
+  ]);
+}
+
 /**
  * Map a toolbar command to a ProseMirror command (toggles where it makes sense). The commands are
  * unguarded by design: the read-only / editability check lives in the caller (FormattedEditor.format),
@@ -135,6 +178,16 @@ export function commandFor(command: FormatCommand): Command {
       return toggleList(nodeType(kind.ordered ? "ordered_list" : "bullet_list"));
     case "quote":
       return toggleQuote();
+    case "link":
+      return insertLink();
+    case "image":
+      return insertNode(
+        nodeType("image").create({ src: "images/image.png", alt: "Image", title: null }),
+      );
+    case "table":
+      return insertNode(starterTable());
+    case "rule":
+      return insertNode(nodeType("horizontal_rule").create());
     default:
       return assertNever(kind);
   }
@@ -196,6 +249,19 @@ function isActive(state: EditorState, kind: FormatKind): boolean {
       return inNodeType($head, nodeType(kind.ordered ? "ordered_list" : "bullet_list"));
     case "quote":
       return inNodeType($head, nodeType("blockquote"));
+    case "link":
+      return markActive(state, markType("link"));
+    case "image":
+      return (
+        state.selection instanceof NodeSelection && state.selection.node.type === nodeType("image")
+      );
+    case "table":
+      return inNodeType($head, nodeType("table"));
+    case "rule":
+      return (
+        state.selection instanceof NodeSelection &&
+        state.selection.node.type === nodeType("horizontal_rule")
+      );
     default:
       return assertNever(kind);
   }

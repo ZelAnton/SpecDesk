@@ -14,7 +14,7 @@ test("Pull Requests mode lists authored and involved open work", async ({ page }
     kind: "github.account",
     payload: { available: true, signedIn: true, login: "alice" },
   });
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Pull Requests"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
   await waitForSent(page, "pr.list.request");
   const request = (await sentFrames(page)).find(
     (frame) =>
@@ -53,7 +53,8 @@ test("Pull Requests mode lists authored and involved open work", async ({ page }
     },
   });
 
-  await expect(page.locator('#left-dock .dock-tool[data-tool="pullRequests"]')).toBeVisible();
-  await expect(page.locator(".remote-review-title")).toHaveText(["Mine", "Joined"]);
+  const pullRequests = page.locator('#left-dock [data-tool="pullRequests"]');
+  await expect(pullRequests).toBeVisible();
+  await expect(pullRequests.locator(".remote-review-title")).toHaveText(["Mine", "Joined"]);
   await page.screenshot({ path: testInfo.outputPath("pull-requests.png"), fullPage: true });
 });

@@ -2,9 +2,10 @@ import { isReviewState, type StatusState } from "../wire/protocol.js";
 
 /**
  * The author-facing lifecycle chrome: the action buttons (Open / Edit / Save version / Send for review /
- * Discard / Save) plus the formatting toolbar's visibility, driven by the document's lifecycle state.
+ * Discard / Save) plus the formatting toolbar's enabled state, driven by the document's lifecycle state.
  * The "which controls show in which lifecycle state" policy lives here in one tested place — a published
- * document offers Edit; once a draft is in progress the panes become editable and the format bar + the
+ * document offers Edit and a visible disabled format bar; once a draft is in progress the panes and bar
+ * become editable and the
  * draft actions (Save version / Discard / Send for review) take over while Edit hides. Discard and Send
  * for review are Draft-only (Discard isn't a legal move once In review; a sent draft is already
  * submitted); once the draft is under review, Update review replaces Send for review (push the
@@ -21,7 +22,7 @@ export interface LifecycleChromeDeps {
   updateReviewBtn: HTMLButtonElement | null;
   discardBtn: HTMLButtonElement | null;
   saveBtn: HTMLButtonElement | null;
-  formatBar: HTMLElement | null;
+  formatBar: HTMLFieldSetElement | null;
   /** Make both editor panes editable (a draft is in progress) or read-only. */
   setPaneEditable: (editable: boolean) => void;
   onOpen: () => void;
@@ -52,7 +53,7 @@ export class LifecycleChrome {
 
   /**
    * Apply the chrome for a lifecycle state: both panes editable in any non-published state; the format
-   * bar and Save version shown while a draft is in progress; Edit shown only when published; Discard and
+   * bar enabled and Save version shown while a draft is in progress; Edit shown only when published; Discard and
    * Send for review shown only in the Draft state (Discard isn't legal once In review; a sent draft is
    * already submitted); Update review shown only while a review is open. Send for review and Update review
    * additionally require GitHub to be configured (see setGitHubAvailable).
@@ -62,7 +63,7 @@ export class LifecycleChrome {
     const editing = state !== "published" && !this.documentReadOnly;
     this.deps.setPaneEditable(editing);
     if (this.deps.formatBar) {
-      this.deps.formatBar.hidden = !editing;
+      this.deps.formatBar.disabled = !editing;
     }
     if (this.deps.editBtn) {
       this.deps.editBtn.hidden = editing || this.documentReadOnly;

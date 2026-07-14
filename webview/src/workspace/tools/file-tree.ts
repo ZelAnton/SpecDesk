@@ -21,7 +21,7 @@ export interface FileTreeCallbacks {
 
 export class FileTree implements PanelTool {
   readonly id = "files";
-  readonly label = "Files";
+  readonly label = "Folders";
   readonly icon = icon("files");
 
   private headerEl: HTMLElement | null = null;

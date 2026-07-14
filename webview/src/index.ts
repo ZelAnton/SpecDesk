@@ -27,7 +27,9 @@ import {
   parseChatDelta,
   parseChatDone,
   parseDiffResult,
+  parseDocDiscardCompleted,
   parseDocLoaded,
+  parseDocOpenCompleted,
   parseDocumentActivity,
   parseError,
   parseGitHubAccount,
@@ -37,12 +39,18 @@ import {
   parsePreview,
   parsePrList,
   parsePrSuggested,
+  parseRepoCloneConflict,
   parseRepoCloneDestination,
+  parseRepoConfirmation,
   parseRepoDescription,
+  parseRepoOperationCompleted,
   parseStatus,
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWindowCloseCompleted,
+  parseWindowCloseRequested,
+  parseWindowState,
   parseWorkspaceContext,
   parseWorkspaceState,
 } from "./wire/decoders.js";
@@ -63,19 +71,37 @@ import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
 import { PullRequestsPanel } from "./workspace/tools/pull-requests-panel.js";
-import { RepositoriesPanel } from "./workspace/tools/repositories-panel.js";
+import {
+  nextRepositoryOperationRequestId,
+  RepositoriesPanel,
+} from "./workspace/tools/repositories-panel.js";
 import { ReviewRequestsPanel } from "./workspace/tools/review-requests-panel.js";
 import {
   favoritesPanel,
   recentPanel,
   type WorkspaceListCallbacks,
 } from "./workspace/tools/workspace-list.js";
-import { CENTRAL_VIEW_NOTIFICATIONS, setupWorkspace } from "./workspace/workspace.js";
+import {
+  CENTRAL_VIEW_HOME,
+  CENTRAL_VIEW_NOTIFICATIONS,
+  setupWorkspace,
+} from "./workspace/workspace.js";
 
 /** The slice of a pane the Split cross-mirror needs — both MarkdownEditor and FormattedEditor satisfy it. */
 interface MirrorTarget {
   getText(): string;
   hasPendingChange(): boolean;
+}
+
+interface PendingChangeTarget {
+  pendingChangeOrder(): number | null;
+  flushPendingChange(): boolean;
+}
+
+interface ModeSwitchPane extends MirrorTarget, PendingChangeTarget {}
+
+interface RetirablePendingChangeTarget {
+  cancelPendingChange(): boolean;
 }
 
 /**
@@ -89,6 +115,102 @@ interface MirrorTarget {
  */
 export function shouldMirrorInto(text: string, destination: MirrorTarget): boolean {
   return destination.getText() !== text && !destination.hasPendingChange();
+}
+
+/** Flush sibling editors in the order their latest pending edits occurred, so the newest snapshot is
+ * sent last and remains authoritative when both pane debounces are outstanding. */
+export function flushPendingChangesInOrder(targets: readonly PendingChangeTarget[]): void {
+  targets
+    .map((target) => ({ target, order: target.pendingChangeOrder() }))
+    .filter(
+      (entry): entry is { target: PendingChangeTarget; order: number } => entry.order !== null,
+    )
+    .sort((left, right) => left.order - right.order)
+    .forEach(({ target }) => {
+      target.flushPendingChange();
+    });
+}
+
+/** Resolve the text a view-mode switch hydrates from. While the current document is writable, settle both
+ * panes' trailing-edge edit notifications synchronously, oldest first: each callback can mirror into its
+ * sibling, and the newest pending edit therefore becomes the final shared snapshot. Reading the active pane
+ * only AFTER those callbacks also preserves the identity of the pane that supplied that newest snapshot.
+ * A read-only or repository-transitioning document must not flush a delayed author edit into a different
+ * lifecycle/repository identity; in that case mode switching is presentation-only and reads the current pane. */
+export function resolveModeSwitchText(
+  editor: ModeSwitchPane,
+  formatted: ModeSwitchPane,
+  flushAllowed: boolean,
+  activePane: () => Pane,
+): string {
+  if (flushAllowed) {
+    flushPendingChangesInOrder([editor, formatted]);
+  }
+  return activePane() === "formatted" ? formatted.getText() : editor.getText();
+}
+
+/** Ordinary document navigation is an identity boundary. Publish writable pending edits before the
+ * `doc.open` request, and refuse a competing open while a repository transition already owns the files. */
+export function runDocumentNavigation(
+  targets: readonly PendingChangeTarget[],
+  writable: boolean,
+  transitioning: boolean,
+  beginTransition: () => void,
+  sendOpen: () => void,
+): boolean {
+  if (transitioning) {
+    return false;
+  }
+  if (writable) {
+    flushPendingChangesInOrder(targets);
+  }
+  // Claim the identity boundary before posting doc.open. Both panes become read-only synchronously, so no
+  // new debounce can be created while native code saves the old draft and resolves the next document.
+  beginTransition();
+  sendOpen();
+  return true;
+}
+
+/** Discard is an identity boundary too: publish the final pre-discard snapshots, synchronously lock both
+ * panes, then send the correlated request. A terminal failure can safely restore the old editable session. */
+export function runDiscardTransition(
+  targets: readonly PendingChangeTarget[],
+  transitioning: boolean,
+  beginTransition: () => void,
+  sendDiscard: () => void,
+): boolean {
+  if (transitioning) {
+    return false;
+  }
+  flushPendingChangesInOrder(targets);
+  beginTransition();
+  sendDiscard();
+  return true;
+}
+/** Native window close is another persistence boundary: publish both panes' trailing-edge changes in
+ * their original edit order before asking the host to synchronously save the resulting local draft. */
+export function runWindowClose(
+  targets: readonly PendingChangeTarget[],
+  sendClose: () => void,
+): void {
+  flushPendingChangesInOrder(targets);
+  sendClose();
+}
+
+/** A native `doc.loaded` starts a new document identity. Cancel, rather than flush, any timer that survived
+ * the navigation boundary: its callback reads live pane text and would otherwise publish the newly hydrated
+ * document as though it were an edit belonging to the retired identity. */
+export function retirePendingChanges(targets: readonly RetirablePendingChangeTarget[]): void {
+  for (const target of targets) {
+    target.cancelPendingChange();
+  }
+}
+
+export function isMatchingRepositoryOperationCompletion(
+  pendingRequestId: number | null,
+  completedRequestId: number,
+): boolean {
+  return pendingRequestId !== null && pendingRequestId === completedRequestId;
 }
 
 /**
@@ -130,6 +252,7 @@ function wire(): void {
   const currentBranchEl = document.querySelector<HTMLElement>("#current-branch");
   const currentPathEl = document.querySelector<HTMLElement>("#current-path");
   const toolbarSearch = document.querySelector<HTMLInputElement>("#toolbar-search");
+  const toolbarEl = document.querySelector<HTMLElement>("#toolbar");
   const notificationsBtn = document.querySelector<HTMLButtonElement>("#notifications-btn");
   const toolbarAnnouncer = document.querySelector<HTMLElement>("#toolbar-announcer");
   const openBtn = document.querySelector<HTMLButtonElement>("#open-btn");
@@ -160,7 +283,7 @@ function wire(): void {
   const compareBtn = document.querySelector<HTMLButtonElement>("#compare-btn");
   const reviewEmptyEl = document.querySelector<HTMLElement>("#review-empty-bar");
   const reviewOverflowEl = document.querySelector<HTMLElement>("#review-overflow-bar");
-  const formatBar = document.querySelector<HTMLElement>("#format-bar");
+  const formatBar = document.querySelector<HTMLFieldSetElement>("#format-bar");
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
   );
@@ -197,6 +320,9 @@ function wire(): void {
   const githubOpenBtn = document.querySelector<HTMLButtonElement>("#github-open-btn");
   const githubSigninStatus = document.querySelector<HTMLElement>("#github-signin-status");
   const githubCancelBtn = document.querySelector<HTMLButtonElement>("#github-cancel-btn");
+  const windowMinimizeBtn = document.querySelector<HTMLButtonElement>("#window-minimize");
+  const windowMaximizeBtn = document.querySelector<HTMLButtonElement>("#window-maximize");
+  const windowCloseBtn = document.querySelector<HTMLButtonElement>("#window-close");
 
   // The "My reviews" panel's own elements (reviews-panel.ts).
   const reviewsPanelEl = document.querySelector<HTMLElement>("#reviews-panel");
@@ -229,6 +355,9 @@ function wire(): void {
   // variable cannot drift apart; "split" is only a defensive fallback if the markup is ever missing it.
   const initialModeAttr = panesEl?.dataset.mode;
   let mode: ViewMode = isViewMode(initialModeAttr) ? initialModeAttr : "split";
+  // The host primes the hidden editor with its welcome document during startup. Keep the first screen on
+  // Start; later document loads are explicit user choices and therefore reveal the editor.
+  let receivedInitialDocument = false;
   // One monotonic version across BOTH editors: the native side drops stale preview results by
   // version, so the two surfaces must share a single counter.
   let docVersion = 0;
@@ -238,6 +367,85 @@ function wire(): void {
   // or an ipc handler that fires after all four groups have run), so the forward reference is safe.
   let editor: MarkdownEditor;
   let formatted: FormattedEditor;
+  const flushPendingEditorChanges = (): void => {
+    flushPendingChangesInOrder([editor, formatted]);
+  };
+  const retirePendingEditorChanges = (): void => {
+    retirePendingChanges([editor, formatted]);
+  };
+  let repositoryTransitionRequestId: number | null = null;
+  let documentOpenRequestId: number | null = null;
+  let discardRequestId: number | null = null;
+  let windowCloseRequestId: number | null = null;
+  let documentOpenRequestSequence = 0;
+  let discardRequestSequence = 0;
+  let paneEditableRequested = false;
+  const applyPaneEditable = (): void => {
+    const editable =
+      paneEditableRequested &&
+      repositoryTransitionRequestId === null &&
+      documentOpenRequestId === null &&
+      discardRequestId === null &&
+      windowCloseRequestId === null;
+    editor.setEditable(editable);
+    formatted.setEditable(editable);
+    if (
+      (repositoryTransitionRequestId !== null ||
+        documentOpenRequestId !== null ||
+        discardRequestId !== null ||
+        windowCloseRequestId !== null) &&
+      formatBar
+    ) {
+      formatBar.disabled = true;
+    }
+  };
+  const beginRepositoryTransition = (): number | null => {
+    if (
+      repositoryTransitionRequestId !== null ||
+      documentOpenRequestId !== null ||
+      discardRequestId !== null ||
+      windowCloseRequestId !== null
+    ) {
+      return null;
+    }
+    flushPendingEditorChanges();
+    const requestId = nextRepositoryOperationRequestId();
+    repositoryTransitionRequestId = requestId;
+    applyPaneEditable();
+    return requestId;
+  };
+  const finishRepositoryTransition = (requestId: number): void => {
+    if (!isMatchingRepositoryOperationCompletion(repositoryTransitionRequestId, requestId)) {
+      return;
+    }
+    repositoryTransitionRequestId = null;
+    applyPaneEditable();
+    if (formatBar) {
+      formatBar.disabled = !paneEditableRequested;
+    }
+    if (paneEditableRequested) {
+      formatToolbar.refresh();
+    }
+  };
+  const openDocument = (path?: string): boolean => {
+    let requestId = 0;
+    return runDocumentNavigation(
+      [editor, formatted],
+      paneEditableRequested,
+      repositoryTransitionRequestId !== null ||
+        documentOpenRequestId !== null ||
+        discardRequestId !== null ||
+        windowCloseRequestId !== null,
+      () => {
+        requestId = ++documentOpenRequestSequence;
+        documentOpenRequestId = requestId;
+        applyPaneEditable();
+      },
+      () => {
+        ipc.send(Kinds.docOpen, path === undefined ? { requestId } : { path, requestId });
+      },
+    );
+  };
   let review: ReviewController;
   let formatToolbar: FormatToolbar;
   let heightSync: HeightSync;
@@ -283,6 +491,7 @@ function wire(): void {
   // called the moment the user initiates a folder/repo open, so the panel surfaces immediately rather than
   // racing a `tree` event (a plain doc.loaded also produces a tree, which must NOT force Files open).
   let revealWorkspaceFiles: () => void = () => {};
+  let revealWorkspaceRepository: (id: string) => void = () => {};
   const activeContextModel = new ActiveContextModel();
   let activeContext: ActiveContext = activeContextModel.current();
   let setWorkspaceContext: (context: ActiveContext) => void = () => {};
@@ -705,19 +914,61 @@ function wire(): void {
       }
     });
 
+    ipc.on(Kinds.docOpenCompleted, (message) => {
+      const payload = parseDocOpenCompleted(message.payload);
+      if (payload === null || payload.requestId !== documentOpenRequestId) {
+        return;
+      }
+      documentOpenRequestId = null;
+      applyPaneEditable();
+      if (formatBar) {
+        formatBar.disabled = !paneEditableRequested;
+      }
+      if (paneEditableRequested) {
+        formatToolbar.refresh();
+      }
+    });
+
+    ipc.on(Kinds.docDiscardCompleted, (message) => {
+      const payload = parseDocDiscardCompleted(message.payload);
+      if (payload === null || payload.requestId !== discardRequestId) {
+        return;
+      }
+      discardRequestId = null;
+      applyPaneEditable();
+      if (formatBar) {
+        formatBar.disabled = !paneEditableRequested;
+      }
+      if (paneEditableRequested) {
+        formatToolbar.refresh();
+      }
+    });
     ipc.on(Kinds.docLoaded, (message) => {
       const payload = parseDocLoaded(message.payload);
       if (payload) {
-        applyActiveContext(activeContextModel.documentLoaded(payload.path));
+        // `doc.loaded` is the authoritative identity boundary, including host-initiated loads that did not
+        // pass through openDocument. Retire old timers before either pane sees the new text, so no delayed
+        // callback can read that text and emit it as an edit for the document that just went away.
+        retirePendingEditorChanges();
+        const documentCleared = payload.path.length === 0;
+        applyActiveContext(
+          documentCleared
+            ? activeContextModel.documentCleared()
+            : activeContextModel.documentLoaded(payload.path),
+        );
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
-        // A freshly loaded document belongs in the editor: return the centre to it if a non-editor central
-        // view (the Start screen) was showing, so the doc is visible and the view-mode switch re-enables.
-        // Remember whether we switched, to move focus into the editing surface at the end (the Start view's
-        // focused control — e.g. its Open button — is about to be hidden).
-        const returnedToEditor = !isEditorCentral();
-        centralFrame?.show(CENTRAL_VIEW_EDITOR);
+        // The first load primes the hidden editor while Start remains the calm application landing page.
+        // Every later load follows an explicit open/navigation action and returns the centre to the editor.
+        const revealEditor = receivedInitialDocument && !documentCleared;
+        receivedInitialDocument = true;
+        const returnedToEditor = revealEditor && !isEditorCentral();
+        if (documentCleared) {
+          centralFrame?.show(CENTRAL_VIEW_HOME);
+        } else if (revealEditor) {
+          centralFrame?.show(CENTRAL_VIEW_EDITOR);
+        }
         // T-109: feed BOTH panes the SAME already-normalized text — see normalizeLineEndings, the root
         // cause of the spacers-never-render-until-a-mode-switch bug (a raw CRLF payload.text left the
         // source editor's own getText() silently LF-only while the formatted pane's kept the CRLF, a
@@ -811,10 +1062,10 @@ function wire(): void {
       saveBtn,
       formatBar,
       setPaneEditable: (editable) => {
-        editor.setEditable(editable);
-        formatted.setEditable(editable);
+        paneEditableRequested = editable;
+        applyPaneEditable();
       },
-      onOpen: () => ipc.send(Kinds.docOpen),
+      onOpen: () => openDocument(),
       onEdit: () => void dialogs.openBranchName(),
       onSaveVersion: () => void dialogs.openVersionNote(),
       // Open the send-for-review prompt so the author confirms/edits the outward-facing PR title/body; on
@@ -824,8 +1075,26 @@ function wire(): void {
       // a GitHub remote, and surfaces any problem as a plain status message).
       onUpdateReview: () => ipc.send(Kinds.docUpdateReview),
       onDiscard: () => {
-        review.clear();
-        ipc.send(Kinds.docDiscard);
+        let requestId = 0;
+        const started = runDiscardTransition(
+          [editor, formatted],
+          repositoryTransitionRequestId !== null ||
+            documentOpenRequestId !== null ||
+            discardRequestId !== null ||
+            windowCloseRequestId !== null,
+          () => {
+            requestId = ++discardRequestSequence;
+            discardRequestId = requestId;
+            applyPaneEditable();
+          },
+          () => {
+            review.clear();
+            ipc.send(Kinds.docDiscard, { requestId });
+          },
+        );
+        if (!started) {
+          return;
+        }
       },
       onSave: () => ipc.send(Kinds.docSave),
     });
@@ -855,6 +1124,15 @@ function wire(): void {
         ipc.send(Kinds.reviewRefresh);
       }
       lifecycleChrome.setLifecycle(payload.state);
+      if (
+        (repositoryTransitionRequestId !== null ||
+          documentOpenRequestId !== null ||
+          discardRequestId !== null ||
+          windowCloseRequestId !== null) &&
+        formatBar
+      ) {
+        formatBar.disabled = true;
+      }
       if (editing) {
         formatToolbar.refresh();
       }
@@ -938,6 +1216,12 @@ function wire(): void {
       cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
       signOut: () => ipc.send(Kinds.githubSignOut),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+      copyText: async (text) => {
+        if (navigator.clipboard?.writeText === undefined) {
+          throw new Error("Clipboard access is unavailable");
+        }
+        await navigator.clipboard.writeText(text);
+      },
     });
 
     accountSettingsBtn?.addEventListener("click", () => {
@@ -1012,6 +1296,76 @@ function wire(): void {
     });
   }
 
+  function wireWindowControls(): void {
+    const isInteractive = (target: EventTarget | null): boolean =>
+      target instanceof Element &&
+      target.closest("button, input, textarea, select, a, [contenteditable='true']") !== null;
+    const isDragSurface = (target: EventTarget | null): boolean =>
+      target === toolbarEl ||
+      (target instanceof Element && target.closest("#app-title, #repository-context") !== null);
+
+    toolbarEl?.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || isInteractive(event.target) || !isDragSurface(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      // The native caption drag owns the message loop until pointer-up, so a later DOM double-click is not
+      // a reliable signal. MouseEvent.detail already counts presses: route the second press to maximize
+      // before entering another drag loop.
+      if (event.detail >= 2) {
+        ipc.send(Kinds.windowToggleMaximize);
+      } else {
+        ipc.send(Kinds.windowDrag);
+      }
+    });
+    windowMinimizeBtn?.addEventListener("click", () => ipc.send(Kinds.windowMinimize));
+    windowMaximizeBtn?.addEventListener("click", () => ipc.send(Kinds.windowToggleMaximize));
+    windowCloseBtn?.addEventListener("click", () => {
+      // Use the same native-deferred handshake as Alt+F4/taskbar/system close. The host responds with a
+      // correlated flush request; only that request is allowed to settle editor debounces and acknowledge.
+      ipc.send(Kinds.windowClose, { requestId: 0 });
+    });
+
+    ipc.on(Kinds.windowCloseRequested, (message) => {
+      const payload = parseWindowCloseRequested(message.payload);
+      if (payload === null || windowCloseRequestId !== null) {
+        return;
+      }
+      runWindowClose([editor, formatted], () => {
+        windowCloseRequestId = payload.requestId;
+        applyPaneEditable();
+        ipc.send(Kinds.windowClose, { requestId: payload.requestId });
+      });
+    });
+
+    ipc.on(Kinds.windowCloseCompleted, (message) => {
+      const payload = parseWindowCloseCompleted(message.payload);
+      if (payload === null || payload.requestId !== windowCloseRequestId) {
+        return;
+      }
+      windowCloseRequestId = null;
+      applyPaneEditable();
+      if (formatBar) {
+        formatBar.disabled = !paneEditableRequested;
+      }
+      if (paneEditableRequested) {
+        formatToolbar.refresh();
+      }
+    });
+
+    ipc.on(Kinds.windowState, (message) => {
+      const payload = parseWindowState(message.payload);
+      if (payload === null || windowMaximizeBtn === null) {
+        return;
+      }
+      const label = payload.maximized ? "Restore" : "Maximize";
+      windowMaximizeBtn.setAttribute("aria-label", label);
+      windowMaximizeBtn.title = label;
+      windowMaximizeBtn.setAttribute("aria-pressed", String(payload.maximized));
+      windowMaximizeBtn.textContent = payload.maximized ? "❐" : "□";
+    });
+  }
+
   // Wiring group 4 — the view-mode switch and the view/toolbar chrome around it: mode changes (Code /
   // Split / Formatted), the wrap toggle, the theme toggle, export-log, and the skip link.
   function wireViewMode(): void {
@@ -1036,7 +1390,20 @@ function wire(): void {
       // whichever the author was last reading — not unconditionally the source editor; in a single-pane
       // mode the sole visible pane. The coordinator holds the active-pane state, so it resolves this.
       const line = splitSync.readingLine(prevVis.editor, prevVis.preview);
-      const text = prevVis.editor ? editor.getText() : formatted.getText();
+      // A pane edit is reported on a trailing debounce. Settle it before hiding/hydrating panes, otherwise
+      // the user can type in the newly visible stale sibling before the old callback runs and the later
+      // stale-base snapshot silently wins. The lifecycle/transition gate prevents a delayed edit from being
+      // flushed after the current document stopped accepting author changes.
+      const text = resolveModeSwitchText(
+        editor,
+        formatted,
+        paneEditableRequested &&
+          repositoryTransitionRequestId === null &&
+          documentOpenRequestId === null &&
+          discardRequestId === null &&
+          windowCloseRequestId === null,
+        () => splitSync.activePane(),
+      );
 
       if (nextVis.editor && !prevVis.editor) {
         editor.setText(text, true);
@@ -1050,8 +1417,7 @@ function wire(): void {
         panesEl.dataset.mode = next;
       }
       viewModeControl.setSelected(next);
-      editor.setEditable(editing);
-      formatted.setEditable(editing);
+      applyPaneEditable();
       // The format target depends on the mode (Code→source, Formatted→WYSIWYG), so refresh the buttons.
       formatToolbar.refresh();
 
@@ -1233,7 +1599,7 @@ function wire(): void {
     };
     const versions = new DocumentActivityPanel("versions", "Versions", requestActivity);
     const comments = new DocumentActivityPanel("comments", "Comments", requestActivity);
-    const history = new DocumentActivityPanel("history", "Change history", requestActivity);
+    const history = new DocumentActivityPanel("history", "History", requestActivity);
     activityPanels = [versions, comments, history];
     // chat.delta / chat.done are unsolicited native→webview events (docs/design/09-ipc-protocol.md): one
     // streaming turn at a time, so a per-turn id in chat.done is enough — no envelope-id correlation needed.
@@ -1254,7 +1620,7 @@ function wire(): void {
     // folder. The host feeds it the workspace tree via unsolicited `tree` events (a folder was opened, or a
     // document loaded — see the tree.request below).
     const files = new FileTree({
-      onOpenFile: (path) => ipc.send(Kinds.docOpen, { path }),
+      onOpenFile: (path) => openDocument(path),
       onOpenFolder: () => openFolder(),
       onToggleFavorite: (item, favorite) =>
         ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
@@ -1267,8 +1633,7 @@ function wire(): void {
     const openWorkspaceItem = (item: WorkspaceItem): void => {
       if (item.kind === "repository") {
         if (item.repositoryId) {
-          revealWorkspaceFiles();
-          ipc.send(Kinds.repoBrowse, { id: item.repositoryId });
+          revealWorkspaceRepository(item.repositoryId);
         }
         return;
       }
@@ -1280,15 +1645,38 @@ function wire(): void {
             revealWorkspaceFiles();
             ipc.send(Kinds.repoBrowse, { id: item.repositoryId, branch: item.branch });
           } else {
-            ipc.send(Kinds.docOpen, { path });
+            openDocument(path);
           }
+        }
+        return;
+      }
+      if (item.kind === "clone") {
+        if (item.repositoryId) {
+          revealWorkspaceFiles();
+          ipc.send(Kinds.repoOpen, { url: item.repositoryId, clonePath: item.path });
+        }
+        return;
+      }
+      if (item.kind === "branch") {
+        if (item.repositoryId && item.branch) {
+          const requestId = beginRepositoryTransition();
+          if (requestId === null) {
+            return;
+          }
+          revealWorkspaceFiles();
+          ipc.send(Kinds.repoSwitchBranch, {
+            id: item.repositoryId,
+            clonePath: item.path,
+            branch: item.branch,
+            requestId,
+          });
         }
         return;
       }
       if (item.isFolder) {
         openFolder(item.path);
       } else {
-        ipc.send(Kinds.docOpen, { path: item.path });
+        openDocument(item.path);
       }
     };
     // The Recent and Favorites panels share these callbacks: open an item, and toggle its favorite state
@@ -1303,11 +1691,11 @@ function wire(): void {
     // The Repositories panel: register from an owner/name or URL, remove it, browse its remote tree, or
     // explicitly copy it locally. Browsing reveals Files before the host returns the tree.
     const repositories = new RepositoriesPanel({
-      onCloneManaged: (url, destinationPath) =>
-        ipc.send(Kinds.repoCloneManaged, { url, destinationPath }),
-      onCloneToFolder: (url) => ipc.send(Kinds.repoCloneToFolder, { url }),
-      onDestinationRequest: (url, requestId) =>
-        ipc.send(Kinds.repoCloneDestinationRequest, { url, requestId }),
+      onCloneManaged: (url, localName, destinationPath) =>
+        ipc.send(Kinds.repoCloneManaged, { url, localName, destinationPath }),
+      onCloneToFolder: (url, localName) => ipc.send(Kinds.repoCloneToFolder, { url, localName }),
+      onDestinationRequest: (url, localName, requestId) =>
+        ipc.send(Kinds.repoCloneDestinationRequest, { url, localName, requestId }),
       onDescriptionRequest: (url, requestId) =>
         ipc.send(Kinds.repoDescriptionRequest, { url, requestId }),
       onUnregister: (id) => ipc.send(Kinds.repoUnregister, { id }),
@@ -1315,8 +1703,19 @@ function wire(): void {
         revealWorkspaceFiles();
         ipc.send(Kinds.repoBrowse, { id: repo.id });
       },
-      onOpenClone: (repo, clonePath) => ipc.send(Kinds.repoOpen, { url: repo.url, clonePath }),
-      onClone: (repo) => ipc.send(Kinds.repoClone, { id: repo.id }),
+      onOpenClone: (repo, clonePath) => {
+        revealWorkspaceFiles();
+        ipc.send(Kinds.repoOpen, { url: repo.url, clonePath });
+      },
+      onSwitchBranch: (repo, clonePath, branch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) {
+          return;
+        }
+        revealWorkspaceFiles();
+        ipc.send(Kinds.repoSwitchBranch, { id: repo.id, clonePath, branch, requestId });
+      },
+      onOpenExistingClone: (url, clonePath) => ipc.send(Kinds.repoOpen, { url, clonePath }),
       onToggleFavorite: (repo, favorite) =>
         ipc.send(Kinds.workspaceFavorite, {
           path: repo.id,
@@ -1325,6 +1724,60 @@ function wire(): void {
           isFolder: true,
           favorite,
         }),
+      onToggleCloneFavorite: (repo, clonePath, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, {
+          path: clonePath,
+          repositoryId: repo.id,
+          kind: "clone",
+          isFolder: true,
+          favorite,
+        }),
+      onToggleBranchFavorite: (repo, clonePath, branch, favorite) =>
+        ipc.send(Kinds.workspaceFavorite, {
+          path: clonePath,
+          repositoryId: repo.id,
+          branch,
+          kind: "branch",
+          isFolder: true,
+          favorite,
+        }),
+      onDeleteClone: (repo, clonePath, confirmationToken) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) {
+          return;
+        }
+        ipc.send(Kinds.repoDeleteClone, {
+          id: repo.id,
+          clonePath,
+          confirmationToken,
+          requestId,
+        });
+      },
+      onDeleteBranch: (repo, clonePath, branch, confirmationToken) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) {
+          return;
+        }
+        ipc.send(Kinds.repoDeleteBranch, {
+          id: repo.id,
+          clonePath,
+          branch,
+          confirmationToken,
+          requestId,
+        });
+      },
+      onRefresh: (requestId) => ipc.send(Kinds.repoRefreshAll, { requestId }),
+      onPull: (repo, clonePath, branch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) {
+          return;
+        }
+        ipc.send(Kinds.repoPull, { id: repo.id, clonePath, branch, requestId });
+      },
+      onPush: (repo, clonePath, branch) => {
+        flushPendingEditorChanges();
+        ipc.send(Kinds.repoPush, { id: repo.id, clonePath, branch });
+      },
     });
     repositoriesPanel = repositories;
     const reviewRequests = new ReviewRequestsPanel({
@@ -1367,6 +1820,25 @@ function wire(): void {
         repositories.setManagedDestination(payload);
       }
     });
+    ipc.on(Kinds.repoCloneConflict, (message) => {
+      const payload = parseRepoCloneConflict(message.payload);
+      if (payload) {
+        repositories.setCloneConflict(payload);
+      }
+    });
+    ipc.on(Kinds.repoConfirmation, (message) => {
+      const payload = parseRepoConfirmation(message.payload);
+      if (payload) {
+        repositories.setOperationConfirmation(payload);
+      }
+    });
+    ipc.on(Kinds.repoOperationCompleted, (message) => {
+      const payload = parseRepoOperationCompleted(message.payload);
+      if (payload) {
+        repositories.operationCompleted(payload.requestId);
+        finishRepositoryTransition(payload.requestId);
+      }
+    });
     ipc.on(Kinds.repoDescription, (message) => {
       const payload = parseRepoDescription(message.payload);
       if (payload) {
@@ -1388,13 +1860,14 @@ function wire(): void {
         // The view-mode switch only applies to the editor view: disable it while a non-editor central view
         // is shown, and re-measure the editor when it returns (it was hidden, so its geometry went stale).
         onCentralViewChange: (viewId) => {
+          document.body.dataset.centralView = viewId;
           const editorActive = viewId === CENTRAL_VIEW_EDITOR;
           viewModeControl.setDisabled(!editorActive);
           if (editorActive) {
             requestEditorRelayout();
           }
         },
-        onOpenFile: () => ipc.send(Kinds.docOpen),
+        onOpenFile: () => openDocument(),
         onOpenFolder: () => openFolder(),
         onOpenItem: openWorkspaceItem,
         onOutlineNavigate: (line) => navigateToLine(line),
@@ -1413,12 +1886,17 @@ function wire(): void {
       },
     );
     centralFrame = workspace.centralFrame;
+    document.body.dataset.centralView = centralFrame.active() ?? "home";
     outline = workspace.outline;
     home = workspace.home;
     setWorkspaceContext = (context) => workspace.setActiveContext(context);
     setWorkspaceContext(activeContext);
     // Now that the docks exist, opening a folder/repo can surface the Files navigator immediately.
     revealWorkspaceFiles = () => workspace.revealTool("left", "files");
+    revealWorkspaceRepository = (id) => {
+      workspace.revealTool("left", "repositories");
+      repositories.revealRepository(id);
+    };
 
     // The host feeds the file navigator the workspace tree via unsolicited `tree` events (a folder was
     // opened, a repo cloned, or a document loaded — see the tree.request in the doc.loaded handler). When the
@@ -1443,6 +1921,7 @@ function wire(): void {
         repositories.setState(payload);
         assistantChat?.setRepositories(payload.repositories);
         home?.setRecents(payload.recent);
+        home?.setFavorites(payload.favorites);
       }
     });
     // Ask for the current store once now that the handler is registered, so the panels populate immediately.
@@ -1503,6 +1982,7 @@ function wire(): void {
   wireEditors();
   wireLifecycle();
   wireGitHub();
+  wireWindowControls();
   wireViewMode();
   wireWorkspace();
 

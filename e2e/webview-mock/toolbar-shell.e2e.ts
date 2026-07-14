@@ -28,6 +28,10 @@ test("global context and Markdown controls live in the correct toolbars and rema
       path: "guides/intro.md",
     },
   });
+  await expect(page.locator("body")).toHaveAttribute("data-central-view", "editor");
+  await expect(page.locator("#app-title")).toBeHidden();
+  await expect(page.locator("#repository-context")).toBeVisible();
+  await expect(page.locator("#toolbar-search")).toBeVisible();
   await emit(page, {
     kind: "status",
     payload: { state: "draft", label: "Saved", branch: "spec/navigation" },
@@ -44,7 +48,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
 
   // An inactive mode selects and opens instead of collapsing; only a second click on that active icon
   // collapses the panel.
-  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Files"]');
+  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]');
   await filesMode.click();
   await expect(filesMode).toHaveAttribute("aria-expanded", "true");
   await filesMode.click();
@@ -58,6 +62,31 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(bottomActive).toHaveAttribute("aria-expanded", "true");
   await filesMode.click();
   await expect(filesMode).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#editor-toolbar")).toHaveCSS(
+    "background-color",
+    await page
+      .locator("#left-dock .dock-header")
+      .evaluate((element) => getComputedStyle(element).backgroundColor),
+  );
+  const statusBar = page.locator("#status-bar");
+  const leftRail = page.locator("#left-dock .dock-rail");
+  await expect(statusBar).toHaveCSS(
+    "background-color",
+    await leftRail.evaluate((element) => getComputedStyle(element).backgroundColor),
+  );
+  await expect(statusBar).toHaveCSS(
+    "color",
+    await leftRail.evaluate((element) => getComputedStyle(element).color),
+  );
+
+  // The bottom panel owns only the workspace column. The right rail spans both rows and therefore remains
+  // unobscured whether the bottom panel is expanded or collapsed.
+  const bottomBox = await page.locator("#bottom-dock").boundingBox();
+  const rightBox = await page.locator("#right-dock").boundingBox();
+  if (bottomBox === null || rightBox === null) {
+    throw new Error("The bottom and right docks must both participate in layout");
+  }
+  expect(bottomBox.x + bottomBox.width).toBeLessThanOrEqual(rightBox.x);
   await page.screenshot({ path: testInfo.outputPath("panels-expanded.png"), fullPage: true });
   await bottomActive.click();
   await expect(page.locator("#bottom-dock .dock-rail")).toHaveCSS("flex-direction", "row");
@@ -113,6 +142,9 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await expect(page.locator('#panes[data-mode="formatted"]')).toHaveCount(1);
 
   await page.locator("#notifications-btn").click();
+  await expect(page.locator("#app-title")).toBeVisible();
+  await expect(page.locator("#repository-context")).toBeHidden();
+  await expect(page.locator("#toolbar-search")).toBeHidden();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "notifications");
   await expect(page.locator("#notifications-view")).toBeVisible();
   await expect(page.locator("#notifications-view .notifications-list")).toContainText(

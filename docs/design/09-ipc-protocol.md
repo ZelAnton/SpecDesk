@@ -39,7 +39,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled (focus-gated) and on window focus |
 | `action.publish` | `{}` | merge the PR (if permitted) — *not yet built (PoC-10)* |
 | `github.signIn` / `github.signInCancel` / `github.signOut` | `{}` | connect / cancel-connecting / disconnect a GitHub account (device flow) |
-| `doc.discard` | `{}` | abandon the draft |
+| `doc.discard` | `{ requestId }` | abandon the draft after both editor debounces are flushed; both panes stay locked until the matching terminal result |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
 | `comment.resolve` | `{ id }` | resolve a thread |
@@ -55,16 +55,23 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
 | `tree.request` | `{ path? }` | request the Markdown file tree (`path` scopes it; absent → the current workspace folder, else the open document's folder). Host replies with `tree` |
 | `folder.open` | `{ path? }` | open a folder as the file-navigator root (`path`), or `null`/absent → the native folder picker. A `tree` event follows |
-| `doc.open` | `{ path? }` | open a spec for editing (`path`), or `null`/absent → the native open dialog |
+| `doc.open` | `{ path?, requestId }` | open a spec for editing (`path`), or `null`/absent → the native open dialog; both panes stay locked until the matching terminal acknowledgement |
 | `workspace.request` | `{}` | request the persisted workspace state (recent items, favorites, registered repos); host replies with `workspace.state` |
-| `workspace.favorite` | `{ path, favorite }` | add (`favorite` true) or remove (false) a file/folder from favorites; host re-emits `workspace.state` |
+| `workspace.favorite` | `{ path, favorite, kind?, repositoryId?, branch?, isFolder? }` | add or remove a local/remote item, GitHub repository, local copy, or exact branch; host re-emits `workspace.state` |
 | `repo.register` | `{ url }` | register a GitHub repo from a URL/spec (`https://github.com/owner/name(.git)`, `owner/name`, or `git@github.com:owner/name(.git)`); the host parses/normalizes it and re-emits `workspace.state`, or emits `error` if it isn't a repo. A4 stores the entry only — no clone yet |
-| `repo.cloneToFolder` | `{ url }` | choose a parent folder and clone the GitHub repository into a new, non-colliding child folder |
-| `repo.cloneManaged` | `{ url, destinationPath }` | create a new copy at the managed path the author reviewed |
-| `repo.cloneDestination.request` | `{ url, requestId }` | resolve the exact managed destination before enabling Clone |
+| `repo.cloneToFolder` | `{ url, localName }` | choose a parent folder and create a locally named copy of the GitHub repository |
+| `repo.cloneManaged` | `{ url, localName, destinationPath? }` | create a named copy at the managed path the author reviewed |
+| `repo.cloneDestination.request` | `{ url, localName, requestId }` | resolve the exact managed destination and any existing registered copy before enabling Clone |
 | `repo.description.request` | `{ url, requestId }` | resolve the repository description and visibility before enabling clone actions |
-| `repo.unregister` | `{ id }` | remove a registered repo by its `owner/name` id; host re-emits `workspace.state` |
+| `repo.unregister` | `{ id }` | forget a registered repo in SpecDesk only by its `owner/name` id; never deletes the GitHub repository; host re-emits `workspace.state` |
 | `repo.open` | `{ url }` | open a GitHub repo (`owner/name` or a GitHub URL): clone it into a managed local folder under the app data root (or reuse an existing clone) and open that folder as the workspace — a `tree` follows; an unparseable value comes back as `error`. Registers the repo too (re-emits `workspace.state`) |
+| `repo.switchBranch` | `{ id, clonePath, branch, requestId }` | verify the copy still belongs to the selected GitHub repository and remains on its registered current branch before preserving work, switch it, restore remembered work for that branch, and open its files |
+| `repo.deleteClone` | `{ id, clonePath, confirmationToken?, requestId }` | delete only the local copy folder after native safety inspection; never deletes the GitHub repository |
+| `repo.deleteBranch` | `{ id, clonePath, branch, confirmationToken?, requestId }` | delete only the local branch after native safety inspection; never deletes its GitHub remote branch |
+| `repo.refreshAll` | `{ requestId }` | verify each copy still belongs to its registered GitHub repository, fetch and inspect matching usable copies on one repository handle, skip mismatches without contacting their remotes, continue after individual failures, re-emit one authoritative `workspace.state`, then report an aggregate error if needed; `repo.operationCompleted` with the same positive request id is the terminal acknowledgement |
+| `repo.pull` | `{ id, clonePath, branch, requestId }` | verify the copy still belongs to the registered GitHub repository and remains on the named current branch before saving editor text, then fast-forward and inspect it on one repository handle; reject rather than switching branches or merging implicitly |
+| `repo.push` | `{ id, clonePath, branch }` | verify the copy still belongs to the registered GitHub repository before releasing a credential, then share and inspect the named current local branch on one repository handle; reject if that branch is no longer checked out |
+| `window.minimize` / `window.toggleMaximize` / `window.close` / `window.drag` | `{}` except close `{ requestId }` | allow-listed native window commands from the in-content Windows title bar; close uses `0` for a new intent and a positive id to acknowledge the matching native flush request; drag begins the standard OS caption move |
 | `log` / `log.export` | `{ level, message, data? }` / `{}` | forward a webview log line to the host logger / export the current rolling log file |
 | `trace.dump` | `{ t0Epoch, firstSeq, entries: [{ seq, t, cat, event, data? }] }` | dump the always-on diagnostic trace ring; the host persists it as a JSON file beside the log and appends its tail (wall-clock-stamped) to the `log.export` that follows. Sent just before `log.export` when the author exports the log |
 
@@ -73,6 +80,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `kind` | payload | meaning |
 |--------|---------|---------|
 | `preview.html` | `{ html, lineMap, version }` | rendered preview to inject |
+| doc.openCompleted | { requestId, succeeded } | terminal acknowledgement for the matching doc.open; emitted for success, cancellation, and failure so the editor identity lock always resolves |
+| `doc.discardCompleted` | `{ requestId, succeeded }` | terminal acknowledgement for the matching discard; success follows the reloaded published document, while failure restores the old editable draft |
 | `diff.result` | `{ entries }` | changed blocks of the working copy vs its last saved version, for the live "show changes" overlay (editor `version` on the envelope) |
 | `pr.diff.rendered` | `{ html, mode }` | rendered/raw diff of the open PR to display |
 | `pr.compare.rendered` | `{ html, mode, base }` | rendered/raw comparison of a PR's version against the chosen base |
@@ -90,15 +99,21 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `document.activity` | `{ document?, versions, historyState, historyMessage?, comments, commentsState, commentsMessage?, history }` | selected-document activity; versions and distinct change summaries come from bounded repository history, with `notVersioned` distinguished from a load failure, while comments are the newest bounded inline GitHub review comments filtered by the exact selected repository path and distinguish verified-empty, disconnected, and unavailable states |
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
-| `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: `{ path, label, isFolder }[]` — `recent` is most-recent-first, `favorites` in the order added; `repositories`: `{ id, name, url }[]`) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |
+| `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: workspace items; each registered local copy carries `{ ahead, behind, hasUncommitted, stashCount, hasConflicts }`, while each branch also carries `canDelete` (true only for a removable local non-default branch)) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |
 | `workspace.context` | `{ repository, repositoryRoot, branch, branchState, defaultBranch, path }` | authoritative context for the open document. Repository and relative path come from its versioning root (never the independently browsed file-tree root); `branchState` (`named` / `detached` / `unavailable`) keeps a deliberate unnamed checkout distinct from a read failure. Nullable repository fields mean the open file is not in a readable versioned repository |
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |
 | `github.account` | `{ available, signedIn, login?, message?, organizations? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` is the authorized organization-login list after it loads; `message` is a transient/failed sign-in line) |
 | `github.repositories` | `{ repositories: { fullName, description? }[] }` | case-insensitively de-duplicated repositories available to the connected account for owner/name autocomplete |
-| `repo.cloneDestination` | `{ url, requestId, path? }` | exact managed clone path; `requestId` lets the webview ignore a stale response |
+| `repo.cloneDestination` | `{ url, localName, requestId, path?, exists, existingClonePath? }` | exact managed clone path and occupied-name recovery; `requestId` plus `localName` lets the webview ignore stale responses |
+| `repo.cloneConflict` | `{ url, localName, existingClonePath, message }` | a clone-time race occupied the reviewed name; the UI offers to open the existing copy |
+| `repo.confirmation` | `{ operation, id, clonePath, branch, message, warnings, confirmationToken }` | required destructive-action warning plus an opaque fingerprint for the exact unsaved, unshared, held, or conflicting local work inspected |
+| `repo.operationCompleted` | `{ requestId }` | terminal acknowledgement for branch switching, local-copy or branch deletion, and Pull; the webview unlocks editing only when `requestId` matches its active operation |
 | `repo.description` | `{ url, requestId, state, description? }` | description lookup result (`found`, `private`, `notFound`, or `error`); correlation fields let the webview ignore stale responses |
+| `window.state` | `{ maximized }` | native maximize/restore state for the in-content title-bar button |
+| `window.closeRequested` | `{ requestId }` | correlated request to settle both editor debounces before acknowledging `window.close`; native Alt+F4, taskbar/system close, and the in-content close button all enter this handshake |
+| `window.closeCompleted` | `{ requestId, succeeded }` | terminal failure result for a close that stays open; the webview unlocks editing only for its matching request |
 | `confirm.request` | `{ id, action, summary }` | ask the author to confirm a mutating action |
 
 ## Ordering & correctness rules
@@ -112,6 +127,8 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
   (`editor.changed` → `preview.html`,
   `diff.request` → `diff.result`): a newer edit supersedes any in-flight result. Unsolicited
   events (status, toast, chat.delta) carry neither.
+- **Discard ordering:** both editor debounces settle before `doc.discard`; the panes lock before the command is sent and unlock only for its matching `doc.discardCompleted`. Native code keeps the draft dirty until checkout and reload both succeed, and restores autosave after a failure.
+- **Close ordering:** every close path is deferred after the webview is ready. The webview settles both editor debounces in edit order and acknowledges the positive `requestId`; the host then synchronously writes any pending local draft and permits native teardown only after success. A failed write leaves the window open and unlocks the editors via the matching `window.closeCompleted`.
 - **Debounce/throttle:** `editor.changed` ~120 ms; repository-description lookup ~220 ms;
   `scroll.sync` throttled to animation frame.
 - **Cancellation:** a new `editor.changed` cancels the in-flight parse/preview for the prior

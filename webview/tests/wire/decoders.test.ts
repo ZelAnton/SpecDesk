@@ -2,17 +2,83 @@ import { describe, expect, it } from "vitest";
 import {
   parseBranchNameSuggested,
   parseDiffResult,
+  parseDocDiscardCompleted,
   parseDocLoaded,
+  parseDocOpenCompleted,
   parseError,
   parseImageInserted,
   parsePreview,
+  parseRepoConfirmation,
+  parseRepoOperationCompleted,
   parseStatus,
   parseTree,
   parseVersionNoteSuggested,
+  parseWindowCloseCompleted,
+  parseWindowCloseRequested,
   parseWorkspaceState,
 } from "../../src/wire/decoders.js";
 
 describe("IPC payload decoders (the native→webview JSON boundary)", () => {
+  it("accepts only correlated window-close handshake payloads", () => {
+    expect(parseWindowCloseRequested({ requestId: 7 })).toEqual({ requestId: 7 });
+    expect(parseWindowCloseRequested({ requestId: 0 })).toBeNull();
+    expect(parseWindowCloseRequested({ requestId: Number.MAX_SAFE_INTEGER + 1 })).toBeNull();
+    expect(parseWindowCloseCompleted({ requestId: 7, succeeded: false })).toEqual({
+      requestId: 7,
+      succeeded: false,
+    });
+    expect(parseWindowCloseCompleted({ requestId: 7 })).toBeNull();
+    expect(parseWindowCloseCompleted({ requestId: 7, succeeded: "no" })).toBeNull();
+  });
+  it("parseRepoConfirmation normalizes an omitted clone branch but still requires a delete branch", () => {
+    const cloneConfirmation = {
+      operation: "deleteClone",
+      id: "acme/specs",
+      clonePath: "C:\\SpecDesk\\repos\\product-specs",
+      message: "Delete this local copy from this computer?",
+      warnings: ["There are unfinished local edits."],
+      confirmationToken: "DD42A087",
+    };
+
+    expect(parseRepoConfirmation(cloneConfirmation)).toEqual({
+      ...cloneConfirmation,
+      branch: null,
+    });
+    expect(parseRepoConfirmation({ ...cloneConfirmation, operation: "deleteBranch" })).toBeNull();
+    expect(parseRepoConfirmation({ ...cloneConfirmation, branch: "review-copy" })).toBeNull();
+    expect(
+      parseRepoConfirmation({
+        ...cloneConfirmation,
+        operation: "deleteBranch",
+        branch: "review-copy",
+      }),
+    ).toEqual({ ...cloneConfirmation, operation: "deleteBranch", branch: "review-copy" });
+  });
+
+  it("parseRepoOperationCompleted accepts only positive safe request IDs", () => {
+    expect(parseRepoOperationCompleted({ requestId: 7 })).toEqual({ requestId: 7 });
+    expect(parseRepoOperationCompleted({ requestId: 0 })).toBeNull();
+    expect(parseRepoOperationCompleted({ requestId: Number.MAX_SAFE_INTEGER + 1 })).toBeNull();
+  });
+
+  it("parseDocDiscardCompleted accepts only correlated terminal results", () => {
+    expect(parseDocDiscardCompleted({ requestId: 8, succeeded: false })).toEqual({
+      requestId: 8,
+      succeeded: false,
+    });
+    expect(parseDocDiscardCompleted({ requestId: 0, succeeded: false })).toBeNull();
+    expect(parseDocDiscardCompleted({ requestId: 8 })).toBeNull();
+  });
+  it("parseDocOpenCompleted accepts only correlated terminal results", () => {
+    expect(parseDocOpenCompleted({ requestId: 7, succeeded: true })).toEqual({
+      requestId: 7,
+      succeeded: true,
+    });
+    expect(parseDocOpenCompleted({ requestId: 0, succeeded: true })).toBeNull();
+    expect(parseDocOpenCompleted({ requestId: 7 })).toBeNull();
+    expect(parseDocOpenCompleted({ requestId: 7, succeeded: "yes" })).toBeNull();
+  });
+
   it("parseDocLoaded accepts a well-formed payload and rejects malformed ones", () => {
     expect(parseDocLoaded({ path: "a.md", text: "x", docDir: "", readOnly: false })).toEqual({
       path: "a.md",
@@ -124,11 +190,64 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
           name: "octo/spec",
           url: "https://github.com/octo/spec",
           defaultBranch: "master",
-          clones: [{ id: "octo_spec", path: "C:\\repos\\octo_spec", branches: ["draft"] }],
+          clones: [
+            {
+              id: "octo_spec",
+              path: "C:\\repos\\octo_spec",
+              currentBranch: "draft",
+              status: {
+                ahead: 2,
+                behind: 1,
+                hasUncommitted: true,
+                stashCount: 1,
+                hasConflicts: false,
+              },
+              branches: [
+                {
+                  name: "draft",
+                  canDelete: true,
+                  status: {
+                    ahead: 2,
+                    behind: 1,
+                    hasUncommitted: true,
+                    stashCount: 1,
+                    hasConflicts: false,
+                  },
+                },
+              ],
+            },
+          ],
         },
       ],
     };
     expect(parseWorkspaceState(state)).toEqual(state);
+    const repository = state.repositories[0];
+    const clone = repository?.clones[0];
+    if (repository === undefined || clone === undefined) {
+      throw new Error("The workspace-state fixture must contain one local copy.");
+    }
+    const { currentBranch: _omittedCurrentBranch, ...cloneWithoutCurrentBranch } = clone;
+    const nativeOmittedNull = parseWorkspaceState({
+      ...state,
+      repositories: [
+        {
+          ...repository,
+          clones: [cloneWithoutCurrentBranch],
+        },
+      ],
+    });
+    expect(nativeOmittedNull?.repositories[0]?.clones[0]?.currentBranch).toBeNull();
+    expect(
+      parseWorkspaceState({
+        ...state,
+        repositories: [
+          {
+            ...repository,
+            clones: [{ ...clone, status: { ahead: -1 } }],
+          },
+        ],
+      }),
+    ).toBeNull();
     for (const favorite of [
       { path: "docs/guide.md", label: "guide.md", isFolder: false, kind: "remote" },
       {

@@ -46,8 +46,20 @@ export const Kinds = {
   repoCloneDestinationRequest: "repo.cloneDestination.request",
   repoDescriptionRequest: "repo.description.request",
   repoBrowse: "repo.browse",
+  repoSwitchBranch: "repo.switchBranch",
+  repoDeleteClone: "repo.deleteClone",
+  repoDeleteBranch: "repo.deleteBranch",
+  repoRefreshAll: "repo.refreshAll",
+  repoPull: "repo.pull",
+  repoPush: "repo.push",
+  windowMinimize: "window.minimize",
+  windowToggleMaximize: "window.toggleMaximize",
+  windowClose: "window.close",
+  windowDrag: "window.drag",
   // native → webview
   docLoaded: "doc.loaded",
+  docOpenCompleted: "doc.openCompleted",
+  docDiscardCompleted: "doc.discardCompleted",
   previewHtml: "preview.html",
   imageInserted: "image.inserted",
   branchNameSuggested: "branch.name.suggested",
@@ -68,9 +80,29 @@ export const Kinds = {
   tree: "tree",
   workspaceState: "workspace.state",
   repoCloneDestination: "repo.cloneDestination",
+  repoCloneConflict: "repo.cloneConflict",
+  repoConfirmation: "repo.confirmation",
+  repoOperationCompleted: "repo.operationCompleted",
   repoDescription: "repo.description",
   workspaceContext: "workspace.context",
+  windowState: "window.state",
+  windowCloseRequested: "window.closeRequested",
+  windowCloseCompleted: "window.closeCompleted",
 } as const;
+
+/** Native maximize state for the in-content title-bar button. */
+export interface WindowStatePayload {
+  maximized: boolean;
+}
+
+export interface WindowCloseRequestedPayload {
+  requestId: number;
+}
+
+export interface WindowCloseCompletedPayload {
+  requestId: number;
+  succeeded: boolean;
+}
 
 /** The diff wire `kind` discriminator names — the single runtime source on the webview side; the
  *  {@link DiffKind} type derives from it, so the validated set and the type can't drift apart. Mirror of
@@ -249,6 +281,18 @@ export interface DocLoadedPayload {
 /** Payload of `error` (native→webview). */
 export interface ErrorPayload {
   message: string;
+}
+
+/** Terminal result for one correlated `doc.open` transition. */
+export interface DocOpenCompletedPayload {
+  requestId: number;
+  succeeded: boolean;
+}
+
+/** Terminal result for one correlated `doc.discard` transition. */
+export interface DocDiscardCompletedPayload {
+  requestId: number;
+  succeeded: boolean;
 }
 
 /** Payload of `link.open` (webview→native): a URL to open in the OS — an http/https page in
@@ -468,6 +512,12 @@ export interface TemplatesPayload {
  *  the native open dialog. */
 export interface DocOpenPayload {
   path?: string;
+  requestId: number;
+}
+
+/** Payload of `doc.discard` (webview→native): correlate the locked editor transition with its completion. */
+export interface DocDiscardPayload {
+  requestId: number;
 }
 
 /** Payload of `folder.open` (webview→native): open a folder as the file navigator's root (`path`), or
@@ -516,7 +566,7 @@ export interface WorkspaceItem {
   path: string;
   label: string;
   isFolder: boolean;
-  kind?: "local" | "remote" | "repository";
+  kind?: "local" | "remote" | "repository" | "clone" | "branch";
   repositoryId?: string;
   branch?: string;
 }
@@ -535,7 +585,23 @@ export interface RegisteredRepo {
 export interface RegisteredClone {
   id: string;
   path: string;
-  branches: string[];
+  currentBranch: string | null;
+  branches: RegisteredBranch[];
+  status: RepositoryStatusPayload;
+}
+
+export interface RegisteredBranch {
+  name: string;
+  status: RepositoryStatusPayload;
+  canDelete: boolean;
+}
+
+export interface RepositoryStatusPayload {
+  ahead: number;
+  behind: number;
+  hasUncommitted: boolean;
+  stashCount: number;
+  hasConflicts: boolean;
 }
 
 /** Payload of `workspace.state` (native→webview): the persisted workspace store — the author's `recent`
@@ -552,7 +618,7 @@ export interface WorkspaceStatePayload {
 export interface WorkspaceFavoritePayload {
   path: string;
   favorite: boolean;
-  kind?: "local" | "remote" | "repository";
+  kind?: "local" | "remote" | "repository" | "clone" | "branch";
   repositoryId?: string;
   branch?: string;
   isFolder?: boolean;
@@ -578,14 +644,75 @@ export interface RepoOpenPayload {
   clonePath?: string;
 }
 
+export interface RepoSwitchBranchPayload {
+  id: string;
+  clonePath: string;
+  branch: string;
+  requestId: number;
+}
+
+export interface RepoPullPayload extends RepoSwitchBranchPayload {}
+
+export interface RepoRefreshAllPayload {
+  requestId: number;
+}
+
+export interface RepoPushPayload {
+  id: string;
+  clonePath: string;
+  branch: string;
+}
+
+export interface RepoDeleteClonePayload {
+  id: string;
+  clonePath: string;
+  confirmationToken?: string;
+  requestId: number;
+}
+
+export interface RepoDeleteBranchPayload extends RepoDeleteClonePayload {
+  branch: string;
+}
+
 export interface RepoCloneToFolderPayload {
   url: string;
+  localName: string;
+}
+
+export interface RepoCloneManagedPayload {
+  url: string;
+  localName: string;
+  destinationPath?: string;
 }
 
 export interface RepoCloneDestinationPayload {
   url: string;
   requestId: number;
+  localName: string;
   path?: string;
+  exists: boolean;
+  existingClonePath?: string;
+}
+
+export interface RepoCloneConflictPayload {
+  url: string;
+  localName: string;
+  existingClonePath: string;
+  message: string;
+}
+
+export interface RepoConfirmationPayload {
+  operation: "deleteClone" | "deleteBranch";
+  id: string;
+  clonePath: string;
+  branch: string | null;
+  message: string;
+  warnings: string[];
+  confirmationToken: string;
+}
+
+export interface RepoOperationCompletedPayload {
+  requestId: number;
 }
 
 export type RepoDescriptionState = "found" | "private" | "notFound" | "error";

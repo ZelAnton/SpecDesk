@@ -46,7 +46,7 @@ public sealed class HostControllerAutosaveRaceTests
     }
 
     [Test]
-    public void RunDiskAutosave_QueuedBehindADiscardThatAlreadyCompleted_SkipsTheStaleWrite()
+    public void RunDiskAutosave_ClaimedBeforeDiscardFinishesBeforeTheCheckoutCanStart()
     {
         FakeVersioning versioning = new();
         using HostController controller = new(
@@ -57,62 +57,48 @@ public sealed class HostControllerAutosaveRaceTests
             versioning,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<HostController>.Instance,
             _docPath,
-            // Long enough that the real timer never fires on its own — this test drives
-            // RunDiskAutosave directly and deterministically instead.
             TimeSpan.FromMinutes(10));
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
         controller.OnMessage(IpcSerializer.SerializeEvent(
             MessageKinds.EditorChanged, new EditorChangedPayload("# Billing (unsaved draft)")));
-
-        // Grab the private _repoGate object so the test can hold it itself, standing in for the
-        // "an image insert holds _repoGate" trigger from the finding — this is what forces the
-        // autosave callback below to actually block rather than racing straight through.
         object repoGate = typeof(HostController)
             .GetField("_repoGate", BindingFlags.NonPublic | BindingFlags.Instance)!
             .GetValue(controller)!;
+        FieldInfo leaseField = typeof(HostController)
+            .GetField("_documentMutationLeaseClaimed", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
         Task autosave;
         Monitor.Enter(repoGate);
         try
         {
-            // Fire the "autosave" callback on its own thread: it takes its (path, text, generation)
-            // snapshot under _sync (uncontended — the test thread holds _repoGate, not _sync) and then
-            // blocks trying to enter _repoGate, exactly like the real timer callback would.
             autosave = Task.Run(controller.RunDiskAutosave);
+            Assert.That(
+                SpinUntil(() => (bool)leaseField.GetValue(controller)!, TimeSpan.FromSeconds(2)),
+                Is.True);
 
-            // Bounded wait for the background thread to reach that blocking point. The _sync snapshot
-            // is a handful of uncontended field reads, so this margin is generous, not a tight race.
-            Assert.That(SpinUntil(() => autosave.Status == TaskStatus.Running, TimeSpan.FromSeconds(2)), Is.True);
-            Thread.Sleep(50);
-
-            // "Discard" now runs on the SAME thread that holds _repoGate: .NET monitors are reentrant
-            // per-thread, so its own `lock (_repoGate)` section proceeds immediately (no blocking) while
-            // the autosave task above stays queued — reproducing "Discard wins the race for the gate".
             controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard));
-
-            Assert.That(versioning.DiscardCalled, Is.True);
-            // Discard's own repo access has already completed while the autosave task is still queued
-            // on _repoGate — the file still holds what LoadFile (re-)read from disk (the published
-            // content), since the stale autosave write has not happened yet.
-            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing (published)"));
+            Assert.Multiple(() =>
+            {
+                Assert.That(versioning.DiscardCalled, Is.False);
+                Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing (published)"));
+            });
         }
         finally
         {
-            // Release _repoGate: the queued autosave callback can now finally proceed.
             Monitor.Exit(repoGate);
         }
 
-        // Bounded wait, not a hang: a wiring bug (the fix regressing) must fail the test, not hang it.
         Assert.That(autosave.Wait(TimeSpan.FromSeconds(5)), Is.True);
-        Assert.That(
-            File.ReadAllText(_docPath),
-            Is.EqualTo("# Billing (published)"),
-            "the stale draft snapshot must not have been written over the reverted, published file");
+        Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing (unsaved draft)"));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard));
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.DiscardCalled, Is.True);
+        });
     }
-
     [Test]
-    public void RunDiskAutosave_SnapshotTakenWhileACheckoutHasBumpedButNotYetResetText_SkipsTheStaleWrite()
+    public void RunDiskAutosave_DuringCheckoutTransitionCannotClaimTheStaleText()
     {
         // Targets the narrower window inside OnDiscard's own _repoGate section: between its bump of
         // _draftGeneration (right after the revert) and _text actually catching up in the later _sync
@@ -145,8 +131,11 @@ public sealed class HostControllerAutosaveRaceTests
         // _text/_textGeneration/_state at all — exactly the torn intermediate state a snapshot taken
         // mid-checkout would observe.
         generationField.SetValue(controller, before + 1);
-
+        FieldInfo transitionField = typeof(HostController)
+            .GetField("_documentRepositoryTransition", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        transitionField.SetValue(controller, true);
         controller.RunDiskAutosave();
+        transitionField.SetValue(controller, false);
 
         Assert.That(
             File.ReadAllText(_docPath),

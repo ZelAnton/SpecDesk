@@ -117,7 +117,7 @@ describe("WorkspaceListPanel — Favorites", () => {
   it("shows the empty hint until a state is set", () => {
     const { body } = ready("favorites");
     expect(body.querySelector<HTMLElement>(".workspace-list-empty")?.textContent).toBe(
-      "Star a repository, file, or folder to keep it here.",
+      "Star a repository, local copy, branch, file, or folder to keep it here.",
     );
   });
 
@@ -204,6 +204,38 @@ describe("WorkspaceListPanel — Favorites", () => {
     expect(body.querySelector(".workspace-item-context")?.textContent).toBe("Repository");
     expect(body.querySelector(".workspace-open")?.getAttribute("aria-label")).toBe(
       "Repository octo/spec",
+    );
+  });
+
+  it("distinguishes local-copy and branch favorites", () => {
+    const { panel, body } = ready("favorites");
+    panel.setState({
+      recent: [],
+      favorites: [
+        {
+          path: "C:\\repos\\specs",
+          label: "quarterly-specs",
+          isFolder: true,
+          kind: "clone",
+          repositoryId: "octo/spec",
+        },
+        {
+          path: "C:\\repos\\specs",
+          label: "quarterly-specs",
+          isFolder: true,
+          kind: "branch",
+          repositoryId: "octo/spec",
+          branch: "draft",
+        },
+      ],
+      repositories: [],
+    });
+
+    expect(
+      [...body.querySelectorAll(".workspace-item-context")].map((item) => item.textContent),
+    ).toEqual(["Local copy · octo/spec", "octo/spec · local version"]);
+    expect(body.querySelectorAll(".workspace-open")[1]?.getAttribute("aria-label")).toContain(
+      "Branch draft",
     );
   });
 });

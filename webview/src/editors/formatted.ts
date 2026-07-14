@@ -912,6 +912,19 @@ export class FormattedEditor {
     return this.scheduleChange.pending;
   }
 
+  pendingChangeOrder(): number | null {
+    return this.scheduleChange.pendingOrder;
+  }
+
+  flushPendingChange(): boolean {
+    return this.scheduleChange.flush();
+  }
+
+  /** Retire an edit notification that belongs to the document identity being replaced. */
+  cancelPendingChange(): boolean {
+    return this.scheduleChange.cancel();
+  }
+
   /**
    * Allow or block document edits. Read by the filterTransaction gate; the view stays contentEditable
    * either way (so the caret works and a read-only typing attempt can offer a draft).

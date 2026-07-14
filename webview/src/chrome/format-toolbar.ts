@@ -11,6 +11,7 @@
  * the dialogs/review leaf modules).
  */
 
+import { isToggleFormat } from "../editors/format-registry.js";
 import { type FormatCommand, isFormatCommand } from "../editors/md-format.js";
 import type { ViewMode } from "./view-mode.js";
 
@@ -68,7 +69,11 @@ export class FormatToolbar {
     for (const button of this.deps.buttons) {
       const command = button.dataset.format;
       if (isFormatCommand(command)) {
-        button.setAttribute("aria-pressed", String(active.has(command)));
+        if (isToggleFormat(command)) {
+          button.setAttribute("aria-pressed", String(active.has(command)));
+        } else {
+          button.removeAttribute("aria-pressed");
+        }
         button.disabled = disabled.has(command);
       }
     }

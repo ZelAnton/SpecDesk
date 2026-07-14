@@ -15,7 +15,9 @@ import {
   type DiffEntryPayload,
   type DiffOverflowPayload,
   type DiffResultPayload,
+  type DocDiscardCompletedPayload,
   type DocLoadedPayload,
+  type DocOpenCompletedPayload,
   type DocumentActivityPayload,
   type DocumentChange,
   type DocumentComment,
@@ -34,8 +36,12 @@ import {
   type PromptTemplate,
   type PrSuggestedPayload,
   type RegisteredRepo,
+  type RepoCloneConflictPayload,
   type RepoCloneDestinationPayload,
+  type RepoConfirmationPayload,
   type RepoDescriptionPayload,
+  type RepoOperationCompletedPayload,
+  type RepositoryStatusPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -43,6 +49,9 @@ import {
   type TreeNode,
   type TreePayload,
   type VersionNoteSuggestedPayload,
+  type WindowCloseCompletedPayload,
+  type WindowCloseRequestedPayload,
+  type WindowStatePayload,
   type WorkspaceContextPayload,
   type WorkspaceItem,
   type WorkspaceStatePayload,
@@ -63,6 +72,26 @@ export function isNumber(value: unknown): value is number {
 
 export function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
+}
+
+export function parseWindowState(value: unknown): WindowStatePayload | null {
+  return isRecord(value) && isBoolean(value.maximized) ? { maximized: value.maximized } : null;
+}
+
+export function parseWindowCloseRequested(value: unknown): WindowCloseRequestedPayload | null {
+  return isRecord(value) && isPositiveRequestId(value.requestId)
+    ? { requestId: value.requestId }
+    : null;
+}
+
+export function parseWindowCloseCompleted(value: unknown): WindowCloseCompletedPayload | null {
+  return isRecord(value) && isPositiveRequestId(value.requestId) && isBoolean(value.succeeded)
+    ? { requestId: value.requestId, succeeded: value.succeeded }
+    : null;
+}
+
+function isPositiveRequestId(value: unknown): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value > 0;
 }
 
 /** Validate every item of an array through `parseItem`; null if `value` isn't an array or an item fails. */
@@ -107,6 +136,31 @@ export function parseDocLoaded(value: unknown): DocLoadedPayload | null {
     ...(isString(value.branch) ? { branch: value.branch } : {}),
     ...(isString(value.repositoryPath) ? { repositoryPath: value.repositoryPath } : {}),
   };
+}
+
+export function parseDocDiscardCompleted(value: unknown): DocDiscardCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.requestId) ||
+    !Number.isSafeInteger(value.requestId) ||
+    value.requestId <= 0 ||
+    !isBoolean(value.succeeded)
+  ) {
+    return null;
+  }
+  return { requestId: value.requestId, succeeded: value.succeeded };
+}
+export function parseDocOpenCompleted(value: unknown): DocOpenCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.requestId) ||
+    !Number.isSafeInteger(value.requestId) ||
+    value.requestId <= 0 ||
+    !isBoolean(value.succeeded)
+  ) {
+    return null;
+  }
+  return { requestId: value.requestId, succeeded: value.succeeded };
 }
 
 function parseLineSpan(value: unknown): LineSpan | null {
@@ -303,15 +357,95 @@ export function parseGitHubRepositories(value: unknown): GitHubRepositoriesPaylo
 }
 
 export function parseRepoCloneDestination(value: unknown): RepoCloneDestinationPayload | null {
-  if (!isRecord(value) || !isString(value.url) || !isNumber(value.requestId)) {
+  if (
+    !isRecord(value) ||
+    !isString(value.url) ||
+    !isNumber(value.requestId) ||
+    !isString(value.localName) ||
+    !isBoolean(value.exists)
+  ) {
     return null;
   }
-  if (value.path !== undefined && !isString(value.path)) {
+  if (
+    (value.path !== undefined && !isString(value.path)) ||
+    (value.existingClonePath !== undefined && !isString(value.existingClonePath)) ||
+    (value.exists && !isString(value.existingClonePath)) ||
+    (!value.exists && value.existingClonePath !== undefined)
+  ) {
     return null;
   }
-  return value.path === undefined
-    ? { url: value.url, requestId: value.requestId }
-    : { url: value.url, requestId: value.requestId, path: value.path };
+  return {
+    url: value.url,
+    requestId: value.requestId,
+    localName: value.localName,
+    exists: value.exists,
+    ...(isString(value.path) ? { path: value.path } : {}),
+    ...(isString(value.existingClonePath) ? { existingClonePath: value.existingClonePath } : {}),
+  };
+}
+
+export function parseRepoCloneConflict(value: unknown): RepoCloneConflictPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.url) ||
+    !isString(value.localName) ||
+    !isString(value.existingClonePath) ||
+    !isString(value.message)
+  ) {
+    return null;
+  }
+  return {
+    url: value.url,
+    localName: value.localName,
+    existingClonePath: value.existingClonePath,
+    message: value.message,
+  };
+}
+
+export function parseRepoConfirmation(value: unknown): RepoConfirmationPayload | null {
+  if (
+    !isRecord(value) ||
+    (value.operation !== "deleteClone" && value.operation !== "deleteBranch") ||
+    !isString(value.id) ||
+    !isString(value.clonePath) ||
+    !isString(value.message) ||
+    !isString(value.confirmationToken) ||
+    value.confirmationToken === ""
+  ) {
+    return null;
+  }
+  const warnings = parseArray(value.warnings, (warning) => (isString(warning) ? warning : null));
+  const branch = value.branch === undefined ? null : value.branch;
+  if (
+    warnings === null ||
+    warnings.length === 0 ||
+    (branch !== null && !isString(branch)) ||
+    (value.operation === "deleteBranch" && !isString(branch)) ||
+    (value.operation === "deleteClone" && branch !== null)
+  ) {
+    return null;
+  }
+  return {
+    operation: value.operation,
+    id: value.id,
+    clonePath: value.clonePath,
+    branch,
+    message: value.message,
+    warnings,
+    confirmationToken: value.confirmationToken,
+  };
+}
+
+export function parseRepoOperationCompleted(value: unknown): RepoOperationCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.requestId) ||
+    !Number.isSafeInteger(value.requestId) ||
+    value.requestId <= 0
+  ) {
+    return null;
+  }
+  return { requestId: value.requestId };
 }
 
 export function parseRepoDescription(value: unknown): RepoDescriptionPayload | null {
@@ -630,7 +764,11 @@ function parseWorkspaceItem(value: unknown): WorkspaceItem | null {
   }
   const kind = value.kind === undefined ? "local" : value.kind;
   if (
-    (kind !== "local" && kind !== "remote" && kind !== "repository") ||
+    (kind !== "local" &&
+      kind !== "remote" &&
+      kind !== "repository" &&
+      kind !== "clone" &&
+      kind !== "branch") ||
     (value.repositoryId !== undefined && !isString(value.repositoryId)) ||
     (value.branch !== undefined && !isString(value.branch))
   ) {
@@ -649,7 +787,17 @@ function parseWorkspaceItem(value: unknown): WorkspaceItem | null {
       (!value.isFolder ||
         value.branch !== undefined ||
         !isRepositoryId(value.repositoryId) ||
-        value.path.toLowerCase() !== value.repositoryId.toLowerCase()))
+        value.path.toLowerCase() !== value.repositoryId.toLowerCase())) ||
+    (kind === "clone" &&
+      (!value.isFolder ||
+        value.branch !== undefined ||
+        !isRepositoryId(value.repositoryId) ||
+        !isAbsoluteLocalPath(value.path))) ||
+    (kind === "branch" &&
+      (!value.isFolder ||
+        !isRepositoryId(value.repositoryId) ||
+        !isRemoteBranch(value.branch) ||
+        !isAbsoluteLocalPath(value.path)))
   ) {
     return null;
   }
@@ -723,11 +871,34 @@ function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
     return null;
   }
   const clones = parseArray(value.clones, (clone) => {
-    if (!isRecord(clone) || !isString(clone.id) || !isString(clone.path)) {
+    const currentBranch = isRecord(clone) ? (clone.currentBranch ?? null) : null;
+    if (
+      !isRecord(clone) ||
+      !isString(clone.id) ||
+      !isString(clone.path) ||
+      (currentBranch !== null && !isRemoteBranch(currentBranch))
+    ) {
       return null;
     }
-    const branches = parseArray(clone.branches, (branch) => (isString(branch) ? branch : null));
-    return branches === null ? null : { id: clone.id, path: clone.path, branches };
+    const status = parseRepositoryStatus(clone.status);
+    const branches = parseArray(clone.branches, (branch) => {
+      if (!isRecord(branch) || !isRemoteBranch(branch.name) || !isBoolean(branch.canDelete)) {
+        return null;
+      }
+      const branchStatus = parseRepositoryStatus(branch.status);
+      return branchStatus === null
+        ? null
+        : { name: branch.name, status: branchStatus, canDelete: branch.canDelete };
+    });
+    return branches === null || status === null
+      ? null
+      : {
+          id: clone.id,
+          path: clone.path,
+          currentBranch,
+          branches,
+          status,
+        };
   });
   return clones === null
     ? null
@@ -738,6 +909,32 @@ function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
         defaultBranch: value.defaultBranch,
         clones,
       };
+}
+
+function parseRepositoryStatus(value: unknown): RepositoryStatusPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.ahead) ||
+    !Number.isInteger(value.ahead) ||
+    value.ahead < 0 ||
+    !isNumber(value.behind) ||
+    !Number.isInteger(value.behind) ||
+    value.behind < 0 ||
+    !isBoolean(value.hasUncommitted) ||
+    !isNumber(value.stashCount) ||
+    !Number.isInteger(value.stashCount) ||
+    value.stashCount < 0 ||
+    !isBoolean(value.hasConflicts)
+  ) {
+    return null;
+  }
+  return {
+    ahead: value.ahead,
+    behind: value.behind,
+    hasUncommitted: value.hasUncommitted,
+    stashCount: value.stashCount,
+    hasConflicts: value.hasConflicts,
+  };
 }
 
 export function parseWorkspaceState(value: unknown): WorkspaceStatePayload | null {

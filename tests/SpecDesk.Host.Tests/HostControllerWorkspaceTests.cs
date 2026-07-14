@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
+using SpecDesk.Git;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
@@ -49,6 +50,8 @@ public sealed class HostControllerWorkspaceTests
 			new(TaskCreationOptions.RunContinuationsAsynchronously);
 		public TaskCompletionSource ReleaseFirst { get; } =
 			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource SecondReturned { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		public async Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default)
@@ -64,6 +67,7 @@ public sealed class HostControllerWorkspaceTests
 				}
 				return new GitHubRepositoryMetadata("master");
 			}
+			SecondReturned.TrySetResult();
 			return new GitHubRepositoryMetadata("trunk");
 		}
 
@@ -82,6 +86,74 @@ public sealed class HostControllerWorkspaceTests
 		public string? PickOpenFile() => null;
 		public string? PickOpenFolder() => null;
 		public string? PickSaveFile(string? suggestedPath) => null;
+	}
+
+	private sealed class DeletionTrapRepositoryManager : ILocalRepositoryManager
+	{
+		public int InvocationCount { get; private set; }
+
+		private T Unexpected<T>()
+		{
+			InvocationCount++;
+			throw new AssertionException("Top-level unregister must not invoke local repository operations.");
+		}
+
+		public LocalRepositoryInfo Inspect(string repositoryPath, string knownDefaultBranch) =>
+			Unexpected<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo Fetch(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string? accessToken,
+			CancellationToken ct) => Unexpected<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo PullFastForward(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string expectedBranch,
+			string? accessToken,
+			CancellationToken ct,
+			Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unexpected<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo PushBranchSafely(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string expectedBranch,
+			string accessToken,
+			CancellationToken ct) => Unexpected<LocalRepositoryInfo>();
+
+		public BranchSwitchResult SwitchBranchSafely(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string expectedCurrentBranch,
+			string branch,
+			Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unexpected<BranchSwitchResult>();
+
+		public RepositoryDeletionRisks InspectDeletionRisks(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string? expectedCurrentBranch,
+			string? branch = null,
+			Action? beforeInspect = null) => Unexpected<RepositoryDeletionRisks>();
+
+		public BranchDeletionResult DeleteBranch(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string branch,
+			string defaultBranch,
+			string confirmationToken,
+			Action? onCurrentBranchChangeStarting = null) => Unexpected<BranchDeletionResult>();
+
+		public bool DeleteClone(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string confirmationToken,
+			Action? onMutationStarting = null) => Unexpected<bool>();
 	}
 
 	private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
@@ -114,7 +186,9 @@ public sealed class HostControllerWorkspaceTests
 
 	private HostController NewController(
 		IGitHubAuth? auth = null,
-		IGitHubRepositoryCatalog? repositoryCatalog = null)
+		IGitHubRepositoryCatalog? repositoryCatalog = null,
+		ILocalRepositoryInspector? repositoryInspector = null,
+		WorkspaceStore? workspace = null)
 	{
 		void Send(string json)
 		{
@@ -133,7 +207,8 @@ public sealed class HostControllerWorkspaceTests
 			NullLogger<HostController>.Instance,
 			initialDocPath: null,
 			auth: auth ?? new FakeGitHubAuth(true),
-			workspace: new WorkspaceStore(_wsPath),
+			workspace: workspace ?? new WorkspaceStore(_wsPath),
+			repositoryInspector: repositoryInspector,
 			repositoryCatalog: repositoryCatalog);
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
 		lock (_gate)
@@ -160,6 +235,32 @@ public sealed class HostControllerWorkspaceTests
 
 			return latest;
 		}
+	}
+
+	private WorkspaceStatePayload? WaitForState(Func<WorkspaceStatePayload, bool> predicate)
+	{
+		WorkspaceStatePayload? match = null;
+		bool found = SpinWait.SpinUntil(() =>
+		{
+			lock (_gate)
+			{
+				foreach (string json in _sent)
+				{
+					IpcMessage? message = IpcSerializer.TryDeserialize(json);
+					WorkspaceStatePayload? state = message?.Kind == MessageKinds.WorkspaceState
+						? message.GetPayload<WorkspaceStatePayload>()
+						: null;
+					if (state is not null && predicate(state))
+					{
+						match = state;
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}, TimeSpan.FromSeconds(5));
+		return found ? match : null;
 	}
 
 	private IpcMessage? Find(string kind)
@@ -199,7 +300,10 @@ public sealed class HostControllerWorkspaceTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.WorkspaceRequest));
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Recent.Count == 0
+			&& candidate.Favorites.Count == 0
+			&& candidate.Repositories.Count == 0);
 		Assert.That(state, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -209,6 +313,48 @@ public sealed class HostControllerWorkspaceTests
 		});
 	}
 
+	[Test]
+	public void WorkspaceRequest_StaleForcedSnapshotCannotOvertakeANewerMutation()
+	{
+		string id = $"outside/repo{Guid.NewGuid():N}";
+		new WorkspaceStore(_wsPath).RegisterRepo(new RegisteredRepo(
+			id, id, $"https://github.com/{id}", "main", []));
+		using HostController controller = NewController();
+		using ManualResetEventSlim captured = new(false);
+		using ManualResetEventSlim release = new(false);
+		controller.WorkspaceRequestStateCapturedForTest = () =>
+		{
+			captured.Set();
+			release.Wait(TimeSpan.FromSeconds(5));
+		};
+
+		Task request = Task.Run(() => controller.OnMessage(
+			IpcSerializer.SerializeEvent(MessageKinds.WorkspaceRequest)));
+		Assert.That(captured.Wait(TimeSpan.FromSeconds(2)), Is.True);
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoUnregister, new UnregisterRepoPayload(id)));
+		release.Set();
+		Assert.That(request.Wait(TimeSpan.FromSeconds(2)), Is.True);
+		Assert.That(WaitForState(state => state.Repositories.Count == 0), Is.Not.Null);
+
+		WorkspaceStatePayload[] states;
+		lock (_gate)
+		{
+			states = _sent
+				.Select(IpcSerializer.TryDeserialize)
+				.Where(message => message?.Kind == MessageKinds.WorkspaceState)
+				.Select(message => message!.GetPayload<WorkspaceStatePayload>()!)
+				.ToArray();
+		}
+		Assert.That(states, Is.Not.Empty);
+		int firstEmpty = Array.FindIndex(states, state => state.Repositories.Count == 0);
+		Assert.Multiple(() =>
+		{
+			Assert.That(firstEmpty, Is.GreaterThanOrEqualTo(0));
+			Assert.That(states.Skip(firstEmpty).All(state => state.Repositories.Count == 0), Is.True,
+				"the captured older state must not be emitted after the unregister mutation");
+		});
+	}
 	[TestCase(false, false, RepoDescriptionStates.Found, "")]
 	[TestCase(true, true, RepoDescriptionStates.Private, "gho_test")]
 	public void RepositoryDescriptionRequest_PublishesMetadataForTheCurrentAuthorization(
@@ -264,13 +410,18 @@ public sealed class HostControllerWorkspaceTests
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready)); // auto-opens welcome.md
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.WorkspaceRequest));
-		Assert.That(LatestState()!.Recent, Is.Empty, "the auto-opened welcome doc must not be a recent");
+		WorkspaceStatePayload? initialState = WaitForState(state => state.Recent.Count == 0);
+		Assert.That(initialState, Is.Not.Null);
+		Assert.That(initialState!.Recent, Is.Empty, "the auto-opened welcome doc must not be a recent");
 
 		// A file the author explicitly opens IS recorded.
 		string chosen = WriteDoc("chosen.md");
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(chosen)));
 		string[] expected = [chosen];
-		Assert.That(LatestState()!.Recent.Select(r => r.Path), Is.EqualTo(expected));
+		WorkspaceStatePayload? chosenState = WaitForState(state =>
+			state.Recent.Count == 1 && state.Recent[0].Path == chosen);
+		Assert.That(chosenState, Is.Not.Null);
+		Assert.That(chosenState!.Recent.Select(r => r.Path), Is.EqualTo(expected));
 	}
 
 	[Test]
@@ -281,7 +432,8 @@ public sealed class HostControllerWorkspaceTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(doc)));
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Recent.Count == 1 && candidate.Recent[0].Path == doc);
 		Assert.That(state, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -301,7 +453,9 @@ public sealed class HostControllerWorkspaceTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.FolderOpen, new FolderOpenPayload(folder)));
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Recent.Count == 1
+			&& candidate.Recent[0].Path == Path.GetFullPath(folder));
 		Assert.That(state, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -322,7 +476,10 @@ public sealed class HostControllerWorkspaceTests
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(b)));
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(a)));
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Recent.Count == 2
+			&& candidate.Recent[0].Path == a
+			&& candidate.Recent[1].Path == b);
 		Assert.That(state, Is.Not.Null);
 		// Re-opening a.md moves it to the front; it is not duplicated. Most-recent first: [a, b].
 		string[] expected = [a, b];
@@ -339,7 +496,8 @@ public sealed class HostControllerWorkspaceTests
 			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload(doc)));
 		}
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Recent.Count == 20 && candidate.Recent[0].Label == "f24.md");
 		Assert.That(state, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -359,7 +517,7 @@ public sealed class HostControllerWorkspaceTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.WorkspaceFavorite, new WorkspaceFavoritePayload(folder, Favorite: true)));
-		WorkspaceStatePayload? added = LatestState();
+		WorkspaceStatePayload? added = WaitForState(candidate => candidate.Favorites.Count == 1);
 		Assert.That(added, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -372,7 +530,9 @@ public sealed class HostControllerWorkspaceTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.WorkspaceFavorite, new WorkspaceFavoritePayload(folder, Favorite: false)));
-		Assert.That(LatestState()!.Favorites, Is.Empty);
+		WorkspaceStatePayload? removed = WaitForState(candidate => candidate.Favorites.Count == 0);
+		Assert.That(removed, Is.Not.Null);
+		Assert.That(removed!.Favorites, Is.Empty);
 	}
 
 	[Test]
@@ -402,6 +562,43 @@ public sealed class HostControllerWorkspaceTests
 		});
 	}
 
+	[Test]
+	public void FavoriteToggle_PreservesRegisteredCloneAndBranchIdentity()
+	{
+		string clonePath = Path.Combine(_root, "spec-copy");
+		Directory.CreateDirectory(clonePath);
+		WorkspaceStore store = new(_wsPath);
+		store.RegisterRepo(new RegisteredRepo(
+			"octo/specs",
+			"octo/specs",
+			"https://github.com/octo/specs",
+			"main",
+			[
+				new RegisteredClone(
+					"spec-copy", clonePath, "draft",
+					[new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+						new RegisteredBranch("draft", RepositoryStatusPayload.Empty)],
+					RepositoryStatusPayload.Empty),
+			]));
+		using HostController controller = NewController();
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(
+				clonePath, true, "clone", RepositoryId: "octo/specs", IsFolder: true)));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.WorkspaceFavorite,
+			new WorkspaceFavoritePayload(
+				clonePath, true, "branch", RepositoryId: "octo/specs", Branch: "draft", IsFolder: true)));
+
+		WorkspaceItem[] favorites = new WorkspaceStore(_wsPath).State().Favorites.ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(favorites.Select(item => item.Kind), Is.EqualTo(["clone", "branch"]));
+			Assert.That(favorites.Select(item => item.RepositoryId), Is.All.EqualTo("octo/specs"));
+			Assert.That(favorites.Single(item => item.Kind == "branch").Branch, Is.EqualTo("draft"));
+		});
+	}
 	[TestCase(false)]
 	[TestCase(true)]
 	public void FavoriteToggle_CanRemoveADeletedLocalItem(bool folder)
@@ -443,7 +640,9 @@ public sealed class HostControllerWorkspaceTests
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoRegister, new RegisterRepoPayload("https://github.com/octo/spec-repo")));
 
-		WorkspaceStatePayload? state = LatestState();
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Repositories.Count == 1
+			&& candidate.Repositories[0].Id == "octo/spec-repo");
 		Assert.That(state, Is.Not.Null);
 		Assert.Multiple(() =>
 		{
@@ -483,15 +682,13 @@ public sealed class HostControllerWorkspaceTests
 			MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
-		for (int attempt = 0; attempt < 100; attempt++)
-		{
-			IReadOnlyList<RegisteredRepo> repositories = new WorkspaceStore(_wsPath).State().Repositories;
-			if (repositories.Count > 0 && repositories[0].DefaultBranch == "trunk")
-			{
-				break;
-			}
-			Thread.Sleep(20);
-		}
+		Assert.That(catalog.SecondReturned.Task.Wait(TimeSpan.FromSeconds(5)), Is.True,
+			"The replacement registration did not start its metadata lookup.");
+		Assert.That(SpinWait.SpinUntil(
+			() => new WorkspaceStore(_wsPath).State().Repositories
+				.SingleOrDefault()?.DefaultBranch == "trunk",
+			TimeSpan.FromSeconds(5)), Is.True,
+			"The replacement registration did not persist its metadata.");
 		if (disposeBeforeRelease)
 		{
 			controller.Dispose();
@@ -523,7 +720,7 @@ public sealed class HostControllerWorkspaceTests
 
 		Assert.Multiple(() =>
 		{
-			Assert.That(Find(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message, Is.Not.Null.And.Not.Empty);
+			Assert.That(WaitFor(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message, Is.Not.Null.And.Not.Empty);
 			// No workspace.state is emitted for a rejected register (nothing changed), so the store stays empty.
 			Assert.That(LatestState(), Is.Null);
 		});
@@ -535,12 +732,72 @@ public sealed class HostControllerWorkspaceTests
 		using HostController controller = NewController();
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoRegister, new RegisterRepoPayload("owner/name")));
-		Assert.That(LatestState()!.Repositories, Has.Count.EqualTo(1));
+		WorkspaceStatePayload? registered = WaitForState(state =>
+			state.Repositories.Count == 1 && state.Repositories[0].Id == "owner/name");
+		Assert.That(registered, Is.Not.Null);
+		Assert.That(registered!.Repositories, Has.Count.EqualTo(1));
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoUnregister, new UnregisterRepoPayload("owner/name")));
 
-		Assert.That(LatestState()!.Repositories, Is.Empty);
+		WorkspaceStatePayload? unregistered = WaitForState(state => state.Repositories.Count == 0);
+		Assert.That(unregistered, Is.Not.Null);
+		Assert.That(unregistered!.Repositories, Is.Empty);
+	}
+
+	[Test]
+	public void UnregisterRepo_ForgetsOnlyRegistrationAndFavorites()
+	{
+		DeletionTrapRepositoryManager manager = new();
+		WorkspaceStore store = new(_wsPath);
+		using HostController controller = NewController(repositoryInspector: manager, workspace: store);
+		string clonePath = Path.Combine(_root, "spec-copy");
+		string branchMarker = Path.Combine(clonePath, ".git", "refs", "heads", "draft");
+		string sentinelPath = Path.Combine(clonePath, "keep-me.md");
+		Directory.CreateDirectory(Path.GetDirectoryName(branchMarker)!);
+		File.WriteAllText(branchMarker, "seeded-local-branch");
+		File.WriteAllText(sentinelPath, "local work must survive forgetting the registration");
+		store.RegisterRepo(new RegisteredRepo(
+			"octo/specs",
+			"octo/specs",
+			"https://github.com/octo/specs",
+			"main",
+			[
+				new RegisteredClone(
+					"spec-copy",
+					clonePath,
+					"draft",
+					[
+						new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+						new RegisteredBranch("draft", RepositoryStatusPayload.Empty, CanDelete: true),
+					],
+					RepositoryStatusPayload.Empty),
+			]));
+		store.SetFavorite(new WorkspaceItem(
+			"octo/specs", "octo/specs", true, "repository", "octo/specs"), true);
+		store.SetFavorite(new WorkspaceItem(
+			clonePath, "spec-copy", true, "clone", "octo/specs"), true);
+		store.SetFavorite(new WorkspaceItem(
+			clonePath, "draft", true, "branch", "octo/specs", "draft"), true);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
+
+		WorkspaceStatePayload? state = WaitForState(candidate =>
+			candidate.Repositories.Count == 0 && candidate.Favorites.Count == 0);
+		Assert.That(state, Is.Not.Null);
+		WorkspaceStatePayload persisted = new WorkspaceStore(_wsPath).State();
+		Assert.Multiple(() =>
+		{
+			Assert.That(persisted.Repositories, Is.Empty);
+			Assert.That(persisted.Favorites, Is.Empty);
+			Assert.That(Directory.Exists(clonePath), Is.True);
+			Assert.That(File.ReadAllText(branchMarker), Is.EqualTo("seeded-local-branch"));
+			Assert.That(File.ReadAllText(sentinelPath),
+				Is.EqualTo("local work must survive forgetting the registration"));
+			Assert.That(manager.InvocationCount, Is.Zero,
+				"forgetting a GitHub repository registration must not inspect or delete local work");
+		});
 	}
 
 	[Test]
@@ -550,6 +807,8 @@ public sealed class HostControllerWorkspaceTests
 		controller.OnMessage(IpcSerializer.SerializeEvent(
 			MessageKinds.RepoRegister,
 			new RegisterRepoPayload("octo/specs")));
+		Assert.That(WaitForState(state =>
+			state.Repositories.Count == 1 && state.Repositories[0].Id == "octo/specs"), Is.Not.Null);
 		lock (_gate)
 		{
 			_sent.Clear();

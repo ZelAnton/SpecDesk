@@ -18,7 +18,12 @@ import {
 } from "./active-context.js";
 import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./central-frame.js";
 import { Dock } from "./dock.js";
-import { DOCK_EDGES, type DockEdge, type WorkspaceDocksState } from "./dock-state.js";
+import {
+  collapsedForStartup,
+  DOCK_EDGES,
+  type DockEdge,
+  type WorkspaceDocksState,
+} from "./dock-state.js";
 import type { DockStore } from "./dock-store.js";
 import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
@@ -100,6 +105,53 @@ export interface WorkspaceTools {
   readonly pullRequests?: PanelTool;
 }
 
+interface GroupedSection {
+  readonly label: string;
+  readonly tool: PanelTool;
+}
+
+/** Several closely related tools behind one rail mode, with plain section headings instead of extra modes. */
+function groupedTool(
+  id: string,
+  label: string,
+  iconMarkup: string,
+  sections: readonly GroupedSection[],
+): PanelTool {
+  return {
+    id,
+    label,
+    icon: iconMarkup,
+    mount(body): void {
+      const root = document.createElement("div");
+      root.className = "grouped-panel";
+      for (const section of sections) {
+        const sectionEl = document.createElement("section");
+        sectionEl.className = "grouped-panel-section";
+        const heading = document.createElement("h3");
+        heading.className = "grouped-panel-heading";
+        heading.textContent = section.label;
+        const content = document.createElement("div");
+        content.className = "grouped-panel-content";
+        content.dataset.tool = section.tool.id;
+        section.tool.mount(content);
+        sectionEl.append(heading, content);
+        root.append(sectionEl);
+      }
+      body.append(root);
+    },
+    onShow(): void {
+      for (const section of sections) {
+        section.tool.onShow?.();
+      }
+    },
+    onHide(): void {
+      for (const section of sections) {
+        section.tool.onHide?.();
+      }
+    },
+  };
+}
+
 /**
  * Build the central-frame host (editor + Start views), the navigator that switches between them, and the
  * docks; wire persistence, the centre-resize bridge, and the active-view notifications. Returns a handle
@@ -145,38 +197,57 @@ export function setupWorkspace(
     buildNotificationsView(elements.notificationsView);
     centralFrame.register({ id: CENTRAL_VIEW_NOTIFICATIONS, el: elements.notificationsView });
   }
-  centralFrame.show(CENTRAL_VIEW_EDITOR);
-  // Seed the navigator's highlight (the initial show above is a no-op when the editor is already active, so
+  const initialView = home !== undefined ? CENTRAL_VIEW_HOME : CENTRAL_VIEW_EDITOR;
+  centralFrame.show(initialView);
+  // Seed the navigator's highlight (the initial show above is a no-op when Start is already active, so
   // its onChange doesn't fire — set the current destination explicitly).
-  navigator.setActive(CENTRAL_VIEW_EDITOR);
+  navigator.setActive(initialView);
+
+  const recent =
+    tools.recent ??
+    placeholderTool(
+      "recent",
+      "Recent",
+      icon("recent"),
+      "Files and folders you open will appear here.",
+    );
+  const favorites =
+    tools.favorites ??
+    placeholderTool(
+      "favorites",
+      "Favorites",
+      icon("favorites"),
+      "Star a repository, local copy, branch, file, or folder to keep it here.",
+    );
+  const navigatorHub = groupedTool("navigator", "Navigator", navigator.icon, [
+    { label: "Go to", tool: navigator },
+    { label: "Favorites", tool: favorites },
+    { label: "History", tool: recent },
+  ]);
+  const reviews =
+    tools.reviews ??
+    placeholderTool(
+      "reviews",
+      "Review",
+      icon("review"),
+      "Reviews waiting for you will appear here.",
+    );
+  const pullRequests =
+    tools.pullRequests ??
+    placeholderTool(
+      "pullRequests",
+      "Pull Requests",
+      icon("pullRequests"),
+      "Open pull requests involving you will appear here.",
+    );
+  const prs = groupedTool("prs", "PRs", icon("pullRequests"), [
+    { label: "Needs your review", tool: reviews },
+    { label: "Your pull requests", tool: pullRequests },
+  ]);
 
   const toolsByEdge: Record<DockEdge, readonly PanelTool[]> = {
     left: [
-      navigator,
-      // The real workspace file navigator when index.ts wired it; a placeholder in a reduced DOM (tests/host).
-      tools.files ??
-        placeholderTool(
-          "files",
-          "Files",
-          icon("files"),
-          "The folders and specs of an opened workspace will appear here.",
-        ),
-      // Recent / Favorites / Repositories: the real tools when index.ts wired them, else placeholders whose
-      // ids/labels match, so the reduced DOM boots and a persisted active mode still resolves.
-      tools.recent ??
-        placeholderTool(
-          "recent",
-          "Recent",
-          icon("recent"),
-          "Files and folders you open will appear here.",
-        ),
-      tools.favorites ??
-        placeholderTool(
-          "favorites",
-          "Favorites",
-          icon("favorites"),
-          "Star a file or folder to keep it here.",
-        ),
+      navigatorHub,
       tools.repositories ??
         placeholderTool(
           "repositories",
@@ -184,20 +255,15 @@ export function setupWorkspace(
           icon("repositories"),
           "Register a repository to keep it handy.",
         ),
-      tools.reviews ??
+      // The real workspace folder navigator when index.ts wired it; a placeholder in a reduced DOM.
+      tools.files ??
         placeholderTool(
-          "reviews",
-          "Review",
-          icon("review"),
-          "Reviews waiting for you will appear here.",
+          "files",
+          "Folders",
+          icon("files"),
+          "The folders and specs of an opened workspace will appear here.",
         ),
-      tools.pullRequests ??
-        placeholderTool(
-          "pullRequests",
-          "Pull Requests",
-          icon("pullRequests"),
-          "Open pull requests involving you will appear here.",
-        ),
+      prs,
     ],
     right: [
       // The real AI assistant chat when index.ts wired it; the placeholder in a reduced DOM (tests/host).
@@ -224,12 +290,7 @@ export function setupWorkspace(
           "Document comments will appear here.",
         ),
       tools.history ??
-        placeholderTool(
-          "history",
-          "Change history",
-          icon("history"),
-          "Saved changes will appear here.",
-        ),
+        placeholderTool("history", "History", icon("history"), "Saved changes will appear here."),
     ],
     bottom: [
       placeholderTool(
@@ -247,7 +308,7 @@ export function setupWorkspace(
     ],
   };
 
-  const persisted = store.load();
+  const persisted = collapsedForStartup(store.load());
   const docks = new Map<DockEdge, Dock>();
 
   const currentState = (): WorkspaceDocksState => ({
@@ -292,7 +353,10 @@ export function setupWorkspace(
     dock.setOpen(true);
     dock.setMode(toolId);
   };
-  revealRepositories = () => revealTool("left", "repositories");
+  revealRepositories = () => {
+    revealTool("left", "repositories");
+    tools.repositories?.focusPrimary?.();
+  };
   const setActiveContext = (context: ActiveContext): void => {
     docks.get("right")?.setAvailableTools(rightToolsForContext(context));
   };

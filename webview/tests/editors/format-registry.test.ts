@@ -34,12 +34,22 @@ describe("format registry is the single source of truth", () => {
       { id: "bold", hotkey: "Mod-b", label: "Bold (Ctrl+B)" },
       { id: "italic", hotkey: "Mod-i", label: "Italic (Ctrl+I)" },
       { id: "strike", hotkey: "Mod-Shift-x", label: "Strikethrough (Ctrl+Shift+X)" },
+      { id: "inlineCode", hotkey: "Mod-`", label: "Inline code (Ctrl+`)" },
       { id: "h1", hotkey: "Mod-Alt-1", label: "Heading 1 (Ctrl+Alt+1)" },
       { id: "h2", hotkey: "Mod-Alt-2", label: "Heading 2 (Ctrl+Alt+2)" },
+      { id: "h3", hotkey: "Mod-Alt-3", label: "Heading 3 (Ctrl+Alt+3)" },
       { id: "bullet", hotkey: "Mod-Shift-8", label: "Bullet list (Ctrl+Shift+8)" },
       { id: "ordered", hotkey: "Mod-Shift-7", label: "Numbered list (Ctrl+Shift+7)" },
       { id: "quote", hotkey: "Mod-Shift-.", label: "Quote (Ctrl+Shift+>)" },
       { id: "code", hotkey: "Mod-Shift-e", label: "Code block (Ctrl+Shift+E)" },
+      { id: "link", hotkey: "Mod-k", label: "Insert link (Ctrl+K)" },
+      { id: "table", hotkey: "Mod-Alt-t", label: "Insert table (Ctrl+Alt+T)" },
+      {
+        id: "image",
+        hotkey: "Mod-Shift-i",
+        label: "Insert image reference (Ctrl+Shift+I)",
+      },
+      { id: "rule", hotkey: "Mod-Shift-r", label: "Insert divider (Ctrl+Shift+R)" },
     ]);
   });
 });
@@ -99,6 +109,16 @@ describe("the toolbar buttons stay in lockstep with the registry", () => {
       const { label } = formatDef(command);
       expect(button.getAttribute("title")).toBe(label);
       expect(button.getAttribute("aria-label")).toBe(label);
+    }
+  });
+
+  it("uses ordinary buttons for insertion-only image and divider actions", () => {
+    for (const command of ["table", "image", "rule"]) {
+      expect(
+        html
+          .querySelector<HTMLButtonElement>(`#format-bar button[data-format="${command}"]`)
+          ?.hasAttribute("aria-pressed"),
+      ).toBe(false);
     }
   });
 });
@@ -161,5 +181,6 @@ describe("the shipped workspace chrome", () => {
     expect(styles).toMatch(/\.dock-rail\s*\{[^}]*background:\s*var\(--mode-rail\)/s);
     expect(styles).toMatch(/\.dock\s*\{[^}]*background:\s*var\(--panel\)/s);
     expect(styles).toMatch(/\.dock-header\s*\{[^}]*background:\s*var\(--panel-header\)/s);
+    expect(styles).toMatch(/#editor-toolbar\s*\{[^}]*background:\s*var\(--panel-header\)/s);
   });
 });

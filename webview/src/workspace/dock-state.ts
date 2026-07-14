@@ -43,6 +43,16 @@ export const DEFAULT_DOCKS_STATE: WorkspaceDocksState = {
   bottom: { open: false, size: 200, mode: "log" },
 };
 
+/** Start every application session with a calm, uncluttered canvas while retaining the user's preferred
+ *  mode and size for the moment they reopen a panel. Runtime changes are persisted normally after startup. */
+export function collapsedForStartup(state: WorkspaceDocksState): WorkspaceDocksState {
+  return {
+    left: { ...state.left, open: false },
+    right: { ...state.right, open: false },
+    bottom: { ...state.bottom, open: false },
+  };
+}
+
 /** The localStorage key holding the serialized {@link WorkspaceDocksState}; versioned so a future schema
  *  change can bump it and start clean rather than mis-reading an old shape. */
 export const DOCKS_STORAGE_KEY = "specdesk.docks.v1";

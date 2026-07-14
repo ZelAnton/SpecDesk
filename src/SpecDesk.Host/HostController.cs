@@ -73,6 +73,14 @@ public sealed partial class HostController : IDisposable
 
 	private readonly Func<string, string, Renderer.RenderResult> _render;
 	private readonly Action<string> _send;
+	private readonly object _outboundSync = new();
+	private readonly Queue<OutboundEntry> _outboundFrames = new();
+	private readonly record struct OutboundEntry(string? Json, Action? Completion);
+	private bool _outboundDraining;
+	private bool _outboundStopped;
+	private bool _outboundSending;
+	private int _outboundSenderThreadId;
+	private int _disposeStarted;
 	private readonly IFileDialogs _dialogs;
 	private readonly ImageInserter _inserter;
 	private readonly IDocumentVersioning _versioning;
@@ -136,6 +144,10 @@ public sealed partial class HostController : IDisposable
 	private readonly object _repoGate = new();
 	private bool _disposed;
 
+	// Claimed only after the close handshake has proved that no local repository mutation is active. It is
+	// coordinated with mutation starts under _clonePublishSync + _sync, then remains set through window teardown.
+	private bool _closePreparationClaimed;
+
 	// The whole draft editing session as one immutable snapshot (see the DraftSession record below),
 	// swapped atomically as a single reference under _sync. Consolidates what were six separate fields
 	// (_state / _branch / _baseBranch / _dirty / _versionsSaved / _versionsShared) plus the _sync-guarded
@@ -155,7 +167,27 @@ public sealed partial class HostController : IDisposable
 		Generation: 0);
 
 	private Timer? _autosaveTimer;
-
+	private bool _documentRepositoryTransition;
+	private bool _documentDiscardTransition;
+	private bool _documentOpenTransition;
+	private long _documentOpenTransitionRequestId;
+	internal Action? DocumentRetirementStateClearedForTest { get; set; }
+	internal Action? DocumentRetirementPublishingForTest { get; set; }
+	internal Action? OutboundDrainStartingForTest { get; set; }
+	internal Action? OutboundFrameDequeuedForTest { get; set; }
+	internal Action? OutboundBatchCompletionEnqueuedForTest { get; set; }
+	internal Action? DisposeCancellationStartingForTest { get; set; }
+	internal ManualResetEventSlim? PendingRepoActionsTakenForTest { get; set; }
+	internal ManualResetEventSlim? PendingRepoActionsResumeForTest { get; set; }
+	internal ManualResetEventSlim? PendingRepoActionsResumedForTest { get; set; }
+	internal ManualResetEventSlim? RepoRegistrationPublishedForTest { get; set; }
+	internal ManualResetEventSlim? RepoRegistrationResumeForTest { get; set; }
+	// Claimed under _sync before a document-owned file/asset/commit mutation and held through its terminal
+	// publication. Identity transitions check the same flag before they can claim the document.
+	private bool _documentMutationLeaseClaimed;
+	// Monotonic identity of the in-memory document text. Unlike _draftGeneration (checkout identity),
+	// this advances for every accepted editor change and every document hydration.
+	private long _contentGeneration;
 	// Monotonic "which repo checkout is this" token. Bumped only under _repoGate, immediately after a
 	// repo mutation that changes what is checked out (BeginEdit in OnEdit; Discard in OnDiscard) —
 	// never under _sync alone, and never in CancelAutosave (called by both, but before either's
@@ -219,6 +251,23 @@ public sealed partial class HostController : IDisposable
 	// opened). Independent of _repoRoot (the versioning root of the OPEN document): the author can browse one
 	// folder's tree while editing a document elsewhere. Guarded by _sync like the other document fields.
 	private string? _workspaceRoot;
+	private long _workspaceNavigationIntentSequence;
+	private long _workspaceNavigationIntentGeneration;
+	private long _workspaceRootGeneration;
+	private readonly object _workspaceRootPublicationSync = new();
+	private readonly record struct WorkspaceRootPublication(
+		string Root, long Generation, long NavigationGeneration);
+	private readonly record struct WorkspaceRootClearPublication(
+		long Generation, long NavigationGeneration);
+	private readonly record struct WorkspaceTreeRequestPublication(
+		string? Root, string? DocumentPath, long Generation);
+	internal Action? WorkspaceRequestStateCapturedForTest { get; set; }
+	internal Action<string>? WorkspaceRootPublishingForTest { get; set; }
+	internal Action<string>? WorkspaceRootRemoteInvalidationStartingForTest { get; set; }
+	internal Action? WorkspaceRootClearPublishingForTest { get; set; }
+	internal Action<string>? WorkspaceTreeRequestCapturedForTest { get; set; }
+	internal Action? RemoteBrowseTerminalPublishingForTest { get; set; }
+	internal Action? RemoteFileTerminalPublishingForTest { get; set; }
 	// The open document's dominant line ending, detected from the RAW file content at load/discard time.
 	// `_text` itself is NOT guaranteed LF-only: it starts as that same raw content (LoadFile/Discard) and
 	// only becomes LF-only once the webview reports an edit (its editor model normalizes every line break
@@ -288,10 +337,15 @@ public sealed partial class HostController : IDisposable
 	/// <summary>Disposes the pending autosave timer and cancels any in-flight sign-in.</summary>
 	public void Dispose()
 	{
+		if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+		{
+			return;
+		}
+		Action[] droppedOutboundCompletions = StopOutbound();
 		_lifetimeCts.Cancel();
-		// A review push holds the account publication gate while it crosses the synchronous git boundary.
-		// Cancel its linked token before waiting for that gate so shutdown can release a cooperative push.
 		CancelCurrentAccountSession();
+		Timer? autosaveTimer;
+		HashSet<CancellationTokenSource> cancellations = [];
 		lock (_signInPublishSync)
 		{
 			lock (_clonePublishSync)
@@ -303,35 +357,37 @@ public sealed partial class HostController : IDisposable
 						lock (_sync)
 						{
 							_disposed = true;
-							_autosaveTimer?.Dispose();
+							autosaveTimer = _autosaveTimer;
 							_autosaveTimer = null;
-							_signInCts?.Cancel();
+							if (_signInCts is not null) cancellations.Add(_signInCts);
 							_signInCts = null;
 							_accountSessionGeneration++;
-							_accountSessionCts.Cancel();
+							cancellations.Add(_accountSessionCts);
 							_accountDetailsGeneration++;
-							_accountDetailsCts?.Cancel();
+							if (_accountDetailsCts is not null) cancellations.Add(_accountDetailsCts);
 							_accountDetailsCts = null;
 							_repositoryDescriptionGeneration++;
-							_repositoryDescriptionCts?.Cancel();
+							if (_repositoryDescriptionCts is not null) cancellations.Add(_repositoryDescriptionCts);
 							_repositoryDescriptionCts = null;
 							TakePendingRepoActions();
-							_chatCts?.Cancel();
+							if (_chatCts is not null) cancellations.Add(_chatCts);
 							_chatCts = null;
 							_cloneGeneration++;
-							_cloneCts?.Cancel();
-							_cloneCts = null;
-							_cloneRepoId = null;
+							if (_cloneCts is not null) cancellations.Add(_cloneCts);
+							_localRepositoryActionGeneration++;
+							if (_localRepositoryActionCts is not null) cancellations.Add(_localRepositoryActionCts);
+							_localRepositoryActionCts = null;
+							_localRepositoryActionRepoId = null;
 							foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
 							{
-								lookup.Cts.Cancel();
+								cancellations.Add(lookup.Cts);
 							}
 							_repoMetadataLookups.Clear();
-							_remoteBrowseCts?.Cancel();
+							if (_remoteBrowseCts is not null) cancellations.Add(_remoteBrowseCts);
 							_remoteBrowseCts = null;
 							_remoteBrowseRepoId = null;
 							_remoteBrowseIntentRepoId = null;
-							_remoteFileCts?.Cancel();
+							if (_remoteFileCts is not null) cancellations.Add(_remoteFileCts);
 							_remoteFileCts = null;
 							_remoteFileRepoId = null;
 						}
@@ -339,10 +395,31 @@ public sealed partial class HostController : IDisposable
 				}
 			}
 		}
+		autosaveTimer?.Dispose();
+		DisposeCancellationStartingForTest?.Invoke();
+		foreach (CancellationTokenSource cancellation in cancellations)
+		{
+			CancelForDispose(cancellation);
+		}
+		foreach (Action completion in droppedOutboundCompletions)
+		{
+			InvokeOutboundCompletion(completion);
+		}
 		ResetChatAgentAsync().GetAwaiter().GetResult();
 		_chatAgentGate.Dispose();
 	}
-
+	private static void CancelForDispose(CancellationTokenSource cancellation)
+	{
+		try
+		{
+			cancellation.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+			// The completed operation owns disposal of its token source; reaching that terminal callback
+			// concurrently means cancellation is no longer needed and teardown may continue.
+		}
+	}
 	/// <summary>Route one incoming wire envelope. Unknown or malformed frames are ignored. Runs on the
 	/// native WebView2 callback thread, so it caps the (untrusted) frame size and is the last-resort
 	/// guard so no handler exception reaches — and tears down — the message pump.</summary>
@@ -460,7 +537,7 @@ public sealed partial class HostController : IDisposable
 				OnSuggestVersionNote(message);
 				break;
 			case MessageKinds.DocDiscard:
-				OnDiscard();
+				OnDiscard(message);
 				break;
 			case MessageKinds.ImagePaste:
 				OnImagePaste(message);
@@ -534,6 +611,24 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.RepoBrowse:
 				OnBrowseRepo(message);
 				break;
+			case MessageKinds.RepoSwitchBranch:
+				OnSwitchRepoBranch(message);
+				break;
+			case MessageKinds.RepoDeleteClone:
+				OnDeleteRepoClone(message);
+				break;
+			case MessageKinds.RepoDeleteBranch:
+				OnDeleteRepoBranch(message);
+				break;
+			case MessageKinds.RepoRefreshAll:
+				OnRefreshAllRepositories(message);
+				break;
+			case MessageKinds.RepoPull:
+				OnPullRepository(message);
+				break;
+			case MessageKinds.RepoPush:
+				OnPushRepository(message);
+				break;
 			default:
 				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
 				break;
@@ -559,7 +654,6 @@ public sealed partial class HostController : IDisposable
 	private static bool IsRemoteMutation(string kind) => kind is
 		MessageKinds.EditorChanged
 		or MessageKinds.DocSave
-		or MessageKinds.DocEdit
 		or MessageKinds.DocSaveVersion
 		or MessageKinds.DocSendForReview
 		or MessageKinds.DocUpdateReview
@@ -594,12 +688,115 @@ public sealed partial class HostController : IDisposable
 	private void SendError(string message) =>
 		Emit(IpcSerializer.SerializeEvent(MessageKinds.Error, new ErrorPayload(message)));
 
-	// Single funnel for every outbound frame. The webview transport (_send) can throw if the window is
-	// being torn down (SendWebMessage on a disposed window); a send is best-effort, so swallow that here so
-	// it can never surface as an unobserved fault on a background task (RunReviewPublish / sign-in / render
-	// / image) or need a guard at each catch site. Message-thread sends are already under OnMessage's net;
-	// this makes the background paths equally safe and uniform.
-	private void Emit(string json)
+	// Single ordered funnel for every outbound frame. Frames created while their caller owns a controller
+	// monitor are drained on another thread; calls made outside those monitors retain synchronous delivery
+	// when no earlier batch is queued. The drainer never waits for monitors owned by unrelated threads.
+	private void Emit(string json, Action? completion = null) =>
+		EnqueueOutbound(new OutboundEntry(json, completion));
+
+	// Marks the end of a logical outbound batch whose frames were enqueued by earlier Emit calls. FIFO
+	// guarantees the callback runs only after every preceding send attempt has returned.
+	private void CompleteOutboundBatch(Action completion)
+	{
+		EnqueueOutbound(new OutboundEntry(Json: null, completion));
+		OutboundBatchCompletionEnqueuedForTest?.Invoke();
+	}
+	internal void CompleteOutboundBatchForTest(Action completion) => CompleteOutboundBatch(completion);
+
+	private void EnqueueOutbound(OutboundEntry entry)
+	{
+		bool drain;
+		bool stopped;
+		lock (_outboundSync)
+		{
+			stopped = _outboundStopped;
+			if (stopped)
+			{
+				drain = false;
+			}
+			else
+			{
+				_outboundFrames.Enqueue(entry);
+				drain = !_outboundDraining;
+				if (drain)
+				{
+					_outboundDraining = true;
+				}
+			}
+		}
+		if (stopped)
+		{
+			InvokeOutboundCompletion(entry.Completion);
+			return;
+		}
+		if (!drain)
+		{
+			return;
+		}
+		if (IsControllerMonitorEntered())
+		{
+			_ = Task.Run(DrainOutbound);
+		}
+		else
+		{
+			DrainOutbound();
+		}
+	}
+
+	internal bool IsControllerMonitorEnteredForTest() => IsControllerMonitorEntered();
+
+	private bool IsControllerMonitorEntered() =>
+		Monitor.IsEntered(_signInPublishSync)
+		|| Monitor.IsEntered(_clonePublishSync)
+		|| Monitor.IsEntered(_remotePublishSync)
+		|| Monitor.IsEntered(_repositoryDescriptionPublishSync)
+		|| Monitor.IsEntered(_sync)
+		|| Monitor.IsEntered(_repoGate)
+		|| Monitor.IsEntered(_workspaceRootPublicationSync);
+
+	private void DrainOutbound()
+	{
+		OutboundDrainStartingForTest?.Invoke();
+		while (true)
+		{
+			OutboundEntry entry;
+			lock (_outboundSync)
+			{
+				if (_outboundStopped)
+				{
+					_outboundFrames.Clear();
+					_outboundDraining = false;
+					return;
+				}
+				if (!_outboundFrames.TryDequeue(out entry))
+				{
+					_outboundDraining = false;
+					return;
+				}
+				_outboundSending = true;
+				_outboundSenderThreadId = Environment.CurrentManagedThreadId;
+			}
+			try
+			{
+				if (entry.Json is not null)
+				{
+					OutboundFrameDequeuedForTest?.Invoke();
+					SendOutbound(entry.Json);
+				}
+				InvokeOutboundCompletion(entry.Completion);
+			}
+			finally
+			{
+				lock (_outboundSync)
+				{
+					_outboundSending = false;
+					_outboundSenderThreadId = 0;
+					Monitor.PulseAll(_outboundSync);
+				}
+			}
+		}
+	}
+	private void SendOutbound(string json)
 	{
 		try
 		{
@@ -607,17 +804,44 @@ public sealed partial class HostController : IDisposable
 		}
 		catch (ObjectDisposedException ex)
 		{
-			// The window is being torn down — expected and quiet.
 			_logger.LogDebug(ex, "Dropped an outbound IPC frame (window torn down)");
 		}
 		catch (Exception ex)
 		{
-			// Any other transport fault is a real problem worth surfacing above Debug (the pre-Emit code let
-			// it reach OnMessage's Error net); still swallowed so a background task can't fault on it.
 			_logger.LogWarning(ex, "Dropped an outbound IPC frame (webview transport error)");
 		}
 	}
 
+	private void InvokeOutboundCompletion(Action? completion)
+	{
+		try
+		{
+			completion?.Invoke();
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "An outbound delivery completion callback failed");
+		}
+	}
+
+	private Action[] StopOutbound()
+	{
+		lock (_outboundSync)
+		{
+			_outboundStopped = true;
+			Action[] completions = _outboundFrames
+				.Where(entry => entry.Completion is not null)
+				.Select(entry => entry.Completion!)
+				.ToArray();
+			_outboundFrames.Clear();
+			int currentThreadId = Environment.CurrentManagedThreadId;
+			while (_outboundSending && _outboundSenderThreadId != currentThreadId)
+			{
+				Monitor.Wait(_outboundSync);
+			}
+			return completions;
+		}
+	}
 	// Route a webview log record into the host logger so native + webview share one log file.
 	private void OnLog(IpcMessage message)
 	{

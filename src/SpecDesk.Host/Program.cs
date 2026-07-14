@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Photino.NET;
 using SpecDesk.Ai;
 using SpecDesk.AppInfo;
+using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.Git;
 using SpecDesk.GitHub;
@@ -129,8 +130,30 @@ internal static class Program
 		string? devToolsEnv = Environment.GetEnvironmentVariable("SPECDESK_DEVTOOLS")?.Trim().ToLowerInvariant();
 		bool devTools = devToolsEnv is "1" or "true" or "yes" or "on";
 
+		WindowCloseCoordinator closeCoordinator = new(
+			requestEditorFlush: requestId => window!.SendWebMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.WindowCloseRequested,
+				new WindowCloseRequestedPayload(requestId))),
+			persistPendingDraft: controller.TryPersistPendingLocalDraftForClose,
+			completeHandshake: (requestId, succeeded) => window!.SendWebMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.WindowCloseCompleted,
+				new WindowCloseCompletedPayload(requestId, succeeded))),
+			closeWindow: () => window!.Close());
+		WindowCommandRouter windowCommands = new(
+			minimize: () => window!.SetMinimized(true),
+			toggleMaximize: () => window!.SetMaximized(!window.Maximized),
+			requestClose: closeCoordinator.HandleWebClose,
+			beginDrag: () => NativeWindowDrag.Begin(window!.WindowHandle));
+		void SendWindowState(bool maximized) =>
+			window!.SendWebMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.WindowState,
+				new WindowStatePayload(maximized)));
+
 		window = new PhotinoWindow()
 			.SetTitle(ProductInfo.Name)
+			.SetChromeless(true)
+			.SetResizable(true)
+			.SetUseOsDefaultLocation(false)
 			.SetUseOsDefaultSize(false)
 			.SetSize(1280, 800)
 			.SetDevToolsEnabled(devTools)
@@ -138,19 +161,37 @@ internal static class Program
 			.Center()
 			// Fires synchronously on the UI thread as soon as WM_CLOSE is dispatched, ahead of the
 			// native window (and its message queue) being torn down — see DialogClosingGrace above.
-			// Never veto the close; this only arms the grace period for in-flight dialogs.
+			// The first close is deferred while the webview flushes and the host persists; the coordinator's
+			// programmatic close is then allowed through and arms the grace period for in-flight dialogs.
 			.RegisterWindowClosingHandler((_, _) =>
 			{
-				dialogClosingCts.CancelAfter(DialogClosingGrace);
-				return false;
+				bool deferClose = closeCoordinator.HandleNativeClosing();
+				if (!deferClose)
+				{
+					dialogClosingCts.CancelAfter(DialogClosingGrace);
+				}
+				return deferClose;
 			})
+			.RegisterMaximizedHandler((_, _) => SendWindowState(maximized: true))
+			.RegisterRestoredHandler((_, _) => SendWindowState(maximized: false))
 			// Custom scheme handlers must be registered before the page loads. The asset root
 			// follows the open document's repo (null until the first document loads).
 			.RegisterCustomSchemeHandler(
 				"app",
 				(object _, string _, string url, out string contentType) =>
 					ServeAsset(controller.RepoRoot, url, out contentType))
-			.RegisterWebMessageReceivedHandler((_, message) => controller.OnMessage(message))
+			.RegisterWebMessageReceivedHandler((_, message) =>
+			{
+				IpcMessage? envelope = IpcSerializer.TryDeserialize(message);
+				if (string.Equals(envelope?.Kind, MessageKinds.Ready, StringComparison.Ordinal))
+				{
+					closeCoordinator.MarkWebviewReady();
+				}
+				if (!windowCommands.TryHandle(message))
+				{
+					controller.OnMessage(message);
+				}
+			})
 			// Resolve relative to the app base directory, not the current working directory: the CWD
 			// is wherever the user launches the exe (and a single-file build self-extracts its content
 			// to a temp dir), so a CWD-relative path would not find wwwroot/.

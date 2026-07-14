@@ -92,6 +92,100 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
+    public void Edit_PostCheckoutFailureRetiresTheDocumentAndRejectsStaleEditorText()
+    {
+        FakeVersioning versioning = new()
+        {
+            ThrowBeginEditAfterMutation = true,
+        };
+        using ManualResetEventSlim stateCleared = new(false);
+        using ManualResetEventSlim releaseRetirement = new(false);
+        using HostController controller = NewController(versioning);
+        controller.DocumentRetirementStateClearedForTest = () =>
+        {
+            stateCleared.Set();
+            releaseRetirement.Wait(TimeSpan.FromSeconds(5));
+        };
+        _sent.Clear();
+        Task edit = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocEdit, new EditPayload("spec/late-failure"))));
+        Assert.That(stateCleared.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Task<bool> close = Task.Run(controller.TryPersistPendingLocalDraftForClose);
+        Assert.That(close.Wait(TimeSpan.FromSeconds(2)), Is.True,
+            "Window close could not observe the already-cleared Edit retirement state.");
+        releaseRetirement.Set();
+        Assert.That(edit.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Assert.That(close.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        DocLoadedPayload? cleared = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Stale published text"),
+            version: 1));
+        controller.RunDiskAutosave();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.Branch, Is.EqualTo("spec/late-failure"));
+            Assert.That(cleared?.Path, Is.Empty);
+            Assert.That(cleared?.Text, Is.Empty);
+            Assert.That(cleared?.ReadOnly, Is.True);
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing"));
+            Assert.That(FindKind(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("closed to protect"));
+        });
+    }
+
+    [Test]
+    public void EditTransitionRejectsWindowCloseUntilTheWorkingLineIsPublished()
+    {
+        using ManualResetEventSlim editEntered = new(false);
+        using ManualResetEventSlim releaseEdit = new(false);
+        FakeVersioning versioning = new()
+        {
+            BeginEditEntered = editEntered,
+            BeginEditGate = releaseEdit,
+        };
+        using HostController controller = NewController(versioning);
+        Task edit = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocEdit, new EditPayload("spec/close-race"))));
+        Assert.That(editEntered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+
+        bool mayClose = controller.TryPersistPendingLocalDraftForClose();
+        releaseEdit.Set();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mayClose, Is.False);
+            Assert.That(edit.Wait(TimeSpan.FromSeconds(5)), Is.True);
+            Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
+            Assert.That(versioning.Branch, Is.EqualTo("spec/close-race"));
+            Assert.That(FindKind(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("current document"));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void WindowCloseClaimRejectsEditBeforeAnyWorkingLineMutation()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning);
+
+        bool mayClose = controller.TryPersistPendingLocalDraftForClose();
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocEdit, new EditPayload("spec/after-close")));
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mayClose, Is.True);
+            Assert.That(versioning.BeginEditCalls, Is.Zero);
+            Assert.That(versioning.Branch, Is.EqualTo("main"));
+            Assert.That(FindKind(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("document is changing"));
+        });
+    }
+
+    [Test]
     public void Ready_EmitsAuthoritativeRepositoryContextForTheOpenDocument()
     {
         FakeVersioning versioning = new() { Branch = "master", DefaultBranchValue = "master" };
@@ -359,12 +453,87 @@ public sealed class HostControllerLifecycleTests
             version: 1));
 
         // Typing flips the status to "Unsaved changes" but never commits — committing is explicit.
-        StatusPayload? status = LatestStatus();
+        StatusPayload? status = WaitForStatus(candidate => candidate.Label == "Unsaved changes");
         Assert.That(status!.Label, Is.EqualTo("Unsaved changes"));
 
         // Give the idle disk-autosave time to fire and confirm it still did not create a commit.
         Thread.Sleep(80);
         Assert.That(versioning.SaveVersionCalls, Is.EqualTo(0), "typing must not commit");
+    }
+
+    [Test]
+    public void OpenAnotherDocument_PersistsPendingEditorTextBeforeReplacingTheDocument()
+    {
+        string nextPath = Path.Combine(_tempDir, "next.md");
+        File.WriteAllText(nextPath, "# Next");
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Pending first document"),
+            version: 1));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocOpen,
+            new DocOpenPayload(nextPath)));
+
+        WorkspaceContextPayload? context = LatestWorkspaceContext();
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Pending first document"));
+            Assert.That(context, Is.Not.Null);
+            Assert.That(context!.Path, Is.EqualTo("next.md"));
+        });
+    }
+
+    [Test]
+    public void WindowClose_PersistsPendingDraftBeforeTheAutosaveDeadline()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Last keystroke"),
+            version: 1));
+
+        Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing"));
+
+        bool mayClose = controller.TryPersistPendingLocalDraftForClose();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mayClose, Is.True);
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Last keystroke"));
+        });
+    }
+
+    [Test]
+    public void WindowClose_WhenPendingDraftCannotBeWritten_FailsClosed()
+    {
+        FakeVersioning versioning = new();
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Must not be lost"),
+            version: 1));
+
+        bool mayClose;
+        using (FileStream lockFile = File.Open(_docPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            mayClose = controller.TryPersistPendingLocalDraftForClose();
+        }
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(mayClose, Is.False);
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing"));
+            Assert.That(
+                FindKind(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("stayed open"));
+        });
     }
 
     [Test]
@@ -418,7 +587,7 @@ public sealed class HostControllerLifecycleTests
             MessageKinds.DocSaveVersion,
             new SaveVersionPayload(string.Empty)));
 
-        StatusPayload? status = LatestStatus();
+        StatusPayload? status = WaitForStatus(candidate => candidate.Label == "Version saved");
         Assert.Multiple(() =>
         {
             Assert.That(versioning.SaveVersionCalls, Is.EqualTo(1));
@@ -463,19 +632,200 @@ public sealed class HostControllerLifecycleTests
     }
 
     [Test]
-    public void Discard_ReturnsToPublished()
+    public void Discard_ReturnsToPublishedAndCompletesTheMatchingTransition()
     {
         FakeVersioning versioning = new();
         using HostController controller = NewController(versioning);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
 
-        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocDiscard));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocDiscard,
+            new DocDiscardPayload(RequestId: 71)));
 
+        DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
+            MessageKinds.DocDiscardCompleted,
+            candidate => candidate.RequestId == 71);
         StatusPayload? status = LatestStatus();
         Assert.Multiple(() =>
         {
             Assert.That(versioning.DiscardCalled, Is.True);
             Assert.That(status!.State, Is.EqualTo("published"));
+            Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(71, Succeeded: true)));
+        });
+    }
+
+    [Test]
+    public void DiscardBlocksLateEditorChangesUntilTheMatchingReloadCompletes()
+    {
+        using ManualResetEventSlim discardEntered = new();
+        using ManualResetEventSlim discardGate = new();
+        FakeVersioning versioning = new()
+        {
+            DiscardEntered = discardEntered,
+            DiscardGate = discardGate,
+        };
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Acknowledged before discard"),
+            version: 1));
+
+        Task discard = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocDiscard,
+            new DocDiscardPayload(RequestId: 73))));
+        Assert.That(discardEntered.Wait(TimeSpan.FromSeconds(5)), Is.True, "Discard did not enter the repository gate.");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Late cross-state edit"),
+            version: 2));
+        discardGate.Set();
+
+        Assert.That(discard.Wait(TimeSpan.FromSeconds(5)), Is.True, "Discard did not complete after its gate was released.");
+        DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
+            MessageKinds.DocDiscardCompleted,
+            candidate => candidate.RequestId == 73);
+        DocLoadedPayload? loaded = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(73, Succeeded: true)));
+            Assert.That(loaded!.Text, Is.EqualTo("# Billing"));
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing"));
+            Assert.That(LatestStatus()!.State, Is.EqualTo("published"));
+        });
+    }
+
+    [Test]
+    public void DiscardReloadFailureRestoresDraftIdentityAndAutosaveBeforeUnlocking()
+    {
+        FakeVersioning versioning = new() { AfterDiscardCheckout = () => File.Delete(_docPath) };
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        string? draftBranch = versioning.Branch;
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Protected across reload failure"),
+            version: 1));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocDiscard,
+            new DocDiscardPayload(RequestId: 74)));
+        DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
+            MessageKinds.DocDiscardCompleted,
+            candidate => candidate.RequestId == 74);
+        controller.RunDiskAutosave();
+        string autosaved = File.ReadAllText(_docPath);
+        bool mayClose = controller.TryPersistPendingLocalDraftForClose();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(74, Succeeded: false)));
+            Assert.That(versioning.CompleteDiscardCalled, Is.False);
+            Assert.That(versioning.Branch, Is.EqualTo(draftBranch));
+            Assert.That(autosaved, Is.EqualTo("# Protected across reload failure"));
+            Assert.That(mayClose, Is.True);
+            Assert.That(LatestStatus()!.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void DiscardRestorePostMutationFailureRetiresDraftAndRejectsEveryStaleWrite()
+    {
+        FakeVersioning versioning = new();
+        versioning.AfterDiscardCheckout = () =>
+        {
+            File.Delete(_docPath);
+            versioning.ThrowBeginEditAfterMutation = true;
+            versioning.KeepBranchOnBeginEditPostMutationFailure = true;
+        };
+        using ManualResetEventSlim stateCleared = new(false);
+        using ManualResetEventSlim releaseRetirement = new(false);
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocEdit, new EditPayload("spec/discard-restore")));
+        controller.DocumentRetirementStateClearedForTest = () =>
+        {
+            stateCleared.Set();
+            releaseRetirement.Wait(TimeSpan.FromSeconds(5));
+        };
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Draft must never reach main"),
+            version: 1));
+        lock (_gate)
+        {
+            _sent.Clear();
+        }
+
+        Task discard = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocDiscard,
+            new DocDiscardPayload(RequestId: 75))));
+        Assert.That(stateCleared.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Task<bool> close = Task.Run(controller.TryPersistPendingLocalDraftForClose);
+        Assert.That(close.Wait(TimeSpan.FromSeconds(2)), Is.True,
+            "Window close could not observe the already-cleared Discard retirement state.");
+        releaseRetirement.Set();
+        Assert.That(discard.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        Assert.That(close.Wait(TimeSpan.FromSeconds(5)), Is.True);
+        DocLoadedPayload? cleared = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+        DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
+            MessageKinds.DocDiscardCompleted,
+            candidate => candidate.RequestId == 75);
+        File.WriteAllText(_docPath, "# Published after failed restoration");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Stale editor frame"),
+            version: 2));
+        controller.RunDiskAutosave();
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocSaveVersion,
+            new SaveVersionPayload("Must not commit")));
+        bool mayClose = close.Result;
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.Branch, Is.EqualTo("main"));
+            Assert.That(versioning.BeginEditMutationStartingCalls, Is.EqualTo(2));
+            Assert.That(versioning.SaveVersionCalls, Is.Zero);
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Published after failed restoration"));
+            Assert.That(cleared?.Path, Is.Empty);
+            Assert.That(cleared?.Text, Is.Empty);
+            Assert.That(cleared?.ReadOnly, Is.True);
+            Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(75, Succeeded: false)));
+            Assert.That(mayClose, Is.True);
+            Assert.That(FindKind(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("closed to protect"));
+        });
+    }
+
+    [Test]
+    public void DiscardFailurePreservesAcknowledgedDirtyTextForCloseBeforeAutosaveDeadline()
+    {
+        FakeVersioning versioning = new() { ThrowOnDiscard = true };
+        using HostController controller = NewController(versioning, TimeSpan.FromMinutes(1));
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged,
+            new EditorChangedPayload("# Protected pending edit"),
+            version: 1));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.DocDiscard,
+            new DocDiscardPayload(RequestId: 72)));
+        DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
+            MessageKinds.DocDiscardCompleted,
+            candidate => candidate.RequestId == 72);
+        bool mayClose = controller.TryPersistPendingLocalDraftForClose();
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.DiscardCalled, Is.True);
+            Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(72, Succeeded: false)));
+            Assert.That(mayClose, Is.True);
+            Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Protected pending edit"));
+            Assert.That(LatestStatus()!.State, Is.EqualTo("draft"));
         });
     }
 
@@ -784,6 +1134,34 @@ public sealed class HostControllerLifecycleTests
         }
 
         return null;
+    }
+
+    private StatusPayload? WaitForStatus(Func<StatusPayload, bool> predicate) =>
+        WaitForPayload(MessageKinds.Status, predicate);
+
+    private T? WaitForPayload<T>(string kind, Func<T, bool> predicate)
+        where T : class
+    {
+        T? match = null;
+        bool found = WaitFor(() =>
+        {
+            lock (_gate)
+            {
+                foreach (string json in _sent)
+                {
+                    IpcMessage? message = IpcSerializer.TryDeserialize(json);
+                    T? payload = message?.Kind == kind ? message.GetPayload<T>() : null;
+                    if (payload is not null && predicate(payload))
+                    {
+                        match = payload;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        });
+        return found ? match : null;
     }
 
     private IpcMessage? WaitForKind(string kind)

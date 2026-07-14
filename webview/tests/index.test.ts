@@ -83,7 +83,7 @@ function installMatchMediaStub(): void {
 // `panesMarkup` optionally adds #panes (with its `data-mode`, the single declared source of truth for
 // the starting mode) and the mode radiogroup buttons, for the startup-mode test below; every other test
 // omits it, exactly mirroring index.html's real fallback when the radiogroup chrome is absent.
-function setupDom(panesMarkup = ""): void {
+function setupDom(panesMarkup = "", extraMarkup = ""): void {
   document.body.innerHTML = `
 		<span id="status"></span>
 		<div id="editor"></div>
@@ -93,6 +93,7 @@ function setupDom(panesMarkup = ""): void {
     <div id="review-empty-bar" hidden></div>
     <div id="review-overflow-bar" hidden></div>
     ${panesMarkup}
+    ${extraMarkup}
   `;
 }
 
@@ -111,8 +112,11 @@ let wiredWindowListeners: Array<[string, EventListenerOrEventListenerObject]> = 
 /** Boot the real index.ts wiring against a mocked host bridge. The ipc.ts singleton reads
  *  `window.external` at module-eval time, so the bridge must be installed and the module graph reset
  *  before each fresh import. */
-async function mountApp(panesMarkup = ""): Promise<ReturnType<typeof mockBridge>> {
-  setupDom(panesMarkup);
+async function mountApp(
+  panesMarkup = "",
+  extraMarkup = "",
+): Promise<ReturnType<typeof mockBridge>> {
+  setupDom(panesMarkup, extraMarkup);
   installMatchMediaStub();
   const bridge = mockBridge();
   Object.defineProperty(globalThis, "external", { value: bridge, configurable: true });
@@ -192,6 +196,98 @@ describe("index.ts: diff.result malformed-payload guard (jsdom)", () => {
   });
 });
 
+describe("index.ts: correlated repository-operation completion", () => {
+  it("ignores stale completions and accepts only the active request", async () => {
+    const { isMatchingRepositoryOperationCompletion } = await import("../src/index.js");
+
+    expect(isMatchingRepositoryOperationCompletion(12, 11)).toBe(false);
+    expect(isMatchingRepositoryOperationCompletion(12, 12)).toBe(true);
+    expect(isMatchingRepositoryOperationCompletion(null, 12)).toBe(false);
+  });
+});
+
+describe("index.ts: correlated discard transition", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  it("flushes pending panes oldest-first and locks before a slow discard is sent", async () => {
+    const { runDiscardTransition } = await import("../src/index.js");
+    const { debounce } = await import("../src/util/debounce.js");
+    const events: string[] = [];
+    const first = debounce(() => events.push("first edit"), 120);
+    const second = debounce(() => events.push("second edit"), 120);
+    const pane = (pending: typeof first) => ({
+      pendingChangeOrder: () => pending.pendingOrder,
+      flushPendingChange: () => pending.flush(),
+    });
+    first();
+    vi.advanceTimersByTime(10);
+    second();
+
+    const panes = [pane(first), pane(second)];
+    const started = runDiscardTransition(
+      panes,
+      false,
+      () => events.push("locked"),
+      () => events.push("discard sent"),
+    );
+    const duplicateStarted = runDiscardTransition(
+      panes,
+      true,
+      () => events.push("duplicate lock"),
+      () => events.push("duplicate send"),
+    );
+    vi.advanceTimersByTime(500);
+
+    expect(started).toBe(true);
+    expect(duplicateStarted).toBe(false);
+    expect(events).toEqual(["first edit", "second edit", "locked", "discard sent"]);
+  });
+
+  it("keeps a slow discard locked and unlocks only its matching failure", async () => {
+    const bridge = await mountApp(
+      "",
+      '<button id="discard-btn" type="button">Discard</button><fieldset id="format-bar"></fieldset>',
+    );
+    const discard = document.querySelector<HTMLButtonElement>("#discard-btn");
+    const formatBar = document.querySelector<HTMLFieldSetElement>("#format-bar");
+    bridge.emit({
+      kind: Kinds.docLoaded,
+      payload: { path: "docs/spec.md", text: "# Draft\n", docDir: "docs", readOnly: false },
+    });
+    bridge.emit({
+      kind: Kinds.status,
+      payload: { state: "draft", label: "Draft", branch: "spec/draft" },
+    });
+    expect(formatBar?.disabled).toBe(false);
+
+    discard?.click();
+    const request = bridge.sent.find((message) => message.kind === Kinds.docDiscard);
+    const requestId = (request?.payload as { requestId?: number } | undefined)?.requestId;
+    expect(requestId).toBeTypeOf("number");
+    expect(formatBar?.disabled).toBe(true);
+
+    vi.advanceTimersByTime(500);
+    expect(formatBar?.disabled).toBe(true);
+    bridge.emit({
+      kind: Kinds.docDiscardCompleted,
+      payload: { requestId: Number(requestId) + 1, succeeded: false },
+    });
+    expect(formatBar?.disabled).toBe(true);
+    bridge.emit({
+      kind: Kinds.docDiscardCompleted,
+      payload: { requestId, succeeded: false },
+    });
+    expect(formatBar?.disabled).toBe(false);
+  });
+});
 describe("index.ts: Split cross-pane mirror debounce race (jsdom)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -273,6 +369,373 @@ describe("index.ts: Split cross-pane mirror debounce race (jsdom)", () => {
     vi.advanceTimersByTime(50);
     expect(destReported).toBe("Xshared\n");
     expect(shouldMirrorInto(destReported, source)).toBe(true);
+  });
+
+  it("flushes reverse-order dual-pending edits oldest first so the newest Code edit wins", async () => {
+    await mountApp();
+    const { MarkdownEditor } = await import("../src/editors/editor.js");
+    const { FormattedEditor: FreshFormattedEditor } = await import("../src/editors/formatted.js");
+    const { flushPendingChangesInOrder, shouldMirrorInto } = await import("../src/index.js");
+    const reports: string[] = [];
+
+    const sourceHost = document.createElement("div");
+    const formattedHost = document.createElement("div");
+    document.body.append(sourceHost, formattedHost);
+    let source: InstanceType<typeof MarkdownEditor>;
+    let formatted: InstanceType<typeof FreshFormattedEditor>;
+    source = new MarkdownEditor(sourceHost, {
+      onChange: (text) => {
+        reports.push(["code:", text].join(""));
+        if (shouldMirrorInto(text, formatted)) formatted.mirror(text);
+      },
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onGeometryChange: () => {},
+      onEditAttempt: () => {},
+      onFocus: () => {},
+      onOpenLink: () => {},
+    });
+    formatted = new FreshFormattedEditor(formattedHost, {
+      onChange: (text) => {
+        reports.push(["formatted:", text].join(""));
+        if (shouldMirrorInto(text, source)) source.mirror(text);
+      },
+      onEditAttempt: () => {},
+      onScroll: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+      onOpenLink: () => {},
+    });
+    source.setEditable(true);
+    formatted.setEditable(true);
+    source.setText("shared\n", true);
+    formatted.setText("shared\n");
+
+    const formattedView = (formatted as unknown as { view: EditorView }).view;
+    formattedView.dispatch(formattedView.state.tr.insertText("older ", 1) as Transaction);
+    vi.advanceTimersByTime(10);
+    source.setText("newest Code edit\n");
+
+    flushPendingChangesInOrder([source, formatted]);
+
+    expect(reports).toEqual(["formatted:older shared\n", "code:newest Code edit\n"]);
+    expect(source.getText()).toBe("newest Code edit\n");
+    expect(formatted.getText()).toBe("newest Code edit\n");
+  });
+
+  it("publishes both pending pane edits before window.close", async () => {
+    await mountApp();
+    const { MarkdownEditor } = await import("../src/editors/editor.js");
+    const { FormattedEditor: FreshFormattedEditor } = await import("../src/editors/formatted.js");
+    const { runWindowClose, shouldMirrorInto } = await import("../src/index.js");
+    const reports: string[] = [];
+
+    const sourceHost = document.createElement("div");
+    const formattedHost = document.createElement("div");
+    document.body.append(sourceHost, formattedHost);
+    let source: InstanceType<typeof MarkdownEditor>;
+    let formatted: InstanceType<typeof FreshFormattedEditor>;
+    source = new MarkdownEditor(sourceHost, {
+      onChange: (text) => {
+        reports.push(`code:${text}`);
+        if (shouldMirrorInto(text, formatted)) formatted.mirror(text);
+      },
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onGeometryChange: () => {},
+      onEditAttempt: () => {},
+      onFocus: () => {},
+      onOpenLink: () => {},
+    });
+    formatted = new FreshFormattedEditor(formattedHost, {
+      onChange: (text) => {
+        reports.push(`formatted:${text}`);
+        if (shouldMirrorInto(text, source)) source.mirror(text);
+      },
+      onEditAttempt: () => {},
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+      onOpenLink: () => {},
+    });
+    source.setEditable(true);
+    formatted.setEditable(true);
+    source.setText("shared\n", true, false);
+    formatted.setText("shared\n");
+
+    const formattedView = (formatted as unknown as { view: EditorView }).view;
+    formattedView.dispatch(formattedView.state.tr.insertText("older ", 1) as Transaction);
+    vi.advanceTimersByTime(10);
+    source.setText("newest\n");
+
+    runWindowClose([source, formatted], () => reports.push("window.close"));
+
+    expect(reports).toEqual(["formatted:older shared\n", "code:newest\n", "window.close"]);
+    vi.advanceTimersByTime(200);
+    expect(reports.at(-1)).toBe("window.close");
+  });
+
+  const modeSwitches = [
+    { from: "formatted", to: "code", first: "formatted", second: "editor" },
+    { from: "formatted", to: "split", first: "formatted", second: "editor" },
+    { from: "split", to: "code", first: "formatted", second: "editor" },
+    { from: "code", to: "formatted", first: "editor", second: "formatted" },
+    { from: "code", to: "split", first: "editor", second: "formatted" },
+    { from: "split", to: "formatted", first: "editor", second: "formatted" },
+  ] as const;
+
+  it.each(
+    modeSwitches,
+  )("settles $first before $from → $to so the immediate $second edit preserves both", async ({
+    first,
+    second,
+  }) => {
+    const { MarkdownEditor } = await import("../src/editors/editor.js");
+    const { resolveModeSwitchText, shouldMirrorInto } = await import("../src/index.js");
+    const reports: string[] = [];
+    let active: Pane = first;
+
+    const sourceHost = document.createElement("div");
+    const formattedHost = document.createElement("div");
+    document.body.append(sourceHost, formattedHost);
+    let source: InstanceType<typeof MarkdownEditor>;
+    let formatted: FormattedEditor;
+    source = new MarkdownEditor(sourceHost, {
+      onChange: (text) => {
+        active = "editor";
+        reports.push(text);
+        if (shouldMirrorInto(text, formatted)) formatted.mirror(text);
+      },
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onGeometryChange: () => {},
+      onEditAttempt: () => {},
+      onFocus: () => {},
+      onOpenLink: () => {},
+    });
+    formatted = new FormattedEditor(formattedHost, {
+      onChange: (text) => {
+        active = "formatted";
+        reports.push(text);
+        if (shouldMirrorInto(text, source)) source.mirror(text);
+      },
+      onEditAttempt: () => {},
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+      onOpenLink: () => {},
+    });
+    source.setText("base\n", true, false);
+    formatted.setText("base\n");
+    source.setEditable(true);
+    formatted.setEditable(true);
+
+    const edit = (pane: Pane, word: string): void => {
+      if (pane === "editor") {
+        source.setText(`${word} ${source.getText()}`);
+        return;
+      }
+      const view = (formatted as unknown as { view: EditorView }).view;
+      view.dispatch(view.state.tr.insertText(`${word} `, 1) as Transaction);
+    };
+
+    // The first edit is still inside its 120 ms trailing debounce when the author switches modes.
+    edit(first, "first");
+    vi.advanceTimersByTime(50);
+    const canonical = resolveModeSwitchText(source, formatted, true, () => active);
+    expect(canonical).toBe("first base\n");
+    expect(source.getText()).toBe(canonical);
+    expect(formatted.getText()).toBe(canonical);
+
+    // The newly selected pane starts from the flushed text, so its immediate edit composes with — rather
+    // than overwrites — the first pane's edit. Advancing beyond both original deadlines must produce no
+    // stale third persistence callback: resolveModeSwitchText cancelled the first pane's timer by flush.
+    active = second;
+    edit(second, "second");
+    vi.advanceTimersByTime(200);
+
+    expect(reports).toEqual(["first base\n", "second first base\n"]);
+    expect(source.getText()).toBe("second first base\n");
+    expect(formatted.getText()).toBe("second first base\n");
+  });
+
+  it("keeps a read-only mode switch presentation-only instead of flushing a delayed edit", async () => {
+    const { resolveModeSwitchText } = await import("../src/index.js");
+    let flushes = 0;
+    const pane = (text: string, order: number) => ({
+      getText: () => text,
+      hasPendingChange: () => true,
+      pendingChangeOrder: () => order,
+      flushPendingChange: () => {
+        flushes += 1;
+        return true;
+      },
+    });
+    const source = pane("source identity\n", 1);
+    const formatted = pane("formatted identity\n", 2);
+
+    expect(resolveModeSwitchText(source, formatted, false, () => "formatted")).toBe(
+      "formatted identity\n",
+    );
+    expect(flushes).toBe(0);
+  });
+
+  const documentNavigations = [
+    { mode: "code", first: "editor" },
+    { mode: "formatted", first: "formatted" },
+    { mode: "split", first: "formatted" },
+  ] as const;
+
+  it.each(
+    documentNavigations,
+  )("persists a pending $mode edit before doc.open and retires it before hydration", async ({
+    first,
+  }) => {
+    const { MarkdownEditor } = await import("../src/editors/editor.js");
+    const { retirePendingChanges, runDocumentNavigation, shouldMirrorInto } = await import(
+      "../src/index.js"
+    );
+    const events: string[] = [];
+
+    const sourceHost = document.createElement("div");
+    const formattedHost = document.createElement("div");
+    document.body.append(sourceHost, formattedHost);
+    let source: InstanceType<typeof MarkdownEditor>;
+    let formatted: FormattedEditor;
+    source = new MarkdownEditor(sourceHost, {
+      onChange: (text) => {
+        events.push(`changed:${text}`);
+        if (shouldMirrorInto(text, formatted)) formatted.mirror(text);
+      },
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onGeometryChange: () => {},
+      onEditAttempt: () => {},
+      onFocus: () => {},
+      onOpenLink: () => {},
+    });
+    formatted = new FormattedEditor(formattedHost, {
+      onChange: (text) => {
+        events.push(`changed:${text}`);
+        if (shouldMirrorInto(text, source)) source.mirror(text);
+      },
+      onEditAttempt: () => {},
+      onScroll: () => {},
+      onScrollSettle: () => {},
+      onCursor: () => {},
+      onHover: () => {},
+      onContentResize: () => {},
+      onFocus: () => {},
+      onActiveChange: () => {},
+      onOpenLink: () => {},
+    });
+    source.setText("old\n", true, false);
+    formatted.setText("old\n");
+    source.setEditable(true);
+    formatted.setEditable(true);
+
+    const edit = (pane: Pane, word: string): void => {
+      if (pane === "editor") {
+        source.setText(`${word} ${source.getText()}`);
+        return;
+      }
+      const view = (formatted as unknown as { view: EditorView }).view;
+      view.dispatch(view.state.tr.insertText(`${word} `, 1) as Transaction);
+    };
+
+    edit(first, "saved");
+    vi.advanceTimersByTime(50);
+    expect(
+      runDocumentNavigation(
+        [source, formatted],
+        true,
+        false,
+        () => {
+          source.setEditable(false);
+          formatted.setEditable(false);
+          events.push("transition");
+        },
+        () => events.push("doc.open"),
+      ),
+    ).toBe(true);
+    expect(events).toEqual(["changed:saved old\n", "transition", "doc.open"]);
+
+    // A real editor transaction arriving after doc.open but before hydration must be rejected by the
+    // synchronous identity lock. Code and Formatted cover their independent read-only mechanisms; Split
+    // runs the same boundary while both panes are present.
+    if (first === "editor") {
+      source.applyFormat("bold");
+    } else {
+      const view = (formatted as unknown as { view: EditorView }).view;
+      view.dispatch(view.state.tr.insertText("blocked ", 1) as Transaction);
+    }
+    vi.advanceTimersByTime(200);
+    expect(events).toEqual(["changed:saved old\n", "transition", "doc.open"]);
+    expect(source.getText()).toBe("saved old\n");
+    expect(formatted.getText()).toBe("saved old\n");
+
+    retirePendingChanges([source, formatted]);
+    source.setText("new document\n", true, false);
+    formatted.setText("new document\n");
+    vi.advanceTimersByTime(200);
+
+    expect(events).toEqual(["changed:saved old\n", "transition", "doc.open"]);
+    expect(source.getText()).toBe("new document\n");
+    expect(formatted.getText()).toBe("new document\n");
+  });
+
+  it("guards read-only and repository-transitioning document navigation", async () => {
+    const { runDocumentNavigation } = await import("../src/index.js");
+    let flushes = 0;
+    let opens = 0;
+    const pane = {
+      pendingChangeOrder: () => 1,
+      flushPendingChange: () => {
+        flushes += 1;
+        return true;
+      },
+    };
+
+    expect(
+      runDocumentNavigation(
+        [pane],
+        false,
+        false,
+        () => {},
+        () => (opens += 1),
+      ),
+    ).toBe(true);
+    expect({ flushes, opens }).toEqual({ flushes: 0, opens: 1 });
+
+    expect(
+      runDocumentNavigation(
+        [pane],
+        true,
+        true,
+        () => {},
+        () => (opens += 1),
+      ),
+    ).toBe(false);
+    expect({ flushes, opens }).toEqual({ flushes: 0, opens: 1 });
   });
 });
 

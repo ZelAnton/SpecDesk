@@ -14,7 +14,7 @@ test("repository description is visible before Clone is enabled", async ({ page 
   await openDockTool(page, "left", "Repositories");
 
   await page.locator(".repo-register-input").fill("acme/specs");
-  const clone = page.locator(".repo-register-add");
+  const clone = page.locator(".repo-clone-primary");
   await expect(page.locator(".repo-description")).toHaveText("Repository description: loading…");
   await expect(clone).toBeDisabled();
 

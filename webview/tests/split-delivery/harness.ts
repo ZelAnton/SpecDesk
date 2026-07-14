@@ -262,9 +262,12 @@ export function wire(code: string, html: string, css: string): WiredApp {
   };
 }
 
-/** Feed a `doc.loaded` frame (the host's "here is the document") and let the reconcile settle. */
+/** Feed a `doc.loaded` frame (the host's "here is the document"), reveal the editor from the app's Start
+ *  screen, and let the reconcile settle. The production shell intentionally keeps the first host-loaded
+ *  document mounted but hidden until the author chooses Document; this geometry harness must render it. */
 export async function loadDocument(app: WiredApp, text: string): Promise<void> {
   app.emit({ kind: "doc.loaded", payload: { path: "spec.md", text, docDir: "", readOnly: false } });
+  document.querySelector<HTMLElement>('.nav-item[data-view="editor"]')?.click();
   await flushFrames();
 }
 

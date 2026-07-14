@@ -216,6 +216,12 @@ function workspaceItemKey(item: WorkspaceItem): string {
   if (kind === "repository") {
     return `repository:${(item.repositoryId ?? item.path).toLowerCase()}`;
   }
+  if (kind === "clone") {
+    return `clone:${item.repositoryId?.toLowerCase() ?? ""}:${item.path.toLowerCase()}`;
+  }
+  if (kind === "branch") {
+    return `branch:${item.repositoryId?.toLowerCase() ?? ""}:${item.path.toLowerCase()}:${item.branch ?? ""}`;
+  }
   return `local:${item.path.toLowerCase()}`;
 }
 
@@ -239,6 +245,23 @@ function workspaceItemContext(item: WorkspaceItem): {
       tooltip: `Repository ${repository}`,
       accessibleName: `Repository ${repository}`,
       secondary: "Repository",
+    };
+  }
+  if (item.kind === "clone") {
+    const repository = item.repositoryId ?? "Unknown repository";
+    return {
+      tooltip: `${repository} · ${item.path}`,
+      accessibleName: `Local copy ${item.label} of ${repository}`,
+      secondary: `Local copy · ${repository}`,
+    };
+  }
+  if (item.kind === "branch") {
+    const repository = item.repositoryId ?? "Unknown repository";
+    const branch = item.branch ?? item.label;
+    return {
+      tooltip: `${repository} · ${item.label} · ${branch}`,
+      accessibleName: `Branch ${branch} in local copy ${item.label} of ${repository}`,
+      secondary: `${repository} · local version`,
     };
   }
   return {
@@ -278,7 +301,7 @@ export function favoritesPanel(callbacks: WorkspaceListCallbacks): WorkspaceList
       id: "favorites",
       label: "Favorites",
       icon: icon("favorites"),
-      emptyHint: "Star a repository, file, or folder to keep it here.",
+      emptyHint: "Star a repository, local copy, branch, file, or folder to keep it here.",
       items: (state) => state.favorites,
       isFavorite: () => true,
     },

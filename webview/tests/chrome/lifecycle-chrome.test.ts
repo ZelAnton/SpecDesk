@@ -12,7 +12,7 @@ function harness() {
     <button id="update-review"></button>
     <button id="discard"></button>
     <button id="save"></button>
-    <div id="format-bar"></div>
+    <fieldset id="format-bar"></fieldset>
   `;
   const byId = (id: string) => document.querySelector<HTMLButtonElement>(`#${id}`);
   const setPaneEditable = vi.fn<(editable: boolean) => void>();
@@ -33,7 +33,7 @@ function harness() {
     updateReviewBtn: byId("update-review"),
     discardBtn: byId("discard"),
     saveBtn: byId("save"),
-    formatBar: document.querySelector<HTMLElement>("#format-bar"),
+    formatBar: document.querySelector<HTMLFieldSetElement>("#format-bar"),
     setPaneEditable,
     ...callbacks,
   };
@@ -48,7 +48,7 @@ describe("LifecycleChrome.setLifecycle", () => {
     chrome.setGitHubAvailable(true);
     chrome.setLifecycle("draft");
     expect(setPaneEditable).toHaveBeenLastCalledWith(true);
-    expect(hidden("format-bar")).toBe(false);
+    expect(document.querySelector<HTMLFieldSetElement>("#format-bar")?.disabled).toBe(false);
     expect(hidden("edit")).toBe(true);
     expect(hidden("save-version")).toBe(false);
     expect(hidden("discard")).toBe(false);
@@ -61,7 +61,8 @@ describe("LifecycleChrome.setLifecycle", () => {
     chrome.setGitHubAvailable(true);
     chrome.setLifecycle("published");
     expect(setPaneEditable).toHaveBeenLastCalledWith(false);
-    expect(hidden("format-bar")).toBe(true);
+    expect(hidden("format-bar")).toBe(false);
+    expect(document.querySelector<HTMLFieldSetElement>("#format-bar")?.disabled).toBe(true);
     expect(hidden("edit")).toBe(false);
     expect(hidden("save-version")).toBe(true);
     expect(hidden("discard")).toBe(true);

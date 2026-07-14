@@ -82,6 +82,124 @@ public sealed class LibGit2RepositoryClonerTests
         Assert.That(_cloner.IsCloned(_dest), Is.True, "a valid working tree is a clone");
     }
 
+	[Test]
+	public void IsCloneOf_ValidatesOriginWithoutChangingTheWorkingTree()
+	{
+		_cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+		string sentinel = Path.Combine(_dest, "local-only.txt");
+		File.WriteAllText(sentinel, "kept");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(_cloner.IsCloneOf(_dest, _bare), Is.True);
+			Assert.That(_cloner.IsCloneOf(_dest, Path.Combine(_root, "different.git")), Is.False);
+			Assert.That(File.ReadAllText(sentinel), Is.EqualTo("kept"));
+		});
+	}
+
+	[Test]
+	public void RepositoryUrlsMatch_TreatsEquivalentGitHubFormsAsTheSameRepository()
+	{
+		Assert.Multiple(() =>
+		{
+			Assert.That(LibGit2RepositoryCloner.RepositoryUrlsMatch(
+				"https://github.com/Acme/Specs.git",
+				"git@github.com:acme/specs.git"), Is.True);
+			Assert.That(LibGit2RepositoryCloner.RepositoryUrlsMatch(
+				"https://github.com/acme/specs/",
+				"https://GITHUB.COM/ACME/SPECS"), Is.True);
+			Assert.That(LibGit2RepositoryCloner.RepositoryUrlsMatch(
+				"https://github.com/acme/specs.git",
+				"https://github.com/other/specs.git"), Is.False);
+		});
+	}
+
+	[TestCase("https://github.com/acme/specs.git", true)]
+	[TestCase("https://GITHUB.COM/ACME/SPECS", true)]
+	[TestCase("git@github.com:acme/specs.git", true)]
+	[TestCase("ssh://git@github.com/acme/specs.git", true)]
+	[TestCase("ssh://git@github.com:22/acme/specs.git", true)]
+	[TestCase("ssh://github.com/acme/specs.git", false)]
+	[TestCase("ssh://attacker@github.com/acme/specs.git", false)]
+	[TestCase("ssh://git@github.com:2222/acme/specs.git", false)]
+	[TestCase("http://github.com/acme/specs.git", false)]
+	[TestCase("file://github.com/acme/specs.git", false)]
+	[TestCase("git://github.com/acme/specs.git", false)]
+	[TestCase("ftp://github.com/acme/specs.git", false)]
+	[TestCase("https://github.com.evil.example/acme/specs.git", false)]
+	[TestCase("https://github.com@evil.example/acme/specs.git", false)]
+	[TestCase("https://attacker@github.com/acme/specs.git", false)]
+	[TestCase("https://github.com:444/acme/specs.git", false)]
+	[TestCase("https://github.com/acme/specs.git?redirect=evil", false)]
+	public void RepositoryUrlsMatch_AcceptsOnlyCanonicalGitHubTransports(
+		string candidate,
+		bool expected)
+	{
+		Assert.That(
+			LibGit2RepositoryCloner.RepositoryUrlsMatch(
+				"https://github.com/acme/specs.git",
+				candidate),
+			Is.EqualTo(expected));
+	}
+
+	[TestCase("http://github.com/acme/specs.git")]
+	[TestCase("file://github.com/acme/specs.git")]
+	[TestCase("git://github.com/acme/specs.git")]
+	[TestCase("ftp://github.com/acme/specs.git")]
+	public void RepositoryUrlsMatch_RejectsMatchingInsecureGitHubAuthorities(string url)
+	{
+		Assert.That(LibGit2RepositoryCloner.RepositoryUrlsMatch(url, url), Is.False);
+	}
+
+	[Test]
+	public void IsCloneOfAtBranch_RequiresTheExactNamedOrDetachedHead()
+	{
+		_cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+		string currentBranch;
+		using (Repository repository = new(_dest))
+		{
+			currentBranch = repository.Head.FriendlyName;
+		}
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, _bare, currentBranch), Is.True);
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, _bare, "different"), Is.False);
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, _bare, expectedCurrentBranch: null), Is.False);
+		});
+
+		using (Repository repository = new(_dest))
+		{
+			Commands.Checkout(repository, repository.Head.Tip);
+		}
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, _bare, expectedCurrentBranch: null), Is.True);
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, _bare, currentBranch), Is.False);
+		});
+	}
+
+	[Test]
+	public void IsCloneOfAtBranch_FailsClosedForInvalidRootOrOrigin()
+	{
+		_cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+		string currentBranch;
+		using (Repository repository = new(_dest))
+		{
+			currentBranch = repository.Head.FriendlyName;
+		}
+		string nonRepository = Path.Combine(_root, "not-a-repository");
+		Directory.CreateDirectory(nonRepository);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(_cloner.IsCloneOfAtBranch(Path.Combine(_dest, "nested"), _bare, currentBranch), Is.False);
+			Assert.That(_cloner.IsCloneOfAtBranch(_dest, Path.Combine(_root, "different.git"), currentBranch), Is.False);
+			Assert.That(_cloner.IsCloneOfAtBranch(nonRepository, _bare, currentBranch), Is.False);
+		});
+	}
+
     [Test]
 	public void CloneOrReuse_PreExistingNonRepositoryDestination_FailsClosedAndPreservesIt()
     {
@@ -89,7 +207,7 @@ public sealed class LibGit2RepositoryClonerTests
         Directory.CreateDirectory(_dest);
         File.WriteAllText(Path.Combine(_dest, "partial.pack"), "debris");
 
-		Assert.Throws<IOException>(
+		Assert.Throws<RepositoryDestinationConflictException>(
 			() => _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None));
 		Assert.That(File.ReadAllText(Path.Combine(_dest, "partial.pack")), Is.EqualTo("debris"));
     }
@@ -112,6 +230,26 @@ public sealed class LibGit2RepositoryClonerTests
         });
     }
 
+	[Test]
+	public void CloneOrReuse_ExistingCloneWithDifferentOrigin_FailsClosedAndPreservesIt()
+	{
+		_cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
+		string sentinel = Path.Combine(_dest, "local-only.txt");
+		File.WriteAllText(sentinel, "kept");
+		string differentRemote = Path.Combine(_root, "different-remote.git");
+
+		RepositoryDestinationConflictException error = Assert.Throws<RepositoryDestinationConflictException>(
+			() => _cloner.CloneOrReuse(differentRemote, _dest, accessToken: null, CancellationToken.None))!;
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(error.DestinationPath, Is.EqualTo(_dest));
+			Assert.That(File.ReadAllText(sentinel), Is.EqualTo("kept"));
+			using Repository existing = new(_dest);
+			Assert.That(existing.Network.Remotes["origin"]?.Url, Is.EqualTo(_bare));
+		});
+	}
+
     [Test]
     public void CloneOrReuse_AnEmptyUrl_Throws()
     {
@@ -120,7 +258,7 @@ public sealed class LibGit2RepositoryClonerTests
     }
 
     [Test]
-    public void Inspect_InfersMasterAndOmitsItFromTheNestedBranchList()
+    public void Inspect_InfersMasterAndIncludesDefaultCurrentAndRemoteLines()
     {
         _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
         using (Repository repository = new(_dest))
@@ -134,13 +272,14 @@ public sealed class LibGit2RepositoryClonerTests
         Assert.Multiple(() =>
         {
             Assert.That(info.DefaultBranch, Is.EqualTo("master"));
-            Assert.That(info.Branches, Has.Member("draft"));
-            Assert.That(info.Branches, Has.No.Member("master"));
+            Assert.That(info.CurrentBranch, Is.EqualTo("master"));
+            Assert.That(info.Branches.Select(branch => branch.Name), Does.Contain("draft"));
+            Assert.That(info.Branches.Select(branch => branch.Name), Does.Contain("master"));
         });
     }
 
     [Test]
-    public void Inspect_PreservesAKnownCustomDefaultAndOmitsIt()
+    public void Inspect_PreservesAKnownCustomDefaultAndIncludesIt()
     {
         _cloner.CloneOrReuse(_bare, _dest, accessToken: null, CancellationToken.None);
         using (Repository repository = new(_dest))
@@ -154,8 +293,8 @@ public sealed class LibGit2RepositoryClonerTests
         Assert.Multiple(() =>
         {
             Assert.That(info.DefaultBranch, Is.EqualTo("trunk"));
-            Assert.That(info.Branches, Has.Member("draft"));
-            Assert.That(info.Branches, Has.No.Member("trunk"));
+            Assert.That(info.Branches.Select(branch => branch.Name), Does.Contain("draft"));
+            Assert.That(info.Branches.Select(branch => branch.Name), Does.Contain("trunk"));
         });
     }
 }

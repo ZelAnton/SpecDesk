@@ -86,16 +86,15 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   await page.screenshot({ path: testInfo.outputPath("start-repositories.png"), fullPage: true });
 
   // Tasks 13-14: both GitHub work modes exist in the real shell and explain their signed-out state.
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Review"]').click();
-  const review = page.locator('#left-dock .dock-tool[data-tool="reviews"]');
+  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  const review = page.locator('#left-dock [data-tool="reviews"]');
   await expect(review).toBeVisible();
   await expect(review.locator('.remote-review-list[data-state="auth"] .remote-review-status')).toHaveText(
     "Connect a GitHub account to see review requests.",
   );
   await page.screenshot({ path: testInfo.outputPath("review-signed-out.png"), fullPage: true });
 
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Pull Requests"]').click();
-  const pullRequests = page.locator('#left-dock .dock-tool[data-tool="pullRequests"]');
+  const pullRequests = page.locator('#left-dock [data-tool="pullRequests"]');
   await expect(pullRequests).toBeVisible();
   await expect(
     pullRequests.locator('.remote-review-list[data-state="auth"] .remote-review-status'),

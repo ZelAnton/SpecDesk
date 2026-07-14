@@ -63,16 +63,133 @@ export function formatMarkdown(
   const { kind } = formatDef(command);
   switch (kind.type) {
     case "inline":
-      return toggleInline(doc, from, to, kind.marker, kind.node);
+      return kind.mark === "code"
+        ? toggleInlineCode(doc, from, to)
+        : toggleInline(doc, from, to, kind.marker, kind.node);
     case "fence":
       return toggleFence(doc, from, to);
     case "heading":
     case "list":
     case "quote":
       return toggleBlockPrefix(doc, from, to, kind);
+    case "link":
+      return insertLink(doc, from, to);
+    case "image":
+      return insertImage(doc, from, to);
+    case "table":
+      return insertTable(doc, from, to);
+    case "rule":
+      return insertRule(doc, from, to);
     default:
       return assertNever(kind);
   }
+}
+
+/** Insert an editable Markdown link. The selected words become the label; the URL placeholder is selected
+ *  afterwards so the author can paste the destination immediately. */
+function insertLink(doc: string, from: number, to: number): FormatEdit {
+  const existing = enclosingNode(doc, from, to, "Link");
+  if (existing !== null) {
+    const open = existing.firstChild;
+    const closeLabel = open?.nextSibling;
+    if (open !== null && open !== undefined && closeLabel !== null && closeLabel !== undefined) {
+      const label = doc.slice(open.to, closeLabel.from);
+      const labelStart = existing.from;
+      return {
+        from: existing.from,
+        to: existing.to,
+        insert: label,
+        selectionStart: labelStart,
+        selectionEnd: labelStart + label.length,
+      };
+    }
+  }
+  const label = escapeLabel(doc.slice(from, to) || "link text");
+  const target = "https://";
+  const insert = `[${label}](${target})`;
+  const targetStart = from + label.length + 3;
+  return {
+    from,
+    to,
+    insert,
+    selectionStart: targetStart,
+    selectionEnd: targetStart + target.length,
+  };
+}
+
+/** Toggle an inline code span, choosing a delimiter longer than every backtick run in the selection. */
+function toggleInlineCode(doc: string, from: number, to: number): FormatEdit {
+  if (to > from) {
+    const existing = enclosingNode(doc, from, to, "InlineCode");
+    const unwrapped = existing !== null ? unwrapNode(doc, from, to, existing) : null;
+    if (unwrapped !== null) {
+      return unwrapped;
+    }
+  }
+  const selected = doc.slice(from, to);
+  const longestRun = Math.max(
+    0,
+    ...Array.from(selected.matchAll(/`+/g), (match) => match[0].length),
+  );
+  const marker = "`".repeat(longestRun + 1);
+  const pad = selected.includes("`") || (/^\s/.test(selected) && /\s$/.test(selected)) ? " " : "";
+  const insert = marker + pad + selected + pad + marker;
+  const innerStart = from + marker.length + pad.length;
+  return {
+    from,
+    to,
+    insert,
+    selectionStart: innerStart,
+    selectionEnd: innerStart + selected.length,
+  };
+}
+
+/** Insert an editable image reference. Image bytes can still be pasted/dropped through the repository
+ *  image pipeline; this command covers an existing repository or web image by selecting its path. */
+function insertImage(doc: string, from: number, to: number): FormatEdit {
+  const alt = escapeLabel(doc.slice(from, to) || "Image");
+  const target = "images/image.png";
+  const insert = `![${alt}](${target})`;
+  const targetStart = from + alt.length + 4;
+  return {
+    from,
+    to,
+    insert,
+    selectionStart: targetStart,
+    selectionEnd: targetStart + target.length,
+  };
+}
+
+/** Insert a small starter table before the current block; the first heading is selected for immediate
+ *  replacement. Structural row/column changes remain simplest in Code mode. */
+function insertTable(doc: string, from: number, to: number): FormatEdit {
+  const [blockStart] = blockLineRange(doc, from, to);
+  const insert = "| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |\n\n";
+  return {
+    from: blockStart,
+    to: blockStart,
+    insert,
+    selectionStart: blockStart + 2,
+    selectionEnd: blockStart + 10,
+  };
+}
+
+/** Insert a thematic break as its own block without consuming adjacent text. */
+function insertRule(doc: string, from: number, to: number): FormatEdit {
+  const [blockStart] = blockLineRange(doc, from, to);
+  const insert = "---\n\n";
+  const caret = blockStart + insert.length;
+  return {
+    from: blockStart,
+    to: blockStart,
+    insert,
+    selectionStart: caret,
+    selectionEnd: caret,
+  };
+}
+
+function escapeLabel(value: string): string {
+  return value.replace(/([\\\]])/g, "\\$1");
 }
 
 /**
@@ -111,6 +228,10 @@ function toggleInline(
  * raw marker characters sitting next to the selection.
  */
 function enclosingWrap(doc: string, from: number, to: number, nodeName: string): MdNode | null {
+  return enclosingNode(doc, from, to, nodeName);
+}
+
+function enclosingNode(doc: string, from: number, to: number, nodeName: string): MdNode | null {
   const tree = markdownLanguage.parser.parse(doc);
   for (let node: MdNode | null = tree.resolveInner(from, 1); node !== null; node = node.parent) {
     if (node.name === nodeName && node.from <= from && node.to >= to) {

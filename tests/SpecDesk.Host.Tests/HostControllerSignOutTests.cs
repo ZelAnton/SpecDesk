@@ -124,6 +124,9 @@ public sealed class HostControllerSignOutTests
 		public ManualResetEventSlim Release { get; } = new(false);
 
 		public bool IsCloned(string destinationPath) => false;
+		public bool IsCloneOf(string destinationPath, string url) => false;
+		public bool IsCloneOfAtBranch(
+			string destinationPath, string url, string? expectedCurrentBranch) => false;
 
 		public string CloneOrReuse(
 			string url, string destinationPath, string? accessToken, CancellationToken cancellationToken)
@@ -233,6 +236,7 @@ public sealed class HostControllerSignOutTests
 			WorkspaceStatePayload state = new WorkspaceStore(Path.Combine(root, "workspace.json")).State();
 			Assert.Multiple(() =>
 			{
+				Assert.That(state.Repositories.Any(repo => repo.Id == "octo/browse"), Is.True);
 				Assert.That(state.Repositories.Any(repo => repo.Id == "octo/register"), Is.False);
 				Assert.That(state.Repositories.Any(repo => repo.Id == "octo/clone"), Is.False);
 			});
@@ -281,6 +285,7 @@ public sealed class HostControllerSignOutTests
 		public void PushBranch(
 			string repoRoot,
 			string branchName,
+			string expectedRepositoryUrl,
 			string accessToken,
 			string remoteName = "origin",
 			CancellationToken cancellationToken = default)

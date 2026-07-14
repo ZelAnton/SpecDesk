@@ -37,57 +37,57 @@ public sealed partial class HostController
 
 	private void OnEditorChanged(IpcMessage message)
 	{
-		lock (_sync)
-		{
-			if (_remoteDocument is not null)
-			{
-				return;
-			}
-		}
-
 		EditorChangedPayload? payload = SafeGetPayload<EditorChangedPayload>(message);
 		if (payload is null)
 		{
 			return;
 		}
 
-		long version = message.Version ?? 0;
-		// Still the ordering gate for _text itself, not only for a render: an out-of-order/duplicate
-		// frame must not overwrite _text with stale content (see HostControllerLineEndingTests'
-		// "Discard_ThenAFreshEdit..." for why a second edit in the same draft must strictly advance the
-		// version). This stays even though the render it also used to gate is no longer triggered here
-		// — see the comment below.
-		if (!_coordinator.ShouldRender(version))
-		{
-			return;
-		}
-
-		string text = payload.Text;
-		// Publish _text under _sync so the autosave timer's _sync snapshot sees it consistently with
-		// _currentPath (the two must stay a matched pair, or autosave could write across documents).
-		// The session's Generation tags this text with the checkout it was written against — see
-		// DraftSession.Generation — so a later disk-autosave snapshot of this text carries a generation
-		// that a stale re-check can actually compare against. Only Generation moves here (a plain edit
-		// never changes the lifecycle state), so `with` preserves the rest of the session verbatim.
+		bool announce = false;
 		lock (_sync)
 		{
-			_text = text;
-			_session = _session with { Generation = Interlocked.Read(ref _draftGeneration) };
+			if (_disposed
+				|| _remoteDocument is not null
+				|| _currentPath is null
+				|| _closePreparationClaimed
+				|| _documentMutationLeaseClaimed
+				|| _documentOpenTransition
+				|| _documentRepositoryTransition
+				|| _documentDiscardTransition)
+			{
+				return;
+			}
+
+			long version = message.Version ?? 0;
+			if (!_coordinator.ShouldRender(version))
+			{
+				return;
+			}
+
+			long draftGeneration = Interlocked.Read(ref _draftGeneration);
+			DraftSession session = _session;
+			bool editing = _repoRoot is not null && IsEditingState(session.State);
+			_text = payload.Text;
+			Interlocked.Increment(ref _contentGeneration);
+			_session = session with
+			{
+				Generation = draftGeneration,
+				Dirty = editing || session.Dirty,
+			};
+			if (editing)
+			{
+				announce = !session.Dirty;
+				_autosaveTimer?.Dispose();
+				_autosaveTimer = new Timer(
+					_ => RunDiskAutosave(), null, _autosaveIdle, Timeout.InfiniteTimeSpan);
+			}
 		}
 
-		// #preview (the native Markdig render sink RenderAndSend below feeds) is permanently hidden
-		// (styles.css: `#preview { display: none; }`) and has no consumer today — Split now pairs the
-		// source editor with the editable WYSIWYG, not this pane. Running a full Markdig render plus an
-		// HTML IPC round-trip on every debounced edit here was therefore pure overhead, paid on the hot
-		// typing path for a panel nobody ever sees. RenderAndSend is kept (internal) as the ready entry
-		// point for a future on-demand consumer — diff (PoC-6) or comments (PoC-8) — to call directly;
-		// it is simply no longer invoked automatically from here.
-
-		// In an editing state, each edit (re)arms the idle disk autosave (write only, never a commit)
-		// and flips the status to "Unsaved changes".
-		MarkDirtyAndScheduleDiskAutosave();
+		if (announce)
+		{
+			SendTransientStatus("Unsaved changes");
+		}
 	}
-
 	/// <summary>
 	/// Render <paramref name="text"/> to HTML and emit it as <see cref="MessageKinds.PreviewHtml"/>,
 	/// unless a newer edit has since superseded <paramref name="version"/>
@@ -139,25 +139,242 @@ public sealed partial class HostController
 	private void OnOpen(IpcMessage message)
 	{
 		// An explicit path (the Start screen's "open a file", or a click in the folder tree) opens directly;
-		// no path falls back to the native open dialog (the toolbar "Open…").
+		// no path falls back to the native open dialog (the toolbar "Open…"). The request id belongs to the
+		// webview's edit lock: every terminal path completes it exactly once, while a remote load carries it
+		// through its asynchronous/authenticated continuation.
 		DocOpenPayload? payload = SafeGetPayload<DocOpenPayload>(message);
+		long requestId = payload?.RequestId ?? 0;
 		string? path = !string.IsNullOrWhiteSpace(payload?.Path)
 			? payload.Path
 			: _dialogs.PickOpenFile();
-		if (path is not null)
+		if (path is null)
 		{
-			if (TryParseRemotePath(path, out string owner, out string name, out string branch, out string remotePath))
+			EmitDocumentOpenCompletion(requestId, succeeded: false);
+			return;
+		}
+
+		bool remotePath = TryParseRemotePath(
+			path, out string owner, out string name, out string branch, out string remoteDocumentPath);
+		if (remotePath && (_repositoryCatalog is null || _auth is null))
+		{
+			SendError("Browsing repositories online isn't available in this build.");
+			EmitDocumentOpenCompletion(requestId, succeeded: false);
+			return;
+		}
+		if (remotePath && _workspace?.FindRepo($"{owner}/{name}") is null)
+		{
+			SendError("That repository is no longer registered.");
+			EmitDocumentOpenCompletion(requestId, succeeded: false);
+			return;
+		}
+
+		if (!TryBeginDocumentOpen(
+			requestId,
+			out bool repositoryActionInProgress,
+			out DocumentMutationSnapshot? pendingDraft,
+			out long navigationGeneration))
+		{
+			SendError(repositoryActionInProgress
+				? "Repository work is still finishing. Wait a moment, then open the file again."
+				: "The document is changing right now. Wait a moment, then open the file again.");
+			EmitDocumentOpenCompletion(requestId, succeeded: false);
+			return;
+		}
+
+		if (pendingDraft is not null
+			&& !TryPersistCurrentDocumentBeforeNavigation(pendingDraft, requestId))
+		{
+			CompleteDocumentOpen(requestId, succeeded: false);
+			return;
+		}
+
+		if (remotePath)
+		{
+			lock (_sync)
 			{
-				LoadRemoteFile(owner, name, branch, remotePath, path);
+				AcceptWorkspaceNavigationIntentLocked(navigationGeneration);
 			}
-			else
+			LoadRemoteFile(
+				owner, name, branch, remoteDocumentPath, path, requestId, navigationGeneration);
+			return;
+		}
+
+		InvalidateRemoteNavigation(browse: true, file: true);
+		CompleteDocumentOpen(requestId, LoadFile(path, navigationGeneration: navigationGeneration));
+	}
+
+	// The only nested acquisition for document navigation. Repository publication uses the same
+	// clone -> remote -> session order. The locks protect only the transition claim and snapshot;
+	// disk/network work runs after they are released under the claimed transition lease.
+	private bool TryBeginDocumentOpen(
+		long requestId,
+		out bool repositoryActionInProgress,
+		out DocumentMutationSnapshot? pendingDraft,
+		out long navigationGeneration)
+	{
+		lock (_clonePublishSync)
+		{
+			lock (_remotePublishSync)
 			{
-				InvalidateRemoteNavigation(browse: true, file: true);
-				LoadFile(path);
+				lock (_sync)
+				{
+					repositoryActionInProgress = _localRepositoryActionCts is not null;
+					if (_disposed
+						|| _closePreparationClaimed
+						|| _documentMutationLeaseClaimed
+						|| _documentRepositoryTransition
+						|| _documentDiscardTransition
+						|| _documentOpenTransition
+						|| repositoryActionInProgress)
+					{
+						pendingDraft = null;
+						navigationGeneration = 0;
+						return false;
+					}
+
+					_documentOpenTransition = true;
+					navigationGeneration = ++_workspaceNavigationIntentSequence;
+					_documentOpenTransitionRequestId = requestId;
+					DraftSession session = _session;
+					pendingDraft = _remoteDocument is null && _currentPath is not null && session.Dirty
+						? new DocumentMutationSnapshot(
+							_currentPath,
+							_repoRoot,
+							_text,
+							_lineEnding,
+							Interlocked.Read(ref _draftGeneration),
+							Interlocked.Read(ref _contentGeneration),
+							session.Branch,
+							session.BaseBranch)
+						: null;
+					if (pendingDraft is not null)
+					{
+						_autosaveTimer?.Dispose();
+						_autosaveTimer = null;
+					}
+					return true;
+				}
 			}
 		}
 	}
+	private void CompleteDocumentOpen(long requestId, bool succeeded)
+	{
+		bool completed = false;
+		lock (_sync)
+		{
+			if (_documentOpenTransition && _documentOpenTransitionRequestId == requestId)
+			{
+				completed = true;
+				if (!succeeded
+					&& _repoRoot is not null
+					&& _currentPath is not null
+					&& _session.Dirty
+					&& IsEditingState(_session.State))
+				{
+					_autosaveTimer?.Dispose();
+					_autosaveTimer = new Timer(
+						_ => RunDiskAutosave(), null, _autosaveIdle, Timeout.InfiniteTimeSpan);
+				}
+				_documentOpenTransition = false;
+				_documentOpenTransitionRequestId = 0;
+			}
+		}
+		if (completed)
+		{
+			EmitDocumentOpenCompletion(requestId, succeeded);
+		}
+	}
 
+	private void EmitDocumentOpenCompletion(long requestId, bool succeeded)
+	{
+		if (requestId <= 0)
+		{
+			return;
+		}
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.DocOpenCompleted,
+			new DocOpenCompletedPayload(requestId, succeeded)));
+	}
+
+	// The open transition owns the old document identity while this exact snapshot is written. No
+	// publication monitor is held during I/O; editor, repository, discard, autosave, and close paths all
+	// reject the transition lease until the new identity is published or the open is cancelled.
+	private bool TryPersistCurrentDocumentBeforeNavigation(
+		DocumentMutationSnapshot snapshot,
+		long requestId)
+	{
+		try
+		{
+			bool stale;
+			lock (_repoGate)
+			{
+				stale = !IsDocumentOpenSnapshotCurrentUnderRepositoryGate(snapshot, requestId);
+				if (!stale)
+				{
+					File.WriteAllText(snapshot.Path, ApplyLineEnding(snapshot.Text, snapshot.LineEnding));
+				}
+			}
+
+			if (stale || !IsDocumentOpenSnapshotCurrent(snapshot, requestId))
+			{
+				_logger.LogWarning(
+					"Opening another document was cancelled because the current draft changed while saving {Path}",
+					snapshot.Path);
+				SendError("The current document changed while it was being saved. Please try opening the other file again.");
+				return false;
+			}
+
+			_logger.LogDebug("Saved pending changes to {Path} before opening another document", snapshot.Path);
+			return true;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_logger.LogError(ex, "Could not save pending changes to {Path} before opening another document", snapshot.Path);
+			SendError("Could not save your changes, so the other document was not opened.");
+			return false;
+		}
+	}
+
+	// Called only while _repoGate is held; taking _sync here would invert the repository -> session order.
+	private bool IsDocumentOpenSnapshotCurrentUnderRepositoryGate(
+		DocumentMutationSnapshot snapshot,
+		long requestId)
+	{
+		DraftSession session = Volatile.Read(ref _session);
+		return Volatile.Read(ref _documentOpenTransition)
+			&& Interlocked.Read(ref _documentOpenTransitionRequestId) == requestId
+			&& !Volatile.Read(ref _disposed)
+			&& !Volatile.Read(ref _documentMutationLeaseClaimed)
+			&& !Volatile.Read(ref _documentRepositoryTransition)
+			&& !Volatile.Read(ref _documentDiscardTransition)
+			&& Volatile.Read(ref _remoteDocument) is null
+			&& string.Equals(Volatile.Read(ref _currentPath), snapshot.Path, StringComparison.Ordinal)
+			&& string.Equals(Volatile.Read(ref _repoRoot), snapshot.RepoRoot, StringComparison.Ordinal)
+			&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+			&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+			&& string.Equals(session.Branch, snapshot.Branch, StringComparison.Ordinal)
+			&& string.Equals(session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+	}
+
+	private bool IsDocumentOpenSnapshotCurrent(DocumentMutationSnapshot snapshot, long requestId)
+	{
+		lock (_sync)
+		{
+			return _documentOpenTransition
+				&& _documentOpenTransitionRequestId == requestId
+				&& !_disposed
+				&& !_documentMutationLeaseClaimed
+				&& !_documentRepositoryTransition
+				&& !_documentDiscardTransition
+				&& _remoteDocument is null
+				&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
+				&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+				&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+				&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+				&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
+				&& string.Equals(_session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+		}
+	}
 	// Open a folder as the left-rail file navigator's root: an explicit path (a registered repo, or a folder
 	// the Start screen offered) or the native folder-picker. Sets the workspace root and emits its tree. Does
 	// NOT change the open document — the author can browse one folder while editing a document elsewhere.
@@ -187,17 +404,71 @@ public sealed partial class HostController
 	// document — the author can browse one folder while editing a document elsewhere.
 	private void OpenWorkspaceFolder(string root)
 	{
-		InvalidateRemoteNavigation(browse: true, file: true);
+		WorkspaceRootPublication publication;
 		lock (_sync)
 		{
+			long navigationGeneration = ++_workspaceNavigationIntentSequence;
+			AcceptWorkspaceNavigationIntentLocked(navigationGeneration);
 			_workspaceRoot = root;
+			publication = new WorkspaceRootPublication(
+				root, ++_workspaceRootGeneration, navigationGeneration);
 		}
-
-		_logger.LogInformation("Opened workspace folder {Root}", root);
-		// A4: an opened folder is now the most-recent workspace item (emits workspace.state).
-		RecordRecent(root, isFolder: true);
-		EmitTree(root);
+		PublishWorkspaceFolder(publication);
 	}
+
+	// Publish the already-committed workspace root. Repository opens set the root in the same publication
+	// lease as their registration CAS, then perform the potentially slow tree read after releasing it. The
+	// final token check and both outbound events are serialized with later root publications, so an older
+	// asynchronous open can never overwrite a newer navigator selection.
+	private void PublishWorkspaceFolder(WorkspaceRootPublication publication)
+	{
+		WorkspaceRootPublishingForTest?.Invoke(publication.Root);
+		lock (_workspaceRootPublicationSync)
+		{
+			WorkspaceRootRemoteInvalidationStartingForTest?.Invoke(publication.Root);
+			if (!TryInvalidateRemoteNavigationForWorkspacePublication(publication))
+			{
+				return;
+			}
+			TreePayload tree;
+			try
+			{
+				tree = FileTreeBuilder.Build(publication.Root);
+			}
+			catch (Exception ex) when (
+				ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+			{
+				lock (_sync)
+				{
+					if (!IsWorkspaceRootPublicationCurrentLocked(publication))
+					{
+						return;
+					}
+				}
+				_logger.LogError(ex, "Could not read the folder tree at {Root}", publication.Root);
+				SendError("That folder could not be read.");
+				return;
+			}
+
+			lock (_sync)
+			{
+				if (!IsWorkspaceRootPublicationCurrentLocked(publication))
+				{
+					return;
+				}
+				RecordRecent(publication.Root, isFolder: true);
+				Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, tree));
+			}
+			_logger.LogInformation("Opened workspace folder {Root}", publication.Root);
+		}
+	}
+
+	private bool IsWorkspaceRootPublicationCurrentLocked(WorkspaceRootPublication publication) =>
+		!_disposed
+		&& publication.Generation == _workspaceRootGeneration
+		&& publication.NavigationGeneration == _workspaceNavigationIntentGeneration
+		&& _workspaceRoot is not null
+		&& SameFullPath(_workspaceRoot, publication.Root);
 
 	// Serve the Markdown file tree for the navigator. An explicit path scopes it; otherwise the current
 	// workspace folder, else the open document's folder — so requesting the tree without a prior "open
@@ -207,6 +478,7 @@ public sealed partial class HostController
 		InvalidateRemoteNavigation(browse: true, file: false);
 		TreeRequestPayload? payload = SafeGetPayload<TreeRequestPayload>(message);
 		string? root;
+		WorkspaceTreeRequestPublication? publication = null;
 		if (!string.IsNullOrWhiteSpace(payload?.Path))
 		{
 			root = payload.Path;
@@ -216,20 +488,31 @@ public sealed partial class HostController
 			lock (_sync)
 			{
 				root = _workspaceRoot ?? (_currentPath is not null ? Path.GetDirectoryName(_currentPath) : null);
+				publication = new WorkspaceTreeRequestPublication(
+					_workspaceRoot, _currentPath, _workspaceRootGeneration);
 			}
+			WorkspaceTreeRequestCapturedForTest?.Invoke(root ?? string.Empty);
 		}
 
 		if (string.IsNullOrEmpty(root))
 		{
 			// Nothing to show yet (no folder opened, no document loaded) — an empty tree, not an error.
-			Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, new TreePayload(string.Empty, [])));
+			TreePayload emptyTree = new(string.Empty, []);
+			if (publication is { } emptyPublication)
+			{
+				EmitWorkspaceTreeRequest(emptyTree, emptyPublication);
+			}
+			else
+			{
+				Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, emptyTree));
+			}
 			return;
 		}
 
-		EmitTree(root);
+		EmitTree(root, publication);
 	}
 
-	private void EmitTree(string root)
+	private void EmitTree(string root, WorkspaceTreeRequestPublication? publication = null)
 	{
 		TreePayload tree;
 		try
@@ -242,12 +525,302 @@ public sealed partial class HostController
 			// ArgumentException/NotSupportedException come from Path.GetFullPath on a malformed root (an
 			// embedded null, invalid syntax) — which tree.request's explicit-path branch does not pre-check
 			// with Directory.Exists. Turn any of these into a plain error rather than a silent dead request.
+			if (publication is { } failedPublication)
+			{
+				lock (_workspaceRootPublicationSync)
+				{
+					lock (_sync)
+					{
+						if (!IsWorkspaceTreeRequestCurrentLocked(failedPublication))
+						{
+							return;
+						}
+					}
+					_logger.LogError(ex, "Could not read the folder tree at {Root}", root);
+					SendError("That folder could not be read.");
+				}
+				return;
+			}
 			_logger.LogError(ex, "Could not read the folder tree at {Root}", root);
 			SendError("That folder could not be read.");
 			return;
 		}
 
+		if (publication is { } currentPublication)
+		{
+			EmitWorkspaceTreeRequest(tree, currentPublication);
+			return;
+		}
+
 		Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, tree));
+	}
+
+	private void EmitWorkspaceTreeRequest(
+		TreePayload tree,
+		WorkspaceTreeRequestPublication publication)
+	{
+		lock (_workspaceRootPublicationSync)
+		{
+			lock (_sync)
+			{
+				if (!IsWorkspaceTreeRequestCurrentLocked(publication))
+				{
+					return;
+				}
+				Emit(IpcSerializer.SerializeEvent(MessageKinds.Tree, tree));
+			}
+		}
+	}
+
+	private bool IsWorkspaceTreeRequestCurrentLocked(WorkspaceTreeRequestPublication publication) =>
+		!_disposed
+		&& publication.Generation == _workspaceRootGeneration
+		&& ((publication.Root is null && _workspaceRoot is null)
+			|| (publication.Root is not null
+				&& _workspaceRoot is not null
+				&& SameFullPath(publication.Root, _workspaceRoot)))
+		&& (publication.Root is not null
+			|| string.Equals(publication.DocumentPath, _currentPath, StringComparison.OrdinalIgnoreCase));
+
+	/// <summary>Claim the close boundary only when no local repository mutation is active, then synchronously
+	/// persist the current local draft before the native window is allowed to close. A failed or stale write
+	/// releases the claim and fails closed, so the author can retry after the operation or storage fault ends.</summary>
+	internal bool TryPersistPendingLocalDraftForClose()
+	{
+		bool repositoryActionInProgress;
+		bool documentMutationInProgress;
+		lock (_clonePublishSync)
+		{
+			lock (_sync)
+			{
+				if (_disposed)
+				{
+					return false;
+				}
+				repositoryActionInProgress = _cloneCts is not null
+					|| _localRepositoryActionCts is not null;
+				documentMutationInProgress = _documentMutationLeaseClaimed
+					|| _documentOpenTransition
+					|| _documentRepositoryTransition
+					|| _documentDiscardTransition;
+				if (!repositoryActionInProgress && !documentMutationInProgress)
+				{
+					_closePreparationClaimed = true;
+				}
+			}
+		}
+
+		if (repositoryActionInProgress)
+		{
+			SendError("SpecDesk is still finishing repository work. Wait a moment, then close again.");
+			return false;
+		}
+		if (documentMutationInProgress)
+		{
+			SendError("SpecDesk is still finishing the current document. Wait a moment, then close again.");
+			return false;
+		}
+
+		bool succeeded = false;
+		try
+		{
+			succeeded = TryPersistPendingLocalDraftForCloseCore();
+			return succeeded;
+		}
+		finally
+		{
+			if (!succeeded)
+			{
+				ReleaseClosePreparationClaim();
+			}
+		}
+	}
+
+	private void ReleaseClosePreparationClaim()
+	{
+		lock (_clonePublishSync)
+		{
+			lock (_sync)
+			{
+				if (!_disposed)
+				{
+					_closePreparationClaimed = false;
+				}
+			}
+		}
+	}
+
+	private bool TryPersistPendingLocalDraftForCloseCore()
+	{
+		string? path;
+		lock (_sync)
+		{
+			DraftSession session = _session;
+			if (_remoteDocument is not null || _currentPath is null || !session.Dirty)
+			{
+				return true;
+			}
+			path = _currentPath;
+		}
+		if (!TryClaimDocumentMutation(
+			path,
+			requireRepository: false,
+			requireEditing: false,
+			assignPathWhenMissing: false,
+			out DocumentMutationSnapshot snapshot,
+			allowClosePreparation: true))
+		{
+			SendError("The document is changing right now. Please try closing again.");
+			return false;
+		}
+		lock (_sync)
+		{
+			_autosaveTimer?.Dispose();
+			_autosaveTimer = null;
+		}
+
+		try
+		{
+			bool stale;
+			lock (_repoGate)
+			{
+				stale = !IsDocumentMutationCurrentUnderRepositoryGate(snapshot);
+				if (!stale)
+				{
+					File.WriteAllText(snapshot.Path, ApplyLineEnding(snapshot.Text, snapshot.LineEnding));
+				}
+			}
+
+			if (stale || !IsDocumentMutationCurrent(snapshot))
+			{
+				_logger.LogWarning(
+					"Window close was cancelled because the draft identity changed while saving {Path}",
+					snapshot.Path);
+				MarkDirtyAndScheduleDiskAutosave();
+				SendError("The document changed while it was being saved. Please try closing again.");
+				return false;
+			}
+
+			_logger.LogDebug("Saved pending changes to {Path} before closing", snapshot.Path);
+			return true;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Could not save pending changes to {Path} before closing", snapshot.Path);
+			MarkDirtyAndScheduleDiskAutosave();
+			SendError("Could not save your changes, so SpecDesk stayed open.");
+			return false;
+		}
+		finally
+		{
+			ReleaseDocumentMutationLease();
+		}
+	}
+
+	private sealed record DocumentMutationSnapshot(
+		string Path,
+		string? RepoRoot,
+		string Text,
+		string LineEnding,
+		long DraftGeneration,
+		long ContentGeneration,
+		string? Branch,
+		string? BaseBranch);
+
+	private bool TryClaimDocumentMutation(
+		string path,
+		bool requireRepository,
+		bool requireEditing,
+		bool assignPathWhenMissing,
+		out DocumentMutationSnapshot snapshot,
+		bool allowClosePreparation = false)
+	{
+		lock (_sync)
+		{
+			if (_disposed
+				|| (!allowClosePreparation && _closePreparationClaimed)
+				|| _remoteDocument is not null
+				|| _documentMutationLeaseClaimed
+				|| _documentRepositoryTransition
+				|| _documentDiscardTransition
+				|| _documentOpenTransition)
+			{
+				snapshot = null!;
+				return false;
+			}
+			if (assignPathWhenMissing && _currentPath is null)
+			{
+				_currentPath = path;
+			}
+			DraftSession session = _session;
+			if (_currentPath is null
+				|| !string.Equals(_currentPath, path, StringComparison.Ordinal)
+				|| (requireRepository && _repoRoot is null)
+				|| (requireEditing && !IsEditingState(session.State)))
+			{
+				snapshot = null!;
+				return false;
+			}
+
+			snapshot = new DocumentMutationSnapshot(
+				_currentPath,
+				_repoRoot,
+				_text,
+				_lineEnding,
+				Interlocked.Read(ref _draftGeneration),
+				Interlocked.Read(ref _contentGeneration),
+				session.Branch,
+				session.BaseBranch);
+			_documentMutationLeaseClaimed = true;
+			return true;
+		}
+	}
+
+	// Called only while _repoGate is held. It deliberately performs lock-free/volatile reads: taking _sync
+	// here would invert the repository→session lock order. The lease was published under _sync before the
+	// caller entered _repoGate, and every identity transition must reject that lease before mutating.
+	private bool IsDocumentMutationCurrentUnderRepositoryGate(DocumentMutationSnapshot snapshot)
+	{
+		DraftSession session = Volatile.Read(ref _session);
+		return Volatile.Read(ref _documentMutationLeaseClaimed)
+			&& !Volatile.Read(ref _disposed)
+			&& !Volatile.Read(ref _documentRepositoryTransition)
+			&& !Volatile.Read(ref _documentDiscardTransition)
+			&& !Volatile.Read(ref _documentOpenTransition)
+			&& Volatile.Read(ref _remoteDocument) is null
+			&& string.Equals(Volatile.Read(ref _currentPath), snapshot.Path, StringComparison.Ordinal)
+			&& string.Equals(Volatile.Read(ref _repoRoot), snapshot.RepoRoot, StringComparison.Ordinal)
+			&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+			&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+			&& string.Equals(session.Branch, snapshot.Branch, StringComparison.Ordinal)
+			&& string.Equals(session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+	}
+
+	private bool IsDocumentMutationCurrent(DocumentMutationSnapshot snapshot)
+	{
+		lock (_sync)
+		{
+			return _documentMutationLeaseClaimed
+				&& !_disposed
+				&& !_documentRepositoryTransition
+				&& !_documentDiscardTransition
+				&& !_documentOpenTransition
+				&& _remoteDocument is null
+				&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
+				&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+				&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+				&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+				&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
+				&& string.Equals(_session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+		}
+	}
+
+	private void ReleaseDocumentMutationLease()
+	{
+		lock (_sync)
+		{
+			_documentMutationLeaseClaimed = false;
+		}
 	}
 
 	// "Save" writes the working copy to disk — it never commits. Committing a version is the explicit
@@ -255,206 +828,461 @@ public sealed partial class HostController
 	// idle autosave performs; for a plain (unversioned) file it is the ordinary file save.
 	private void OnSave()
 	{
-		string? path = _currentPath ?? _dialogs.PickSaveFile(null);
+		string? path;
+		lock (_sync)
+		{
+			path = _currentPath;
+		}
+		path ??= _dialogs.PickSaveFile(null);
 		if (path is null)
 		{
 			return;
 		}
 
-		// Snapshot the text, its line-ending style, and publish the path under _sync (a matched set,
-		// like LoadFile), so the autosave timer can't observe a torn (path, text) state.
-		string text;
-		string lineEnding;
-		lock (_sync)
+		if (!TryClaimDocumentMutation(
+			path,
+			requireRepository: false,
+			requireEditing: false,
+			assignPathWhenMissing: true,
+			out DocumentMutationSnapshot snapshot))
 		{
-			text = _text;
-			lineEnding = _lineEnding;
-			_currentPath = path;
+			SendError("The document is changing right now. Wait a moment, then save again.");
+			return;
 		}
 
 		try
 		{
-			// Serialize with the autosave timer's write (which holds _repoGate) so the two can't both
-			// write this file at once.
+			bool stale = false;
 			lock (_repoGate)
 			{
-				File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
+				if (!IsDocumentMutationCurrentUnderRepositoryGate(snapshot))
+				{
+					stale = true;
+				}
+				else
+				{
+					File.WriteAllText(path, ApplyLineEnding(snapshot.Text, snapshot.LineEnding));
+				}
+			}
+			if (stale)
+			{
+				SendError("The document changed before it could be saved. Try again.");
+				return;
 			}
 
-			_logger.LogInformation("Saved {Path} to disk ({Length} chars)", path, text.Length);
+			if (!IsDocumentMutationCurrent(snapshot))
+			{
+				SendError("The document changed while it was being saved. Check the open document and try again.");
+				return;
+			}
+			_logger.LogInformation("Saved {Path} to disk ({Length} chars)", path, snapshot.Text.Length);
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			_logger.LogError(ex, "Could not save {Path}", path);
-			Emit(IpcSerializer.SerializeEvent(
-				MessageKinds.Error,
-				new ErrorPayload("Could not save the file.")));
+			SendError("Could not save the file.");
+		}
+		finally
+		{
+			ReleaseDocumentMutationLease();
 		}
 	}
-
 	// "Edit": fork a working branch and enter Draft. The author names the draft (branch) in a prompt
 	// on the webview side; an empty name falls back to the generated one. Until this runs the editor
 	// is read-only — editing is only possible once a branch exists.
+	private sealed record DocumentEditTransition(
+		string Path,
+		string RepoRoot,
+		DraftSession Session,
+		long DraftGeneration,
+		long ContentGeneration);
+
 	private void OnEdit(IpcMessage message)
 	{
-		if (_repoRoot is null || _currentPath is null)
+		if (!TryBeginDocumentEdit(
+			out DocumentEditTransition? transition,
+			out string next,
+			out string? rejection))
 		{
-			SendError("Open a document before editing.");
+			if (rejection is not null)
+			{
+				SendError(rejection);
+			}
 			return;
 		}
 
-		string next = Lifecycle.tryStep(_session.State, "edit");
-		if (next.Length == 0)
-		{
-			_logger.LogDebug("Edit ignored from state {State}", _session.State);
-			return;
-		}
-
-		if (!IsRepoVersioned(_repoRoot))
-		{
-			SendError("This folder isn't set up for versioning yet.");
-			return;
-		}
-
+		DocumentEditTransition activeTransition = transition!;
 		EditPayload? payload = SafeGetPayload<EditPayload>(message);
-
+		bool mutationStarted = false;
+		long mutationGeneration = 0;
 		try
 		{
-			string? toml = WorkflowSeeds.TryReadRepoToml(_repoRoot);
-			string docSlug = WorkflowSeeds.DocSlug(_currentPath);
+			string? toml = WorkflowSeeds.TryReadRepoToml(activeTransition.RepoRoot);
+			string docSlug = WorkflowSeeds.DocSlug(activeTransition.Path);
 			// Prefer the author's chosen draft name (sanitized to a valid ref); else the generated one.
 			string sanitized = WorkflowSeeds.SanitizeBranchName(payload?.BranchName);
 			string branchName = sanitized.Length > 0
 				? sanitized
 				: WorkflowConfig.branchNameForHost(toml, docSlug, DateTimeOffset.Now);
 			string baseBranch = WorkflowConfig.defaultBaseForHost(toml);
-			EditSession session;
+			EditSession? editSession = null;
+			string? checkedOutText = null;
+			bool versioned;
 			lock (_repoGate)
 			{
-				session = _versioning.BeginEdit(_repoRoot, branchName, baseBranch);
-				// Bump while STILL holding _repoGate, immediately after the checkout succeeds — not
-				// later, under _sync alone (see the _draftGeneration field comment). A disk-autosave
-				// callback from a just-discarded draft on this same document could still be queued for
-				// this very gate; bumping here guarantees that by the time it is able to enter _repoGate
-				// itself, the generation has already changed, regardless of when its (path, text)
-				// snapshot was taken.
-				Interlocked.Increment(ref _draftGeneration);
+				if (!IsDocumentEditTransitionCurrentUnderRepositoryGate(activeTransition))
+				{
+					throw new InvalidOperationException("The open document changed before editing could start.");
+				}
+				versioned = _versioning.IsVersioned(activeTransition.RepoRoot);
+				if (versioned)
+				{
+					editSession = _versioning.BeginEdit(
+						activeTransition.RepoRoot,
+						branchName,
+						baseBranch,
+						onMutationStarting: () =>
+						{
+							mutationGeneration = Interlocked.Increment(ref _draftGeneration);
+							mutationStarted = true;
+						});
+					if (!mutationStarted)
+					{
+						throw new InvalidOperationException("Editing did not report its working-line change.");
+					}
+					checkedOutText = ReadBoundedUtf8File(activeTransition.Path);
+				}
 			}
 
+			if (!versioned)
+			{
+				CancelDocumentEditTransition(ref transition);
+				SendError("This folder isn't set up for versioning yet.");
+				return;
+			}
+
+			bool published;
 			lock (_sync)
 			{
-				// A fresh draft has saved nothing and shared nothing yet. Generation is deliberately NOT
-				// touched here: BeginEdit bumped _draftGeneration (above, under _repoGate) but did not rewrite
-				// _text, so the session's Generation stays behind until the first edit updates _text (see
-				// DraftSession.Generation) — the editor still shows the just-published content to edit from.
-				_session = _session with
+				published = IsDocumentEditTransitionCurrentAfterMutation(activeTransition, mutationGeneration);
+				if (published)
 				{
-					State = next,
-					Branch = session.Branch,
-					BaseBranch = session.BaseBranch,
-					Dirty = false,
-					VersionsSaved = 0,
-					VersionsShared = 0,
-				};
+					_text = checkedOutText!;
+					Interlocked.Increment(ref _contentGeneration);
+					_lineEnding = DetectLineEnding(checkedOutText!);
+					_session = new DraftSession(
+						next,
+						editSession!.Branch,
+						editSession.BaseBranch,
+						Dirty: false,
+						VersionsSaved: 0,
+						VersionsShared: 0,
+						Generation: mutationGeneration);
+				}
 			}
-
+			if (!published)
+			{
+				RetireDocumentEditTransitionAfterMutation(ref transition);
+				SendError("The working line changed, but the document could not be opened safely. The document was closed to protect the local files.");
+				return;
+			}
 			_logger.LogInformation(
-				"Editing {Doc} on branch {Branch} (base {Base})", docSlug, session.Branch, session.BaseBranch);
+				"Editing {Doc} on branch {Branch} (base {Base})", docSlug, editSession!.Branch, editSession.BaseBranch);
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.DocLoaded,
+				new DocLoadedPayload(activeTransition.Path, checkedOutText!, DocRelativeDir())));
 			SendLifecycleStatus();
+			lock (_sync)
+			{
+				_documentRepositoryTransition = false;
+			}
+			transition = null;
 		}
 		catch (DirtyWorkingTreeException ex)
 		{
+			if (mutationStarted)
+			{
+				RetireDocumentEditTransitionAfterMutation(ref transition);
+			}
+			else
+			{
+				CancelDocumentEditTransition(ref transition);
+			}
 			// Another document's draft was autosaved to disk but never saved as a version, and a forced
 			// checkout here would have silently wiped it — BeginEdit refused instead. Plain-language,
 			// no git vocabulary (branch names stay in the log, not the message the author sees).
 			_logger.LogError(ex, "Could not start editing: {DirtyBranch} has unsaved autosaved changes", ex.DirtyBranch);
 			SendError("Another document has unsaved changes. Open it and save or discard that draft, then try again.");
 		}
-		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+		catch (ProtectedLocalFileException ex)
 		{
-			_logger.LogError(ex, "Could not start editing");
-			SendError("Could not start editing this document.");
+			CancelDocumentEditTransition(ref transition);
+			_logger.LogWarning(ex, "Could not start editing because local path {Path} would be overwritten", ex.FilePath);
+			SendError("A protected local file is in the way. Move or rename it, then start editing again.");
 		}
+		catch (Exception ex) when (
+			ex is LibGit2SharpException
+				or InvalidOperationException
+				or IOException
+				or UnauthorizedAccessException
+				or ArgumentException
+				or FormatException)
+		{
+			if (mutationStarted)
+			{
+				RetireDocumentEditTransitionAfterMutation(ref transition);
+			}
+			else
+			{
+				CancelDocumentEditTransition(ref transition);
+			}
+			_logger.LogError(ex, "Could not start editing");
+			SendError(mutationStarted
+				? "The working line changed, but editing could not be finished. The document was closed to protect the local files."
+				: "Could not start editing this document.");
+		}
+		finally
+		{
+			if (mutationStarted)
+			{
+				RetireDocumentEditTransitionAfterMutation(ref transition);
+			}
+			else
+			{
+				CancelDocumentEditTransition(ref transition);
+			}
+		}
+	}
+
+	private bool TryBeginDocumentEdit(
+		out DocumentEditTransition? transition,
+		out string next,
+		out string? rejection)
+	{
+		lock (_clonePublishSync)
+		{
+			lock (_remotePublishSync)
+			{
+				lock (_sync)
+				{
+					DraftSession session = _session;
+					next = Lifecycle.tryStep(session.State, "edit");
+					if (_repoRoot is null || _currentPath is null || _remoteDocument is not null)
+					{
+						transition = null;
+						rejection = "Open a document before editing.";
+						return false;
+					}
+					if (next.Length == 0)
+					{
+						_logger.LogDebug("Edit ignored from state {State}", session.State);
+						transition = null;
+						rejection = null;
+						return false;
+					}
+					bool repositoryActionInProgress = _localRepositoryActionCts is not null;
+					if (_disposed
+						|| _closePreparationClaimed
+						|| _documentMutationLeaseClaimed
+						|| _documentOpenTransition
+						|| _documentRepositoryTransition
+						|| _documentDiscardTransition
+						|| _publishInFlight
+						|| repositoryActionInProgress)
+					{
+						transition = null;
+						rejection = repositoryActionInProgress
+							? "Repository work is still finishing. Wait a moment, then start editing again."
+							: "The document is changing right now. Wait a moment, then start editing again.";
+						return false;
+					}
+
+					_documentRepositoryTransition = true;
+					_autosaveTimer?.Dispose();
+					_autosaveTimer = null;
+					transition = new DocumentEditTransition(
+						_currentPath,
+						_repoRoot,
+						session,
+						Interlocked.Read(ref _draftGeneration),
+						Interlocked.Read(ref _contentGeneration));
+					rejection = null;
+					return true;
+				}
+			}
+		}
+	}
+
+	private bool IsDocumentEditTransitionCurrentUnderRepositoryGate(DocumentEditTransition transition)
+	{
+		return Volatile.Read(ref _documentRepositoryTransition)
+			&& !Volatile.Read(ref _disposed)
+			&& !Volatile.Read(ref _documentMutationLeaseClaimed)
+			&& !Volatile.Read(ref _documentOpenTransition)
+			&& !Volatile.Read(ref _documentDiscardTransition)
+			&& Volatile.Read(ref _localRepositoryActionCts) is null
+			&& Volatile.Read(ref _remoteDocument) is null
+			&& string.Equals(Volatile.Read(ref _currentPath), transition.Path, StringComparison.Ordinal)
+			&& string.Equals(Volatile.Read(ref _repoRoot), transition.RepoRoot, StringComparison.Ordinal)
+			&& ReferenceEquals(Volatile.Read(ref _session), transition.Session)
+			&& Interlocked.Read(ref _draftGeneration) == transition.DraftGeneration
+			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
+	}
+
+	private bool IsDocumentEditTransitionCurrentAfterMutation(
+		DocumentEditTransition transition,
+		long mutationGeneration)
+	{
+		return _documentRepositoryTransition
+			&& !_disposed
+			&& !_documentMutationLeaseClaimed
+			&& !_documentOpenTransition
+			&& !_documentDiscardTransition
+			&& _localRepositoryActionCts is null
+			&& _remoteDocument is null
+			&& string.Equals(_currentPath, transition.Path, StringComparison.Ordinal)
+			&& string.Equals(_repoRoot, transition.RepoRoot, StringComparison.Ordinal)
+			&& ReferenceEquals(_session, transition.Session)
+			&& Interlocked.Read(ref _draftGeneration) == mutationGeneration
+			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
+	}
+
+	private void CancelDocumentEditTransition(ref DocumentEditTransition? transition)
+	{
+		if (transition is null)
+		{
+			return;
+		}
+		lock (_sync)
+		{
+			_documentRepositoryTransition = false;
+		}
+		transition = null;
+	}
+
+	private void RetireDocumentEditTransitionAfterMutation(ref DocumentEditTransition? transition)
+	{
+		if (transition is null)
+		{
+			return;
+		}
+		lock (_sync)
+		{
+			Interlocked.Increment(ref _draftGeneration);
+			ClearActiveDocumentStateLocked();
+			_documentRepositoryTransition = false;
+		}
+		DocumentRetirementStateClearedForTest?.Invoke();
+		transition = null;
+		PublishActiveDocumentCleared();
 	}
 
 	// "Discard": abandon the draft — drop to the base branch, delete the working branch, and reload
 	// the document from disk so the editor reflects the published version again.
-	private void OnDiscard()
+	private void OnDiscard(IpcMessage message)
+	{
+		DocDiscardPayload? payload = SafeGetPayload<DocDiscardPayload>(message);
+		long requestId = payload?.RequestId ?? 0;
+		bool succeeded = false;
+		try
+		{
+			succeeded = TryDiscardCurrentDraft();
+		}
+		finally
+		{
+			CompleteDocumentDiscard(requestId, succeeded);
+		}
+	}
+
+	private sealed record DocumentDiscardTransition(
+		string RepoRoot,
+		string Path,
+		string Branch,
+		string BaseBranch,
+		string Text,
+		string LineEnding,
+		DraftSession Session,
+		long DraftGeneration,
+		long ContentGeneration);
+
+	private bool TryDiscardCurrentDraft()
 	{
 		// Gate the lifecycle transition AND the publish-in-flight check atomically under _sync, matching
-		// OnSendForReview/OnUpdateReview's discipline. Computing tryStep from an unlocked read of the session
-		// state, then separately re-entering _sync only to check _publishInFlight (as this used to do), leaves
-		// a window: a review publish's background task settles the state (TryAdvanceReview) and clears
-		// _publishInFlight (ClearPublishInFlight) in two separate, later lock(_sync) acquisitions of its
-		// own — if this method's unlocked tryStep read the PRE-push state (still permitting "discard")
-		// before that background task started, but this method's lock acquisition happens only after the
-		// ENTIRE publish round-trip (including ClearPublishInFlight) has already finished, the stale
-		// `next` survives unrechecked and the only-_publishInFlight check passes (false again by then) —
-		// Discard then deletes the local branch a just-opened PR now depends on. Re-deriving tryStep here,
-		// inside the same critical section as the flag check, closes that: a stale read is impossible
-		// because both the state and the flag are read together, under the one lock a concurrent
-		// TryAdvanceReview/ClearPublishInFlight also uses.
-		string? repoRoot;
-		string? path;
-		string? branch;
-		string? baseBranch;
+		// OnSendForReview/OnUpdateReview's discipline. Once claimed, reject every editor.changed until the
+		// checkout either publishes its reloaded identity or restores the old editable session.
+		DocumentDiscardTransition transition;
+		long discardGeneration;
 		lock (_sync)
 		{
 			DraftSession session = _session;
 			string next = Lifecycle.tryStep(session.State, "discard");
-			if (next.Length == 0)
+			if (next.Length == 0 || _documentDiscardTransition)
 			{
-				return;
+				return false;
+			}
+			if (_closePreparationClaimed
+				|| _documentMutationLeaseClaimed
+				|| _documentRepositoryTransition
+				|| _documentOpenTransition)
+			{
+				_logger.LogDebug("Discard ignored: the document is still being saved or changed");
+				SendError("The document is changing right now. Wait a moment, then discard the draft again.");
+				return false;
 			}
 
 			if (_publishInFlight)
 			{
-				// A Send for review is publishing this draft right now. Discarding would delete the local
-				// branch, which — if the push has already opened the PR — orphans it on GitHub. Ignore the
-				// discard; the send settles to In review in a moment, where Discard is no longer offered.
 				_logger.LogDebug("Discard ignored: a review publish is in flight");
-				return;
+				return false;
 			}
 
-			repoRoot = _repoRoot;
-			path = _currentPath;
-			branch = session.Branch;
-			baseBranch = session.BaseBranch;
-		}
+			string? repoRoot = _repoRoot;
+			string? path = _currentPath;
+			string? branch = session.Branch;
+			string? baseBranch = session.BaseBranch;
+			if (repoRoot is null || path is null || branch is null || baseBranch is null)
+			{
+				return false;
+			}
 
-		if (repoRoot is null || path is null || branch is null || baseBranch is null)
-		{
-			return;
+			_documentDiscardTransition = true;
+			// Pause the timer, but keep Dirty=true until checkout AND reload have both succeeded. Clearing it
+			// here made a failed discard look safely persisted to the close handshake.
+			_autosaveTimer?.Dispose();
+			_autosaveTimer = null;
+			transition = new DocumentDiscardTransition(
+				repoRoot,
+				path,
+				branch,
+				baseBranch,
+				_text,
+				_lineEnding,
+				session,
+				Interlocked.Read(ref _draftGeneration),
+				Interlocked.Read(ref _contentGeneration));
+			discardGeneration = transition.DraftGeneration;
 		}
 
 		try
 		{
-			CancelAutosave();
-
-			// Deliberately NOT calling LoadFile here: it re-reads the file and resets _text/_session in a
-			// LATER, separate lock(_sync) block, after ResolveRepoRoot. Reading the reverted content
-			// while still holding _repoGate (right here) means the read that _text below is set from is
-			// never racing a second, independent disk read.
 			string revertedText;
 			lock (_repoGate)
 			{
-				_versioning.Discard(repoRoot, branch, baseBranch);
-				// Bump before the read: even if the read below throws, the revert already happened, so
-				// a queued autosave must not be allowed to treat its stale snapshot as still current.
-				Interlocked.Increment(ref _draftGeneration);
-				revertedText = File.ReadAllText(path);
+				// Keep the working branch ref until the published file has been reloaded. If that read fails,
+				// RestoreDiscardFailure can check the same draft back out before autosave resumes; deleting the
+				// branch first would leave no safe destination for the retained in-memory text.
+				_versioning.BeginDiscard(transition.RepoRoot, transition.Branch, transition.BaseBranch);
+				discardGeneration = Interlocked.Increment(ref _draftGeneration);
+				revertedText = File.ReadAllText(transition.Path);
+				_versioning.CompleteDiscard(
+					transition.RepoRoot, transition.Branch, transition.BaseBranch);
 			}
 
 			lock (_sync)
 			{
 				_text = revertedText;
-				// Re-detected from the reverted file's raw content, same as LoadFile.
+				Interlocked.Increment(ref _contentGeneration);
 				_lineEnding = DetectLineEnding(revertedText);
-				// A discarded draft is a fresh Published session that has saved and shared nothing. Dirty is
-				// false here (CancelAutosave, above, already cleared it); the fresh record makes that explicit.
-				// Generation is tagged with the (already bumped, above) checkout _text is now current for —
-				// see DraftSession.Generation for why RunDiskAutosave's snapshot must capture this companion
-				// rather than _draftGeneration directly.
 				_session = new DraftSession(
 					Lifecycle.stateName(Lifecycle.State.Published),
 					Branch: null,
@@ -463,29 +1291,199 @@ public sealed partial class HostController
 					VersionsSaved: 0,
 					VersionsShared: 0,
 					Generation: Interlocked.Read(ref _draftGeneration));
+				_documentDiscardTransition = false;
 			}
 
-			_logger.LogInformation("Discarded draft on {Branch}", branch);
+			_logger.LogInformation("Discarded draft on {Branch}", transition.Branch);
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.DocLoaded,
-				new DocLoadedPayload(path, revertedText, DocRelativeDir())));
+				new DocLoadedPayload(transition.Path, revertedText, DocRelativeDir())));
 			SendWorkspaceContext();
 			SendLifecycleStatus();
+			return true;
 		}
 		catch (LibGit2SharpException ex)
 		{
 			_logger.LogError(ex, "Could not discard draft");
-			SendError("Could not discard your draft.");
+			bool restored = RestoreDiscardFailure(transition, discardGeneration);
+			SendDiscardFailure(restored);
+			return false;
+		}
+		catch (ProtectedLocalFileException ex)
+		{
+			_logger.LogWarning(ex, "Could not discard because local path {Path} would be overwritten", ex.FilePath);
+			bool restored = RestoreDiscardFailure(transition, discardGeneration);
+			SendError(restored
+				? "A protected local file is in the way. Move or rename it, then discard the draft again."
+				: "Could not restore your draft safely, so the document was closed.");
+			return false;
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
-			// The revert itself succeeded (this only runs after _versioning.Discard returned); only the
-			// immediate re-read of the reverted file failed (vanished, locked, unreadable).
-			_logger.LogError(ex, "Discarded draft on {Branch}, but could not reload {Path}", branch, path);
-			SendError("Discarded your draft, but could not reload the file.");
+			_logger.LogError(ex, "Could not discard or reload draft {Path}", transition.Path);
+			bool restored = RestoreDiscardFailure(transition, discardGeneration);
+			SendDiscardFailure(restored);
+			return false;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Unexpected failure discarding draft");
+			bool restored = RestoreDiscardFailure(transition, discardGeneration);
+			SendDiscardFailure(restored);
+			return false;
 		}
 	}
 
+	private bool RestoreDiscardFailure(
+		DocumentDiscardTransition transition,
+		long restoreGeneration)
+	{
+		bool identityRestored = false;
+		bool restoreMutationStarted = false;
+		try
+		{
+			lock (_repoGate)
+			{
+				if (!IsDocumentDiscardTransitionCurrentUnderRepositoryGate(
+					transition, restoreGeneration))
+				{
+					throw new InvalidOperationException(
+						"The document changed before its draft working line could be restored.");
+				}
+				string? currentBranch = _versioning.CurrentBranch(transition.RepoRoot);
+				if (!string.Equals(currentBranch, transition.Branch, StringComparison.Ordinal))
+				{
+					_versioning.BeginEdit(
+						transition.RepoRoot,
+						transition.Branch,
+						transition.BaseBranch,
+						onMutationStarting: () =>
+						{
+							restoreGeneration = Interlocked.Increment(ref _draftGeneration);
+							restoreMutationStarted = true;
+						});
+					if (!restoreMutationStarted)
+					{
+						throw new InvalidOperationException(
+							"Restoring the draft did not report its working-line change.");
+					}
+				}
+				identityRestored = string.Equals(
+					_versioning.CurrentBranch(transition.RepoRoot),
+					transition.Branch,
+					StringComparison.Ordinal);
+				if (!identityRestored)
+				{
+					throw new InvalidOperationException("The draft working line was not restored.");
+				}
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(
+				ex,
+				"Could not restore draft branch {Branch} after discard failed (mutation started: {MutationStarted})",
+				transition.Branch,
+				restoreMutationStarted);
+		}
+
+		if (!identityRestored)
+		{
+			RetireFailedDiscardRestoration();
+			return false;
+		}
+
+		bool published;
+		bool reschedule = false;
+		lock (_sync)
+		{
+			published = IsDocumentDiscardTransitionCurrent(transition, restoreGeneration);
+			if (published)
+			{
+				_session = _session with { Generation = Interlocked.Read(ref _draftGeneration) };
+				_documentDiscardTransition = false;
+				reschedule = _session.Dirty;
+			}
+		}
+		if (!published)
+		{
+			RetireFailedDiscardRestoration();
+			return false;
+		}
+		if (reschedule)
+		{
+			MarkDirtyAndScheduleDiskAutosave();
+		}
+		return true;
+	}
+
+	private bool IsDocumentDiscardTransitionCurrentUnderRepositoryGate(
+		DocumentDiscardTransition transition,
+		long generation)
+	{
+		return Volatile.Read(ref _documentDiscardTransition)
+			&& !Volatile.Read(ref _disposed)
+			&& !Volatile.Read(ref _documentMutationLeaseClaimed)
+			&& !Volatile.Read(ref _documentOpenTransition)
+			&& !Volatile.Read(ref _documentRepositoryTransition)
+			&& Volatile.Read(ref _remoteDocument) is null
+			&& string.Equals(Volatile.Read(ref _currentPath), transition.Path, StringComparison.Ordinal)
+			&& string.Equals(Volatile.Read(ref _repoRoot), transition.RepoRoot, StringComparison.Ordinal)
+			&& ReferenceEquals(Volatile.Read(ref _session), transition.Session)
+			&& string.Equals(Volatile.Read(ref _text), transition.Text, StringComparison.Ordinal)
+			&& string.Equals(Volatile.Read(ref _lineEnding), transition.LineEnding, StringComparison.Ordinal)
+			&& Interlocked.Read(ref _draftGeneration) == generation
+			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
+	}
+
+	private bool IsDocumentDiscardTransitionCurrent(
+		DocumentDiscardTransition transition,
+		long generation)
+	{
+		return _documentDiscardTransition
+			&& !_disposed
+			&& !_documentMutationLeaseClaimed
+			&& !_documentOpenTransition
+			&& !_documentRepositoryTransition
+			&& _remoteDocument is null
+			&& string.Equals(_currentPath, transition.Path, StringComparison.Ordinal)
+			&& string.Equals(_repoRoot, transition.RepoRoot, StringComparison.Ordinal)
+			&& ReferenceEquals(_session, transition.Session)
+			&& string.Equals(_text, transition.Text, StringComparison.Ordinal)
+			&& string.Equals(_lineEnding, transition.LineEnding, StringComparison.Ordinal)
+			&& Interlocked.Read(ref _draftGeneration) == generation
+			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
+	}
+
+	private void RetireFailedDiscardRestoration()
+	{
+		lock (_sync)
+		{
+			Interlocked.Increment(ref _draftGeneration);
+			ClearActiveDocumentStateLocked();
+			_documentDiscardTransition = false;
+		}
+		DocumentRetirementStateClearedForTest?.Invoke();
+		PublishActiveDocumentCleared();
+	}
+
+	private void SendDiscardFailure(bool restored)
+	{
+		SendError(restored
+			? "Could not discard your draft. Your unsaved changes are still protected."
+			: "The working line changed, but the draft could not be reopened safely. The document was closed to protect the local files.");
+	}
+
+	private void CompleteDocumentDiscard(long requestId, bool succeeded)
+	{
+		if (requestId <= 0)
+		{
+			return;
+		}
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.DocDiscardCompleted,
+			new DocDiscardCompletedPayload(requestId, succeeded)));
+	}
 	// Whether the given lifecycle state is one in which the document is being edited on a working
 	// branch (so disk autosave should run and "Save a version" is allowed). Takes the state explicitly so
 	// callers pass the value from a session snapshot they already read, rather than re-reading _session.
@@ -538,10 +1536,7 @@ public sealed partial class HostController
 	// reproduce the race with a concurrent Discard this method's generation re-check guards against.
 	internal void RunDiskAutosave()
 	{
-		string text;
-		string path;
-		string lineEnding;
-		long generation;
+		string? path;
 		lock (_sync)
 		{
 			DraftSession session = _session;
@@ -549,150 +1544,203 @@ public sealed partial class HostController
 			{
 				return;
 			}
-
+			path = _currentPath;
+		}
+		if (!TryClaimDocumentMutation(
+			path,
+			requireRepository: true,
+			requireEditing: true,
+			assignPathWhenMissing: false,
+			out DocumentMutationSnapshot snapshot))
+		{
+			MarkDirtyAndScheduleDiskAutosave();
+			return;
+		}
+		lock (_sync)
+		{
 			_autosaveTimer?.Dispose();
 			_autosaveTimer = null;
-			text = _text;
-			path = _currentPath;
-			lineEnding = _lineEnding;
-			// Capture the session's Generation (the checkout this text was written against), NOT a live read
-			// of _draftGeneration here — see DraftSession.Generation for why the two can briefly disagree,
-			// and why only the former is safe to compare against later.
-			generation = session.Generation;
 		}
 
-		// Outer net: this runs on the Timer thread, which has no last-resort catch of its own (unlike the
-		// message pump's OnMessage), so ANY exception escaping — an unexpected IO subtype, or a fault from
-		// the SendError transport in the inner catch — would go unobserved and terminate the process.
+		bool rearmAutosave = false;
 		try
 		{
 			try
 			{
-				// Serialize the disk write with repo mutations: a "Save a version" commit stages the
-				// working tree, and writing the file mid-stage would race it.
+				bool stale;
 				lock (_repoGate)
 				{
-					// Re-check the draft's identity immediately before writing: this callback may have
-					// been queued waiting for _repoGate while Discard (or a new Edit) ran and released it
-					// first, in which case the snapshot above is for a draft that no longer exists — write
-					// it now and it resurrects discarded content on the (now different) checked-out
-					// branch. Lock-free by design: _repoGate must never be held while also taking _sync.
-					// Comparing against the LIVE _draftGeneration (not the session's captured Generation,
-					// which is what the snapshot above holds) is deliberate: it is the authoritative value a
-					// checkout's own _repoGate section bumps, so it is guaranteed current here regardless of
-					// whether that checkout's later _sync-guarded _text update has happened yet.
-					if (Interlocked.Read(ref _draftGeneration) != generation)
+					stale = !IsDocumentMutationCurrentUnderRepositoryGate(snapshot);
+					if (!stale)
 					{
-						_logger.LogDebug(
-							"Disk autosave for {Path} skipped: the draft changed while this write was queued", path);
-						return;
+						File.WriteAllText(
+							snapshot.Path,
+							ApplyLineEnding(snapshot.Text, snapshot.LineEnding));
 					}
-
-					File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
+				}
+				if (stale || !IsDocumentMutationCurrent(snapshot))
+				{
+					rearmAutosave = true;
+					_logger.LogDebug(
+						"Disk autosave for {Path} skipped: the document content changed while this write was queued",
+						snapshot.Path);
+					return;
 				}
 
-				_logger.LogDebug("Disk-autosaved {Path} ({Length} chars)", path, text.Length);
+				_logger.LogDebug(
+					"Disk-autosaved {Path} ({Length} chars)", snapshot.Path, snapshot.Text.Length);
 			}
 			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 			{
-				_logger.LogError(ex, "Disk autosave failed for {Path}", path);
+				rearmAutosave = true;
+				_logger.LogError(ex, "Disk autosave failed for {Path}", snapshot.Path);
 				SendError("Could not save your changes.");
 			}
 		}
 		catch (Exception ex)
 		{
+			rearmAutosave = true;
 			_logger.LogError(ex, "Unexpected fault in the disk-autosave timer callback");
 		}
+		finally
+		{
+			ReleaseDocumentMutationLease();
+			if (rearmAutosave)
+			{
+				MarkDirtyAndScheduleDiskAutosave();
+			}
+		}
 	}
-
-	// "Save a version": flush the working copy to disk and commit it (document + any pasted assets)
-	// with the author's version note. The only place a commit is created. A no-op (nothing changed
-	// since the last version) is reported plainly rather than as an error.
 	private void OnSaveVersion(IpcMessage message)
 	{
 		SaveVersionPayload? payload = SafeGetPayload<SaveVersionPayload>(message);
-
-		string next = Lifecycle.tryStep(_session.State, "saveVersion");
-		if (next.Length == 0)
-		{
-			_logger.LogDebug("Save a version ignored from state {State}", _session.State);
-			return;
-		}
-
-		string text;
-		string path;
-		string repoRoot;
-		string lineEnding;
+		string? path;
 		lock (_sync)
 		{
-			if (_repoRoot is null || _currentPath is null)
-			{
-				return;
-			}
-
-			// This commit supersedes any pending disk autosave.
-			_autosaveTimer?.Dispose();
-			_autosaveTimer = null;
-			text = _text;
 			path = _currentPath;
-			repoRoot = _repoRoot;
-			lineEnding = _lineEnding;
 		}
-
-		if (!IsRepoVersioned(repoRoot))
+		if (path is null
+			|| !TryClaimDocumentMutation(
+				path,
+				requireRepository: true,
+				requireEditing: true,
+				assignPathWhenMissing: false,
+				out DocumentMutationSnapshot snapshot))
 		{
-			SendError("This folder isn't set up for versioning yet.");
+			SendError("The document is changing right now. Wait a moment, then save the version again.");
 			return;
 		}
 
+		lock (_sync)
+		{
+			_autosaveTimer?.Dispose();
+			_autosaveTimer = null;
+		}
 		string note = !string.IsNullOrWhiteSpace(payload?.Note)
 			? payload!.Note
-			: WorkflowSeeds.SuggestedVersionNote(repoRoot, path);
+			: WorkflowSeeds.SuggestedVersionNote(snapshot.RepoRoot!, snapshot.Path);
+		bool rearmAutosave = false;
 
 		try
 		{
-			CommitResult result;
+			CommitResult? result = null;
+			bool stale = false;
+			bool versioned = true;
 			lock (_repoGate)
 			{
-				File.WriteAllText(path, ApplyLineEnding(text, lineEnding));
-				result = _versioning.SaveVersion(repoRoot, note);
+				if (!IsDocumentMutationCurrentUnderRepositoryGate(snapshot))
+				{
+					stale = true;
+				}
+				else if (!_versioning.IsVersioned(snapshot.RepoRoot!))
+				{
+					versioned = false;
+				}
+				else
+				{
+					File.WriteAllText(
+						snapshot.Path,
+						ApplyLineEnding(snapshot.Text, snapshot.LineEnding));
+					result = _versioning.SaveVersion(snapshot.RepoRoot!, note);
+				}
 			}
 
+			if (stale || !IsDocumentMutationCurrent(snapshot))
+			{
+				rearmAutosave = true;
+				SendError("The document changed before this version could be saved. Check the open document and try again.");
+				return;
+			}
+			if (!versioned)
+			{
+				rearmAutosave = true;
+				SendError("This folder isn't set up for versioning yet.");
+				return;
+			}
+
+			CommitResult saved = result!;
+			bool published;
 			lock (_sync)
 			{
-				DraftSession session = _session;
-				// Save a version is a self-transition in every editing state (Draft→Draft, InReview→
-				// InReview, …) — it never changes the lifecycle state, so we deliberately do NOT write State
-				// here. `next` was computed from a possibly-stale read (this commit ran under _repoGate, not
-				// _sync); a Send / Update review completing meanwhile may have advanced State (e.g.
-				// Draft→InReview), and writing the stale `next` would clobber that. Either way the working
-				// copy now matches the last saved version (a no-op commit means it already did), so clear
-				// Dirty; a committed version is one more a later Send / Update review can share.
-				_session = session with
+				published = _documentMutationLeaseClaimed
+					&& !_disposed
+					&& !_documentRepositoryTransition
+					&& !_documentDiscardTransition
+					&& !_documentOpenTransition
+					&& _remoteDocument is null
+					&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
+					&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+					&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+					&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+					&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
+					&& string.Equals(_session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+				if (published)
 				{
-					Dirty = false,
-					VersionsSaved = result.Committed ? session.VersionsSaved + 1 : session.VersionsSaved,
-				};
+					DraftSession session = _session;
+					_session = session with
+					{
+						Dirty = false,
+						VersionsSaved = saved.Committed ? session.VersionsSaved + 1 : session.VersionsSaved,
+					};
+				}
+			}
+			if (!published)
+			{
+				rearmAutosave = true;
+				SendError("The document changed while this version was being saved. Check the open document before continuing.");
+				return;
 			}
 
-			if (result.Committed)
+			if (saved.Committed)
 			{
-				_logger.LogInformation("Saved a version of {Path} as {Sha}: {Note}", path, result.Sha, note);
+				_logger.LogInformation("Saved a version of {Path} as {Sha}: {Note}", snapshot.Path, saved.Sha, note);
 				SendTransientStatus("Version saved");
 			}
 			else
 			{
-				_logger.LogInformation("Save a version: nothing changed for {Path}", path);
+				_logger.LogInformation("Save a version: nothing changed for {Path}", snapshot.Path);
 				SendTransientStatus("No changes since the last version");
 			}
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or LibGit2SharpException)
+		catch (Exception ex) when (
+			ex is IOException
+				or UnauthorizedAccessException
+				or LibGit2SharpException
+				or InvalidOperationException)
 		{
-			_logger.LogError(ex, "Could not save a version of {Path}", path);
+			rearmAutosave = true;
+			_logger.LogError(ex, "Could not save a version of {Path}", snapshot.Path);
 			SendError("Could not save this version.");
 		}
+		finally
+		{
+			ReleaseDocumentMutationLease();
+			if (rearmAutosave)
+			{
+				MarkDirtyAndScheduleDiskAutosave();
+			}
+		}
 	}
-
 	// Reply to the webview's request for a version note to prefill the "Save a version" prompt. The
 	// reply is correlated by the request id (the webview awaits it).
 	private void OnSuggestVersionNote(IpcMessage message)
@@ -742,7 +1790,12 @@ public sealed partial class HostController
 	// recordRecent: whether a successful load adds this file to the workspace "recent" list. True for a user
 	// open (the toolbar/Start "Open…", a tree click); false for the initial auto-opened welcome doc, which the
 	// author never chose and which would otherwise sit permanently at the top of Recent.
-	private void LoadFile(string path, bool recordRecent = true)
+	private bool LoadFile(
+		string path,
+		bool recordRecent = true,
+		string? resumedBranch = null,
+		string? resumedBaseBranch = null,
+		long navigationGeneration = 0)
 	{
 		string text;
 		try
@@ -761,7 +1814,17 @@ public sealed partial class HostController
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.Error,
 				new ErrorPayload("Could not open the file.")));
-			return;
+			return false;
+		}
+
+		lock (_sync)
+		{
+			if (_disposed
+				|| (navigationGeneration > 0
+					&& !AcceptWorkspaceNavigationIntentLocked(navigationGeneration)))
+			{
+				return false;
+			}
 		}
 
 		// Reset any in-progress draft this HOST OBJECT remembers so an autosave can never commit the
@@ -776,15 +1839,30 @@ public sealed partial class HostController
 		// fresh — silently resetting the very autosaved content this restores. Resolve that FIRST load's
 		// lifecycle from the repo's actual checked-out branch; every later "Open" this session already
 		// has an authoritative in-memory state of its own (see _lifecycleResolvedOnce).
-		(string state, string? branch, string? baseBranch) = _lifecycleResolvedOnce
-			? (Lifecycle.stateName(Lifecycle.State.Published), null, null)
-			: ResolveInitialLifecycle(repoRoot);
-		_lifecycleResolvedOnce = true;
+		(string state, string? branch, string? baseBranch) = !string.IsNullOrWhiteSpace(resumedBranch)
+			? (Lifecycle.stateName(Lifecycle.State.Draft), resumedBranch, resumedBaseBranch)
+			: _lifecycleResolvedOnce
+				? (Lifecycle.stateName(Lifecycle.State.Published), null, null)
+				: ResolveInitialLifecycle(repoRoot);
 		lock (_sync)
 		{
+			if (_disposed
+				|| (navigationGeneration > 0
+					&& navigationGeneration != _workspaceNavigationIntentGeneration))
+			{
+				return false;
+			}
+			// A successful load publishes a new document identity even when it reopens the same path. A review
+			// push belongs to the identity that started it, so it must no longer block Edit on this replacement.
+			// Retiring only its claim (rather than weakening TryBeginDocumentEdit's general publish gate) keeps
+			// same-document actions single-flight. The claim id prevents the old task's terminal cleanup from
+			// clearing a newer publish, while _draftGeneration prevents its result from advancing a new draft.
+			RetirePublishInFlightLocked();
+			_lifecycleResolvedOnce = true;
 			// Publish the document fields as one matched set under the lock, so a still-running autosave
 			// timer can never snapshot a torn (new path, old text) pair and write across documents.
 			_text = text;
+			Interlocked.Increment(ref _contentGeneration);
 			_currentPath = path;
 			_repoRoot = repoRoot;
 			_remoteDocument = null;
@@ -831,6 +1909,7 @@ public sealed partial class HostController
 		{
 			SendLifecycleStatus();
 		}
+		return true;
 	}
 
 	private static string ReadBoundedUtf8File(string path)
@@ -927,19 +2006,8 @@ public sealed partial class HostController
 	{
 		ImagePastePayload? payload = SafeGetPayload<ImagePastePayload>(message);
 		string? id = message.Id;
-		if (payload is null || _currentPath is null || _repoRoot is null)
+		if (payload is null)
 		{
-			ReplyInserted(id, string.Empty);
-			return;
-		}
-
-		// The editor is navigable (caret/selection) while read-only, so a paste can fire before the
-		// author has started a draft. Ignore it: with no working branch the image has nowhere to live,
-		// and inserting would mutate a read-only/published document and write a stray file into the repo.
-		DraftSession session = _session;
-		if (!IsEditingState(session.State))
-		{
-			_logger.LogDebug("Image paste ignored: not editing (state {State})", session.State);
 			ReplyInserted(id, string.Empty);
 			return;
 		}
@@ -955,8 +2023,24 @@ public sealed partial class HostController
 			return;
 		}
 
-		string repoRoot = _repoRoot;
-		string docPath = _currentPath;
+		string? path;
+		lock (_sync)
+		{
+			path = _currentPath;
+		}
+		if (path is null
+			|| !TryClaimDocumentMutation(
+				path,
+				requireRepository: true,
+				requireEditing: true,
+				assignPathWhenMissing: false,
+				out DocumentMutationSnapshot snapshot))
+		{
+			_logger.LogDebug("Image paste ignored because the document identity is changing or is read-only");
+			ReplyInserted(id, string.Empty);
+			return;
+		}
+
 		string? originalName = payload.OriginalName;
 		string? mime = payload.Mime;
 		_logger.LogInformation(
@@ -968,15 +2052,28 @@ public sealed partial class HostController
 		{
 			try
 			{
-				// Serialize the image file write with every other repo mutation (begin-edit, autosave,
-				// save-version, discard) under _repoGate: libgit2 is not safe for concurrent writes, and
-				// a paste landing mid-stage/checkout would corrupt the staged tree or the new asset.
-				string? markdown;
+				string? markdown = null;
+				bool stale;
 				lock (_repoGate)
 				{
-					markdown = _inserter(repoRoot, docPath, bytes, originalName, mime);
+					stale = !IsDocumentMutationCurrentUnderRepositoryGate(snapshot);
+					if (!stale)
+					{
+						markdown = _inserter(
+							snapshot.RepoRoot!,
+							snapshot.Path,
+							bytes,
+							originalName,
+							mime);
+					}
 				}
 
+				if (stale || !IsDocumentMutationCurrent(snapshot))
+				{
+					_logger.LogWarning("Image insert result suppressed because the document changed");
+					ReplyInserted(id, string.Empty);
+					return;
+				}
 				if (markdown is null)
 				{
 					_logger.LogWarning("Image insert failed (name={Name}, mime={Mime})", originalName, mime);
@@ -984,23 +2081,23 @@ public sealed partial class HostController
 						MessageKinds.Error,
 						new ErrorPayload("Could not insert the image.")));
 					ReplyInserted(id, string.Empty);
+					return;
 				}
-				else
-				{
-					_logger.LogInformation("Image inserted: {Markdown}", markdown);
-					ReplyInserted(id, markdown);
-				}
+
+				_logger.LogInformation("Image inserted: {Markdown}", markdown);
+				ReplyInserted(id, markdown);
 			}
 			catch (Exception ex)
 			{
-				// Never leave the awaiting webview hanging on an unobserved task fault: log, and reply
-				// empty so the paste resolves with no insertion.
 				_logger.LogError(ex, "Image insert task faulted (name={Name}, mime={Mime})", originalName, mime);
 				ReplyInserted(id, string.Empty);
 			}
+			finally
+			{
+				ReleaseDocumentMutationLease();
+			}
 		});
 	}
-
 	// Compare the working copy (head) against the requested base and send the structural diff for the
 	// editors to overlay (PoC-6). The webview overlay owns which base to ask for (DiffRequestPayload.Base);
 	// only "lastVersion" (the file's last committed version, local only — no GitHub) is wired so far.

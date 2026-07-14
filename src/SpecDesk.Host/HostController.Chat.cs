@@ -136,8 +136,9 @@ public sealed partial class HostController
 
 	// Called with _chatAgentGate held so sign-out/account replacement cannot dispose the session while a
 	// turn is starting or streaming. The host hands the token directly to the factory; the SDK retains it
-	// only in process for this account session. SpecDesk never logs, persists, or sends it over IPC, and
-	// disposing the session on sign-out/account replacement releases it.
+	// only in process for this account session. The auth layer persists the token with Windows DPAPI; this
+	// chat path does not log it, create a separate persisted copy, or send it over IPC. Disposing the session
+	// on sign-out/account replacement releases it.
 	private async Task<bool> StreamChatAgentAsync(
 		IChatAgent agent,
 		string text,

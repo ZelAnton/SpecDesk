@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Contracts;
+using SpecDesk.Git;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
@@ -97,6 +98,17 @@ public sealed class HostControllerRepositoryBrowseTests
 			CancellationToken cancellationToken = default) => Task.FromResult("text");
 	}
 
+	private sealed class NoopCloner : IRepositoryCloner
+	{
+		public bool IsCloned(string destinationPath) => false;
+		public bool IsCloneOf(string destinationPath, string url) => false;
+		public bool IsCloneOfAtBranch(
+			string destinationPath, string url, string? expectedCurrentBranch) => false;
+		public string CloneOrReuse(
+			string url, string destinationPath, string? accessToken, CancellationToken ct) =>
+			throw new InvalidOperationException("Authorization should remain pending.");
+	}
+
 	private sealed class BlockingSignInAuth : IGitHubAuth
 	{
 		private bool _signedIn;
@@ -184,6 +196,24 @@ public sealed class HostControllerRepositoryBrowseTests
 		}
 	}
 
+	private sealed class FailingTreeCatalog : IGitHubRepositoryCatalog
+	{
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult(new GitHubRepositoryMetadata("main"));
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			Task.FromException<IReadOnlyList<GitHubRepositoryEntry>>(
+				new HttpRequestException("Remote tree failed."));
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) =>
+			Task.FromResult("text");
+	}
+
 	[Test]
 	public void RemoteTree_PreservesCaseDistinctGitHubPaths()
 	{
@@ -263,7 +293,7 @@ public sealed class HostControllerRepositoryBrowseTests
 
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
-			TreePayload tree = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree)!;
+			TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 			string[] expectedTree = ["docs", "README.md"];
 			Assert.That(tree.Nodes.Select(node => node.Name), Is.EqualTo(expectedTree));
 			TreeNode json = tree.Nodes.Single(node => node.Name == "docs").Children.Single();
@@ -300,11 +330,17 @@ public sealed class HostControllerRepositoryBrowseTests
 			{
 				controller.OnMessage(IpcSerializer.SerializeEvent(mutation));
 			}
-			lock (gate)
-			{
-				Assert.That(sent.Count(json => IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.Error),
-					Is.EqualTo(mutations.Length));
-			}
+			bool allErrorsPublished = SpinWait.SpinUntil(
+				() =>
+				{
+					lock (gate)
+					{
+						return sent.Count(json =>
+							IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.Error) == mutations.Length;
+					}
+				},
+				TimeSpan.FromSeconds(2));
+			Assert.That(allErrorsPublished, Is.True);
 		}
 		finally
 		{
@@ -340,7 +376,7 @@ public sealed class HostControllerRepositoryBrowseTests
 
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs", "feature/Case-Sensitive")));
-			_ = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree);
+			_ = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0);
 
 			Assert.That(catalog.LastTreeBranch, Is.EqualTo("feature/Case-Sensitive"));
 		}
@@ -381,7 +417,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			controller.OnMessage(browse);
 			Assert.That(catalog.FirstTreeStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 			controller.OnMessage(browse);
-			TreePayload latest = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree)!;
+			TreePayload latest = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 			Assert.That(latest.Nodes.Single().Name, Is.EqualTo("new.md"));
 			catalog.ReleaseFirstTree.SetResult();
 			Thread.Sleep(100);
@@ -393,8 +429,9 @@ public sealed class HostControllerRepositoryBrowseTests
 					.Where(message => message?.Kind == MessageKinds.Tree)
 					.Select(message => message!.GetPayload<TreePayload>()!)
 					.ToArray();
-				Assert.That(trees, Has.Length.EqualTo(1));
-				Assert.That(trees[0].Nodes.Single().Name, Is.EqualTo("new.md"));
+				TreePayload[] completedTrees = trees.Where(tree => tree.Nodes.Count > 0).ToArray();
+				Assert.That(completedTrees, Has.Length.EqualTo(1));
+				Assert.That(completedTrees[0].Nodes.Single().Name, Is.EqualTo("new.md"));
 			}
 		}
 		finally
@@ -440,8 +477,18 @@ public sealed class HostControllerRepositoryBrowseTests
 			Assert.That(new WorkspaceStore(Path.Combine(root, "workspace.json")).State().Repositories, Is.Empty);
 			lock (gate)
 			{
-				Assert.That(sent.Any(json => IpcSerializer.TryDeserialize(json)?.Kind is MessageKinds.Tree or MessageKinds.Error),
-					Is.False);
+				IpcMessage[] messages = sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null)
+					.Select(message => message!)
+					.ToArray();
+				TreePayload[] trees = messages
+					.Where(message => message.Kind == MessageKinds.Tree)
+					.Select(message => message.GetPayload<TreePayload>()!)
+					.ToArray();
+				Assert.That(trees, Has.Length.EqualTo(1));
+				Assert.That(trees[0].Nodes, Is.Empty);
+				Assert.That(messages.Select(message => message.Kind), Has.None.EqualTo(MessageKinds.Error));
 			}
 		}
 		finally
@@ -474,6 +521,7 @@ public sealed class HostControllerRepositoryBrowseTests
 
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.RepoBrowse, new RepoBrowsePayload(repo.Id)));
+			_ = WaitForTree(sent, gate, tree => tree.Root == repo.Id && tree.Nodes.Count == 0);
 			Assert.That(catalog.FirstTreeStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 			controller.OnMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.RepoUnregister, new UnregisterRepoPayload(repo.Id)));
@@ -490,7 +538,11 @@ public sealed class HostControllerRepositoryBrowseTests
 
 			lock (gate)
 			{
-				Assert.That(sent, Is.Empty);
+				Assert.That(sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null)
+					.Select(message => message!.Kind),
+					Has.None.EqualTo(MessageKinds.Tree));
 			}
 		}
 		finally
@@ -526,7 +578,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			store.UpsertRepoClone(repo, new RegisteredClone("copy", Path.Combine(root, "copy"), []), "main");
 			catalog.ReleaseFirstTree.SetResult();
 
-			TreePayload tree = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree)!;
+			TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 			Assert.That(tree.Nodes.Single().Name, Is.EqualTo("old.md"));
 		}
 		finally
@@ -592,8 +644,10 @@ public sealed class HostControllerRepositoryBrowseTests
 						.Where(message => message?.Kind == MessageKinds.Tree)
 						.Select(message => message!.GetPayload<TreePayload>()!)
 						.ToArray();
-					Assert.That(trees, Has.Length.EqualTo(1));
-					Assert.That(trees[0].Root, Is.EqualTo(Path.GetFullPath(root)));
+					Assert.That(trees, Has.Length.EqualTo(2));
+					Assert.That(trees[0].Root, Is.EqualTo("octo/specs"));
+					Assert.That(trees[0].Nodes, Is.Empty);
+					Assert.That(trees[1].Root, Is.EqualTo(Path.GetFullPath(root)));
 				}
 			}
 		}
@@ -648,6 +702,60 @@ public sealed class HostControllerRepositoryBrowseTests
 	}
 
 	[Test]
+	public void PendingRepositoryOpenDisplacesQueuedRemoteFileExactlyOnce()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-pending-file-replacement-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/other", "octo/other", "https://github.com/octo/other", "main", []));
+			BlockingSignInAuth auth = new();
+			CountingCatalog catalog = new();
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: auth,
+				workspace: store,
+				cloner: new NoopCloner(),
+				repositoryCatalog: catalog);
+			const long requestId = 914;
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen,
+				new DocOpenPayload("github://octo/specs/main/Docs%2FGuide.md", requestId)));
+			Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoOpen, new RepoOpenPayload("octo/other")));
+
+			Assert.That(SpinWait.SpinUntil(() =>
+			{
+				lock (gate)
+				{
+					return sent.Count(json =>
+					{
+						IpcMessage? message = IpcSerializer.TryDeserialize(json);
+						return message?.Kind == MessageKinds.DocOpenCompleted
+							&& message.GetPayload<DocOpenCompletedPayload>() is
+								{ RequestId: requestId, Succeeded: false };
+					}) == 1;
+				}
+			}, TimeSpan.FromSeconds(2)), Is.True);
+			Assert.That(catalog.FileCalls, Is.Zero);
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+	[Test]
 	public void LocalNavigationRetiresARemoteFileQueuedBehindAuthorization()
 	{
 		string root = Path.Combine(Path.GetTempPath(), "specdesk-pending-file-navigation-" + Guid.NewGuid().ToString("N"));
@@ -689,9 +797,15 @@ public sealed class HostControllerRepositoryBrowseTests
 					new DocOpenPayload("github://octo/specs/main/Docs%2FGuide.md")));
 				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 				auth.ReleaseAuthorization.SetResult();
-				Thread.Sleep(100);
+				Assert.That(SpinWait.SpinUntil(() =>
+				{
+					lock (gate)
+					{
+						return sent.Any(json =>
+							IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.Tree);
+					}
+				}, TimeSpan.FromSeconds(2)), Is.True);
 
-				Assert.That(catalog.FileCalls, Is.Zero);
 				lock (gate)
 				{
 					Assert.That(sent.Any(json =>
@@ -760,7 +874,7 @@ public sealed class HostControllerRepositoryBrowseTests
 				Assert.That(catalog.TreeCalls, Is.EqualTo(matching ? 0 : 1));
 				if (!matching)
 				{
-					TreePayload tree = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree)!;
+					TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 					Assert.That(tree.Nodes.Single().Name, Is.EqualTo("remote.md"));
 				}
 			}
@@ -820,7 +934,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			}
 			else
 			{
-				TreePayload tree = WaitFor<TreePayload>(sent, gate, MessageKinds.Tree)!;
+				TreePayload tree = WaitForTree(sent, gate, candidate => candidate.Nodes.Count > 0)!;
 				Assert.That(tree.Nodes.Single().Name, Is.EqualTo("A.md"));
 			}
 		}
@@ -828,6 +942,213 @@ public sealed class HostControllerRepositoryBrowseTests
 		{
 			Directory.Delete(root, recursive: true);
 		}
+	}
+
+	[Test]
+	public void FailedRemoteBrowse_ReplacesThePreviousLocalTreeWithAnEmptyRemoteTree()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-failure-tree-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			File.WriteAllText(Path.Combine(root, "local.md"), "# Local");
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new FailingTreeCatalog());
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.FolderOpen, new FolderOpenPayload(root)));
+			_ = WaitForTree(sent, gate, tree => tree.Root == Path.GetFullPath(root));
+			lock (gate)
+			{
+				sent.Clear();
+			}
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			Assert.That(WaitFor<ErrorPayload>(sent, gate, MessageKinds.Error), Is.Not.Null);
+
+			lock (gate)
+			{
+				IpcMessage[] messages = sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null)
+					.Select(message => message!)
+					.ToArray();
+				TreePayload[] trees = messages
+					.Where(message => message.Kind == MessageKinds.Tree)
+					.Select(message => message.GetPayload<TreePayload>()!)
+					.ToArray();
+				Assert.That(trees, Has.Length.EqualTo(1));
+				Assert.That(trees[0].Root, Is.EqualTo("octo/specs"));
+				Assert.That(trees[0].Nodes, Is.Empty);
+				Assert.That(messages[0].Kind, Is.EqualTo(MessageKinds.Tree));
+				Assert.That(messages[^1].Kind, Is.EqualTo(MessageKinds.Error));
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteTreeTerminalPublication_PrecedesLaterAcceptedLocalNavigation()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-tree-publication-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		using ManualResetEventSlim terminalEntered = new();
+		using ManualResetEventSlim releaseTerminal = new();
+		try
+		{
+			File.WriteAllText(Path.Combine(root, "local.md"), "# Local");
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new Catalog());
+			controller.RemoteBrowseTerminalPublishingForTest = () =>
+			{
+				terminalEntered.Set();
+				releaseTerminal.Wait(TimeSpan.FromSeconds(5));
+			};
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoBrowse, new RepoBrowsePayload("octo/specs")));
+			Assert.That(terminalEntered.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			Task localNavigation = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.FolderOpen, new FolderOpenPayload(root))));
+			Assert.That(localNavigation.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+
+			releaseTerminal.Set();
+			Assert.That(localNavigation.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			_ = WaitForTree(sent, gate, tree => tree.Root == Path.GetFullPath(root));
+
+			lock (gate)
+			{
+				IpcMessage[] messages = sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null)
+					.Select(message => message!)
+					.ToArray();
+				int localTree = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.Tree
+					&& message.GetPayload<TreePayload>()?.Root == Path.GetFullPath(root));
+				Assert.That(localTree, Is.GreaterThanOrEqualTo(0));
+				Assert.That(messages.Skip(localTree + 1)
+					.Where(message => message.Kind == MessageKinds.Tree)
+					.Select(message => message.GetPayload<TreePayload>()!)
+					.Any(tree => tree.Root == "octo/specs" && tree.Nodes.Count > 0), Is.False);
+			}
+		}
+		finally
+		{
+			releaseTerminal.Set();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void RemoteFileTerminalPublication_PrecedesLaterAcceptedLocalNavigation()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-remote-file-publication-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		using ManualResetEventSlim terminalEntered = new();
+		using ManualResetEventSlim releaseTerminal = new();
+		try
+		{
+			File.WriteAllText(Path.Combine(root, "local.md"), "# Local");
+			WorkspaceStore store = new(Path.Combine(root, "workspace.json"));
+			store.RegisterRepo(new RegisteredRepo(
+				"octo/specs", "octo/specs", "https://github.com/octo/specs", "main", []));
+			List<string> sent = [];
+			object gate = new();
+			using HostController controller = new(
+				(_, _) => new Renderer.RenderResult(string.Empty, []),
+				json => { lock (gate) { sent.Add(json); } },
+				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				auth: new FakeGitHubAuth(true), workspace: store, repositoryCatalog: new Catalog());
+			controller.RemoteFileTerminalPublishingForTest = () =>
+			{
+				terminalEntered.Set();
+				releaseTerminal.Wait(TimeSpan.FromSeconds(5));
+			};
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.DocOpen,
+				new DocOpenPayload("github://octo/specs/main/README.md", 147)));
+			Assert.That(terminalEntered.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			Task localNavigation = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.FolderOpen, new FolderOpenPayload(root))));
+			Assert.That(localNavigation.Wait(TimeSpan.FromMilliseconds(100)), Is.False);
+
+			releaseTerminal.Set();
+			Assert.That(localNavigation.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			_ = WaitForTree(sent, gate, tree => tree.Root == Path.GetFullPath(root));
+
+			lock (gate)
+			{
+				IpcMessage[] messages = sent
+					.Select(IpcSerializer.TryDeserialize)
+					.Where(message => message is not null)
+					.Select(message => message!)
+					.ToArray();
+				int localTree = Array.FindLastIndex(messages, message =>
+					message.Kind == MessageKinds.Tree
+					&& message.GetPayload<TreePayload>()?.Root == Path.GetFullPath(root));
+				Assert.That(localTree, Is.GreaterThanOrEqualTo(0));
+				Assert.That(messages.Skip(localTree + 1).Any(message =>
+					message.Kind == MessageKinds.DocLoaded
+					&& message.GetPayload<DocLoadedPayload>()?.Repository == "octo/specs"), Is.False);
+				Assert.That(messages.Skip(localTree + 1).Any(message =>
+					message.Kind == MessageKinds.WorkspaceContext
+					&& message.GetPayload<WorkspaceContextPayload>()?.Repository == "octo/specs"), Is.False);
+			}
+		}
+		finally
+		{
+			releaseTerminal.Set();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private static TreePayload? WaitForTree(
+		List<string> sent, object gate, Func<TreePayload, bool> predicate)
+	{
+		for (int attempt = 0; attempt < 200; attempt++)
+		{
+			lock (gate)
+			{
+				foreach (string json in sent)
+				{
+					IpcMessage? message = IpcSerializer.TryDeserialize(json);
+					TreePayload? tree = message?.Kind == MessageKinds.Tree
+						? message.GetPayload<TreePayload>()
+						: null;
+					if (tree is not null && predicate(tree))
+					{
+						return tree;
+					}
+				}
+			}
+			Thread.Sleep(20);
+		}
+		return null;
 	}
 
 	private static T? WaitFor<T>(List<string> sent, object gate, string kind)

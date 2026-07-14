@@ -14,11 +14,12 @@ function viewOf(ed: MarkdownEditor): EditorView {
 function mount(
   onDebug?: (summary: () => string, perFrame?: boolean) => void,
   onEditAttempt?: () => void,
+  onChange: (text: string, version: number) => void = () => {},
 ): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const ed = new MarkdownEditor(host, {
-    onChange: () => {},
+    onChange,
     onScroll: () => {},
     onScrollSettle: () => {},
     onCursor: () => {},
@@ -389,6 +390,17 @@ describe("MarkdownEditor.hasPendingChange (jsdom, T-042)", () => {
     expect(ed.hasPendingChange()).toBe(true);
     vi.advanceTimersByTime(1);
     expect(ed.hasPendingChange()).toBe(false);
+  });
+
+  it("flushes a pending edit synchronously before a repository transition", () => {
+    const onChange = vi.fn();
+    const { ed } = mount(undefined, undefined, onChange);
+    ed.setText("last keystroke before switching");
+    expect(ed.flushPendingChange()).toBe(true);
+    expect(onChange).toHaveBeenCalledWith("last keystroke before switching", 1);
+    expect(ed.hasPendingChange()).toBe(false);
+    vi.advanceTimersByTime(120);
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 
   it("stays false across a silent mirror setText (no change notification is scheduled)", () => {

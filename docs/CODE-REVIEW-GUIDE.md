@@ -19,8 +19,8 @@ SpecDesk is a Windows desktop app (Photino + system WebView2) that lets non-tech
 ("managers") edit Markdown specs stored in GitHub **without ever touching git, branches, or pull
 requests directly**. It wraps a three-mode Markdown editor (source / split / formatted-WYSIWYG,
 Markdown always the source of truth), automated git/GitHub operations behind plain-language buttons,
-a rendered semantic diff, inline review comments, automated image handling, and (planned) an embedded
-AI agent. `SpecDesk` is an explicitly-placeholder working title (rename before any registry/namespace
+a rendered semantic diff, inline review comments, automated image handling, and an embedded chat-only
+GitHub Copilot assistant. `SpecDesk` is an explicitly-placeholder working title (rename before any registry/namespace
 work) — do not read significance into the name.
 
 **The one architectural idea that explains most of the codebase:** native (C#/F#) is the brain and
@@ -80,7 +80,7 @@ src/
   SpecDesk.Diff/              F#  — semantic (AST) diff              → depends on Markdown
   SpecDesk.Git/               C#  — LibGit2Sharp wrapper (local-only ops; GitHub-agnostic) (leaf)
   SpecDesk.GitHub/            C#  — OAuth device-flow auth + hand-rolled HttpClient GitHub API (leaf)
-  SpecDesk.Ai/                C#  — STUB (see §5), no ProjectReferences yet (leaf)
+  SpecDesk.Ai/                C#  — GitHub Copilot chat + prompt templates (leaf)
   SpecDesk.Host/               C# — Exe: Photino bootstrap, IPC router, orchestration → all of the above
 tests/                        # one test project per src/ project, NUnit, mirrors names + ".Tests"
 webview/
@@ -105,7 +105,7 @@ CHANGELOG.md                  # Keep-a-Changelog; detailed per-PoC entries, good
 | `SpecDesk.Diff` | F# | `AstDiff` (Unchanged/Added/Removed/Changed/Moved) + `DiffWire` C#-friendly shape | `SpecDesk.Markdown` | 2 files, 421 LOC |
 | `SpecDesk.Git` | C# | `IDocumentVersioning` (local-only: branch/save-version/discard) + `IGitPublishing`, via LibGit2Sharp | — | 3 files, 435 LOC |
 | `SpecDesk.GitHub` | C# | OAuth device-flow (`GitHubDeviceFlowAuth`), `DpapiTokenProtector`, remote-URL parsing, PR/review status — hand-rolled `HttpClient`, **no Octokit package** | — | 8 files, 1449 LOC |
-| `SpecDesk.Ai` | C# | **Stub** — see §5 | — | 1 file (`Placeholder.cs`) |
+| `SpecDesk.Ai` | C# | GitHub Copilot chat, hardened SDK session, prompt-template storage/fetch | `SpecDesk.Contracts` | 9 C# files |
 | `SpecDesk.Host` | C# (Exe) | Photino bootstrap, `HostController` (IPC dispatch), `AppAssetResolver` (`app://` scheme), `PreviewCoordinator`, `DiffProjection`, `ExternalLink` (URL-scheme gate), Serilog logging, `SampleRepo` seeding | all seven above | 11 files, 2814 LOC — largest project |
 
 Rules that shape this graph (see `AGENTS.md` for the full text — restated here because a naive review
@@ -167,22 +167,26 @@ linted/formatted with Biome (2-space, double quotes) — do not propose a `// @t
 | PoC-6 — Rendered semantic diff | 🟡 Partial | `SpecDesk.Diff` engine + local "Show changes" overlay (working copy vs. last saved version) shipped; diffing an **actual PR** (base vs. head) is not yet built |
 | PoC-7 — In-flight PR comparison | ⬜ Not started | |
 | PoC-8 — Inline comments + GitHub sync | ⬜ Not started | |
-| PoC-9 — AI agent | ⬜ Not started | `SpecDesk.Ai` is a stub, see §5 |
+| PoC-9 — AI agent | 🟡 Partial | production GitHub Copilot chat is shipped; document-mutating tools remain planned |
 | PoC-10 — Conflict handling + Publish | ⬜ Not started | no reconciliation dialog, no Publish button yet |
 | PoC-11 — Editor view modes (Code/Split/Formatted) | ✅ Done | |
 | PoC-12 — WYSIWYG formatted editing | ✅ Done (v1 limits) | see §5 for the named limits |
 
-Do not treat PoC-7/8/9/10 absence as missing functionality to flag — it's scoped-out, tracked future
-work, not an oversight. Do treat a bug **inside** an already-shipped milestone (rows marked ✅) as a
-normal, in-scope finding.
+Do not treat PoC-7/8/10 absence, or PoC-9's still-planned mutating tools, as missing functionality to
+flag — they are scoped-out, tracked future work. Do treat a bug **inside** shipped PoC-9 chat or an
+already-shipped milestone (rows marked ✅) as a normal, in-scope finding.
 
 ## 5. Known stubs, limits, and drift — don't flag these as bugs (but do watch nearby code)
 
-- **`SpecDesk.Ai` is a deliberate one-file stub**: `Placeholder.cs` defines only `public const string
-  Module = "Ai"`. No Microsoft Agent Framework package is referenced yet. Reporting "AI agent isn't
-  implemented" is not a useful finding here. (Minor, harmless doc drift: the `.csproj` TODO comment
-  and root `README.md` call this "PoC-8"; `docs/ROADMAP.md` numbers it "PoC-9" — same milestone, two
-  labels in the wild.)
+- **`SpecDesk.Ai` has a production GitHub Copilot chat path, not a stub**: `Program.cs` wires
+  `CopilotChatAgentFactory`, which passes the connected account's OAuth token only inside the native host
+  to `GitHub.Copilot.SDK` 1.0.6. The SDK runs in `CopilotClientMode.Empty`; sessions have an empty tool
+  allowlist, deny every permission request, and disable config discovery, file hooks, host git operations,
+  session storage, skills, scheduling, and remote sessions. Sign-out or account replacement cancels and
+  disposes the account-bound session. Review this boundary as production security-sensitive code: flag any
+  token exposure, account-crossing late result, enabled tool/capability, or weakened permission gate. The
+  separate Microsoft Agent Framework adapter remains for provider-neutral/offline tests; document-mutating
+  Copilot tools are still deliberately not implemented.
 - **`GitHubAuthOptions.DefaultClientId` is intentionally embedded** — an OAuth client id is a public
   identifier, not a client secret, and SpecDesk's device flow needs it in every shipped build. Development
   and test runs can override it through `SPECDESK_GITHUB_CLIENT_ID`. Do flag a missing/empty default as a
@@ -195,11 +199,10 @@ normal, in-scope finding.
   (see commit `refactor(github): hand-roll the device-code request and drop the Octokit dependency`).
   An absent Octokit package reference in `SpecDesk.GitHub` is expected, current behaviour — the design
   doc is what's stale, not the code.
-- **WYSIWYG (PoC-12) v1, explicitly out of scope for now**: structural table edits (add/remove
-  row/column) must be done in the source view; height-alignment/scroll-sync between Formatted and
-  Split is top-level-block granularity only; adding/removing a whole top-level block falls back to a
-  full re-serialize instead of block-splice. The formatting toolbar's Link/Table/Image buttons are
-  explicitly deferred (only bold/italic/strike/H1/H2/lists/quote/code shipped).
+- **WYSIWYG (PoC-12) v1 limitations**: structural table edits (add/remove row/column) must be done in
+  the source view; the toolbar inserts a starter table but does not yet restructure one. Height-alignment/
+  scroll-sync between Formatted and Split is top-level-block granularity only; adding/removing a whole
+  top-level block falls back to a full re-serialize instead of block-splice.
 - **Markdown round-trip strategy is block-splice, not whole-document reflow — this was a deliberate,
   measured decision** (a whole-document re-serialize was tested and rejected: ~41/48 lines changed on
   a no-op round-trip of `welcome.md`). If you see `md-splice.ts` only re-emitting *changed* top-level

@@ -32,6 +32,13 @@ public sealed class DirtyWorkingTreeException(string dirtyBranch)
     public string DirtyBranch { get; } = dirtyBranch;
 }
 
+/// <summary>A local-only file or directory would be overwritten by a working-line checkout.</summary>
+public sealed class ProtectedLocalFileException(string filePath)
+    : InvalidOperationException("A protected local file is in the way of changing working lines.")
+{
+    public string FilePath { get; } = filePath;
+}
+
 /// <summary>
 /// The local git operations behind the document lifecycle (docs/design/04-git-workflow.md), kept
 /// behind an interface so the host is testable without a real repository and so no LibGit2Sharp
@@ -80,8 +87,16 @@ public interface IDocumentVersioning
     /// Returns the working and resolved base branch names. Throws if the repo has no commits yet, or —
     /// as <see cref="DirtyWorkingTreeException"/> — if the working tree has uncommitted changes that
     /// belong to a different branch than <paramref name="branchName"/> (the forced checkout this performs
-    /// would otherwise silently discard that other, unrelated draft's unsaved autosave).</summary>
-    EditSession BeginEdit(string repoRoot, string branchName, string preferredBase);
+    /// would otherwise silently discard that other, unrelated draft's unsaved autosave).
+    /// <see cref="ProtectedLocalFileException"/> is thrown before mutation when a local-only path would be
+    /// overwritten. Re-entering the already-current branch preserves its working tree.
+    /// <paramref name="onMutationStarting"/> runs after validation and immediately before creating or checking
+    /// out the working branch (or publishing a same-branch resume).</summary>
+    EditSession BeginEdit(
+        string repoRoot,
+        string branchName,
+        string preferredBase,
+        Action? onMutationStarting = null);
 
     /// <summary>Save a version: stage every working-tree change (the document and any assets such
     /// as pasted images) and commit them with <paramref name="message"/> (the author's version
@@ -89,7 +104,11 @@ public interface IDocumentVersioning
     /// version.</summary>
     CommitResult SaveVersion(string repoRoot, string message);
 
-    /// <summary>Abandon a draft: switch back to <paramref name="baseBranch"/> and delete the
-    /// working branch. Safe to call when already off the working branch.</summary>
-    void Discard(string repoRoot, string workingBranch, string baseBranch);
+    /// <summary>Start abandoning a draft by switching to <paramref name="baseBranch"/>, while retaining
+    /// the working branch until the caller has successfully reloaded the published document.</summary>
+    void BeginDiscard(string repoRoot, string workingBranch, string baseBranch);
+
+    /// <summary>Finish abandoning a draft by deleting the retained working branch after the caller has
+    /// successfully reloaded the published document.</summary>
+    void CompleteDiscard(string repoRoot, string workingBranch, string baseBranch);
 }

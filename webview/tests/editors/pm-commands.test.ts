@@ -36,6 +36,7 @@ describe("commandFor — inline marks", () => {
     expect(md(run(sel, "bold"))).toBe("**hello**");
     expect(md(run(sel, "italic"))).toBe("*hello*");
     expect(md(run(sel, "strike"))).toBe("~~hello~~");
+    expect(md(run(sel, "inlineCode"))).toBe("`hello`");
   });
 
   it("toggles a mark off when the selection already carries it", () => {
@@ -57,6 +58,17 @@ describe("commandFor — blocks", () => {
   it("distinguishes h1 from h2", () => {
     const para = select(stateFrom("hello\n"), 1, 6);
     expect(md(run(para, "h2"))).toBe("## hello");
+    expect(md(run(para, "h3"))).toBe("### hello");
+  });
+
+  it("inserts links, tables, image references and dividers", () => {
+    const para = select(stateFrom("hello\n"), 1, 6);
+    expect(md(run(para, "link"))).toBe("[hello](https://)");
+    expect(md(run(para, "image"))).toBe("![Image](images/image.png)");
+    expect(md(run(select(stateFrom("hello\n"), 1), "table"))).toContain(
+      "| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |",
+    );
+    expect(md(run(select(stateFrom("hello\n"), 1), "rule"))).toBe("---\n\nhello");
   });
 
   it("turns a paragraph into a code block", () => {
@@ -113,12 +125,12 @@ describe("activeFormats", () => {
     expect(activeFormats(bolded).has("italic")).toBe(false);
   });
 
-  it("reports h1 and h2 but leaves H3–H6 unpressed", () => {
+  it("reports the three heading levels exposed by the toolbar", () => {
     expect(activeFormats(select(stateFrom("# h\n"), 1)).has("h1")).toBe(true);
     expect(activeFormats(select(stateFrom("## h\n"), 1)).has("h2")).toBe(true);
     const h3 = activeFormats(select(stateFrom("### h\n"), 1));
+    expect(h3.has("h3")).toBe(true);
     expect(h3.has("h1")).toBe(false);
-    expect(h3.has("h2")).toBe(false);
   });
 
   it("reports the active block kind for code, lists and quote", () => {

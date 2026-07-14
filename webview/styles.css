@@ -80,6 +80,7 @@
   --ed-heading: #2f6db5;
   --ed-marker: #7a8794;
   --ed-active: #eef4fb;
+  --ed-hover: #fbf0cd;
 
   --shadow-card: 0 1px 2px rgba(20, 24, 30, 0.12);
   --shadow-pop: 0 10px 30px -12px rgba(28, 32, 40, 0.32);
@@ -124,6 +125,7 @@
   --ed-text: #3c3a33;
   --ed-marker: #b89b4a;
   --ed-active: #f7f3e9;
+  --ed-hover: #f4e4b8;
 }
 
 /* ---- §4 tokens · DARK ---- */
@@ -195,6 +197,7 @@
   --ed-heading: #5b9bd9;
   --ed-marker: #6d7a86;
   --ed-active: #22303d;
+  --ed-hover: #3b3422;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-pop: 0 10px 30px -12px rgba(0, 0, 0, 0.55);
   --shadow-panel: 0 18px 44px -20px rgba(0, 0, 0, 0.6);
@@ -270,6 +273,19 @@ button {
   background: var(--surface-raised);
 }
 
+#app-title {
+  display: none;
+  color: var(--text-strong);
+  font: 600 14px / 1 var(--font-ui);
+}
+
+body:not([data-central-view="editor"]) #app-title {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-height: 30px;
+}
+
 /* Secondary button is the toolbar/editor-action default: surface fill, strong border, small radius. */
 #toolbar button,
 #editor-actions > button {
@@ -330,6 +346,13 @@ button {
   font: 13px var(--font-ui);
 }
 
+/* Document location and in-document search are useful only while the editor is the central view. Keeping
+   them out of Start and Notifications makes those screens read as focused tasks, not an inactive editor. */
+body:not([data-central-view="editor"]) #repository-context,
+body:not([data-central-view="editor"]) #toolbar-search {
+  display: none;
+}
+
 #toolbar .toolbar-icon {
   flex: none;
   width: 30px;
@@ -342,6 +365,37 @@ button {
 #account-control {
   position: relative;
   flex: none;
+}
+
+#window-controls {
+  flex: none;
+  display: inline-flex;
+  align-self: stretch;
+  margin: -0.5rem -0.75rem -0.5rem 0;
+  padding: 0;
+  border: 0;
+}
+
+#toolbar #window-controls .window-control {
+  width: 44px;
+  height: auto;
+  min-height: 38px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font: 16px / 1 var(--font-ui);
+}
+
+#toolbar #window-controls .window-control:hover {
+  background: var(--surface-sunken);
+}
+
+#toolbar #window-controls .window-control--close:hover,
+#toolbar #window-controls .window-control--close:focus-visible {
+  color: var(--mode-rail-text-strong);
+  background: var(--danger-fg);
 }
 
 #toolbar #github-btn {
@@ -774,7 +828,7 @@ button {
   line-height: 1;
 }
 
-/* ---- §8 components — formatting toolbar (at the top of the editor view, shown while editing) ----
+/* ---- §8 components — formatting toolbar (at the top of the editor view, enabled while editing) ----
    Now inside #editor-view (part of the editing area, not a full-width row above the panels), so it spans
    only the editor width and hides with the editor on the Start view. Scoped to :not([hidden]) for the same
    reason as the inline bars. A quiet row: ghost buttons that tint on hover and fill with the accent-soft
@@ -785,7 +839,7 @@ button {
   flex-wrap: wrap;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--panel-header);
 }
 
 #editor-actions {
@@ -803,9 +857,14 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 2px;
+  margin: 0;
   padding: 0.375rem 0.75rem;
+  min-width: 0;
   border-left: 1px solid var(--border);
-  background: var(--surface);
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  background: transparent;
 }
 
 @media (max-width: 900px) {
@@ -866,6 +925,10 @@ button {
   font-family: var(--font-mono);
 }
 
+#format-bar #fmt-inline-code {
+  font-family: var(--font-mono);
+}
+
 /* A hairline divider between button groups. */
 .fmt-sep {
   width: 1px;
@@ -875,15 +938,16 @@ button {
 }
 
 /* ---- Workspace: the collapsible-panel shell (design concept §9) ----
-   The toolbar and inline bars stack above; this region fills the rest. #workspace is a vertical stack of
-   the main row (left rail · centre · right rail) and a full-width bottom dock. #central-frame fills the main
-   row and hosts the central views (workspace/central-frame.ts) — #panes is the primary one. The docks
+   The toolbar and inline bars stack above; this region fills the rest. #workspace is a two-column grid:
+   the main row (left rail · centre) stacks over the bottom dock, while the right rail spans both rows.
+   #central-frame fills the main row and hosts the central views (workspace/central-frame.ts). The docks
    (workspace/dock.ts) are collapsible and resizable; the Docks section below styles them. */
 #workspace {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   /* Vertical companion to #workspace-main's clip: if a very short window can't fit the toolbar plus an
      open bottom dock, clip rather than spill past the viewport (no page scrollbar). The proper small-window
      behaviour is a later stage (§9). */
@@ -895,9 +959,9 @@ button {
   min-height: 24px;
   align-items: center;
   padding: 0 0.75rem;
-  border-top: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-muted);
+  border-top: 1px solid var(--mode-rail-border);
+  background: var(--mode-rail);
+  color: var(--mode-rail-text-strong);
   font-size: 12px;
 }
 
@@ -909,6 +973,8 @@ button {
 }
 
 #workspace-main {
+  grid-column: 1;
+  grid-row: 1;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -940,7 +1006,7 @@ button {
   display: none;
 }
 
-/* The editor central view: the formatting toolbar (when shown) stacked over the panes. */
+/* The editor central view: the formatting toolbar stacked over the panes. */
 #editor-view {
   flex: 1;
   min-width: 0;
@@ -1017,10 +1083,14 @@ button {
 }
 
 .dock-right {
+  grid-column: 3;
+  grid-row: 1 / span 3;
   border-left: 1px solid var(--border);
 }
 
 .dock-bottom {
+  grid-column: 1;
+  grid-row: 3;
   border-top: 1px solid var(--border);
 }
 
@@ -1666,6 +1736,16 @@ button {
   cursor: row-resize;
 }
 
+#workspace > .dock-splitter-right {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+
+#workspace > .dock-splitter-bottom {
+  grid-column: 1;
+  grid-row: 2;
+}
+
 .dock-splitter::before {
   content: "";
   position: absolute;
@@ -1722,6 +1802,35 @@ button {
   flex-direction: column;
   gap: 2px;
   padding: 0.4rem;
+}
+
+.grouped-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.grouped-panel-section {
+  border-bottom: 1px solid var(--border);
+}
+
+.grouped-panel-heading {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  margin: 0;
+  padding: 0.45rem 0.75rem 0.35rem;
+  color: var(--text-muted);
+  background: var(--panel-header);
+  font: 600 11px / 1.3 var(--font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.grouped-panel-content {
+  min-height: 0;
 }
 
 .nav-item {
@@ -2117,6 +2226,53 @@ button {
   padding: 0.25rem 0.5rem 0.55rem;
 }
 
+.repo-panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  color: var(--text-muted);
+  background: var(--panel-header);
+  font: 600 11px / 1.3 var(--font-ui);
+}
+
+.repo-add {
+  margin: 0.35rem 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+}
+
+.repo-add > summary {
+  padding: 0.5rem 0.65rem;
+  color: var(--text);
+  border-radius: var(--r-md);
+  font: 600 12px / 1.3 var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-add[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  background: var(--panel-header);
+}
+
+.repo-refresh {
+  padding: 0.25rem 0.5rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font: 600 11px / 1.2 var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-refresh:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
 .repo-suggestions {
   position: absolute;
   z-index: 4;
@@ -2167,11 +2323,57 @@ button {
   white-space: nowrap;
 }
 
+.repo-local-name-field {
+  flex-basis: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  padding-top: 0.2rem;
+  color: var(--text-muted);
+  font: 12px / 1.35 var(--font-ui);
+}
+
+.repo-local-name-input {
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
+}
+
+.repo-local-name-input[aria-invalid="true"] {
+  border-color: var(--danger-fg);
+}
+
+.repo-destination-warning {
+  color: var(--danger-fg);
+  white-space: normal;
+}
+
+.repo-open-existing {
+  margin-left: 0.4rem;
+  padding: 0.15rem 0.35rem;
+  color: var(--accent);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-open-existing:hover {
+  background: var(--accent-soft);
+}
+
 .repo-description {
   white-space: normal;
 }
 
-.repo-clone-confirmation {
+.repo-clone-confirmation,
+.repo-operation-confirmation {
   margin: 0.25rem 0.5rem 0.55rem;
   padding: 0.65rem;
   border: 1px solid var(--border-strong);
@@ -2181,9 +2383,24 @@ button {
 }
 
 .repo-clone-confirmation strong,
-.repo-clone-confirm-summary {
+.repo-clone-confirm-summary,
+.repo-operation-confirmation strong,
+.repo-operation-message {
   display: block;
   margin: 0 0 0.45rem;
+}
+
+.repo-operation-warnings {
+  margin: 0.35rem 0;
+  padding-left: 1.25rem;
+  color: var(--danger-fg);
+  font: 12px / 1.45 var(--font-ui);
+}
+
+.repo-clone-confirm-actions .repo-operation-delete {
+  color: var(--danger-fg);
+  border-color: var(--danger-fg);
+  background: var(--danger-bg);
 }
 
 .repo-clone-confirm-skip {
@@ -2239,6 +2456,22 @@ button {
   cursor: pointer;
 }
 
+.repo-clone-split {
+  flex: none;
+  display: inline-flex;
+}
+
+.repo-clone-primary {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+
+.repo-clone-toggle {
+  width: 1.85rem;
+  padding: 0.35rem;
+  border-left-color: color-mix(in srgb, var(--on-accent) 35%, transparent);
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
 .repo-register-add:hover {
   background: var(--accent-hover);
 }
@@ -2277,6 +2510,9 @@ button {
 }
 
 .repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2287,16 +2523,28 @@ button {
   flex-direction: column;
   align-items: stretch;
   gap: 0.1rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.repo-row.is-highlighted {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .repo-row-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.1rem;
+  padding: 0.35rem;
 }
 
 .repo-open {
   flex: 1;
+  flex-basis: 100%;
   min-width: 0;
   padding: 0.25rem 0.5rem;
   text-align: left;
@@ -2309,6 +2557,28 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
+}
+
+.repo-name,
+.repo-kind,
+.repo-clone-name,
+.repo-clone-current {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.repo-name {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.repo-kind,
+.repo-clone-current {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .repo-open:hover {
@@ -2333,7 +2603,14 @@ button {
   border-left: 1px solid var(--border);
 }
 
+.repo-clones {
+  margin: 0 0.35rem 0.4rem;
+  padding-left: 0.5rem;
+}
+
 .repo-clone-open {
+  flex: 1;
+  min-width: 0;
   max-width: 100%;
   padding: 0.2rem 0.35rem;
   color: var(--text);
@@ -2344,12 +2621,145 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: pointer;
+  text-align: left;
 }
 
-.repo-branches li {
+.repo-clone-header,
+.repo-branch-header {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.repo-health {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin: 0 2.9rem 0.25rem 0.35rem;
+}
+
+.repo-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0 2.9rem 0.35rem 0.35rem;
+}
+
+.repo-sync-action {
+  padding: 0.2rem 0.45rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font: 600 10px / 1.25 var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-sync-action:hover {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.repo-sync-action:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  background: var(--surface-sunken);
+}
+
+.repo-health-badge {
+  padding: 0.08rem 0.32rem;
+  border: 1px solid;
+  border-radius: var(--r-pill);
+  font: 10px / 1.35 var(--font-ui);
+  white-space: nowrap;
+}
+
+.repo-health-badge.is-unshared {
+  color: var(--info-fg);
+  border-color: var(--info-border);
+  background: var(--info-bg);
+}
+
+.repo-health-badge.is-incoming {
+  color: var(--ok-fg);
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.repo-health-badge.is-unsaved {
+  color: var(--warn-fg);
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.repo-health-badge.is-held {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.repo-health-badge.is-conflict {
+  color: var(--del-text);
+  border-color: var(--del-border);
+  background: var(--del-bg);
+  font-weight: 700;
+}
+
+.repo-branch.is-current > .repo-branch-header {
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+}
+
+.repo-branch.is-current > .repo-branch-header::before {
+  width: 0.28rem;
+  height: 0.28rem;
+  margin-left: 0.25rem;
+  border-radius: 50%;
+  background: var(--accent);
+  content: "";
+}
+
+.repo-clone-header .repo-star,
+.repo-branch-header .repo-star {
+  flex: none;
+  width: 1.45rem;
+  height: 1.45rem;
+}
+
+.repo-item-delete {
+  flex: none;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  font: 14px / 1 var(--font-ui);
+  cursor: pointer;
+}
+
+.repo-item-delete:hover {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+}
+
+.repo-branch-open {
+  flex: 1;
+  width: 100%;
   padding: 0.15rem 0.35rem;
   color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
   font: 11px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo-branch-open:hover {
+  color: var(--text);
+  background: var(--surface-sunken);
 }
 
 .repo-remove {
@@ -2492,12 +2902,14 @@ button {
    the viewport — so the top stays scroll-reachable instead of being clipped (the align-items:center + scroll
    trap). */
 .home-screen {
+  width: min(100%, 50rem);
   margin: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.75rem;
-  max-width: 30rem;
+  max-width: 50rem;
+  box-sizing: border-box;
   padding: 2rem;
   text-align: center;
 }
@@ -2552,12 +2964,26 @@ button {
   border-color: var(--border-strong);
 }
 
-.home-recents {
+.home-shortcut-section {
   width: 100%;
   margin-top: 1.5rem;
 }
 
-.home-recents-label {
+.home-shortcuts {
+  display: grid;
+  width: min(100%, 46rem);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .home-shortcuts {
+    grid-template-columns: 1fr;
+  }
+}
+
+.home-shortcut-label {
   margin: 0 0 0.25rem;
   font: 600 11px var(--font-ui);
   letter-spacing: 0.07em;
@@ -2565,7 +2991,7 @@ button {
   color: var(--text-muted);
 }
 
-.home-recents-empty {
+.home-shortcut-empty {
   margin: 0;
   font: 13px / 1.5 var(--font-ui);
   color: var(--text-muted);
@@ -2573,7 +2999,7 @@ button {
 
 /* The Start screen's recent shortcuts — a few clickable rows that open the item (the left-rail Recent
    panel holds the full history). Left-aligned within the otherwise-centered screen. */
-.home-recents-list {
+.home-shortcut-list {
   margin: 0.35rem 0 0;
   padding: 0;
   list-style: none;
@@ -2601,8 +3027,8 @@ button {
   background: var(--surface-sunken);
 }
 
-.home-recents-empty[hidden],
-.home-recents-list[hidden] {
+.home-shortcut-empty[hidden],
+.home-shortcut-list[hidden] {
   display: none;
 }
 
@@ -2703,10 +3129,10 @@ button {
   scrollbar-gutter: stable;
 }
 
-/* The editor source line under the mouse pointer (faint, auxiliary). Theme-aware via the text colour
-   at low alpha, so it reads in both light and dark. */
+/* The editor source line under the mouse pointer. A light sand wash distinguishes pointing from the
+   blue caret/active-line wash while remaining legible in every theme. */
 .cm-hover-line {
-  background: color-mix(in srgb, var(--text) 5%, transparent);
+  background: var(--ed-hover);
 }
 
 /* The active (caret) source line. Driven externally (activeLineField) and synced with the formatted
@@ -2887,18 +3313,18 @@ button {
   border-bottom: 2px solid var(--border-strong);
 }
 
-/* The block holding the caret (prominent accent wash) and the block under the mouse (faint). In the
+/* The block holding the caret (prominent accent wash) and the block under the mouse (sand). In the
    formatted editor these are ProseMirror node decorations on the top-level block — including a code
    block's <pre>, so the whole block washes (the inner <code> is transparent over it). The wash
-   extends a little into the gutter. Replaces the former yellow highlight. */
+   extends a little into the gutter. */
 .sd-doc .sd-active-block {
   background: var(--accent-soft);
   box-shadow: -0.4rem 0 0 var(--accent-soft);
 }
 
 .sd-doc .sd-hover-block {
-  background: var(--surface-raised);
-  box-shadow: -0.4rem 0 0 var(--surface-raised);
+  background: var(--ed-hover);
+  box-shadow: -0.4rem 0 0 var(--ed-hover);
 }
 
 /* ---- Review / compare overlay (PoC-6) — "Show changes" ----

@@ -23,6 +23,8 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
     payload: {
       url: "outside/public-specs",
       requestId: (destinationRequest?.payload as { requestId: number }).requestId,
+      localName: "public-specs",
+      exists: false,
       path: "C:\\SpecDesk\\repos\\outside_public-specs",
     },
   });
@@ -42,8 +44,14 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
   await expect(page.locator(".repo-managed-destination")).toHaveText(
     "Managed destination: C:\\SpecDesk\\repos\\outside_public-specs",
   );
-  const toggle = page.locator(".repo-register-add");
-  await expect(toggle).toHaveText("Clone…");
+  const primary = page.locator(".repo-clone-primary");
+  const toggle = page.locator(".repo-clone-toggle");
+  await expect(primary).toHaveText("Clone…");
+  await expect(toggle).toHaveAttribute("aria-label", "More clone options");
+  await primary.click();
+  await expect(page.locator(".repo-clone-confirmation")).toBeVisible();
+  await page.getByRole("button", { name: "No" }).click();
+  await expect(page.locator(".repo-clone-menu")).toBeHidden();
   await toggle.click();
   const actions = page.locator('.repo-clone-menu [role="menuitem"]');
   await expect(actions).toHaveText(["Clone…", "Clone to folder…"]);
@@ -53,5 +61,6 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
   await page.locator(".repo-clone-confirm-yes").click();
   expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneToFolder")?.payload).toEqual({
     url: "outside/public-specs",
+    localName: "public-specs",
   });
 });

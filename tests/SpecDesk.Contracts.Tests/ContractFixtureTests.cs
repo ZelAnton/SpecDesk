@@ -25,6 +25,8 @@ public sealed class ContractFixtureTests
 	[
 		(MessageKinds.DocLoaded,
 			new DocLoadedPayload("specs/billing.md", "# Billing\n\nThe refund window is 30 days.\n", "specs")),
+		(MessageKinds.DocOpenCompleted, new DocOpenCompletedPayload(17, Succeeded: true)),
+		(MessageKinds.DocDiscardCompleted, new DocDiscardCompletedPayload(18, Succeeded: false)),
 		(MessageKinds.PreviewHtml,
 			new PreviewPayload("<h1>Billing</h1>", [new LineSpan(0, 0), new LineSpan(2, 2)])),
 		(MessageKinds.Status,
@@ -78,7 +80,19 @@ public sealed class ContractFixtureTests
 			new GitHubRepositoryOptionPayload("octocat/notes", null),
 		])),
 		(MessageKinds.RepoCloneDestination, new RepoCloneDestinationPayload(
-			"acme/specs", 7, @"C:\SpecDesk\repos\acme_specs")),
+			"acme/specs", 7, @"C:\SpecDesk\repos\product-specs", "product-specs", false)),
+		(MessageKinds.RepoCloneConflict, new RepoCloneConflictPayload(
+			"acme/specs", "product-specs", @"C:\SpecDesk\repos\product-specs",
+			"A local copy with that name already exists. Open it instead?")),
+		(MessageKinds.RepoConfirmation, new RepoConfirmationPayload(
+			"deleteBranch",
+			"acme/specs",
+			@"C:\SpecDesk\repos\product-specs",
+			"review-copy",
+			"Delete this local working line?",
+			["There are unfinished local edits.", "There is one protected local work snapshot."],
+			"DD42A087")),
+		(MessageKinds.RepoOperationCompleted, new RepoOperationCompletedPayload(42)),
 		(MessageKinds.RepoDescription, new RepoDescriptionPayload(
 			"acme/specs", 8, RepoDescriptionStates.Found, "Product specifications")),
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
@@ -117,6 +131,9 @@ public sealed class ContractFixtureTests
 		])),
 		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
 			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md")),
+		(MessageKinds.WindowState, new WindowStatePayload(Maximized: true)),
+		(MessageKinds.WindowCloseRequested, new WindowCloseRequestedPayload(RequestId: 23)),
+		(MessageKinds.WindowCloseCompleted, new WindowCloseCompletedPayload(RequestId: 23, Succeeded: false)),
 		// A4 workspace store: one recent file, one favorited folder, and one registered GitHub repo -
 		// exercises both WorkspaceItem shapes (file vs folder) and the RegisteredRepo record.
 		(MessageKinds.WorkspaceState, new WorkspaceStatePayload(
@@ -129,7 +146,17 @@ public sealed class ContractFixtureTests
 		[
 			new RegisteredRepo(
 				"octo/spec-repo", "octo/spec-repo", "https://github.com/octo/spec-repo", "main",
-				[new RegisteredClone("octo-specs", "C:\\specs\\octo-specs", ["review-copy"])]),
+				[new RegisteredClone(
+					"octo-specs",
+					"C:\\specs\\octo-specs",
+					"review-copy",
+					[
+						new RegisteredBranch("main", RepositoryStatusPayload.Empty, CanDelete: false),
+						new RegisteredBranch(
+							"review-copy",
+							new RepositoryStatusPayload(2, 1, true, 1, false), CanDelete: true),
+					],
+					new RepositoryStatusPayload(2, 1, true, 3, false))]),
 		])),
 	];
 
@@ -187,6 +214,33 @@ public sealed class ContractFixtureTests
 		Assert.That(node, Is.Not.Null);
 		Assert.That(node!.AsObject().ContainsKey("branch"), Is.False,
 			"A null Branch must be omitted from the wire, not serialized as null.");
+	}
+
+	[Test]
+	public void RepoRefreshAllPayload_IncludesThePositiveRequestIdOnTheWire()
+	{
+		JsonNode? node = JsonSerializer.SerializeToNode(
+			new RepoRefreshAllPayload(42), IpcSerializer.Options);
+		Assert.That(node, Is.Not.Null);
+		Assert.That(node!["requestId"]?.GetValue<long>(), Is.EqualTo(42));
+	}
+
+	[Test]
+	public void RepoConfirmationPayload_DeleteCloneOmitsItsNullBranchOnTheWire()
+	{
+		JsonNode? node = JsonSerializer.SerializeToNode(
+			new RepoConfirmationPayload(
+				"deleteClone",
+				"acme/specs",
+				@"C:\SpecDesk\repos\product-specs",
+				Branch: null,
+				"Delete this local copy from this computer?",
+				["There are unfinished local edits."],
+				"DD42A087"),
+			IpcSerializer.Options);
+
+		Assert.That(node, Is.Not.Null);
+		Assert.That(node!["branch"], Is.Null, "A null branch is omitted from the native wire payload.");
 	}
 
 	[Test]

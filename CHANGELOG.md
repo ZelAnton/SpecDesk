@@ -7,11 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Reopening a specification while an older review request is still finishing no longer blocks editing the reopened document.
+- Completing an older repository operation no longer replaces a repository, folder, or file opened later.
+- Concurrent workspace refreshes no longer restore an older repository or favorites list.
+- A slower repository open can no longer replace the navigator tree chosen by a newer open.
+- Removing the open working line now closes its specification and navigator instead of silently switching their files.
+- Repository activity no longer stalls unrelated interface updates while another local Git operation is running.
+- Closing SpecDesk now finishes an in-progress interface update and drops updates that are still queued.
+- Forgetting a repository now prevents delayed local-copy opens, clones, or actions from restoring or changing its registration.
+- Disconnecting GitHub now prevents an unfinished repository lookup from leaving a partial registration behind.
+- Repository metadata now remains saved when workspace state is read concurrently during registration.
+- Removing a local copy or working line now prevents delayed inspection from restoring deleted entries.
+- A failed working-line change now closes the affected document atomically before window close can save stale text.
+- Changing or discarding a working line now preserves local-only files that would be overwritten.
+
 ### Added
 
+- Each local copy now offers plain-language Get updates and Share changes actions for its current working line.
+- Local copies and working lines now show available upstream updates and known conflicts alongside local-work indicators.
+- Repositories now has one Refresh action that checks every registered local copy for upstream updates.
+- The Start page now shows favorite repositories, folders, and specs alongside recent work.
+- Selecting a favorite GitHub repository now reveals and highlights it in the Repositories panel.
+- Local copies and working lines now show distinct indicators for unshared versions, unsaved edits, and work held safely for another branch.
+- Local copies and local working lines can be removed safely without deleting GitHub repositories or remote branches; risky local work is explained before confirmation.
+- Favorites now accept GitHub repositories, individual local copies, and exact branches alongside files and folders.
+- Local repository copies can be named independently, so the same GitHub repository can be copied more than once; occupied names offer to open the existing copy.
+- The always-visible Markdown formatting toolbar now includes H3, inline code, links, starter tables, image references, and dividers alongside the existing headings, lists, styles, quotes, and code blocks.
+- The Windows title bar now lives inside SpecDesk, with native drag, double-click maximize, and accessible window controls.
+- Split view now mirrors the line or formatted block under the pointer in both panes with a distinct sand highlight.
 - The Copilot panel now uses a roomy VS Code-style composer card with context and template actions,
   assistant/model indicators, an icon send action, and live GitHub connection status in one compact footer.
-- The right panel now follows the active context: Chat is always available, Comments appears for a review, Change history for a repository branch, Outline for Markdown, and Versions for repository files.
+- The right panel now follows the active context: Chat is always available, Comments appears for a review, History for a repository branch, Outline for Markdown, and Versions for repository files.
 - GitHub repository entry now suggests accessible personal and organization repositories by name.
 - Public GitHub repositories outside the connected account's suggestions can be entered as `owner/repository`.
 - Repository entry now offers **Clone…** to managed storage and **Clone to folder…** with collision-safe destinations.
@@ -32,10 +60,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without a local copy; selecting a text file opens a read-only preview, while local trees now include all files.
 - Registered repositories now show their managed local copies and each copy's non-default working branches;
   you can create more than one local copy, and SpecDesk remembers the repository's actual default branch.
+- Repository copies can now be given a local name, with duplicate names offering to open the existing copy
+  while different names allow several copies of the same GitHub repository.
+- Selecting a local repository working line now protects unfinished files, restores that line's previously
+  protected work, and opens the selected copy without exposing the recovery steps.
+- Local repository copies and non-main working lines can now be removed, with state-bound warnings for
+  unfinished edits, unshared versions, and protected work snapshots before anything is discarded; GitHub
+  repositories and remote branches are never deleted.
+- Local repository copies and working lines now expose distinct status for unfinished edits, unshared saved
+  versions, and protected work snapshots.
 - Adding or opening a GitHub repository while disconnected now starts sign-in with SpecDesk's built-in
   public OAuth identity, opens GitHub's authorization page in your normal browser, and continues the
   requested action after access is granted.
-- The right panel now includes Versions, Comments, and Change history for the selected document. Versions
+- The right panel now includes Versions, Comments, and History for the selected document. Versions
   and history come from the document's saved repository history; Comments lists the selected file's inline
   GitHub review comments when connected and shows an honest empty state otherwise.
 - The assistant now has an Attach menu for the open file, current folder, and registered repositories;
@@ -129,6 +166,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stale.
 
 ### Changed
+
+- Switching between Markdown view modes now preserves edits that are still waiting to synchronize from either pane.
+
+- Local copies now provide safe Get updates and Share actions: updates are fast-forward-only, local work is
+  never overwritten, remote-ahead lines must be updated before sharing, and sharing never force-pushes.
+- Local copies and working lines now distinguish saved versions to share, updates available from GitHub,
+  unfinished edits, protected snapshots, and known overlapping changes.
+- The Repositories panel can now refresh every registered local copy in one background batch, continuing past
+  unavailable copies and updating repository status once when the batch completes.
+- GitHub device authorization now starts by copying the one-time code before opening the standard GitHub
+  verification page, while keeping the visible code as a fallback when clipboard access is unavailable.
+- Repositories now uses a calmer card hierarchy with an at-a-glance repository/copy count, collapsible add controls, and named-copy creation that always goes through the editable clone form.
+- Open Repository on the Start page now focuses repository search as soon as the panel opens.
+- The left rail is now Navigator, Repositories, Folders, and PRs; Favorites and History live inside Navigator, while review requests and participating pull requests share PRs.
+- Repository copies and branches are now direct navigation choices; choosing a branch safely switches it before showing that copy's files.
+- Repository cloning now uses a split button: **Clone** performs the usual managed copy immediately, while its arrow opens the destination menu.
+- The Markdown editor toolbar now uses the same grey surface as side-panel headers.
+- Start and Notifications now hide inactive document breadcrumbs and search, leaving a focused global toolbar.
+- The right-side saved-change tool is now labeled simply **History**.
+- SpecDesk now opens on Start with all optional panels collapsed while retaining each panel's preferred mode and size.
+- The dark status bar now matches the side rails, and the bottom panel leaves the right rail continuously accessible.
 - The Assistant button is now the first mode on the right toolbar, ahead of document-specific tools.
 - Assistant replies now come from GitHub Copilot after GitHub sign-in instead of the offline echo preview;
   disconnecting or changing accounts cancels the active turn and discards that account's chat session.
@@ -345,6 +403,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Completing an older repository operation no longer replaces a repository, folder, or file opened later.
+- Starting Edit now stays bound to the exact specification and working line until the checked-out file is reloaded, preventing concurrent updates, navigation, or window close from creating hidden drafts or publishing stale state.
+- Repository updates now reject insecure or local transports masquerading as GitHub before any connection, credential callback, or working-line change.
+- Document saves, saved versions, autosave, image paste, navigation, and window close now use the exact in-memory content version, preventing a queued older snapshot from overwriting newer edits or another working line.
+- Saving, saving a version, and pasting an image now stay bound to the exact open specification and working line, so concurrent line changes or local removals cannot write files, assets, or versions into another line.
+- Repository actions now close an active specification safely when an external checkout or replacement invalidates their final state, preventing stale text from being saved into another working line.
+- Working-line switches, updates, and removals now stop stale editor text from being saved after a late post-checkout inspection or recovery failure.
+- Failed local-copy removal now closes the affected specification and reports the preserved recovery folder when the original path cannot be restored, preventing autosave from writing into a replacement folder.
+- Forgetting a missing or repointed local-copy registration now leaves its open folder and pending document edits active because no files were removed.
+- Removing a repository registration now waits for its current local action to finish, so completed updates, line changes, and local removals settle the active document safely.
+- Closing SpecDesk now waits for repository copying, updates, line changes, sharing, and local removal to finish before ending the process.
+- Forgetting a repository while its local copy is still being prepared now keeps that operation isolated until cleanup finishes, preventing another copy or window close from interrupting it.
+- Closing SpecDesk now settles the final editor input and writes a pending local draft before the window is allowed to close.
+- A failed Discard now restores editing and autosave only after the exact draft working line is verified; if restoration changes files and then fails, the document closes so stale draft text cannot overwrite the published version.
+- Opening another specification now locks both editor panes until that exact request succeeds or fails, preventing edits from crossing document identities.
+- Opening a specification now waits for active local repository work to finish, preventing files from being read while their working line is changing.
+- Removing a local repository copy now stops safely when it owns linked working copies and explains any unfinished or unshared work they contain.
+
+- Opening another document now saves pending editor input before navigation and retires old edit timers before hydration.
+
+- Repository transitions now preserve the newest pending Split-pane edit, lock both editors while files may change, and flush edits before Get updates.
+- Repository transitions now stay locked until the exact branch, removal, or Get request finishes, ignoring unrelated document and workspace updates.
+- Refresh all now remains visibly in progress until its exact background batch completes, ignoring unrelated repository state updates.
+- Refresh all now discards fetched status when a local copy is replaced or re-registered before the result can be shown.
+- Get updates now reloads the open specification after a successful fast-forward, preventing a stale editor from overwriting received changes.
+- Repository copy creation now rejects a destination claimed by another repository during cloning instead of registering or opening the wrong local copy.
+- Newly created local copies are verified again before opening, so a path repointed during cloning is left untouched and never registered under the wrong repository.
+- Missing or invalid local-copy records no longer reserve a reusable name; forgetting one removes only SpecDesk state and never touches unrelated files.
+- Opening an existing local copy now verifies that its GitHub source matches the selected repository instead of opening a different working tree under the wrong name.
+- Refreshing or switching a local copy now verifies its GitHub source on the same open repository before contacting a remote, reading its state, or changing local work.
+- Getting or sharing versions now captures and validates the exact fetch and effective push destinations before using credentials or starting network work, so concurrent remote-configuration changes cannot redirect an in-flight operation; switching still verifies the expected source and current working line before saving editor text.
+- Local working lines without an upstream, or whose upstream comparison is unavailable, now show unshared versions and retain that warning before local deletion.
+- Refreshing, switching, getting, sharing, or removing a working line now rechecks the exact current line before reloading documents or publishing status, so an external checkout cannot label another line as the completed result.
+- Removing a local copy now verifies its GitHub source on the same repository handle and re-verifies the quarantined tree after moving it, leaving path replacements untouched.
+- Removing a working line now uses an atomic expected-version delete and refuses lines checked out in another worktree, preserving concurrent external Git updates.
+- Removing local repository work now verifies the current working line before saving pending editor text, preventing a stale action from writing that text into another line.
+- Removing an open local copy now closes its document without opening a replacement folder that appears at the deleted path.
+- Removing the current local working line now immediately records the line actually checked out, while detached local copies continue to appear normally.
+- Local branch removal now uses the repository's current checkout instead of cached workspace state before protecting and reloading the active document.
+- Clone to folder now refuses an occupied requested name and offers the registered existing copy instead of silently creating a suffixed folder.
+- Repository working lines now show Delete only for local, non-default branches that the action can actually remove.
+- Switching or removing repository work now flushes the editor debounce first, preserving the last keystrokes before the transition.
+- Disconnecting GitHub now prevents delayed Git authentication callbacks from releasing the retired account token.
+- Local-copy and working-line favorites now retain their repository identity and reopen the exact copy or line.
+- Switching or removing the active working line now blocks stale autosave frames and reloads the document from the selected line; removing its local copy closes the document on Start.
+- Working-line changes now refuse to overwrite ignored local files that become tracked on the destination, and local-copy deletion confirmations include nested ignored files.
+- Refresh all now stops using a captured GitHub token immediately when the author disconnects or changes accounts.
 - Context-specific dock modes now remain hidden outside their applicable pull request, branch, repository,
   or Markdown-file context instead of leaking into every right-panel rail.
 - Detached, remote-only, and outside-repository documents now apply their active context correctly when
@@ -1179,6 +1284,8 @@ Markdown pipeline, the local version lifecycle, and the full GitHub review round
   focused, so it stays in the tab order without cluttering the layout.
 
 ### Fixed
+
+- Completing an older repository operation no longer replaces a repository, folder, or file opened later.
 - Send for review no longer strands a document in Draft when a review already exists for it: if the
   pull request was opened earlier (e.g. sent, app restarted, then re-sent the same day), GitHub's
   "a pull request already exists" is now reconciled to **In review** instead of a misleading "check

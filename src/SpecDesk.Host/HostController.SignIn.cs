@@ -66,13 +66,22 @@ public sealed partial class HostController
 	private bool StartForAccountSession(AccountSession session, Action start) =>
 		PublishForAccountSession(session, start);
 
-	private void RotateAccountSessionLocked()
+	private CancellationTokenSource RotateAccountSessionLocked()
 	{
 		CancellationTokenSource previous = _accountSessionCts;
 		_accountSessionGeneration++;
-		previous.Cancel();
 		_accountSessionCts = new CancellationTokenSource();
-		previous.Dispose();
+		return previous;
+	}
+
+	private static void CancelAndDispose(CancellationTokenSource? cancellation)
+	{
+		if (cancellation is null)
+		{
+			return;
+		}
+		cancellation.Cancel();
+		cancellation.Dispose();
 	}
 
 	private void CancelCurrentAccountSession()
@@ -110,6 +119,7 @@ public sealed partial class HostController
 		}
 
 		CancellationTokenSource cts;
+		CancellationTokenSource? previousCts;
 		lock (_signInPublishSync)
 		{
 			lock (_sync)
@@ -118,11 +128,12 @@ public sealed partial class HostController
 				{
 					return;
 				}
-				_signInCts?.Cancel();
+				previousCts = _signInCts;
 				cts = new CancellationTokenSource();
 				_signInCts = cts;
 			}
 		}
+		previousCts?.Cancel();
 
 		CancellationToken token = cts.Token;
 		_ = Task.Run(async () =>
@@ -203,6 +214,7 @@ public sealed partial class HostController
 		bool resume)
 	{
 		PendingRepoActions? actions = null;
+		CancellationTokenSource? retiredAccountSession = null;
 		lock (_signInPublishSync)
 		{
 			lock (_sync)
@@ -214,81 +226,85 @@ public sealed partial class HostController
 				actions = TakePendingRepoActions();
 				if (signedIn)
 				{
-					RotateAccountSessionLocked();
+					retiredAccountSession = RotateAccountSessionLocked();
 				}
-				// Retire this flow atomically with taking its actions. A repository request arriving after
-				// this point either observes the stored authorization or starts a fresh flow; it can never
-				// enqueue behind a terminal flow whose queue was already drained.
 				_signInCts = null;
 			}
-
-			SendAccount(signedIn, login, message);
-			if (signedIn)
-			{
-				RefreshAccountOrganizations(login);
-			}
-			else
-			{
-				InvalidateAccountDetails();
-			}
-			if (resume && actions is not null)
-			{
-				ResumePendingRepoActions(actions);
-			}
+		}
+		if (actions is not null)
+		{
+			PendingRepoActionsTakenForTest?.Set();
+			PendingRepoActionsResumeForTest?.Wait();
+		}
+		CancelAndDispose(retiredAccountSession);
+		SendAccount(signedIn, login, message);
+		if (signedIn)
+		{
+			RefreshAccountOrganizations(login);
+		}
+		else
+		{
+			InvalidateAccountDetails();
+		}
+		if (resume && actions is not null)
+		{
+			ResumePendingRepoActions(actions);
+			PendingRepoActionsResumedForTest?.Set();
+		}
+		else
+		{
+			CompletePendingDocumentOpen(actions);
 		}
 	}
-
 	private void OnGitHubSignInCancel()
 	{
 		string? persistenceMessage = null;
-		bool hadActiveFlow;
+		PendingRepoActions? actions;
+		CancellationTokenSource? retiredSignIn;
 		lock (_signInPublishSync)
 		{
 			lock (_sync)
 			{
-				TakePendingRepoActions();
-				hadActiveFlow = _signInCts is not null;
-				_signInCts?.Cancel();
+				actions = TakePendingRepoActions();
+				retiredSignIn = _signInCts;
 				_signInCts = null;
 			}
-			try
+		}
+		retiredSignIn?.Cancel();
+		try
+		{
+			if (retiredSignIn is not null)
 			{
-				// Cancellation retires the auth-level epoch too. This call is serialized with the token/session
-				// commit, so a flow already inside a blocking secure-store write is cleared before Cancel returns.
-				if (hadActiveFlow)
-				{
-					_auth?.SignOut();
-				}
-			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-			{
-				_logger.LogWarning(ex, "Could not persist the GitHub sign-in cancellation");
-				persistenceMessage =
-					"Sign-in was cancelled for this session, but SpecDesk couldn't update the saved GitHub authorization. Try disconnecting again after closing apps that may be using it.";
-			}
-			// The retired task is deliberately stale and therefore silent. Publish the one terminal frame
-			// here so the webview closes the code prompt and restores the account affordance.
-			if (persistenceMessage is null)
-			{
-				SendCurrentAccount();
-			}
-			else
-			{
-				InvalidateAccountDetails();
-				SendAccount(signedIn: false, login: null, persistenceMessage);
+				_auth?.SignOut();
 			}
 		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_logger.LogWarning(ex, "Could not persist the GitHub sign-in cancellation");
+			persistenceMessage =
+				"Sign-in was cancelled for this session, but SpecDesk couldn't update the saved GitHub authorization. Try disconnecting again after closing apps that may be using it.";
+		}
+		CompletePendingDocumentOpen(actions);
+		if (persistenceMessage is null)
+		{
+			SendCurrentAccount();
+		}
+		else
+		{
+			InvalidateAccountDetails();
+			SendAccount(signedIn: false, login: null, persistenceMessage);
+		}
 	}
-
 	private void OnGitHubSignOut()
 	{
 		string? persistenceMessage = null;
+		PendingRepoActions? pendingActions = null;
+		WorkspaceStore.WorkspaceStateSnapshot? registrationRollbackState = null;
+		long canceledDocumentOpenRequestId = 0;
+		HashSet<CancellationTokenSource> cancellations = [];
 		CancelCurrentAccountSession();
 		lock (_signInPublishSync)
 		{
-			// Match Dispose's publication-gate order. Each account-bound task must cross its gate before
-			// publishing, so retiring every generation while all gates are held makes sign-out a hard
-			// publication boundary even when a GitHub client ignores cancellation and completes late.
 			lock (_clonePublishSync)
 			{
 				lock (_remotePublishSync)
@@ -297,76 +313,80 @@ public sealed partial class HostController
 					{
 						lock (_sync)
 						{
-							RotateAccountSessionLocked();
+							cancellations.Add(RotateAccountSessionLocked());
 							RetirePublishInFlightLocked();
-							TakePendingRepoActions();
-							_signInCts?.Cancel();
+							pendingActions = TakePendingRepoActions();
+							if (_signInCts is not null) cancellations.Add(_signInCts);
 							_signInCts = null;
-
 							_accountDetailsGeneration++;
-							_accountDetailsCts?.Cancel();
+							if (_accountDetailsCts is not null) cancellations.Add(_accountDetailsCts);
 							_accountDetailsCts = null;
-
 							_repositoryDescriptionGeneration++;
-							_repositoryDescriptionCts?.Cancel();
+							if (_repositoryDescriptionCts is not null) cancellations.Add(_repositoryDescriptionCts);
 							_repositoryDescriptionCts = null;
-
 							_cloneGeneration++;
-							_cloneCts?.Cancel();
-							_cloneCts = null;
-							_cloneRepoId = null;
+							if (_cloneCts is not null) cancellations.Add(_cloneCts);
 							_repoMetadataGeneration++;
 							foreach (RepoMetadataLookup lookup in _repoMetadataLookups.Values)
 							{
-								lookup.Cts.Cancel();
+								if (lookup.RollbackRegistrationOnAccountInvalidation
+									&& _workspace?.TryRollbackNewRepoRegistration(
+										lookup.Registration, out WorkspaceStore.WorkspaceStateSnapshot rollbackState) == true)
+								{
+									registrationRollbackState = rollbackState;
+								}
+								cancellations.Add(lookup.Cts);
 							}
 							_repoMetadataLookups.Clear();
-
 							_remoteBrowseGeneration++;
 							_remoteBrowseIntentGeneration++;
 							_remoteFileGeneration++;
-							_remoteBrowseCts?.Cancel();
+							if (_remoteBrowseCts is not null) cancellations.Add(_remoteBrowseCts);
 							_remoteBrowseCts = null;
 							_remoteBrowseRepoId = null;
 							_remoteBrowseIntentRepoId = null;
-							_remoteFileCts?.Cancel();
+							if (_remoteFileCts is not null) cancellations.Add(_remoteFileCts);
 							_remoteFileCts = null;
 							_remoteFileRepoId = null;
-
-							_chatCts?.Cancel();
-						}
-
-						// Cancellation and generation invalidation happen before the persistent token is
-						// cleared. No account-bound task can publish through a gate after this call.
-						try
-						{
-							_auth?.SignOut();
-						}
-						catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-						{
-							// GitHubDeviceFlowAuth clears its in-memory session before persisting the signed-out
-							// marker. Keep the UI disconnected, but tell the author that the saved session may
-							// need another cleanup attempt before the next app launch.
-							_logger.LogWarning(ex, "Could not persist the GitHub sign-out marker");
-							persistenceMessage =
-								"Disconnected for this session, but SpecDesk couldn't remove the saved GitHub authorization. Try disconnecting again after closing apps that may be using it.";
+							canceledDocumentOpenRequestId = _remoteFileRequestId;
+							_remoteFileRequestId = 0;
+							if (_chatCts is not null) cancellations.Add(_chatCts);
 						}
 					}
 				}
 			}
-			_ = ResetChatAgentAsync();
-			if (persistenceMessage is null)
-			{
-				SendCurrentAccount();
-			}
-			else
-			{
-				InvalidateAccountDetails();
-				SendAccount(signedIn: false, login: null, persistenceMessage);
-			}
+		}
+		foreach (CancellationTokenSource cancellation in cancellations)
+		{
+			cancellation.Cancel();
+		}
+		try
+		{
+			_auth?.SignOut();
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			_logger.LogWarning(ex, "Could not persist the GitHub sign-out marker");
+			persistenceMessage =
+				"Disconnected for this session, but SpecDesk couldn't remove the saved GitHub authorization. Try disconnecting again after closing apps that may be using it.";
+		}
+		if (registrationRollbackState is not null)
+		{
+			EmitWorkspaceState(registrationRollbackState);
+		}
+		CompletePendingDocumentOpen(pendingActions);
+		CompleteDocumentOpen(canceledDocumentOpenRequestId, succeeded: false);
+		_ = ResetChatAgentAsync();
+		if (persistenceMessage is null)
+		{
+			SendCurrentAccount();
+		}
+		else
+		{
+			InvalidateAccountDetails();
+			SendAccount(signedIn: false, login: null, persistenceMessage);
 		}
 	}
-
 	private void SendCurrentAccount()
 	{
 		// Ready can request the account outside an auth handler. Serialize its read-and-refresh claim with
@@ -424,6 +444,7 @@ public sealed partial class HostController
 		}
 
 		CancellationTokenSource cts;
+		CancellationTokenSource? previousCts;
 		long generation;
 		lock (_sync)
 		{
@@ -431,11 +452,12 @@ public sealed partial class HostController
 			{
 				return;
 			}
-			_accountDetailsCts?.Cancel();
+			previousCts = _accountDetailsCts;
 			cts = new CancellationTokenSource();
 			_accountDetailsCts = cts;
 			generation = ++_accountDetailsGeneration;
 		}
+		previousCts?.Cancel();
 
 		CancellationToken cancellationToken = cts.Token;
 		_ = Task.Run(async () =>
@@ -550,12 +572,14 @@ public sealed partial class HostController
 
 	private void InvalidateAccountDetails()
 	{
+		CancellationTokenSource? cancellation;
 		lock (_sync)
 		{
 			_accountDetailsGeneration++;
-			_accountDetailsCts?.Cancel();
+			cancellation = _accountDetailsCts;
 			_accountDetailsCts = null;
 		}
+		cancellation?.Cancel();
 	}
 
 	private void SendAccount(

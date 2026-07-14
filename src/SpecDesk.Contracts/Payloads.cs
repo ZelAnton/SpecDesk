@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SpecDesk.Contracts;
@@ -51,9 +52,21 @@ public static class MessageKinds
 	public const string RepoCloneDestinationRequest = "repo.cloneDestination.request";
 	public const string RepoDescriptionRequest = "repo.description.request";
 	public const string RepoBrowse = "repo.browse";
+	public const string RepoSwitchBranch = "repo.switchBranch";
+	public const string RepoDeleteClone = "repo.deleteClone";
+	public const string RepoDeleteBranch = "repo.deleteBranch";
+	public const string RepoRefreshAll = "repo.refreshAll";
+	public const string RepoPull = "repo.pull";
+	public const string RepoPush = "repo.push";
+	public const string WindowMinimize = "window.minimize";
+	public const string WindowToggleMaximize = "window.toggleMaximize";
+	public const string WindowClose = "window.close";
+	public const string WindowDrag = "window.drag";
 
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
+	public const string DocOpenCompleted = "doc.openCompleted";
+	public const string DocDiscardCompleted = "doc.discardCompleted";
 	public const string PreviewHtml = "preview.html";
 	public const string ImageInserted = "image.inserted";
 	public const string BranchNameSuggested = "branch.name.suggested";
@@ -73,10 +86,29 @@ public static class MessageKinds
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string WorkspaceState = "workspace.state";
+	public const string RepoConfirmation = "repo.confirmation";
+	public const string RepoOperationCompleted = "repo.operationCompleted";
 	public const string RepoCloneDestination = "repo.cloneDestination";
 	public const string RepoDescription = "repo.description";
+	public const string RepoCloneConflict = "repo.cloneConflict";
 	public const string WorkspaceContext = "workspace.context";
+	public const string WindowState = "window.state";
+	public const string WindowCloseRequested = "window.closeRequested";
+	public const string WindowCloseCompleted = "window.closeCompleted";
 }
+
+/// <summary>Payload of <c>window.state</c>: native maximize state for the in-content title-bar button.</summary>
+public sealed record WindowStatePayload(bool Maximized);
+
+/// <summary>Payload of <c>window.close</c>: zero starts a close handshake; a positive id acknowledges the
+/// matching native request after both editor panes have flushed.</summary>
+public sealed record WindowClosePayload(long RequestId = 0);
+
+/// <summary>Native request for the webview to flush both editors before acknowledging a close.</summary>
+public sealed record WindowCloseRequestedPayload(long RequestId);
+
+/// <summary>Terminal result when a close handshake remains open (currently a failed disk persist).</summary>
+public sealed record WindowCloseCompletedPayload(long RequestId, bool Succeeded);
 
 /// <summary>Payload of <c>editor.changed</c> (webview→native). The version rides on the envelope.</summary>
 public sealed record EditorChangedPayload(string Text);
@@ -107,7 +139,16 @@ public sealed record DocLoadedPayload(
 /// Payload of <c>doc.open</c> (webview→native). <c>Path</c> opens that specific file directly (the Start
 /// screen's "open a file", or a click in the folder tree); <c>null</c> falls back to the native open dialog.
 /// </summary>
-public sealed record DocOpenPayload(string? Path);
+public sealed record DocOpenPayload(string? Path, long RequestId = 0);
+
+/// <summary>Terminal result for one correlated <c>doc.open</c> transition.</summary>
+public sealed record DocOpenCompletedPayload(long RequestId, bool Succeeded);
+
+/// <summary>Payload of <c>doc.discard</c>: the positive id owns the editor identity lock.</summary>
+public sealed record DocDiscardPayload(long RequestId = 0);
+
+/// <summary>Terminal result for one correlated <c>doc.discard</c> transition.</summary>
+public sealed record DocDiscardCompletedPayload(long RequestId, bool Succeeded);
 
 /// <summary>
 /// Payload of <c>folder.open</c> (webview→native). <c>Path</c> opens that folder as the workspace directly;
@@ -450,10 +491,81 @@ public sealed record WorkspaceItem(
 /// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
 /// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
 /// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
+public sealed record RepositoryStatusPayload(
+	int Ahead,
+	int Behind,
+	bool HasUncommitted,
+	int StashCount,
+	bool HasConflicts)
+{
+	public static RepositoryStatusPayload Empty { get; } = new(0, 0, false, 0, false);
+}
+
+[JsonConverter(typeof(RegisteredBranchJsonConverter))]
+public sealed record RegisteredBranch(string Name, RepositoryStatusPayload Status, bool CanDelete = false);
+
+public sealed class RegisteredBranchJsonConverter : JsonConverter<RegisteredBranch>
+{
+	public override RegisteredBranch? Read(
+		ref Utf8JsonReader reader,
+		Type typeToConvert,
+		JsonSerializerOptions options)
+	{
+		if (reader.TokenType == JsonTokenType.String)
+		{
+			return new RegisteredBranch(reader.GetString() ?? string.Empty, RepositoryStatusPayload.Empty);
+		}
+		if (reader.TokenType != JsonTokenType.StartObject)
+		{
+			throw new JsonException("A registered branch must be a legacy name or a branch object.");
+		}
+		using JsonDocument document = JsonDocument.ParseValue(ref reader);
+		JsonElement root = document.RootElement;
+		string name = root.TryGetProperty("name", out JsonElement nameElement)
+			&& nameElement.ValueKind == JsonValueKind.String
+			? nameElement.GetString() ?? string.Empty
+			: string.Empty;
+		RepositoryStatusPayload status = root.TryGetProperty("status", out JsonElement statusElement)
+			? statusElement.Deserialize<RepositoryStatusPayload>(options) ?? RepositoryStatusPayload.Empty
+			: RepositoryStatusPayload.Empty;
+		bool canDelete = root.TryGetProperty("canDelete", out JsonElement canDeleteElement)
+			&& canDeleteElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+			&& canDeleteElement.GetBoolean();
+		return new RegisteredBranch(name, status, canDelete);
+	}
+
+	public override void Write(
+		Utf8JsonWriter writer,
+		RegisteredBranch value,
+		JsonSerializerOptions options)
+	{
+		writer.WriteStartObject();
+		writer.WriteString("name", value.Name);
+		writer.WritePropertyName("status");
+		JsonSerializer.Serialize(writer, value.Status, options);
+		writer.WriteBoolean("canDelete", value.CanDelete);
+		writer.WriteEndObject();
+	}
+}
+
+[method: JsonConstructor]
 public sealed record RegisteredClone(
 	string Id,
 	string Path,
-	IReadOnlyList<string> Branches);
+	string? CurrentBranch,
+	IReadOnlyList<RegisteredBranch> Branches,
+	RepositoryStatusPayload Status)
+{
+	public RegisteredClone(string id, string path, IReadOnlyList<string> branches)
+		: this(
+			id,
+			path,
+			null,
+			branches.Select(branch => new RegisteredBranch(branch, RepositoryStatusPayload.Empty)).ToArray(),
+			RepositoryStatusPayload.Empty)
+	{
+	}
+}
 
 public sealed record RegisteredRepo(
 	string Id,
@@ -499,14 +611,31 @@ public sealed record RepoOpenPayload(string Url, string? ClonePath = null);
 public sealed record RepoClonePayload(string Id);
 
 /// <summary>Payload of <c>repo.cloneManaged</c>: clone these coordinates into managed storage.</summary>
-public sealed record RepoCloneManagedPayload(string Url, string? DestinationPath = null);
+public sealed record RepoCloneManagedPayload(
+	string Url,
+	string? DestinationPath = null,
+	string? LocalName = null);
 
 /// <summary>Payload of <c>repo.cloneToFolder</c>: choose a parent folder and clone this GitHub repository.</summary>
-public sealed record RepoCloneToFolderPayload(string Url);
+public sealed record RepoCloneToFolderPayload(string Url, string? LocalName = null);
 
-public sealed record RepoCloneDestinationRequestPayload(string Url, long RequestId);
+public sealed record RepoCloneDestinationRequestPayload(string Url, long RequestId, string LocalName);
 
-public sealed record RepoCloneDestinationPayload(string Url, long RequestId, string? Path);
+public sealed record RepoCloneDestinationPayload(
+	string Url,
+	long RequestId,
+	string? Path,
+	string LocalName,
+	bool Exists,
+	string? ExistingClonePath = null);
+
+/// <summary>A requested managed copy name already belongs to this repository. The UI can offer to open
+/// <paramref name="ExistingClonePath"/> instead of silently reusing it or overwriting it.</summary>
+public sealed record RepoCloneConflictPayload(
+	string Url,
+	string LocalName,
+	string ExistingClonePath,
+	string Message);
 
 public static class RepoDescriptionStates
 {
@@ -525,3 +654,35 @@ public sealed record RepoDescriptionPayload(
 	string? Description = null);
 
 public sealed record RepoBrowsePayload(string Id, string? Branch = null);
+
+/// <summary>Switch one registered local copy to another working line. The host protects unfinished local
+/// work before switching and reopens the copy's files when the switch completes.</summary>
+public sealed record RepoSwitchBranchPayload(string Id, string ClonePath, string Branch, long RequestId = 0);
+
+public sealed record RepoBranchActionPayload(string Id, string ClonePath, string Branch, long RequestId = 0);
+
+public sealed record RepoRefreshAllPayload(long RequestId);
+
+public sealed record RepoDeleteClonePayload(
+	string Id,
+	string ClonePath,
+	string? ConfirmationToken = null,
+	long RequestId = 0);
+
+public sealed record RepoDeleteBranchPayload(
+	string Id,
+	string ClonePath,
+	string Branch,
+	string? ConfirmationToken = null,
+	long RequestId = 0);
+
+public sealed record RepoConfirmationPayload(
+	string Operation,
+	string Id,
+	string ClonePath,
+	string? Branch,
+	string Message,
+	IReadOnlyList<string> Warnings,
+	string ConfirmationToken);
+
+public sealed record RepoOperationCompletedPayload(long RequestId);

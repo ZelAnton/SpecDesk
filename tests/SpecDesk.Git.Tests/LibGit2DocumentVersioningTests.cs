@@ -107,6 +107,35 @@ public sealed class LibGit2DocumentVersioningTests
     }
 
     [Test]
+    public void BeginEdit_MutationBoundaryRunsImmediatelyBeforeBranchCreationAndCheckout()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        int boundaries = 0;
+
+        EditSession session = _versioning.BeginEdit(
+            _repo,
+            "spec/mutation-boundary",
+            "main",
+            onMutationStarting: () =>
+            {
+                using Repository repository = new(_repo);
+                Assert.Multiple(() =>
+                {
+                    Assert.That(repository.Branches["spec/mutation-boundary"], Is.Null);
+                    Assert.That(repository.Head.FriendlyName, Is.EqualTo("main"));
+                });
+                boundaries++;
+            });
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(boundaries, Is.EqualTo(1));
+            Assert.That(session.Branch, Is.EqualTo("spec/mutation-boundary"));
+            Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("spec/mutation-boundary"));
+        });
+    }
+
+    [Test]
     public void BeginEdit_ForksFromTheBaseEvenWhenAnotherWorkingBranchIsCheckedOut()
     {
         _versioning.Initialize(_repo, "Seed");
@@ -126,18 +155,24 @@ public sealed class LibGit2DocumentVersioningTests
     }
 
     [Test]
-    public void BeginEdit_SucceedsWhenResumingTheSameBranchWhileItsOwnWorkingTreeIsDirty()
+    public void BeginEdit_ResumingTheSameBranchPreservesAllWorkingTreeChanges()
     {
         _versioning.Initialize(_repo, "Seed");
         _versioning.BeginEdit(_repo, "spec/x", "main");
-        // A prior session on the SAME branch autosaved to disk but never saved a version: the working
-        // tree is dirty (uncommitted). Resuming the same document/branch must not throw a checkout
-        // conflict — there is no other draft's work at risk here.
+        // A branch name does not identify which document owns local changes. Resuming it must never use
+        // a forced checkout that resets tracked content or removes a local-only asset.
         File.WriteAllText(_doc, "# Uncommitted stray draft");
+        string asset = Path.Combine(_repo, "diagram.bin");
+        byte[] expectedAsset = [0, 1, 2, 255];
+        File.WriteAllBytes(asset, expectedAsset);
 
         Assert.DoesNotThrow(() => _versioning.BeginEdit(_repo, "spec/x", "main"));
-        // Forked from main with a forced checkout, so the uncommitted stray text is reset.
-        Assert.That(File.ReadAllText(_doc), Is.EqualTo("# Version one"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.ReadAllText(_doc), Is.EqualTo("# Uncommitted stray draft"));
+            Assert.That(File.ReadAllBytes(asset), Is.EqualTo(expectedAsset));
+            Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("spec/x"));
+        });
     }
 
     [Test]
@@ -172,6 +207,71 @@ public sealed class LibGit2DocumentVersioningTests
         File.WriteAllText(Path.Combine(_repo, "untracked.tmp"), "not part of any draft's tracked content");
 
         Assert.DoesNotThrow(() => _versioning.BeginEdit(_repo, "spec/b", "main"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(File.ReadAllText(Path.Combine(_repo, "untracked.tmp")),
+                Is.EqualTo("not part of any draft's tracked content"));
+            Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("spec/b"));
+        });
+    }
+
+    [Test]
+    public void BeginEdit_RefusesBeforeAnUntrackedFileWouldBeOverwritten()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        CommitFileOnBranch("spec/target", "collision.bin", [9, 8, 7]);
+        byte[] localBytes = [1, 3, 5, 7];
+        string collision = Path.Combine(_repo, "collision.bin");
+        File.WriteAllBytes(collision, localBytes);
+        RepositorySnapshot before = SnapshotRepository();
+        bool mutationStarted = false;
+
+        ProtectedLocalFileException ex = Assert.Throws<ProtectedLocalFileException>(() =>
+            _versioning.BeginEdit(_repo, "spec/target", "main", () => mutationStarted = true))!;
+
+        AssertCheckoutRefusalPreserved(before, collision, localBytes, mutationStarted);
+        Assert.That(ex.FilePath.Replace('\\', '/'), Is.EqualTo("collision.bin"));
+    }
+
+    [Test]
+    public void BeginEdit_RefusesBeforeAnUntrackedDirectoryWouldBeReplacedByATargetFile()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        CommitFileOnBranch("spec/target", "collision-dir", [9, 8, 7]);
+        string collisionDir = Path.Combine(_repo, "collision-dir");
+        Directory.CreateDirectory(collisionDir);
+        byte[] localBytes = [2, 4, 6, 8];
+        string localFile = Path.Combine(collisionDir, "local.bin");
+        File.WriteAllBytes(localFile, localBytes);
+        RepositorySnapshot before = SnapshotRepository();
+        bool mutationStarted = false;
+
+        Assert.Throws<ProtectedLocalFileException>(() =>
+            _versioning.BeginEdit(_repo, "spec/target", "main", () => mutationStarted = true));
+
+        AssertCheckoutRefusalPreserved(before, localFile, localBytes, mutationStarted);
+        Assert.That(Directory.Exists(collisionDir), Is.True);
+    }
+
+    [Test]
+    public void BeginEdit_RefusesBeforeAnIgnoredFileWouldBeOverwritten()
+    {
+        _versioning.Initialize(_repo, "Seed");
+        CommitFileOnBranch("spec/target", "private/cache.bin", [9, 8, 7]);
+        File.WriteAllText(Path.Combine(_repo, ".gitignore"), "private/\n");
+        CommitCurrentTree("Protect local cache");
+        string privateDir = Path.Combine(_repo, "private");
+        Directory.CreateDirectory(privateDir);
+        byte[] localBytes = [10, 20, 30, 40];
+        string collision = Path.Combine(privateDir, "cache.bin");
+        File.WriteAllBytes(collision, localBytes);
+        RepositorySnapshot before = SnapshotRepository();
+        bool mutationStarted = false;
+
+        Assert.Throws<ProtectedLocalFileException>(() =>
+            _versioning.BeginEdit(_repo, "spec/target", "main", () => mutationStarted = true));
+
+        AssertCheckoutRefusalPreserved(before, collision, localBytes, mutationStarted);
     }
 
     [Test]
@@ -303,12 +403,109 @@ public sealed class LibGit2DocumentVersioningTests
         File.WriteAllText(_doc, "# Version two");
         _versioning.SaveVersion(_repo, "Update spec");
 
-        _versioning.Discard(_repo, "spec/x", "main");
+        _versioning.BeginDiscard(_repo, "spec/x", "main");
+        using (Repository repository = new(_repo))
+        {
+            Assert.That(repository.Branches["spec/x"], Is.Not.Null, "The draft must remain recoverable until reload succeeds.");
+        }
+        _versioning.CompleteDiscard(_repo, "spec/x", "main");
 
+        using Repository completedRepository = new(_repo);
         Assert.Multiple(() =>
         {
             Assert.That(_versioning.CurrentBranch(_repo), Is.EqualTo("main"));
             Assert.That(File.ReadAllText(_doc), Is.EqualTo("# Version one"));
+            Assert.That(completedRepository.Branches["spec/x"], Is.Null);
+        });
+    }
+
+    [Test]
+    public void BeginDiscard_RefusesBeforeAnUntrackedFileWouldBeOverwritten()
+    {
+        string publishedAsset = Path.Combine(_repo, "published.bin");
+        File.WriteAllBytes(publishedAsset, [9, 8, 7]);
+        _versioning.Initialize(_repo, "Seed");
+        _versioning.BeginEdit(_repo, "spec/x", "main");
+        using (Repository repository = new(_repo))
+        {
+            Commands.Remove(repository, "published.bin");
+            Commit(repository, "Remove published asset in draft");
+        }
+        byte[] localBytes = [1, 2, 3, 4];
+        File.WriteAllBytes(publishedAsset, localBytes);
+        RepositorySnapshot before = SnapshotRepository();
+
+        Assert.Throws<ProtectedLocalFileException>(() =>
+            _versioning.BeginDiscard(_repo, "spec/x", "main"));
+
+        AssertCheckoutRefusalPreserved(before, publishedAsset, localBytes, mutationStarted: false);
+    }
+
+    private sealed record RepositorySnapshot(
+        string Branch,
+        string HeadSha,
+        Dictionary<string, string> Refs);
+
+    private void CommitFileOnBranch(string branchName, string relativePath, byte[] content)
+    {
+        using Repository repository = new(_repo);
+        Branch branch = repository.CreateBranch(branchName, repository.Head.Tip);
+        Commands.Checkout(repository, branch);
+        string path = Path.Combine(_repo, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        string? directory = Path.GetDirectoryName(path);
+        if (directory is not null)
+        {
+            Directory.CreateDirectory(directory);
+        }
+        File.WriteAllBytes(path, content);
+        Commands.Stage(repository, relativePath);
+        Commit(repository, $"Add {relativePath}");
+        Commands.Checkout(repository, repository.Branches["main"]);
+    }
+
+    private void CommitCurrentTree(string message)
+    {
+        using Repository repository = new(_repo);
+        Commands.Stage(repository, "*");
+        Commit(repository, message);
+    }
+
+    private static void Commit(Repository repository, string message)
+    {
+        Signature signature = new("SpecDesk Tests", "tests@specdesk.local", DateTimeOffset.Now);
+        repository.Commit(message, signature, signature);
+    }
+
+    private RepositorySnapshot SnapshotRepository()
+    {
+        using Repository repository = new(_repo);
+        return new RepositorySnapshot(
+            repository.Head.FriendlyName,
+            repository.Head.Tip.Sha,
+            repository.Refs.ToDictionary(
+                reference => reference.CanonicalName,
+                reference => reference.TargetIdentifier,
+                StringComparer.Ordinal));
+    }
+
+    private void AssertCheckoutRefusalPreserved(
+        RepositorySnapshot before,
+        string localPath,
+        byte[] expectedBytes,
+        bool mutationStarted)
+    {
+        using Repository repository = new(_repo);
+        Dictionary<string, string> refsAfter = repository.Refs.ToDictionary(
+            reference => reference.CanonicalName,
+            reference => reference.TargetIdentifier,
+            StringComparer.Ordinal);
+        Assert.Multiple(() =>
+        {
+            Assert.That(mutationStarted, Is.False);
+            Assert.That(File.ReadAllBytes(localPath), Is.EqualTo(expectedBytes));
+            Assert.That(repository.Head.FriendlyName, Is.EqualTo(before.Branch));
+            Assert.That(repository.Head.Tip.Sha, Is.EqualTo(before.HeadSha));
+            Assert.That(refsAfter, Is.EqualTo(before.Refs));
         });
     }
 }

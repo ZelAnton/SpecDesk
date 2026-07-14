@@ -99,6 +99,11 @@ public sealed class HostControllerFilesystemTests
 		return null;
 	}
 
+	private IpcMessage? WaitFor(string kind)
+	{
+		SpinWait.SpinUntil(() => Find(kind) is not null, TimeSpan.FromSeconds(2));
+		return Find(kind);
+	}
 	[Test]
 	public void DocOpen_WithAnExplicitPath_LoadsThatFileAndDoesNotConsultTheDialog()
 	{
@@ -116,14 +121,51 @@ public sealed class HostControllerFilesystemTests
 	}
 
 	[Test]
+	public void DocOpen_WithARequestId_EmitsMatchingSuccessfulCompletion()
+	{
+		using HostController controller = NewController();
+		string file = Path.Combine(_root, "README.md");
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocOpen,
+			new DocOpenPayload(file, RequestId: 41)));
+
+		DocOpenCompletedPayload? completed = Find(MessageKinds.DocOpenCompleted)
+			?.GetPayload<DocOpenCompletedPayload>();
+		Assert.That(completed, Is.EqualTo(new DocOpenCompletedPayload(41, Succeeded: true)));
+	}
+
+	[Test]
+	public void DocOpen_WhenPickerIsCancelled_EmitsMatchingFailedCompletion()
+	{
+		using HostController controller = NewController();
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocOpen,
+			new DocOpenPayload(null, RequestId: 42)));
+
+		DocOpenCompletedPayload? completed = Find(MessageKinds.DocOpenCompleted)
+			?.GetPayload<DocOpenCompletedPayload>();
+		Assert.That(completed, Is.EqualTo(new DocOpenCompletedPayload(42, Succeeded: false)));
+	}
+
+	[Test]
 	public void DocOpen_WithAMalformedPath_EmitsAPlainErrorNotASilentDeadRequest()
 	{
 		using HostController controller = NewController();
 
-		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen, new DocOpenPayload("bad\0path")));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocOpen,
+			new DocOpenPayload("bad\0path", RequestId: 43)));
 
-		Assert.That(Find(MessageKinds.DocLoaded), Is.Null);
-		Assert.That(Find(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message, Is.Not.Null.And.Not.Empty);
+		Assert.Multiple(() =>
+		{
+			Assert.That(Find(MessageKinds.DocLoaded), Is.Null);
+			Assert.That(Find(MessageKinds.Error)?.GetPayload<ErrorPayload>()?.Message, Is.Not.Null.And.Not.Empty);
+			Assert.That(
+				Find(MessageKinds.DocOpenCompleted)?.GetPayload<DocOpenCompletedPayload>(),
+				Is.EqualTo(new DocOpenCompletedPayload(43, Succeeded: false)));
+		});
 	}
 
 	[Test]
@@ -174,7 +216,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree, Is.Not.Null);
 		Assert.That(tree!.Root, Is.EqualTo(Path.GetFullPath(_root)));
 		// Directories sort before files. Files of every type are visible; .git remains excluded.
@@ -195,7 +237,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.FolderOpen, new FolderOpenPayload(null)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(_root)));
 	}
 
@@ -219,7 +261,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(specs)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(specs)));
 		string[] justBilling = ["billing.md"];
 		Assert.That(tree!.Nodes.Select(n => n.Name), Is.EqualTo(justBilling));
@@ -237,7 +279,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(null)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(_root)));
 	}
 
@@ -256,7 +298,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(null)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(Path.Combine(_root, "specs"))));
 	}
 
@@ -275,7 +317,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(null)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree?.Root, Is.EqualTo(Path.GetFullPath(_root)));
 	}
 
@@ -298,7 +340,7 @@ public sealed class HostControllerFilesystemTests
 
 		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.TreeRequest, new TreeRequestPayload(null)));
 
-		TreePayload? tree = Find(MessageKinds.Tree)?.GetPayload<TreePayload>();
+		TreePayload? tree = WaitFor(MessageKinds.Tree)?.GetPayload<TreePayload>();
 		Assert.That(tree, Is.Not.Null);
 		Assert.That(tree!.Root, Is.Empty);
 		Assert.That(tree.Nodes, Is.Empty);

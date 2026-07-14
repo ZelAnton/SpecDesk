@@ -126,6 +126,12 @@ export class ActiveContextModel {
     return this.current();
   }
 
+  documentCleared(): ActiveContext {
+    this.documentPath = null;
+    this.workspace = null;
+    this.status = PUBLISHED;
+    return this.current();
+  }
   workspaceChanged(workspace: WorkspaceContextPayload): ActiveContext {
     this.workspace = workspace;
     return this.current();

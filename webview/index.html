@@ -6,12 +6,13 @@
     <title>SpecDesk</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body>
+  <body data-central-view="home">
     <!-- Skip link (a11y §11): the first focusable element, visually hidden until focused, so a keyboard
          user can jump past the toolbar straight into the editor. The handler in index.ts focuses the
          pane visible in the current mode. -->
     <a class="skip-link" href="#editor">Skip to editor</a>
     <div id="toolbar">
+      <span id="app-title">SpecDesk</span>
       <nav id="repository-context" aria-label="Current document location">
         <span id="current-repository" title="No repository">No repository</span>
         <span class="context-separator" aria-hidden="true">/</span>
@@ -36,6 +37,12 @@
           <button id="account-signout" type="button" role="menuitem" hidden>Sign out</button>
         </div>
       </div>
+      <fieldset id="window-controls">
+        <legend class="sr-only">Window controls</legend>
+        <button id="window-minimize" class="window-control" type="button" aria-label="Minimize" title="Minimize">—</button>
+        <button id="window-maximize" class="window-control" type="button" aria-label="Maximize" title="Maximize" aria-pressed="false">□</button>
+        <button id="window-close" class="window-control window-control--close" type="button" aria-label="Close" title="Close">×</button>
+      </fieldset>
       <span id="toolbar-announcer" class="sr-only" aria-live="polite"></span>
     </div>
     <!-- Inline prompt for the draft name (branch), revealed by "Edit". Seeded with the generated
@@ -102,8 +109,8 @@
       Too many changes to show in detail — the document is too large to compare closely.
     </div>
     <!-- Workspace: the collapsible-panel shell (design concept §9). The toolbar and inline bars stack
-         above; this region fills the rest. A main row (left rail · centre · right rail) stacks over a
-         full-width bottom dock. The centre is the CentralFrame host (workspace/central-frame.ts): #editor-view
+         above; this region fills the rest. The left rail and centre stack over the bottom dock, while the
+         right rail remains a separate full-height column. The centre is the CentralFrame host (workspace/central-frame.ts): #editor-view
          (the formatting toolbar over the panes) is its primary "editor" view, and the left-rail navigation
          swaps in other registered views. The docks start collapsed; workspace/dock.ts builds each one's
          chrome (an icon rail + a header with the active mode's title + collapse) and content. -->
@@ -115,12 +122,12 @@
              stays deferred until they land. -->
         <div id="left-dock" class="dock dock-left" hidden></div>
         <!-- The central frame is the app's main content region; data-view names the active central view,
-             which central-frame.ts seeds from and keeps in sync (it starts on the editor). -->
-        <main id="central-frame" data-view="editor">
+             which central-frame.ts seeds from and keeps in sync (it starts on Start). -->
+        <main id="central-frame" data-view="home">
           <!-- The editor central view: the formatting toolbar (now part of the editor's working area, not a
                full-width row above the panels) over the panes. central-view(-active) mark it as the active
-               primary central view (see workspace/central-frame.ts); index.ts registers it under "editor". -->
-          <div id="editor-view" class="central-view central-view--active">
+               editor central view (see workspace/central-frame.ts); index.ts registers it under "editor". -->
+          <div id="editor-view" class="central-view">
             <div id="editor-toolbar" role="toolbar" aria-label="Markdown editor controls">
               <div id="editor-actions">
                 <button id="open-btn" type="button">Open…</button>
@@ -144,21 +151,29 @@
                 </span>
                 <span id="status" aria-live="polite">(no document)</span>
               </div>
-              <!-- Formatting controls appear while editing. They route to ProseMirror in Formatted and
-                   Markdown text transforms in Code/Split. -->
-              <div id="format-bar" hidden>
+              <!-- Formatting controls remain visible with an open document and enable only while editing.
+                   They route to ProseMirror in Formatted and Markdown text transforms in Code/Split. -->
+              <fieldset id="format-bar" disabled>
+              <legend class="sr-only">Text formatting</legend>
               <button id="fmt-bold" type="button" data-format="bold" aria-pressed="false" title="Bold (Ctrl+B)" aria-label="Bold (Ctrl+B)">B</button>
               <button id="fmt-italic" type="button" data-format="italic" aria-pressed="false" title="Italic (Ctrl+I)" aria-label="Italic (Ctrl+I)">I</button>
               <button id="fmt-strike" type="button" data-format="strike" aria-pressed="false" title="Strikethrough (Ctrl+Shift+X)" aria-label="Strikethrough (Ctrl+Shift+X)">S</button>
+              <button id="fmt-inline-code" type="button" data-format="inlineCode" aria-pressed="false" title="Inline code (Ctrl+`)" aria-label="Inline code (Ctrl+`)">`code`</button>
               <span class="fmt-sep" aria-hidden="true"></span>
               <button id="fmt-h1" type="button" data-format="h1" aria-pressed="false" title="Heading 1 (Ctrl+Alt+1)" aria-label="Heading 1 (Ctrl+Alt+1)">H1</button>
               <button id="fmt-h2" type="button" data-format="h2" aria-pressed="false" title="Heading 2 (Ctrl+Alt+2)" aria-label="Heading 2 (Ctrl+Alt+2)">H2</button>
+              <button id="fmt-h3" type="button" data-format="h3" aria-pressed="false" title="Heading 3 (Ctrl+Alt+3)" aria-label="Heading 3 (Ctrl+Alt+3)">H3</button>
               <span class="fmt-sep" aria-hidden="true"></span>
               <button id="fmt-bullet" type="button" data-format="bullet" aria-pressed="false" title="Bullet list (Ctrl+Shift+8)" aria-label="Bullet list (Ctrl+Shift+8)">• List</button>
               <button id="fmt-ordered" type="button" data-format="ordered" aria-pressed="false" title="Numbered list (Ctrl+Shift+7)" aria-label="Numbered list (Ctrl+Shift+7)">1. List</button>
               <button id="fmt-quote" type="button" data-format="quote" aria-pressed="false" title="Quote (Ctrl+Shift+&gt;)" aria-label="Quote (Ctrl+Shift+&gt;)">«»</button>
               <button id="fmt-code" type="button" data-format="code" aria-pressed="false" title="Code block (Ctrl+Shift+E)" aria-label="Code block (Ctrl+Shift+E)">&lt;/&gt;</button>
-              </div>
+              <span class="fmt-sep" aria-hidden="true"></span>
+              <button id="fmt-link" type="button" data-format="link" aria-pressed="false" title="Insert link (Ctrl+K)" aria-label="Insert link (Ctrl+K)">Link</button>
+              <button id="fmt-table" type="button" data-format="table" title="Insert table (Ctrl+Alt+T)" aria-label="Insert table (Ctrl+Alt+T)">Table</button>
+              <button id="fmt-image" type="button" data-format="image" title="Insert image reference (Ctrl+Shift+I)" aria-label="Insert image reference (Ctrl+Shift+I)">Image</button>
+              <button id="fmt-rule" type="button" data-format="rule" title="Insert divider (Ctrl+Shift+R)" aria-label="Insert divider (Ctrl+Shift+R)">Divider</button>
+              </fieldset>
             </div>
             <!-- data-mode is the single declared source of truth for the STARTING view mode: index.ts reads
                  it back into its `mode` variable at startup (see the comment there) instead of repeating the
@@ -169,17 +184,16 @@
               <div id="formatted"></div>
             </div>
           </div>
-          <!-- The Start central view (workspace/tools/home-view.ts fills it): a calm open-a-spec screen the
-               left-rail navigator switches to. Starts hidden (no central-view--active) — the CSS hide rule
-               keeps it out of the layout until shown. -->
-          <div id="home-view" class="central-view"></div>
+          <!-- The Start central view (workspace/tools/home-view.ts fills it): the calm initial screen. The
+               left-rail navigator can return here without destroying the hidden editor state. -->
+          <div id="home-view" class="central-view central-view--active"></div>
           <!-- Notifications is a registered central view, not an overlay; its initial list is a deliberate
                stub until the host-side notification feed lands. -->
           <div id="notifications-view" class="central-view"></div>
         </main>
-        <div id="right-dock" class="dock dock-right" hidden></div>
       </div>
       <div id="bottom-dock" class="dock dock-bottom" hidden></div>
+      <div id="right-dock" class="dock dock-right" hidden></div>
     </div>
     <footer id="status-bar">
       <span id="github-account-status" role="status" aria-live="polite" hidden></span>

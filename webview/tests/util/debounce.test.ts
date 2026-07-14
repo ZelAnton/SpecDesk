@@ -53,6 +53,44 @@ describe("debounce", () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  it("flush delivers a pending call immediately and only once", () => {
+    const fn = vi.fn();
+    const run = debounce(fn, 100);
+    expect(run.flush()).toBe(false);
+    run();
+    expect(run.flush()).toBe(true);
+    expect(run.pending).toBe(false);
+    expect(fn).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(100);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancel retires a pending call without invoking it", () => {
+    const fn = vi.fn();
+    const run = debounce(fn, 100);
+    expect(run.cancel()).toBe(false);
+    run();
+    expect(run.cancel()).toBe(true);
+    expect(run.pending).toBe(false);
+    expect(run.pendingOrder).toBeNull();
+    vi.advanceTimersByTime(100);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("exposes a shared chronological order for pending work", () => {
+    const older = debounce(() => {}, 100);
+    const newer = debounce(() => {}, 100);
+
+    older();
+    newer();
+
+    expect(older.pendingOrder).not.toBeNull();
+    expect(newer.pendingOrder).toBeGreaterThan(older.pendingOrder ?? 0);
+    older.flush();
+    expect(older.pendingOrder).toBeNull();
+    expect(newer.pendingOrder).not.toBeNull();
+  });
+
   it("pending reflects whether a deferred call is still outstanding", () => {
     const fn = vi.fn();
     const run = debounce(fn, 100);

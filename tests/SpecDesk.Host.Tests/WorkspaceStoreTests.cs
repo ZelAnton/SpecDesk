@@ -114,6 +114,37 @@ public sealed class WorkspaceStoreTests
 	}
 
 	[Test]
+	public void CloneAndBranchFavorites_PersistWithDistinctRepositoryIdentity()
+	{
+		WorkspaceStore store = new(_path);
+		string clonePath = Path.Combine(_dir, "spec-copy");
+		RegisteredRepo repo = new(
+			"octo/spec",
+			"octo/spec",
+			"https://github.com/octo/spec",
+			"main",
+			[
+				new RegisteredClone(
+					"spec-copy", clonePath, "draft",
+					[new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+						new RegisteredBranch("draft", RepositoryStatusPayload.Empty)],
+					RepositoryStatusPayload.Empty),
+			]);
+		store.RegisterRepo(repo);
+		store.SetFavorite(new WorkspaceItem(clonePath, "spec-copy", true, "clone", repo.Id), true);
+		store.SetFavorite(new WorkspaceItem(clonePath, "spec-copy · main", true, "branch", repo.Id, "main"), true);
+		store.SetFavorite(new WorkspaceItem(clonePath, "spec-copy · draft", true, "branch", repo.Id, "draft"), true);
+
+		WorkspaceItem[] favorites = new WorkspaceStore(_path).State().Favorites.ToArray();
+		Assert.Multiple(() =>
+		{
+			Assert.That(favorites.Select(item => item.Kind), Is.EqualTo(["clone", "branch", "branch"]));
+			Assert.That(favorites.Select(item => item.RepositoryId), Is.All.EqualTo(repo.Id));
+			Assert.That(favorites.Where(item => item.Kind == "branch").Select(item => item.Branch),
+				Is.EqualTo(["main", "draft"]));
+		});
+	}
+	[Test]
 	public void RegisterRepo_DedupesById_AndUnregisterRemovesIt()
 	{
 		WorkspaceStore store = new(_path);
@@ -128,6 +159,72 @@ public sealed class WorkspaceStoreTests
 		store.UnregisterRepo("octo/spec");
 		string[] remaining = ["octo/other"];
 		Assert.That(store.State().Repositories.Select(r => r.Id), Is.EqualTo(remaining));
+	}
+
+	[Test]
+	public void RepositoryRegistrationSnapshot_RejectsAbsentAndReregisteredAbaCommits()
+	{
+		WorkspaceStore store = new(_path);
+		RegisteredRepo repo = new("octo/spec", "octo/spec", "https://github.com/octo/spec", "main", []);
+		RegisteredClone clone = new("copy", Path.Combine(_dir, "copy"), ["main"]);
+		WorkspaceStore.RepositoryRegistrationSnapshot absent = store.CaptureRepoRegistration(repo.Id);
+
+		store.UnregisterRepo(repo.Id);
+		bool committedAfterForget = store.TryCommitRepoClone(
+			absent, requirePresent: false, repo, clone, "main", out _);
+		store.RegisterRepo(repo);
+		WorkspaceStore.RepositoryRegistrationSnapshot registered = store.CaptureRepoRegistration(repo.Id);
+		store.UnregisterRepo(repo.Id);
+		bool metadataRestoredRegistration = store.TrySetRepoDefaultBranch(
+			registered, "trunk", out _);
+		store.RegisterRepo(repo);
+		bool committedAfterReregister = store.TryCommitRepoClone(
+			registered, requirePresent: true, repo, clone, "main", out _);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(committedAfterForget, Is.False);
+			Assert.That(metadataRestoredRegistration, Is.False);
+			Assert.That(committedAfterReregister, Is.False);
+			Assert.That(store.FindRepo(repo.Id)?.Clones, Is.Empty);
+		});
+	}
+
+	[Test]
+	public void RepositoryRegistrationSnapshot_RejectsCloneAndBranchResurrection()
+	{
+		WorkspaceStore store = new(_path);
+		string clonePath = Path.Combine(_dir, "copy");
+		RegisteredClone clone = new(
+			"copy",
+			clonePath,
+			"main",
+			[new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+				new RegisteredBranch("draft", RepositoryStatusPayload.Empty)],
+			RepositoryStatusPayload.Empty);
+		RegisteredRepo repo = new(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", [clone]);
+		store.RegisterRepo(repo);
+		WorkspaceStore.RepositoryRegistrationSnapshot beforeBranchDelete =
+			store.CaptureRepoRegistration(repo.Id);
+
+		store.RemoveRepoBranch(repo.Id, clonePath, "draft");
+		bool restoredBranch = store.TryCommitRepoClone(
+			beforeBranchDelete, requirePresent: true, repo, clone, "main", out _);
+		WorkspaceStore.RepositoryRegistrationSnapshot beforeCloneDelete =
+			store.CaptureRepoRegistration(repo.Id);
+		RegisteredClone currentClone = store.FindRepo(repo.Id)!.Clones.Single();
+		Assert.That(store.TryRemoveRepoClone(
+			repo.Id, repo.Url, currentClone.Path, currentClone.Id), Is.True);
+		bool restoredClone = store.TryCommitRepoClone(
+			beforeCloneDelete, requirePresent: true, repo, currentClone, "main", out _);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(restoredBranch, Is.False);
+			Assert.That(restoredClone, Is.False);
+			Assert.That(store.FindRepo(repo.Id)?.Clones, Is.Empty);
+		});
 	}
 
 	[Test]
@@ -165,6 +262,30 @@ public sealed class WorkspaceStoreTests
 		});
 	}
 
+	[Test]
+	public void TryRemoveRepoClone_DoesNotRemoveAReplacementRegistrationAtTheSamePath()
+	{
+		WorkspaceStore store = new(_path);
+		RegisteredRepo repo = new(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", []);
+		string clonePath = Path.Combine(_dir, "copy");
+		store.RegisterRepo(repo);
+		store.UpsertRepoClone(repo, new RegisteredClone("original", clonePath, ["main"]), "main");
+		store.UpsertRepoClone(repo, new RegisteredClone("replacement", clonePath, ["main"]), "main");
+
+		bool removedOriginal = store.TryRemoveRepoClone(
+			repo.Id, repo.Url, clonePath, "original");
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(removedOriginal, Is.False);
+			Assert.That(store.State().Repositories.Single().Clones.Single().Id, Is.EqualTo("replacement"));
+		});
+		Assert.That(
+			store.TryRemoveRepoClone(repo.Id, repo.Url, clonePath, "replacement"),
+			Is.True);
+		Assert.That(store.State().Repositories.Single().Clones, Is.Empty);
+	}
 	[Test]
 	public void Save_ThenAFreshStore_RoundTripsThroughTheFile()
 	{

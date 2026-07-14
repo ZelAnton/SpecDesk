@@ -29,17 +29,45 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public int BeginEditCalls { get; private set; }
 
+    public int BeginEditMutationStartingCalls { get; private set; }
+
+    public ManualResetEventSlim? BeginEditEntered { get; set; }
+
+    public ManualResetEventSlim? BeginEditGate { get; set; }
+
+    public ManualResetEventSlim? BeginEditMutationStarted { get; set; }
+
+    public ManualResetEventSlim? BeginEditAfterMutationGate { get; set; }
+
+    public bool ThrowBeginEditAfterMutation { get; set; }
+
+    public bool KeepBranchOnBeginEditPostMutationFailure { get; set; }
+
     public int SaveVersionCalls { get; private set; }
 
     public string? LastCommitMessage { get; private set; }
 
     public bool DiscardCalled { get; private set; }
 
+    public bool ThrowOnDiscard { get; set; }
+
+    public ManualResetEventSlim? DiscardEntered { get; set; }
+
+    public ManualResetEventSlim? DiscardGate { get; set; }
+
+    public Action? AfterDiscardCheckout { get; set; }
+
+    public bool CompleteDiscardCalled { get; private set; }
+
     public int InitializeCalls { get; private set; }
 
     /// <summary>The remote URL <see cref="RemoteUrl"/> returns; a GitHub HTTPS URL by default. Set to a
     /// non-GitHub URL (or null) to exercise the "not a GitHub repository" path.</summary>
     public string? RemoteUrlValue { get; set; } = "https://github.com/octo/spec-repo.git";
+
+	public string? PushUrlValue { get; set; }
+
+	public Action? BeforePush { get; set; }
 
     /// <summary>The note <see cref="LastVersionNote"/> returns (the seed for the pull-request title).</summary>
     public string? LastNoteValue { get; set; } = "Clarify the refund window";
@@ -73,6 +101,10 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     public string? PushedBranch { get; private set; }
 
     public string? PushedToken { get; private set; }
+
+	public string? PushedExpectedRepositoryUrl { get; private set; }
+
+	public string? AttemptedExpectedRepositoryUrl { get; private set; }
 
     /// <summary>When set, <see cref="PushBranch"/> blocks (after recording its arguments) until released —
     /// so an Update review test can keep one push in flight and assert a concurrent request is
@@ -153,7 +185,11 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public string? DefaultBranch(string repoRoot, string? preferredBranch) => DefaultBranchValue;
 
-    public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
+    public EditSession BeginEdit(
+        string repoRoot,
+        string branchName,
+        string preferredBase,
+        Action? onMutationStarting = null)
     {
         if (DirtyBranchToThrow is not null)
         {
@@ -161,7 +197,23 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         }
 
         BeginEditCalls++;
-        Branch = branchName;
+        BeginEditEntered?.Set();
+        BeginEditGate?.Wait(TimeSpan.FromSeconds(10));
+        if (onMutationStarting is not null)
+        {
+            BeginEditMutationStartingCalls++;
+            onMutationStarting();
+        }
+        if (!ThrowBeginEditAfterMutation || !KeepBranchOnBeginEditPostMutationFailure)
+        {
+            Branch = branchName;
+        }
+        BeginEditMutationStarted?.Set();
+        BeginEditAfterMutationGate?.Wait(TimeSpan.FromSeconds(10));
+        if (ThrowBeginEditAfterMutation)
+        {
+            throw new InvalidOperationException("begin edit post-checkout boom");
+        }
         return new EditSession(branchName, preferredBase);
     }
 
@@ -181,10 +233,22 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         return new CommitResult(true, $"sha{_commits}", DateTimeOffset.UnixEpoch);
     }
 
-    public void Discard(string repoRoot, string workingBranch, string baseBranch)
+    public void BeginDiscard(string repoRoot, string workingBranch, string baseBranch)
     {
         DiscardCalled = true;
+        DiscardEntered?.Set();
+        DiscardGate?.Wait(TimeSpan.FromSeconds(10));
+        if (ThrowOnDiscard)
+        {
+            throw new IOException("discard boom");
+        }
         Branch = baseBranch;
+        AfterDiscardCheckout?.Invoke();
+    }
+
+    public void CompleteDiscard(string repoRoot, string workingBranch, string baseBranch)
+    {
+        CompleteDiscardCalled = true;
     }
 
     public string? RemoteUrl(string repoRoot, string remoteName = "origin") =>
@@ -195,9 +259,18 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     public bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch) => HasCommitsValue;
 
     public void PushBranch(
-        string repoRoot, string branchName, string accessToken, string remoteName = "origin",
+        string repoRoot, string branchName, string expectedRepositoryUrl, string accessToken,
+        string remoteName = "origin",
         CancellationToken cancellationToken = default)
     {
+		AttemptedExpectedRepositoryUrl = expectedRepositoryUrl;
+		BeforePush?.Invoke();
+		string? effectivePushUrl = PushUrlValue ?? RemoteUrlValue;
+		if (!string.Equals(expectedRepositoryUrl, RemoteUrlValue, StringComparison.OrdinalIgnoreCase)
+			|| !string.Equals(expectedRepositoryUrl, effectivePushUrl, StringComparison.OrdinalIgnoreCase))
+		{
+			throw new RepositoryIdentityMismatchException();
+		}
         if (ThrowOnPush)
         {
             // A transport / auth failure — thrown before recording the call, so it counts as "did not push".
@@ -212,6 +285,7 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
         PushBranchCalls++;
         PushedBranch = branchName;
         PushedToken = accessToken;
+		PushedExpectedRepositoryUrl = expectedRepositoryUrl;
         // Block in flight until the test releases it (bounded so a wiring bug fails fast, not hangs).
         PushGate?.Wait(TimeSpan.FromSeconds(10),
             IgnorePushCancellation ? CancellationToken.None : cancellationToken);

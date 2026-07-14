@@ -177,6 +177,16 @@ describe("active workspace context", () => {
     expect(tools(stale)).toEqual(["assistant", "outline"]);
   });
 
+  it("clears document and repository context when the active local copy is removed", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo\\docs\\proposal.md");
+    model.workspaceChanged(named);
+
+    const cleared = model.documentCleared();
+
+    expect(cleared).toBe(EMPTY_ACTIVE_CONTEXT);
+    expect(tools(cleared)).toEqual(["assistant"]);
+  });
   it("has only the global assistant before a document is active", () => {
     expect(new ActiveContextModel().current()).toBe(EMPTY_ACTIVE_CONTEXT);
     expect(tools(EMPTY_ACTIVE_CONTEXT)).toEqual(["assistant"]);

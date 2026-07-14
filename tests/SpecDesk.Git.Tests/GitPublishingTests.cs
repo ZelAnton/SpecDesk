@@ -65,11 +65,73 @@ public sealed class GitPublishingTests
         File.WriteAllText(Path.Combine(_work, "spec.md"), "# Version two");
         _versioning.SaveVersion(_work, "Draft change");
 
-        _versioning.PushBranch(_work, "spec/draft", "x-access-token");
+        _versioning.PushBranch(_work, "spec/draft", _remote, "x-access-token");
 
         using Repository remote = new(_remote);
         Assert.That(remote.Branches["spec/draft"], Is.Not.Null);
     }
+
+    [Test]
+    public void PushBranch_cancelled_before_authentication_does_not_publish()
+    {
+        _versioning.BeginEdit(_work, "spec/draft", "main");
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() =>
+            _versioning.PushBranch(
+                _work, "spec/draft", _remote, "x-access-token", cancellationToken: cts.Token));
+
+        using Repository remote = new(_remote);
+        Assert.That(remote.Branches["spec/draft"], Is.Null);
+    }
+
+    [Test]
+    public void PushBranch_different_github_pushurl_fails_before_credentials_or_remote_mutation()
+    {
+        using (Repository repo = new(_work))
+        {
+            repo.Config.Set("remote.origin.url", "https://github.com/acme/specs.git");
+            repo.Config.Set("remote.origin.pushurl", "https://github.com/other/specs.git");
+        }
+
+        Assert.Throws<RepositoryIdentityMismatchException>(
+            () => _versioning.PushBranch(
+                _work, "main", "https://github.com/acme/specs.git", "x-access-token"));
+
+        using Repository remote = new(_remote);
+        Assert.That(remote.Branches, Is.Empty);
+    }
+
+	[Test]
+	public void PushBranch_remote_replaced_after_readiness_fails_before_credentials_or_remote_mutation()
+	{
+		const string expectedUrl = "https://github.com/acme/specs.git";
+		using (Repository repo = new(_work))
+		{
+			repo.Config.Set("remote.origin.url", "https://github.com/other/private-repo.git");
+			repo.Config.Set("remote.origin.pushurl", "https://github.com/other/private-repo.git");
+		}
+
+		Assert.Throws<RepositoryIdentityMismatchException>(
+			() => _versioning.PushBranch(_work, "main", expectedUrl, "x-access-token"));
+
+		using Repository remote = new(_remote);
+		Assert.That(remote.Branches, Is.Empty);
+	}
+
+	[Test]
+	public void PushBranch_nested_path_fails_without_pushing_the_parent_repository()
+	{
+		string nested = Path.Combine(_work, "nested");
+		Directory.CreateDirectory(nested);
+
+		Assert.Throws<RepositoryNotFoundException>(
+			() => _versioning.PushBranch(nested, "main", _remote, "x-access-token"));
+
+		using Repository remote = new(_remote);
+		Assert.That(remote.Branches, Is.Empty);
+	}
 
     [Test]
     public void LastVersionNote_returns_the_branch_tip_subject()
@@ -116,14 +178,14 @@ public sealed class GitPublishingTests
     public void PushBranch_throws_for_a_missing_remote()
     {
         Assert.Throws<InvalidOperationException>(
-            () => _versioning.PushBranch(_work, "main", "x-access-token", "upstream"));
+            () => _versioning.PushBranch(_work, "main", _remote, "x-access-token", "upstream"));
     }
 
     [Test]
     public void PushBranch_throws_for_a_missing_branch()
     {
         Assert.Throws<InvalidOperationException>(
-            () => _versioning.PushBranch(_work, "no-such-branch", "x-access-token"));
+            () => _versioning.PushBranch(_work, "no-such-branch", _remote, "x-access-token"));
     }
 
     [Test]
@@ -133,7 +195,7 @@ public sealed class GitPublishingTests
         _versioning.BeginEdit(_work, "spec/draft", "main");
         File.WriteAllText(Path.Combine(_work, "spec.md"), "# Version two");
         _versioning.SaveVersion(_work, "Draft change");
-        _versioning.PushBranch(_work, "spec/draft", "x-access-token");
+        _versioning.PushBranch(_work, "spec/draft", _remote, "x-access-token");
 
         // Rewrite local history on top of the same base: reset spec/draft back to its parent and commit a
         // different change, so its new tip is not a descendant of what the remote already has on
@@ -157,7 +219,7 @@ public sealed class GitPublishingTests
         // Assert.Catch (not Assert.Throws) because the concrete type is NonFastForwardException, a
         // subclass of LibGit2SharpException.
         Assert.Catch<LibGit2SharpException>(
-            () => _versioning.PushBranch(_work, "spec/draft", "x-access-token"));
+            () => _versioning.PushBranch(_work, "spec/draft", _remote, "x-access-token"));
     }
 
     [Test]

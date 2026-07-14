@@ -178,7 +178,8 @@ public sealed class HostControllerAccountBoundaryTests
 		public string? LastVersionNote(string repoRoot, string branchName) => "Review";
 		public bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch) => true;
 		public void PushBranch(
-			string repoRoot, string branchName, string accessToken, string remoteName = "origin",
+			string repoRoot, string branchName, string expectedRepositoryUrl, string accessToken,
+			string remoteName = "origin",
 			CancellationToken cancellationToken = default) => PushOrder = ordering.Next();
 	}
 

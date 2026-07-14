@@ -56,7 +56,7 @@ test("right-panel modes follow named, detached, and review context", async ({ pa
     "Outline",
     "Versions",
     "Comments",
-    "Change history",
+    "History",
   ]);
   await openDockTool(page, "right", "Comments");
   await expect(page.locator("#right-dock .dock-title")).toHaveText("Comments");

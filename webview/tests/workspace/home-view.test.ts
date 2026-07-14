@@ -26,6 +26,7 @@ describe("buildHomeView", () => {
     expect(host.querySelector(".home-title")?.textContent).toBe("SpecDesk");
     expect(host.querySelector(".home-prompt")).not.toBeNull();
     expect(host.querySelector(".home-recents-label")?.textContent).toBe("Recent");
+    expect(host.querySelector(".home-favorites-label")?.textContent).toBe("Favorites");
     // No recents fed yet: the hint shows and the list is hidden.
     expect(host.querySelector<HTMLElement>(".home-recents-empty")?.hidden).toBe(false);
     expect(host.querySelector<HTMLElement>(".home-recents-list")?.hidden).toBe(true);
@@ -71,6 +72,24 @@ describe("buildHomeView", () => {
     expect(onOpenItem).toHaveBeenCalledWith(file);
   });
 
+  it("lists favorite repositories alongside recent items and opens the clicked favorite", () => {
+    const { host, home, onOpenItem } = ready();
+    const repository: WorkspaceItem = {
+      path: "acme/specs",
+      label: "acme/specs",
+      isFolder: true,
+      kind: "repository",
+      repositoryId: "acme/specs",
+    };
+    home.setFavorites([repository]);
+
+    expect(host.querySelector<HTMLElement>(".home-favorites-empty")?.hidden).toBe(true);
+    const row = host.querySelector<HTMLButtonElement>(".home-favorites-list .home-recent");
+    expect(row?.textContent).toContain("acme/specs");
+    row?.click();
+    expect(onOpenItem).toHaveBeenCalledWith(repository);
+  });
+
   it("caps the list to a few items and restores the hint when empty", () => {
     const { host, home } = ready();
     const many: WorkspaceItem[] = Array.from({ length: 9 }, (_, i) => ({
@@ -84,5 +103,10 @@ describe("buildHomeView", () => {
     home.setRecents([]);
     expect(host.querySelectorAll(".home-recent")).toHaveLength(0);
     expect(host.querySelector<HTMLElement>(".home-recents-empty")?.hidden).toBe(false);
+
+    home.setFavorites(many);
+    expect(host.querySelectorAll(".home-favorites-list .home-recent")).toHaveLength(6);
+    home.setFavorites([]);
+    expect(host.querySelector<HTMLElement>(".home-favorites-empty")?.hidden).toBe(false);
   });
 });

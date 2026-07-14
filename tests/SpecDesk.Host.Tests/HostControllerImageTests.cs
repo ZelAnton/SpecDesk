@@ -129,6 +129,66 @@ public sealed class HostControllerImageTests
 		}
 	}
 
+	[Test]
+	public void CleanImagePasteBlocksCloseUntilItsDocumentLeaseFinishes()
+	{
+		List<string> sent = [];
+		object sentGate = new();
+		ManualResetEventSlim entered = new(false);
+		ManualResetEventSlim release = new(false);
+		string tempDir = Path.Combine(Path.GetTempPath(), "specdesk-image-close-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(tempDir);
+		string docPath = Path.Combine(tempDir, "billing.md");
+		File.WriteAllText(docPath, "# Billing");
+		try
+		{
+			ImageInserter inserter = (_, _, _, _, _) =>
+			{
+				entered.Set();
+				release.Wait(TimeSpan.FromSeconds(5));
+				return "![x](images/x.png)";
+			};
+			using HostController controller = new(
+				StubRender,
+				json =>
+				{
+					lock (sentGate)
+					{
+						sent.Add(json);
+					}
+				},
+				new NoDialogs(),
+				inserter,
+				new FakeVersioning(),
+				NullLogger<HostController>.Instance,
+				docPath,
+				TimeSpan.FromMinutes(10));
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+			controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.ImagePaste,
+				new ImagePastePayload("AAAA", "x.png", "image/png"),
+				id: "clean-image"));
+			Assert.That(entered.Wait(TimeSpan.FromSeconds(5)), Is.True);
+
+			bool firstClose = controller.TryPersistPendingLocalDraftForClose();
+			release.Set();
+			IpcMessage? reply = WaitForKind(sent, sentGate, MessageKinds.ImageInserted);
+			bool secondClose = controller.TryPersistPendingLocalDraftForClose();
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(firstClose, Is.False);
+				Assert.That(secondClose, Is.True);
+				Assert.That(reply?.GetPayload<ImageInsertedPayload>()?.Markdown, Is.EqualTo("![x](images/x.png)"));
+			});
+		}
+		finally
+		{
+			release.Set();
+			Directory.Delete(tempDir, recursive: true);
+		}
+	}
 	// The inserter replies from a background task; poll briefly for the expected message.
 	private static IpcMessage? WaitForKind(List<string> sent, object gate, string kind)
 	{

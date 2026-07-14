@@ -1,8 +1,9 @@
 # 08 — AI Agent
 
 The assistant answers questions and helps draft Markdown through the official **GitHub Copilot SDK**.
-It authenticates with the GitHub account already connected in SpecDesk; the access token remains in the
-native process and is never logged, persisted by SpecDesk, or sent to the webview.
+It authenticates with the GitHub account already connected in SpecDesk. SpecDesk's authentication layer
+persists that token encrypted with Windows DPAPI; the Copilot layer receives it only inside the native
+process and never logs it, creates a separate persisted copy, or sends it to the webview.
 
 ## Current chat-only integration
 

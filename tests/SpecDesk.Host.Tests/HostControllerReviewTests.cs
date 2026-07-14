@@ -110,6 +110,9 @@ public sealed class HostControllerReviewTests
         {
             Assert.That(versioning.PushBranchCalls, Is.EqualTo(1));
             Assert.That(versioning.PushedToken, Is.EqualTo("gho_test"));
+			Assert.That(
+				versioning.PushedExpectedRepositoryUrl,
+				Is.EqualTo("https://github.com/octo/spec-repo.git"));
             Assert.That(review.Calls, Is.EqualTo(1));
             Assert.That(review.Owner, Is.EqualTo("octo"));
             Assert.That(review.Repo, Is.EqualTo("spec-repo"));
@@ -122,6 +125,34 @@ public sealed class HostControllerReviewTests
             Assert.That(versioning.PushedBranch, Is.EqualTo(review.Head));
         });
     }
+
+	[Test]
+	public void SendForReview_remote_replaced_after_readiness_refuses_without_push_or_pr()
+	{
+		const string original = "https://github.com/octo/spec-repo.git";
+		const string replacement = "https://github.com/other/private-repo.git";
+		FakeVersioning versioning = new();
+		versioning.BeforePush = () =>
+		{
+			versioning.RemoteUrlValue = replacement;
+			versioning.PushUrlValue = replacement;
+		};
+		FakeGitHubReview review = new();
+		using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+		Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(versioning.AttemptedExpectedRepositoryUrl, Is.EqualTo(original));
+			Assert.That(versioning.RemoteUrlValue, Is.EqualTo(replacement));
+			Assert.That(versioning.PushUrlValue, Is.EqualTo(replacement));
+			Assert.That(versioning.PushBranchCalls, Is.Zero);
+			Assert.That(review.Calls, Is.Zero);
+			Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+		});
+	}
 
     [Test]
     public void SendForReview_falls_back_to_a_generated_title_without_a_version_note()
@@ -331,6 +362,17 @@ public sealed class HostControllerReviewTests
         // brand-new draft is started, reusing the exact same branch name.
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocOpen));
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit, new EditPayload("spec/reused")));
+        Assert.Multiple(() =>
+        {
+            Assert.That(
+                versioning.BeginEditCalls,
+                Is.EqualTo(2),
+                "reloading the document must retire only the old identity's publish claim");
+            Assert.That(
+                LatestStatus()?.State,
+                Is.EqualTo("draft"),
+                "the replacement identity must be editable before the old push settles");
+        });
         SaveAVersion(controller);
 
         // Let the stale push settle (successfully or not) before asserting anything about its effect —
@@ -755,6 +797,35 @@ public sealed class HostControllerReviewTests
             Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
         });
     }
+
+	[Test]
+	public void UpdateReview_remote_replaced_after_readiness_refuses_without_push()
+	{
+		const string original = "https://github.com/octo/spec-repo.git";
+		const string replacement = "https://github.com/other/private-repo.git";
+		FakeVersioning versioning = new();
+		FakeGitHubReview review = new();
+		using HostController controller = BuildInReview(versioning, review);
+		SaveAVersion(controller);
+		versioning.BeforePush = () =>
+		{
+			versioning.RemoteUrlValue = replacement;
+			versioning.PushUrlValue = replacement;
+		};
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+
+		Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(versioning.AttemptedExpectedRepositoryUrl, Is.EqualTo(original));
+			Assert.That(versioning.RemoteUrlValue, Is.EqualTo(replacement));
+			Assert.That(versioning.PushUrlValue, Is.EqualTo(replacement));
+			Assert.That(versioning.PushBranchCalls, Is.EqualTo(1));
+			Assert.That(review.Calls, Is.EqualTo(1));
+			Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+		});
+	}
 
     [Test]
     public void UpdateReview_on_a_non_github_remote_reports_an_error_and_does_not_push()

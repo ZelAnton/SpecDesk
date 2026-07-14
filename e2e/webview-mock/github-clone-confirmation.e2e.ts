@@ -29,6 +29,8 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
     payload: {
       url: "outside/public-specs",
       requestId: (request?.payload as { requestId: number }).requestId,
+      localName: "public-specs",
+      exists: false,
       path: "C:\\SpecDesk\\repos\\outside_public-specs",
     },
   });
@@ -45,7 +47,7 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
       description: "Public product specifications",
     },
   });
-  await page.locator(".repo-register-add").click();
+  await page.locator(".repo-clone-toggle").click();
   await page.locator('[role="menuitem"]').filter({ hasText: /^Clone…$/ }).click();
 
   const confirmation = page.locator(".repo-clone-confirmation");
@@ -73,11 +75,12 @@ test("clone requires Yes and can persist Do not show again", async ({ page }, te
       description: "Second public specification repository",
     },
   });
-  await page.locator(".repo-register-add").click();
+  await page.locator(".repo-clone-toggle").click();
   await page.locator('[role="menuitem"]').filter({ hasText: "Clone to folder…" }).click();
 
   await expect(page.locator(".repo-clone-confirmation")).toBeHidden();
   expect((await sentFrames(page)).find((frame) => frame.kind === "repo.cloneToFolder")?.payload).toEqual({
     url: "outside/second-specs",
+    localName: "second-specs",
   });
 });

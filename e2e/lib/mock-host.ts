@@ -65,6 +65,8 @@ export interface LoadDocOptions {
   path: string;
   text: string;
   docDir?: string;
+  /** Most scenarios exercise the loaded document. Set false only when proving the startup Start screen. */
+  reveal?: boolean;
 }
 
 /**
@@ -83,4 +85,9 @@ export async function loadDoc(page: Page, doc: LoadDocOptions): Promise<void> {
       document.querySelector("#editor .cm-editor") !== null &&
       document.querySelector("#formatted .ProseMirror") !== null,
   );
+  if (doc.reveal !== false) {
+    await page
+      .locator('#left-dock .nav-item[data-view="editor"]')
+      .evaluate((element: HTMLElement) => element.click());
+  }
 }

@@ -1,12 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
   clampDockSize,
+  collapsedForStartup,
   DEFAULT_DOCKS_STATE,
   DOCK_SIZE_BOUNDS,
   parseDocksState,
   serializeDocksState,
   type WorkspaceDocksState,
 } from "../../src/workspace/dock-state.js";
+
+describe("collapsedForStartup", () => {
+  it("collapses all panels without forgetting their preferred modes or sizes", () => {
+    const state: WorkspaceDocksState = {
+      left: { open: true, size: 311, mode: "repositories" },
+      right: { open: true, size: 422, mode: "assistant" },
+      bottom: { open: true, size: 233, mode: "comment" },
+    };
+
+    expect(collapsedForStartup(state)).toEqual({
+      left: { open: false, size: 311, mode: "repositories" },
+      right: { open: false, size: 422, mode: "assistant" },
+      bottom: { open: false, size: 233, mode: "comment" },
+    });
+    expect(state.left.open).toBe(true);
+  });
+});
 
 describe("clampDockSize", () => {
   it("clamps to the edge's bounds and rounds to a whole pixel", () => {

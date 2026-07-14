@@ -14,7 +14,9 @@ import {
   parseChatDelta,
   parseChatDone,
   parseDiffResult,
+  parseDocDiscardCompleted,
   parseDocLoaded,
+  parseDocOpenCompleted,
   parseDocumentActivity,
   parseError,
   parseGitHubAccount,
@@ -24,12 +26,18 @@ import {
   parsePreview,
   parsePrList,
   parsePrSuggested,
+  parseRepoCloneConflict,
   parseRepoCloneDestination,
+  parseRepoConfirmation,
   parseRepoDescription,
+  parseRepoOperationCompleted,
   parseStatus,
   parseTemplates,
   parseTree,
   parseVersionNoteSuggested,
+  parseWindowCloseCompleted,
+  parseWindowCloseRequested,
+  parseWindowState,
   parseWorkspaceContext,
   parseWorkspaceState,
 } from "../src/wire/decoders.js";
@@ -45,6 +53,24 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload).not.toBeNull();
     expect(payload?.path).toBe("specs/billing.md");
     expect(payload?.docDir).toBe("specs");
+  });
+
+  it("window state and correlated close handshake", () => {
+    expect(parseWindowState(fixture["window.state"])).toEqual({ maximized: true });
+    expect(parseWindowState({ maximized: "yes" })).toBeNull();
+    expect(parseWindowCloseRequested(fixture["window.closeRequested"])).toEqual({ requestId: 23 });
+    expect(parseWindowCloseCompleted(fixture["window.closeCompleted"])).toEqual({
+      requestId: 23,
+      succeeded: false,
+    });
+    expect(parseDocOpenCompleted(fixture["doc.openCompleted"])).toEqual({
+      requestId: 17,
+      succeeded: true,
+    });
+    expect(parseDocDiscardCompleted(fixture["doc.discardCompleted"])).toEqual({
+      requestId: 18,
+      succeeded: false,
+    });
   });
 
   it("preview.html (incl. the nested lineMap)", () => {
@@ -177,9 +203,41 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload).toEqual({
       url: "acme/specs",
       requestId: 7,
-      path: "C:\\SpecDesk\\repos\\acme_specs",
+      localName: "product-specs",
+      path: "C:\\SpecDesk\\repos\\product-specs",
+      exists: false,
     });
     expect(parseRepoCloneDestination({ url: "acme/specs", requestId: "7" })).toBeNull();
+  });
+
+  it("repo.cloneConflict", () => {
+    expect(parseRepoCloneConflict(fixture["repo.cloneConflict"])).toEqual({
+      url: "acme/specs",
+      localName: "product-specs",
+      existingClonePath: "C:\\SpecDesk\\repos\\product-specs",
+      message: "A local copy with that name already exists. Open it instead?",
+    });
+  });
+
+  it("repo.confirmation", () => {
+    expect(parseRepoConfirmation(fixture["repo.confirmation"])).toMatchObject({
+      operation: "deleteBranch",
+      id: "acme/specs",
+      branch: "review-copy",
+      warnings: [
+        "There are unfinished local edits.",
+        "There is one protected local work snapshot.",
+      ],
+      confirmationToken: "DD42A087",
+    });
+  });
+
+  it("repo.operationCompleted", () => {
+    expect(parseRepoOperationCompleted(fixture["repo.operationCompleted"])).toEqual({
+      requestId: 42,
+    });
+    expect(parseRepoOperationCompleted({ requestId: 0 })).toBeNull();
+    expect(parseRepoOperationCompleted({ requestId: "42" })).toBeNull();
   });
 
   it("repo.description", () => {
@@ -262,6 +320,32 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       id: "octo/spec-repo",
       url: "https://github.com/octo/spec-repo",
     });
+  });
+
+  it("workspace.state accepts local-copy and branch favorites with stable identities", () => {
+    const payload = parseWorkspaceState({
+      recent: [],
+      favorites: [
+        {
+          path: "C:\\repos\\specs",
+          label: "quarterly-specs",
+          isFolder: true,
+          kind: "clone",
+          repositoryId: "octo/spec-repo",
+        },
+        {
+          path: "C:\\repos\\specs",
+          label: "quarterly-specs",
+          isFolder: true,
+          kind: "branch",
+          repositoryId: "octo/spec-repo",
+          branch: "review-copy",
+        },
+      ],
+      repositories: [],
+    });
+    expect(payload?.favorites.map((item) => item.kind)).toEqual(["clone", "branch"]);
+    expect(payload?.favorites[1]?.branch).toBe("review-copy");
   });
 
   it("workspace.context (authoritative repository, branches, and relative path)", () => {

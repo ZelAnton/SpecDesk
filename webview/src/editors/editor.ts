@@ -71,6 +71,14 @@ function syntaxNodeNameFor(kind: FormatKind): string {
       return "Blockquote";
     case "fence":
       return "FencedCode";
+    case "link":
+      return "Link";
+    case "image":
+      return "Image";
+    case "table":
+      return "Table";
+    case "rule":
+      return "HorizontalRule";
     default:
       return assertNever(kind);
   }
@@ -846,6 +854,19 @@ export class MarkdownEditor {
    *  pane's own (earlier-started, now-firing) debounce. */
   hasPendingChange(): boolean {
     return this.scheduleChange.pending;
+  }
+
+  pendingChangeOrder(): number | null {
+    return this.scheduleChange.pendingOrder;
+  }
+
+  flushPendingChange(): boolean {
+    return this.scheduleChange.flush();
+  }
+
+  /** Retire an edit notification that belongs to the document identity being replaced. */
+  cancelPendingChange(): boolean {
+    return this.scheduleChange.cancel();
   }
 
   /** The editor's editable DOM element — where image paste/drop is captured. */

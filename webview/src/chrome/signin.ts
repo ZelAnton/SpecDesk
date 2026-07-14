@@ -28,6 +28,8 @@ export interface SignInDeps {
   signOut: () => void;
   /** Open the GitHub authorization page in the OS browser. */
   openUrl: (url: string) => void;
+  /** Copy the one-time code before focus moves to the OS browser. */
+  copyText: (text: string) => Promise<void>;
 }
 
 /** Prefix a bare GitHub handle with `@` for display (idempotent). */
@@ -55,6 +57,7 @@ export class SignInController {
   private readonly status: HTMLElement | null;
   private readonly cancelBtn: HTMLButtonElement | null;
   private verificationUri = "";
+  private codeGeneration = 0;
   private available = false;
   private signedIn = false;
 
@@ -161,6 +164,7 @@ export class SignInController {
     });
     this.cancelBtn?.addEventListener("click", () => {
       // Harmless if the flow already ended (the host's cancel is a no-op then); always closes the bar.
+      this.codeGeneration++;
       this.deps.cancelSignIn();
       setHidden(this.bar, true);
     });
@@ -168,6 +172,7 @@ export class SignInController {
 
   /** Show the one-time code for the author to enter at GitHub. */
   showCode(payload: GitHubCodePayload): void {
+    const generation = ++this.codeGeneration;
     this.verificationUri = payload.verificationUri;
     setText(this.text, "To connect, open GitHub and enter this code:");
     setText(this.userCode, payload.userCode);
@@ -177,6 +182,19 @@ export class SignInController {
     setText(this.cancelBtn, "Cancel");
     setHidden(this.bar, false);
     this.setMenuOpen(false);
+
+    // GitHub's documented device flow still requires the one-time code. Start copying it while the
+    // WebView has focus, before opening the OS browser; failure is harmless because the code remains visible.
+    void this.deps
+      .copyText(payload.userCode)
+      .then(() => {
+        if (generation === this.codeGeneration) {
+          setText(this.text, "Code copied. Paste it into GitHub:");
+        }
+      })
+      .catch(() => {
+        // Clipboard access can be denied by WebView/OS policy. The visible code is the accessible fallback.
+      });
 
     // Device-flow authorization is intentionally completed in the user's normal browser. Opening the
     // GitHub page as soon as the host issues the code makes repository actions a single continuous flow;
@@ -225,9 +243,11 @@ export class SignInController {
     }
 
     if (payload.signedIn) {
+      this.codeGeneration++;
       setHidden(this.bar, true);
       return;
     }
+    this.codeGeneration++;
     // Signed out. A message means the flow ended without success (couldn't start / expired / declined /
     // unreachable) — surface it in the bar, revealing the bar even if the code was never shown (an up-front
     // failure). A plain signed-out state (no message) just closes the bar.

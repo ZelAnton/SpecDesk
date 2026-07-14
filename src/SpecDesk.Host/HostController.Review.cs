@@ -105,7 +105,8 @@ public sealed partial class HostController
 				{
 					return false;
 				}
-				(string? blocked, GitHubRepo? repo, string? lastNote) = CheckSendReadiness(root, branchName, baseName);
+				(string? blocked, GitHubRepo? repo, string? expectedRepositoryUrl, string? lastNote) =
+					CheckSendReadiness(root, branchName, baseName);
 				if (blocked is not null)
 				{
 					PublishForAccountSession(accountSession, () => SendError(blocked));
@@ -136,7 +137,8 @@ public sealed partial class HostController
 						{
 							lock (_repoGate)
 							{
-								_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+								_publishing.PushBranch(
+									root, branchName, expectedRepositoryUrl!, token, cancellationToken: innerCt);
 							}
 						}))
 						{
@@ -256,7 +258,7 @@ public sealed partial class HostController
 					return Task.FromResult(false);
 				}
 
-				if (ResolveGitHubReviewRepo(root) is null)
+				if (ResolveGitHubReviewTarget(root) is not { } target)
 				{
 					PublishForAccountSession(accountSession, () =>
 						SendError("This document isn't in a GitHub repository, so its review can't be updated."));
@@ -278,7 +280,8 @@ public sealed partial class HostController
 						{
 							lock (_repoGate)
 							{
-								_publishing.PushBranch(root, branchName, token, cancellationToken: innerCt);
+								_publishing.PushBranch(
+									root, branchName, target.RemoteUrl, token, cancellationToken: innerCt);
 							}
 						}))
 						{
@@ -679,7 +682,9 @@ public sealed partial class HostController
 	// Resolve the GitHub owner/repo the current remote points at (a repo-gated read of the remote URL, then
 	// the strict github.com parse), or null when there is no GitHub remote to host a review. Callers have
 	// already established _publishing is non-null on the synchronous path.
-	private GitHubRepo? ResolveGitHubReviewRepo(string root)
+	private GitHubRepo? ResolveGitHubReviewRepo(string root) => ResolveGitHubReviewTarget(root)?.Repo;
+
+	private (GitHubRepo Repo, string RemoteUrl)? ResolveGitHubReviewTarget(string root)
 	{
 		string? remoteUrl;
 		lock (_repoGate)
@@ -687,30 +692,32 @@ public sealed partial class HostController
 			remoteUrl = _publishing!.RemoteUrl(root);
 		}
 
-		return GitHubRemote.TryParse(remoteUrl);
+		return GitHubRemote.TryParse(remoteUrl) is { } repo && remoteUrl is not null
+			? (repo, remoteUrl)
+			: null;
 	}
 
 	// The single readiness policy shared by the pre-send prompt (OnSuggestPrText) and the send itself:
 	// whether a review can be sent for this draft right now (signed in, a GitHub remote, at least one saved
 	// version), as plain-language checks over local git/store reads (no network). Returns the blocking
-	// reason and a null repo when not ready, or (null, the parsed repo) when ready — so the prompt never
-	// opens for a send that would be rejected, and both paths speak the same words. Callers guarantee
-	// _auth/_publishing are non-null.
-	private (string? Blocked, GitHubRepo? Repo, string? LastNote) CheckSendReadiness(
+	// reason and null repository data when not ready, or the parsed repo plus the exact URL snapshot when
+	// ready. The snapshot binds the later push to this readiness decision, so replacing the working tree or
+	// its remote cannot redirect the operation. Callers guarantee _auth/_publishing are non-null.
+	private (string? Blocked, GitHubRepo? Repo, string? ExpectedRepositoryUrl, string? LastNote) CheckSendReadiness(
 		string root, string branch, string baseBranch)
 	{
 		if (!_auth!.IsSignedIn())
 		{
-			return ("Connect your GitHub account first, then send for review.", null, null);
+			return ("Connect your GitHub account first, then send for review.", null, null, null);
 		}
 
 		// Resolve the GitHub remote first so a non-GitHub repo returns its specific message without a wasted
 		// (and possibly throwing) has-commits/last-note read. Then the remaining two local-git reads batch
 		// under one lock. (Two lock acquisitions on the GitHub path, one on the non-GitHub path; the only
 		// concurrent _repoGate contender during a prompt-open is the quick disk autosave.)
-		if (ResolveGitHubReviewRepo(root) is not { } repo)
+		if (ResolveGitHubReviewTarget(root) is not { } target)
 		{
-			return ("This document isn't in a GitHub repository, so it can't be sent for review.", null, null);
+			return ("This document isn't in a GitHub repository, so it can't be sent for review.", null, null, null);
 		}
 
 		bool hasCommits;
@@ -725,10 +732,10 @@ public sealed partial class HostController
 		{
 			// The draft is level with its base (no saved version) — GitHub would reject the PR as "no commits
 			// between base and head"; ask the author to save a version rather than surfacing that raw.
-			return ("Save a version before sending it for review.", null, null);
+			return ("Save a version before sending it for review.", null, null, null);
 		}
 
-		return (null, repo, lastNote);
+		return (null, target.Repo, target.RemoteUrl, lastNote);
 	}
 
 	// Release the shared single-flight claim taken by OnSendForReview / OnUpdateReview (success, failure,
@@ -871,7 +878,8 @@ public sealed partial class HostController
 			}
 			else
 			{
-				(blocked, GitHubRepo? repo, string? lastNote) = CheckSendReadiness(repoRoot, branch, baseBranch);
+				(blocked, GitHubRepo? repo, _, string? lastNote) =
+					CheckSendReadiness(repoRoot, branch, baseBranch);
 				if (repo is not null)
 				{
 					// Ready — seed the prompt with the same text a bare send would generate.

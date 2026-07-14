@@ -15,8 +15,8 @@ test("Review mode loads assigned work and opens it on GitHub", async ({ page }, 
     payload: { available: true, signedIn: true, login: "alice" },
   });
 
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Review"]').click();
-  const reviewPanel = page.locator('#left-dock .dock-tool[data-tool="reviews"]');
+  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  const reviewPanel = page.locator('#left-dock [data-tool="reviews"]');
   await expect(reviewPanel).toBeVisible();
   await expect(reviewPanel.locator(".remote-review-list")).toHaveAttribute("data-state", "loading");
   await waitForSent(page, "pr.list.request");

@@ -3,12 +3,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RegisteredRepo, WorkspaceStatePayload } from "../../src/wire/protocol.js";
 import { RepositoriesPanel } from "../../src/workspace/tools/repositories-panel.js";
 
+const CLEAN_STATUS = {
+  ahead: 0,
+  behind: 0,
+  hasUncommitted: false,
+  stashCount: 0,
+  hasConflicts: false,
+};
 const REPO: RegisteredRepo = {
   id: "acme/specs",
   name: "acme/specs",
   url: "https://github.com/acme/specs",
   defaultBranch: "main",
-  clones: [{ id: "acme-specs", path: "C:\\repos\\acme-specs", branches: ["draft"] }],
+  clones: [
+    {
+      id: "acme-specs",
+      path: "C:\\repos\\acme-specs",
+      currentBranch: "main",
+      status: CLEAN_STATUS,
+      branches: [
+        { name: "main", status: CLEAN_STATUS, canDelete: false },
+        { name: "draft", status: CLEAN_STATUS, canDelete: true },
+      ],
+    },
+  ],
 };
 const STATE: WorkspaceStatePayload = { recent: [], favorites: [], repositories: [REPO] };
 
@@ -17,15 +35,29 @@ beforeEach(() => {
 });
 
 function ready() {
-  const onCloneManaged = vi.fn<(url: string, destinationPath: string) => void>();
-  const onCloneToFolder = vi.fn<(url: string) => void>();
-  const onDestinationRequest = vi.fn<(url: string, requestId: number) => void>();
+  const onCloneManaged = vi.fn<(url: string, localName: string, destinationPath: string) => void>();
+  const onCloneToFolder = vi.fn<(url: string, localName: string) => void>();
+  const onDestinationRequest = vi.fn<(url: string, localName: string, requestId: number) => void>();
   const onDescriptionRequest = vi.fn<(url: string, requestId: number) => void>();
   const onUnregister = vi.fn<(id: string) => void>();
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
-  const onClone = vi.fn<(repo: RegisteredRepo) => void>();
+  const onSwitchBranch = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
+  const onOpenExistingClone = vi.fn<(url: string, path: string) => void>();
   const onToggleFavorite = vi.fn<(repo: RegisteredRepo, favorite: boolean) => void>();
+  const onToggleCloneFavorite =
+    vi.fn<(repo: RegisteredRepo, path: string, favorite: boolean) => void>();
+  const onToggleBranchFavorite =
+    vi.fn<(repo: RegisteredRepo, path: string, branch: string, favorite: boolean) => void>();
+  const onDeleteClone =
+    vi.fn<(repo: RegisteredRepo, path: string, confirmationToken?: string) => void>();
+  const onDeleteBranch =
+    vi.fn<
+      (repo: RegisteredRepo, path: string, branch: string, confirmationToken?: string) => void
+    >();
+  const onRefresh = vi.fn<(requestId: number) => void>();
+  const onPull = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
+  const onPush = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
   const panel = new RepositoriesPanel({
     onCloneManaged,
     onCloneToFolder,
@@ -34,14 +66,22 @@ function ready() {
     onUnregister,
     onBrowseRepo,
     onOpenClone,
-    onClone,
+    onSwitchBranch,
+    onOpenExistingClone,
     onToggleFavorite,
+    onToggleCloneFavorite,
+    onToggleBranchFavorite,
+    onDeleteClone,
+    onDeleteBranch,
+    onRefresh,
+    onPull,
+    onPush,
   });
   const body = document.createElement("div");
   document.body.appendChild(body);
   panel.mount(body);
   const input = body.querySelector<HTMLInputElement>(".repo-register-input");
-  const add = body.querySelector<HTMLButtonElement>(".repo-register-add");
+  const add = body.querySelector<HTMLButtonElement>(".repo-clone-primary");
   if (!input || !add) {
     throw new Error("repositories panel did not mount its register form");
   }
@@ -57,8 +97,16 @@ function ready() {
     onUnregister,
     onBrowseRepo,
     onOpenClone,
-    onClone,
+    onSwitchBranch,
+    onOpenExistingClone,
     onToggleFavorite,
+    onToggleCloneFavorite,
+    onToggleBranchFavorite,
+    onDeleteClone,
+    onDeleteBranch,
+    onRefresh,
+    onPull,
+    onPush,
   };
 }
 
@@ -76,9 +124,76 @@ describe("RepositoriesPanel", () => {
     const { body } = ready();
     expect(body.querySelector<HTMLElement>(".repo-empty")?.hidden).toBe(false);
     expect(body.querySelector<HTMLElement>(".repo-empty")?.textContent).toBe(
-      "Register a repository to keep it handy.",
+      "Add a repository to keep it ready.",
     );
     expect(body.querySelector<HTMLElement>(".repo-list")?.hidden).toBe(true);
+  });
+
+  it("focuses repository entry when revealed from Start", () => {
+    const { panel, body, input } = ready();
+    panel.focusPrimary();
+    expect(document.activeElement).toBe(input);
+    panel.setState(STATE);
+    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(true);
+  });
+
+  it("refreshes all registered local copies from one action", () => {
+    const { panel, body, onRefresh } = ready();
+    const refresh = body.querySelector<HTMLButtonElement>(".repo-refresh");
+    expect(refresh?.disabled).toBe(true);
+
+    panel.setState(STATE);
+    expect(refresh?.disabled).toBe(false);
+    refresh?.click();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    const requestId = onRefresh.mock.calls[0]?.[0];
+    expect(requestId).toBeTypeOf("number");
+    expect(requestId).toBeGreaterThan(0);
+    expect(refresh?.disabled).toBe(true);
+    expect(refresh?.textContent).toBe("Refreshing…");
+    refresh?.click();
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+
+    // An unrelated workspace update and another operation's completion must not release Refresh.
+    panel.setState(STATE);
+    panel.operationCompleted((requestId ?? 1) + 1);
+    expect(refresh?.disabled).toBe(true);
+    expect(refresh?.textContent).toBe("Refreshing…");
+
+    panel.operationCompleted(requestId ?? 0);
+    expect(refresh?.disabled).toBe(false);
+    expect(refresh?.textContent).toBe("Refresh");
+
+    panel.setState({ ...STATE, repositories: [{ ...REPO, clones: [] }] });
+    expect(refresh?.disabled).toBe(true);
+  });
+
+  it("gets and shares changes only for the clone's current working line", () => {
+    const { panel, body, onPull, onPush } = ready();
+    panel.setState(STATE);
+
+    body.querySelector<HTMLButtonElement>(".repo-pull")?.click();
+    body.querySelector<HTMLButtonElement>(".repo-push")?.click();
+    expect(onPull).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "main");
+    expect(onPush).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "main");
+
+    panel.setState({
+      ...STATE,
+      repositories: [
+        {
+          ...REPO,
+          clones: REPO.clones.map((clone) => ({ ...clone, currentBranch: null })),
+        },
+      ],
+    });
+    expect(body.querySelector<HTMLButtonElement>(".repo-pull")?.disabled).toBe(true);
+    expect(body.querySelector<HTMLButtonElement>(".repo-push")?.disabled).toBe(true);
+    expect(body.querySelector(".repo-pull")?.getAttribute("aria-label")).toContain(
+      "no current working line",
+    );
+    expect(body.querySelector(".repo-push")?.getAttribute("aria-label")).toContain(
+      "no current working line",
+    );
   });
 
   it("retains and refreshes the managed clone entry until a matching success state arrives", () => {
@@ -88,21 +203,25 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "owner/name",
       requestId: 0,
+      localName: "name",
+      exists: false,
       path: "C:\\managed\\owner_name",
     });
     resolveDescription(panel, "owner/name");
     add.click();
-    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
-    expect(onCloneManaged).toHaveBeenCalledWith("owner/name", "C:\\managed\\owner_name");
+    expect(onCloneManaged).toHaveBeenCalledWith("owner/name", "name", "C:\\managed\\owner_name");
     expect(input.value).toBe("  owner/name  "); // retained so a native failure can be retried
-    expect(add.disabled).toBe(false);
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.disabled).toBe(false);
 
     vi.advanceTimersByTime(120);
-    expect(onDestinationRequest).toHaveBeenLastCalledWith("owner/name", 1);
+    expect(onDestinationRequest).toHaveBeenLastCalledWith("owner/name", "name", 1);
     panel.setManagedDestination({
       url: "owner/name",
       requestId: 1,
+      localName: "name",
+      exists: false,
       path: "C:\\managed\\owner_name-2",
     });
 
@@ -110,10 +229,13 @@ describe("RepositoriesPanel", () => {
     panel.setState(STATE);
     expect(input.value).toBe("  owner/name  ");
     add.click();
-    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledTimes(2);
-    expect(onCloneManaged).toHaveBeenLastCalledWith("owner/name", "C:\\managed\\owner_name-2");
+    expect(onCloneManaged).toHaveBeenLastCalledWith(
+      "owner/name",
+      "name",
+      "C:\\managed\\owner_name-2",
+    );
 
     // RegisterOpenedRepo emits workspace.state only after the clone completed at the requested path.
     panel.setState({
@@ -125,7 +247,15 @@ describe("RepositoriesPanel", () => {
           id: "owner/name",
           name: "owner/name",
           url: "https://github.com/owner/name",
-          clones: [{ id: "owner-name-2", path: "C:/managed/owner_name-2/", branches: [] }],
+          clones: [
+            {
+              id: "owner-name-2",
+              path: "C:/managed/owner_name-2/",
+              currentBranch: null,
+              status: CLEAN_STATUS,
+              branches: [],
+            },
+          ],
         },
       ],
     });
@@ -184,13 +314,121 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "outside/public",
       requestId: 3,
+      localName: "public",
+      exists: false,
       path: "C:\\managed\\outside_public",
     });
     resolveDescription(panel, "outside/public", 3);
-    body.querySelector<HTMLButtonElement>(".repo-register-add")?.click();
-    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-primary")?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
-    expect(onCloneManaged).toHaveBeenCalledWith("outside/public", "C:\\managed\\outside_public");
+    expect(onCloneManaged).toHaveBeenCalledWith(
+      "outside/public",
+      "public",
+      "C:\\managed\\outside_public",
+    );
+  });
+
+  it("derives an editable local-copy name and sends it with managed and folder clones", () => {
+    vi.useFakeTimers();
+    try {
+      const { panel, body, input, onDestinationRequest, onCloneManaged, onCloneToFolder } = ready();
+      input.value = "acme/specs";
+      input.dispatchEvent(new Event("input"));
+      const localName = body.querySelector<HTMLInputElement>(".repo-local-name-input");
+      expect(localName?.value).toBe("specs");
+      if (!localName) {
+        throw new Error("local copy name input was not mounted");
+      }
+      localName.value = "quarterly-specs";
+      localName.dispatchEvent(new Event("input"));
+      vi.advanceTimersByTime(120);
+      expect(onDestinationRequest).toHaveBeenLastCalledWith("acme/specs", "quarterly-specs", 2);
+      panel.setManagedDestination({
+        url: "acme/specs",
+        requestId: 2,
+        localName: "quarterly-specs",
+        path: "C:\\managed\\quarterly-specs",
+        exists: false,
+      });
+      resolveDescription(panel, "acme/specs", 1);
+      body.querySelector<HTMLButtonElement>(".repo-clone-primary")?.click();
+      body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
+      expect(onCloneManaged).toHaveBeenCalledWith(
+        "acme/specs",
+        "quarterly-specs",
+        "C:\\managed\\quarterly-specs",
+      );
+
+      body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.click();
+      body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]?.click();
+      body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
+      expect(onCloneToFolder).toHaveBeenCalledWith("acme/specs", "quarterly-specs");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("warns about an occupied name and offers to open the existing copy", () => {
+    const { panel, body, input, add, onOpenExistingClone, onCloneManaged } = ready();
+    input.value = "acme/specs";
+    input.dispatchEvent(new Event("input"));
+    resolveDescription(panel, "acme/specs", 1);
+    panel.setManagedDestination({
+      url: "acme/specs",
+      requestId: 1,
+      localName: "specs",
+      path: "C:\\managed\\specs",
+      exists: true,
+      existingClonePath: "C:\\managed\\specs",
+    });
+
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector(".repo-destination-warning")?.textContent).toContain(
+      "already exists",
+    );
+    body.querySelector<HTMLButtonElement>(".repo-open-existing")?.click();
+    expect(onOpenExistingClone).toHaveBeenCalledWith("acme/specs", "C:\\managed\\specs");
+    expect(onCloneManaged).not.toHaveBeenCalled();
+  });
+
+  it("blocks an occupied non-repository name without offering to open it", () => {
+    const { panel, body, input, add, onOpenExistingClone, onCloneManaged } = ready();
+    input.value = "acme/specs";
+    input.dispatchEvent(new Event("input"));
+    resolveDescription(panel, "acme/specs", 1);
+    panel.setManagedDestination({
+      url: "acme/specs",
+      requestId: 1,
+      localName: "specs",
+      path: "C:\\managed\\specs",
+      exists: true,
+    });
+
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector(".repo-destination-warning")?.textContent).toContain(
+      "Choose another local copy name",
+    );
+    expect(body.querySelector(".repo-open-existing")).toBeNull();
+    add.click();
+    expect(onOpenExistingClone).not.toHaveBeenCalled();
+    expect(onCloneManaged).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a clone race as the same open-existing recovery", () => {
+    const { panel, body, input, onOpenExistingClone } = ready();
+    input.value = "acme/specs";
+    input.dispatchEvent(new Event("input"));
+    panel.setCloneConflict({
+      url: "acme/specs",
+      localName: "specs",
+      existingClonePath: "C:\\managed\\specs",
+      message: "That local copy was created by another action.",
+    });
+    expect(body.querySelector(".repo-destination-warning")?.textContent).toContain(
+      "another action",
+    );
+    body.querySelector<HTMLButtonElement>(".repo-open-existing")?.click();
+    expect(onOpenExistingClone).toHaveBeenCalledWith("acme/specs", "C:\\managed\\specs");
   });
 
   it("identifies a valid public owner/repository outside the connected account list", () => {
@@ -206,14 +444,16 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "outside/public-specs",
       requestId: 1,
+      localName: "public-specs",
+      exists: false,
       path: "C:\\managed\\outside_public-specs",
     });
     resolveDescription(panel, "outside/public-specs", 1);
     add.click();
-    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes")?.click();
     expect(onCloneManaged).toHaveBeenCalledWith(
       "outside/public-specs",
+      "public-specs",
       "C:\\managed\\outside_public-specs",
     );
   });
@@ -224,10 +464,12 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "owner/managed",
       requestId: 0,
+      localName: "managed",
+      exists: false,
       path: "C:\\managed\\owner_managed",
     });
     resolveDescription(panel, "owner/managed");
-    add.click();
+    body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.click();
     const actions = body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]');
     expect([...actions].map((action) => action.textContent)).toEqual([
       "Clone…",
@@ -249,7 +491,7 @@ describe("RepositoriesPanel", () => {
     yes?.click();
     yes?.click();
     expect(onCloneToFolder).toHaveBeenCalledTimes(1);
-    expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder");
+    expect(onCloneToFolder).toHaveBeenCalledWith("owner/folder", "folder");
     expect(input.value).toBe("owner/folder");
   });
 
@@ -259,11 +501,12 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "owner/cancelled",
       requestId: 0,
+      localName: "cancelled",
+      exists: false,
       path: "C:\\managed\\owner_cancelled",
     });
     resolveDescription(panel, "owner/cancelled");
     add.click();
-    body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     const confirmation = body.querySelector<HTMLElement>(".repo-clone-confirmation");
     const form = body.querySelector<HTMLFormElement>(".repo-register");
     const list = body.querySelector<HTMLElement>(".repo-list");
@@ -289,11 +532,12 @@ describe("RepositoriesPanel", () => {
     first.panel.setManagedDestination({
       url: "owner/first",
       requestId: 0,
+      localName: "first",
+      exists: false,
       path: "C:\\managed\\owner_first",
     });
     resolveDescription(first.panel, "owner/first");
     first.add.click();
-    first.body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
     const skip = first.body.querySelector<HTMLInputElement>(".repo-clone-confirm-skip input");
     if (skip) {
       skip.checked = true;
@@ -304,9 +548,9 @@ describe("RepositoriesPanel", () => {
     const second = ready();
     second.input.value = "owner/second";
     resolveDescription(second.panel, "owner/second");
-    second.add.click();
+    second.body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.click();
     second.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[1]?.click();
-    expect(second.onCloneToFolder).toHaveBeenCalledWith("owner/second");
+    expect(second.onCloneToFolder).toHaveBeenCalledWith("owner/second", "second");
     expect(second.body.querySelector<HTMLElement>(".repo-clone-confirmation")?.hidden).toBe(true);
   });
 
@@ -320,6 +564,8 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "owner/first",
       requestId: 1,
+      localName: "first",
+      exists: false,
       path: "C:\\managed\\owner_first",
     });
     expect(body.querySelector(".repo-managed-destination")?.textContent).toContain("checking");
@@ -327,6 +573,8 @@ describe("RepositoriesPanel", () => {
     panel.setManagedDestination({
       url: "owner/current",
       requestId: 2,
+      localName: "current",
+      exists: false,
       path: "C:\\managed\\owner_current",
     });
     resolveDescription(panel, "owner/current", 2);
@@ -369,7 +617,8 @@ describe("RepositoriesPanel", () => {
       expect(body.querySelector(".repo-description")?.textContent).toBe(
         "Description: Current description",
       );
-      expect(add.disabled).toBe(false);
+      expect(add.disabled).toBe(true);
+      expect(body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.disabled).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -388,7 +637,8 @@ describe("RepositoriesPanel", () => {
     expect(body.querySelector(".repo-description")?.textContent).toBe(
       "Private repository · Description: Internal specifications",
     );
-    expect(add.disabled).toBe(false);
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.disabled).toBe(false);
 
     panel.setDescription({ url: "owner/repository", requestId: 0, state: "notFound" });
     expect(body.querySelector(".repo-description")?.textContent).toContain("not found");
@@ -409,6 +659,8 @@ describe("RepositoriesPanel", () => {
       panel.setManagedDestination({
         url: "account-a/private-specs",
         requestId: 1,
+        localName: "private-specs",
+        exists: false,
         path: "C:\\managed\\account-a_private-specs",
       });
       panel.setDescription({
@@ -418,7 +670,6 @@ describe("RepositoriesPanel", () => {
         description: "Account A confidential roadmap",
       });
       add.click();
-      body.querySelector<HTMLButtonElement>('[role="menuitem"]')?.click();
       const oldYes = body.querySelector<HTMLButtonElement>(".repo-clone-confirm-yes");
       expect(body.textContent).toContain("Account A confidential roadmap");
       expect(body.querySelector<HTMLElement>(".repo-clone-confirmation")?.hidden).toBe(false);
@@ -446,6 +697,8 @@ describe("RepositoriesPanel", () => {
       panel.setManagedDestination({
         url: "account-a/private-specs",
         requestId: 1,
+        localName: "private-specs",
+        exists: false,
         path: "C:\\managed\\stale-account-a",
       });
       expect(body.textContent).not.toContain("late Account A description");
@@ -460,6 +713,8 @@ describe("RepositoriesPanel", () => {
       panel.setManagedDestination({
         url: "account-a/private-specs",
         requestId: 3,
+        localName: "private-specs",
+        exists: false,
         path: "C:\\managed\\account-b_public-specs",
       });
       expect(body.textContent).toContain("Public description resolved for account B");
@@ -487,27 +742,39 @@ describe("RepositoriesPanel", () => {
 
     expect(body.querySelector<HTMLElement>(".repo-empty")?.hidden).toBe(true);
     const open = body.querySelector<HTMLButtonElement>(".repo-open");
-    expect(open?.textContent).toBe("acme/specs");
+    expect(open?.querySelector(".repo-name")?.textContent).toBe("acme/specs");
+    expect(open?.querySelector(".repo-kind")?.textContent).toBe("GitHub · 1 local copy");
     expect(open?.title).toBe(REPO.url);
+    expect(body.querySelector(".repo-panel-actions span")?.textContent).toBe(
+      "1 repository · 1 local copy",
+    );
+    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(false);
     open?.click();
     expect(onBrowseRepo).toHaveBeenCalledWith(REPO);
 
     const remove = body.querySelector<HTMLButtonElement>(".repo-remove");
-    expect(remove?.getAttribute("aria-label")).toBe("Remove repository acme/specs");
+    expect(remove?.getAttribute("aria-label")).toBe("Forget repository acme/specs");
     remove?.click();
     expect(onUnregister).toHaveBeenCalledWith("acme/specs");
   });
 
-  it("renders local copies and non-default branches as a nested tree", () => {
-    const { panel, body, onOpenClone, onClone } = ready();
+  it("opens local copies and switches both default and non-default branches from the nested tree", () => {
+    const { panel, body, input, onOpenClone, onSwitchBranch } = ready();
     panel.setState(STATE);
 
-    expect(body.querySelector(".repo-clone-open")?.textContent).toBe("acme-specs");
-    expect(body.querySelector(".repo-branches li")?.textContent).toBe("draft");
+    expect(body.querySelector(".repo-clone-name")?.textContent).toBe("acme-specs");
+    expect(
+      [...body.querySelectorAll(".repo-branch-open")].map((branch) => branch.textContent),
+    ).toEqual(["main", "draft"]);
     body.querySelector<HTMLButtonElement>(".repo-clone-open")?.click();
     expect(onOpenClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
+    body.querySelectorAll<HTMLButtonElement>(".repo-branch-open")[1]?.click();
+    expect(onSwitchBranch).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "draft");
     body.querySelector<HTMLButtonElement>(".repo-clone-action")?.click();
-    expect(onClone).toHaveBeenCalledWith(REPO);
+    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(true);
+    expect(input.value).toBe("acme/specs");
+    expect(body.querySelector<HTMLInputElement>(".repo-local-name-input")?.value).toBe("specs");
+    expect(document.activeElement).toBe(input);
     expect(body.querySelector(".repo-clone-action")?.getAttribute("aria-label")).toContain(
       "acme/specs",
     );
@@ -537,5 +804,166 @@ describe("RepositoriesPanel", () => {
     const refreshed = body.querySelector<HTMLButtonElement>(".repo-star");
     expect(refreshed?.getAttribute("aria-pressed")).toBe("true");
     expect(document.activeElement).toBe(refreshed);
+  });
+
+  it("reveals and focuses the repository selected from Favorites", () => {
+    const { panel, body, onBrowseRepo } = ready();
+    panel.setState(STATE);
+    panel.revealRepository("ACME/SPECS");
+
+    expect(body.querySelector(".repo-row")?.classList.contains("is-highlighted")).toBe(true);
+    const open = body.querySelector(".repo-open");
+    expect(open?.getAttribute("aria-current")).toBe("true");
+    expect(document.activeElement).toBe(open);
+    expect(onBrowseRepo).not.toHaveBeenCalled();
+  });
+
+  it("favorites a local copy and an exact branch independently", () => {
+    const { panel, body, onToggleCloneFavorite, onToggleBranchFavorite } = ready();
+    panel.setState(STATE);
+    const cloneStar = body.querySelector<HTMLButtonElement>(
+      '[aria-label="Favorite local copy acme-specs"]',
+    );
+    const branchStar = body.querySelector<HTMLButtonElement>(
+      '[aria-label="Favorite branch draft in acme-specs"]',
+    );
+    cloneStar?.click();
+    branchStar?.click();
+    expect(onToggleCloneFavorite).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", true);
+    expect(onToggleBranchFavorite).toHaveBeenCalledWith(
+      REPO,
+      "C:\\repos\\acme-specs",
+      "draft",
+      true,
+    );
+
+    panel.setState({
+      ...STATE,
+      favorites: [
+        {
+          path: "C:\\repos\\acme-specs",
+          label: "acme-specs",
+          isFolder: true,
+          kind: "clone",
+          repositoryId: REPO.id,
+        },
+        {
+          path: "C:\\repos\\acme-specs",
+          label: "acme-specs",
+          isFolder: true,
+          kind: "branch",
+          repositoryId: REPO.id,
+          branch: "draft",
+        },
+      ],
+    });
+    expect(
+      body
+        .querySelector('[aria-label="Favorite local copy acme-specs"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      body
+        .querySelector('[aria-label="Favorite branch draft in acme-specs"]')
+        ?.getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("distinguishes unshared versions, unsaved edits, and held work", () => {
+    const { panel, body } = ready();
+    const status = {
+      ...CLEAN_STATUS,
+      ahead: 2,
+      behind: 3,
+      hasUncommitted: true,
+      stashCount: 1,
+      hasConflicts: true,
+    };
+    panel.setState({
+      ...STATE,
+      repositories: [
+        {
+          ...REPO,
+          clones: REPO.clones.map((clone) => ({
+            ...clone,
+            status,
+            branches: clone.branches.map((branch) =>
+              branch.name === "main" ? { ...branch, status } : branch,
+            ),
+          })),
+        },
+      ],
+    });
+
+    const cloneStatus = body.querySelector('[aria-label="Local copy acme-specs status"]');
+    expect(cloneStatus?.querySelector(".is-unshared")?.textContent).toBe("2 not shared");
+    expect(cloneStatus?.querySelector(".is-incoming")?.textContent).toBe("3 updates available");
+    expect(cloneStatus?.querySelector(".is-unsaved")?.textContent).toBe("Unsaved changes");
+    expect(cloneStatus?.querySelector(".is-held")?.textContent).toBe("1 held change");
+    expect(cloneStatus?.querySelector(".is-conflict")?.textContent).toBe(
+      "Conflict needs attention",
+    );
+    const currentBranch = body.querySelector('[aria-current="true"]');
+    expect(currentBranch?.textContent).toBe("main");
+  });
+
+  it("requests safe deletion and only confirms after the host reports warnings", () => {
+    const { panel, body, onDeleteClone, onDeleteBranch } = ready();
+    panel.setState(STATE);
+    body
+      .querySelector<HTMLButtonElement>('[aria-label="Delete local copy acme-specs locally"]')
+      ?.click();
+    expect(
+      body.querySelector('button[aria-label="Delete branch main in acme-specs locally"]'),
+    ).toBeNull();
+    const branchDelete = body.querySelector<HTMLButtonElement>(
+      '[aria-label="Delete branch draft in acme-specs locally"]',
+    );
+    branchDelete?.click();
+    expect(onDeleteClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
+    expect(onDeleteBranch).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "draft");
+
+    panel.setOperationConfirmation({
+      operation: "deleteBranch",
+      id: REPO.id,
+      clonePath: "C:\\repos\\acme-specs",
+      branch: "draft",
+      message: "This version still has local work.",
+      warnings: [
+        "2 changes have not been saved as a version.",
+        "1 saved version has not been shared.",
+        "SpecDesk is holding work for this version.",
+      ],
+      confirmationToken: "branch-risk-v1",
+    });
+    const confirmation = body.querySelector<HTMLElement>(".repo-operation-confirmation");
+    expect(confirmation?.hidden).toBe(false);
+    expect(confirmation?.textContent).toContain("not been saved");
+    expect(confirmation?.textContent).toContain("not been shared");
+    expect(confirmation?.textContent).toContain("holding work");
+    expect(confirmation?.textContent).toContain("Delete local branch");
+    confirmation?.querySelector<HTMLButtonElement>("button")?.click();
+    expect(document.activeElement).toBe(branchDelete);
+    expect(confirmation?.hidden).toBe(true);
+
+    branchDelete?.click();
+    panel.setOperationConfirmation({
+      operation: "deleteBranch",
+      id: REPO.id,
+      clonePath: "C:\\repos\\acme-specs",
+      branch: "draft",
+      message: "This version still has local work.",
+      warnings: ["2 changes have not been saved as a version."],
+      confirmationToken: "branch-risk-v2",
+    });
+    body.querySelector<HTMLButtonElement>(".repo-operation-delete")?.click();
+    expect(onDeleteBranch).toHaveBeenLastCalledWith(
+      REPO,
+      "C:\\repos\\acme-specs",
+      "draft",
+      "branch-risk-v2",
+    );
+    expect(confirmation?.hidden).toBe(true);
+    expect(document.activeElement).toBe(body.querySelector(".repo-open"));
   });
 });

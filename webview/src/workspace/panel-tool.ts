@@ -19,6 +19,8 @@ export interface PanelTool {
   onShow?(): void;
   /** Called before this tool is hidden by collapse or a mode switch. */
   onHide?(): void;
+  /** Focus this mode's primary action after it is revealed programmatically. */
+  focusPrimary?(): void;
 }
 
 /**

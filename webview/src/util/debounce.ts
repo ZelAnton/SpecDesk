@@ -4,7 +4,12 @@
 export interface Debounced {
   (): void;
   readonly pending: boolean;
+  readonly pendingOrder: number | null;
+  flush(): boolean;
+  cancel(): boolean;
 }
+
+let nextPendingOrder = 0;
 
 /**
  * Trailing-edge debounce: coalesce a burst of calls into a single deferred one that runs `ms` after
@@ -15,17 +20,51 @@ export interface Debounced {
  */
 export function debounce(fn: () => void, ms: number): Debounced {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let pendingOrder: number | null = null;
   const trigger = (): void => {
     if (timer !== undefined) {
       clearTimeout(timer);
     }
+    pendingOrder = ++nextPendingOrder;
     timer = setTimeout(() => {
       timer = undefined;
+      pendingOrder = null;
       fn();
     }, ms);
   };
-  return Object.defineProperty(trigger, "pending", {
-    get: () => timer !== undefined,
-    enumerable: true,
+  return Object.defineProperties(trigger, {
+    pending: {
+      get: () => timer !== undefined,
+      enumerable: true,
+    },
+    pendingOrder: {
+      get: () => pendingOrder,
+      enumerable: true,
+    },
+    flush: {
+      value: (): boolean => {
+        if (timer === undefined) {
+          return false;
+        }
+        clearTimeout(timer);
+        timer = undefined;
+        pendingOrder = null;
+        fn();
+        return true;
+      },
+      enumerable: true,
+    },
+    cancel: {
+      value: (): boolean => {
+        if (timer === undefined) {
+          return false;
+        }
+        clearTimeout(timer);
+        timer = undefined;
+        pendingOrder = null;
+        return true;
+      },
+      enumerable: true,
+    },
   }) as Debounced;
 }

@@ -17,6 +17,7 @@ public sealed class WorkspaceStore
 {
 	// Most-recent-first, capped so the list can't grow without bound. The oldest entries fall off the tail.
 	private const int MaxRecent = 20;
+	private const int SaveReplaceAttempts = 6;
 
 	private static readonly JsonSerializerOptions SerializerOptions = new()
 	{
@@ -32,6 +33,16 @@ public sealed class WorkspaceStore
 	private readonly List<WorkspaceItem> _recent;
 	private readonly List<WorkspaceItem> _favorites;
 	private readonly List<RegisteredRepo> _repositories;
+	private readonly Dictionary<string, long> _repositoryEpochs = new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, long> _repositoryCloneEpochs = new(StringComparer.OrdinalIgnoreCase);
+	private long _revision;
+
+	internal sealed record RepositoryRegistrationSnapshot(
+		string Id,
+		long Epoch,
+		long CloneEpoch,
+		RegisteredRepo? Repository);
+	internal sealed record WorkspaceStateSnapshot(long Revision, WorkspaceStatePayload State);
 
 	public WorkspaceStore(string path)
 	{
@@ -69,6 +80,7 @@ public sealed class WorkspaceStore
 				_recent.RemoveRange(MaxRecent, _recent.Count - MaxRecent);
 			}
 
+			_revision++;
 			Save();
 		}
 	}
@@ -107,6 +119,7 @@ public sealed class WorkspaceStore
 			// (matching RegisterRepo/UnregisterRepo).
 			if (changed)
 			{
+				_revision++;
 				Save();
 			}
 		}
@@ -125,6 +138,8 @@ public sealed class WorkspaceStore
 			if (!_repositories.Exists(existing => string.Equals(existing.Id, repo.Id, StringComparison.OrdinalIgnoreCase)))
 			{
 				_repositories.Add(NormalizeRepo(repo));
+				AdvanceRepositoryEpoch(repo.Id);
+				_revision++;
 				Save();
 			}
 		}
@@ -134,8 +149,178 @@ public sealed class WorkspaceStore
 	{
 		lock (_sync)
 		{
-			return _repositories.FirstOrDefault(repo =>
-				string.Equals(repo.Id, id, StringComparison.OrdinalIgnoreCase));
+			return FindRepoLocked(id);
+		}
+	}
+
+	internal RepositoryRegistrationSnapshot CaptureRepoRegistration(string id)
+	{
+		lock (_sync)
+		{
+			return new RepositoryRegistrationSnapshot(
+				id, RepositoryEpoch(id), RepositoryCloneEpoch(id), FindRepoLocked(id));
+		}
+	}
+
+	internal bool IsRepoRegistrationCurrent(
+		RepositoryRegistrationSnapshot expected,
+		bool requirePresent)
+	{
+		lock (_sync)
+		{
+			return RegistrationMatches(expected, requirePresent, FindRepoLocked(expected.Id));
+		}
+	}
+
+	internal bool IsRepoRegistrationPresenceCurrent(RepositoryRegistrationSnapshot expected)
+	{
+		lock (_sync)
+		{
+			RegisteredRepo? current = FindRepoLocked(expected.Id);
+			return RepositoryEpoch(expected.Id) == expected.Epoch
+				&& expected.Repository is not null
+				&& current is not null
+				&& string.Equals(current.Url, expected.Repository.Url, StringComparison.OrdinalIgnoreCase);
+		}
+	}
+
+	internal bool TryRegisterRepo(
+		RepositoryRegistrationSnapshot expected,
+		RegisteredRepo repo,
+		out WorkspaceStateSnapshot state)
+	{
+		ArgumentNullException.ThrowIfNull(expected);
+		ArgumentNullException.ThrowIfNull(repo);
+		lock (_sync)
+		{
+			RegisteredRepo? current = FindRepoLocked(expected.Id);
+			bool expectedPresent = expected.Repository is not null;
+			if (RepositoryEpoch(expected.Id) != expected.Epoch
+				|| expectedPresent != (current is not null)
+				|| (expectedPresent
+					&& !string.Equals(current!.Url, expected.Repository!.Url, StringComparison.OrdinalIgnoreCase)))
+			{
+				state = StateSnapshotLocked();
+				return false;
+			}
+			if (current is null)
+			{
+				_repositories.Add(NormalizeRepo(repo));
+				AdvanceRepositoryEpoch(expected.Id);
+				_revision++;
+				Save();
+			}
+			state = StateSnapshotLocked();
+			return true;
+		}
+	}
+
+	internal bool TrySetRepoDefaultBranch(
+		RepositoryRegistrationSnapshot expected,
+		string defaultBranch,
+		out WorkspaceStateSnapshot state)
+	{
+		ArgumentNullException.ThrowIfNull(expected);
+		ArgumentException.ThrowIfNullOrWhiteSpace(defaultBranch);
+		lock (_sync)
+		{
+			RegisteredRepo? current = FindRepoLocked(expected.Id);
+			if (RepositoryEpoch(expected.Id) != expected.Epoch
+				|| expected.Repository is null
+				|| current is null
+				|| !string.Equals(current.Url, expected.Repository.Url, StringComparison.OrdinalIgnoreCase))
+			{
+				state = StateSnapshotLocked();
+				return false;
+			}
+			int index = _repositories.FindIndex(repo => ReferenceEquals(repo, current));
+			_repositories[index] = current with { DefaultBranch = defaultBranch };
+			_revision++;
+			Save();
+			state = StateSnapshotLocked();
+			return true;
+		}
+	}
+
+	internal bool TryRollbackNewRepoRegistration(
+		RepositoryRegistrationSnapshot expected,
+		out WorkspaceStateSnapshot state)
+	{
+		ArgumentNullException.ThrowIfNull(expected);
+		lock (_sync)
+		{
+			RegisteredRepo? current = FindRepoLocked(expected.Id);
+			if (!RegistrationMatches(expected, requirePresent: true, current)
+				|| !ReferenceEquals(current, expected.Repository))
+			{
+				state = StateSnapshotLocked();
+				return false;
+			}
+
+			AdvanceRepositoryEpoch(expected.Id);
+			AdvanceRepositoryCloneEpoch(expected.Id);
+			_repositories.Remove(current!);
+			_favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, expected.Id, StringComparison.OrdinalIgnoreCase));
+			_revision++;
+			Save();
+			state = StateSnapshotLocked();
+			return true;
+		}
+	}
+
+	internal bool TryCommitRepoClone(
+		RepositoryRegistrationSnapshot expected,
+		bool requirePresent,
+		RegisteredRepo seed,
+		RegisteredClone clone,
+		string inferredDefaultBranch,
+		out WorkspaceStateSnapshot state)
+	{
+		ArgumentNullException.ThrowIfNull(expected);
+		ArgumentNullException.ThrowIfNull(seed);
+		ArgumentNullException.ThrowIfNull(clone);
+		lock (_sync)
+		{
+			RegisteredRepo? current = FindRepoLocked(expected.Id);
+			if (!RegistrationMatches(expected, requirePresent, current))
+			{
+				state = StateSnapshotLocked();
+				return false;
+			}
+
+			int repoIndex = current is null
+				? -1
+				: _repositories.FindIndex(repo => ReferenceEquals(repo, current));
+			RegisteredRepo baseRepo = current ?? NormalizeRepo(seed);
+			List<RegisteredClone> clones = [.. baseRepo.Clones];
+			int cloneIndex = clones.FindIndex(existing => SamePath(existing.Path, clone.Path));
+			if (cloneIndex >= 0)
+			{
+				clones[cloneIndex] = clone;
+			}
+			else
+			{
+				clones.Add(clone);
+			}
+			string defaultBranch = string.IsNullOrWhiteSpace(baseRepo.DefaultBranch)
+				? inferredDefaultBranch
+				: baseRepo.DefaultBranch;
+			RegisteredRepo updated = baseRepo with { DefaultBranch = defaultBranch, Clones = clones };
+			if (repoIndex >= 0)
+			{
+				_repositories[repoIndex] = updated;
+			}
+			else
+			{
+				_repositories.Add(updated);
+				AdvanceRepositoryEpoch(expected.Id);
+			}
+			AdvanceRepositoryCloneEpoch(expected.Id);
+			_revision++;
+			Save();
+			state = StateSnapshotLocked();
+			return true;
 		}
 	}
 
@@ -149,11 +334,14 @@ public sealed class WorkspaceStore
 			if (index < 0)
 			{
 				_repositories.Add(NormalizeRepo(repo));
+				AdvanceRepositoryEpoch(repo.Id);
 			}
 			else
 			{
 				_repositories[index] = NormalizeRepo(repo);
 			}
+			AdvanceRepositoryCloneEpoch(repo.Id);
+			_revision++;
 			Save();
 		}
 	}
@@ -175,7 +363,9 @@ public sealed class WorkspaceStore
 			else
 			{
 				_repositories.Add(updated);
+				AdvanceRepositoryEpoch(seed.Id);
 			}
+			_revision++;
 			Save();
 		}
 	}
@@ -211,24 +401,186 @@ public sealed class WorkspaceStore
 			else
 			{
 				_repositories.Add(updated);
+				AdvanceRepositoryEpoch(seed.Id);
 			}
+			AdvanceRepositoryCloneEpoch(seed.Id);
+			_revision++;
 			Save();
 		}
 	}
 
-	/// <summary>Remove any registered repository whose id matches <paramref name="id"/>. Persists.</summary>
-	public void UnregisterRepo(string id)
+	public bool TryUpdateRepoClone(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId,
+		RegisteredClone updatedClone,
+		string inferredDefaultBranch)
 	{
 		lock (_sync)
 		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Url, expectedUrl, StringComparison.OrdinalIgnoreCase));
+			if (repoIndex < 0)
+			{
+				return false;
+			}
+			RegisteredRepo repo = _repositories[repoIndex];
+			List<RegisteredClone> clones = [.. repo.Clones];
+			int cloneIndex = clones.FindIndex(existing =>
+				SamePath(existing.Path, clonePath)
+				&& string.Equals(existing.Id, expectedCloneId, StringComparison.Ordinal));
+			if (cloneIndex < 0)
+			{
+				return false;
+			}
+			clones[cloneIndex] = updatedClone;
+			string defaultBranch = string.IsNullOrWhiteSpace(repo.DefaultBranch)
+				? inferredDefaultBranch
+				: repo.DefaultBranch;
+			_repositories[repoIndex] = repo with { Clones = clones, DefaultBranch = defaultBranch };
+			AdvanceRepositoryCloneEpoch(id);
+			_revision++;
+			Save();
+			return true;
+		}
+	}
+	public bool TryRemoveRepoClone(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId)
+	{
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Url, expectedUrl, StringComparison.OrdinalIgnoreCase));
+			if (repoIndex < 0)
+			{
+				return false;
+			}
+			RegisteredRepo repo = _repositories[repoIndex];
+			int cloneIndex = repo.Clones.ToList().FindIndex(clone =>
+				SamePath(clone.Path, clonePath)
+				&& string.Equals(clone.Id, expectedCloneId, StringComparison.Ordinal));
+			if (cloneIndex < 0)
+			{
+				return false;
+			}
+			List<RegisteredClone> clones = [.. repo.Clones];
+			clones.RemoveAt(cloneIndex);
+			_repositories[repoIndex] = repo with { Clones = clones };
+			_favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& (SamePath(item.Path, clonePath)
+					|| PathIsInside(item.Path, clonePath)));
+			_recent.RemoveAll(item =>
+				string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
+				&& (SamePath(item.Path, clonePath) || PathIsInside(item.Path, clonePath)));
+			AdvanceRepositoryCloneEpoch(id);
+			_revision++;
+			Save();
+			return true;
+		}
+	}
+	public void RemoveRepoClone(string id, string clonePath)
+	{
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase));
+			if (repoIndex < 0)
+			{
+				return;
+			}
+			RegisteredRepo repo = _repositories[repoIndex];
+			List<RegisteredClone> clones = repo.Clones
+				.Where(clone => !SamePath(clone.Path, clonePath))
+				.ToList();
+			bool cloneRemoved = clones.Count != repo.Clones.Count;
+			bool changed = cloneRemoved;
+			if (cloneRemoved)
+			{
+				_repositories[repoIndex] = repo with { Clones = clones };
+				AdvanceRepositoryCloneEpoch(id);
+			}
+			changed |= _favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& (SamePath(item.Path, clonePath)
+					|| PathIsInside(item.Path, clonePath))) > 0;
+			changed |= _recent.RemoveAll(item =>
+				string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
+				&& (SamePath(item.Path, clonePath) || PathIsInside(item.Path, clonePath))) > 0;
+			if (changed)
+			{
+				_revision++;
+				Save();
+			}
+		}
+	}
+
+	public void RemoveRepoBranch(string id, string clonePath, string branch)
+	{
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase));
+			bool changed = false;
+			if (repoIndex >= 0)
+			{
+				RegisteredRepo repo = _repositories[repoIndex];
+				List<RegisteredClone> clones = [.. repo.Clones];
+				int cloneIndex = clones.FindIndex(existing => SamePath(existing.Path, clonePath));
+				if (cloneIndex >= 0)
+				{
+					RegisteredClone clone = clones[cloneIndex];
+					RegisteredBranch[] branches = clone.Branches
+						.Where(existing => !string.Equals(existing.Name, branch, StringComparison.Ordinal))
+						.ToArray();
+					if (branches.Length != clone.Branches.Count)
+					{
+						clones[cloneIndex] = clone with { Branches = branches };
+						_repositories[repoIndex] = repo with { Clones = clones };
+						AdvanceRepositoryCloneEpoch(id);
+						changed = true;
+					}
+				}
+			}
+			changed |= _favorites.RemoveAll(item =>
+				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(item.Branch, branch, StringComparison.Ordinal)
+				&& SamePath(item.Path, clonePath)) > 0;
+			if (changed)
+			{
+				_revision++;
+				Save();
+			}
+		}
+	}
+
+	/// <summary>Remove any registered repository whose id matches <paramref name="id"/>. Persists.</summary>
+	public void UnregisterRepo(string id) => UnregisterRepoWithSnapshot(id);
+
+	internal WorkspaceStateSnapshot UnregisterRepoWithSnapshot(string id)
+	{
+		lock (_sync)
+		{
+			// The epoch advances even when the repository is already absent. An open/clone intent that captured
+			// the prior absence must not add it after an explicit forget request (the absent -> absent ABA case).
+			AdvanceRepositoryEpoch(id);
+			AdvanceRepositoryCloneEpoch(id);
 			bool changed = _repositories.RemoveAll(existing =>
 				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0;
 			changed |= _favorites.RemoveAll(item =>
 				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			_revision++;
 			if (changed)
 			{
 				Save();
 			}
+			return StateSnapshotLocked();
 		}
 	}
 
@@ -238,9 +590,58 @@ public sealed class WorkspaceStore
 	{
 		lock (_sync)
 		{
-			return new WorkspaceStatePayload([.. _recent], [.. _favorites], [.. _repositories]);
+			return StateLocked();
 		}
 	}
+
+	internal WorkspaceStateSnapshot StateWithRevision()
+	{
+		lock (_sync)
+		{
+			return StateSnapshotLocked();
+		}
+	}
+
+	private WorkspaceStatePayload StateLocked() =>
+		new([.. _recent], [.. _favorites], [.. _repositories]);
+
+	private WorkspaceStateSnapshot StateSnapshotLocked() => new(_revision, StateLocked());
+
+	private RegisteredRepo? FindRepoLocked(string id) =>
+		_repositories.FirstOrDefault(repo =>
+			string.Equals(repo.Id, id, StringComparison.OrdinalIgnoreCase));
+
+	private bool RegistrationMatches(
+		RepositoryRegistrationSnapshot expected,
+		bool requirePresent,
+		RegisteredRepo? current)
+	{
+		if (RepositoryEpoch(expected.Id) != expected.Epoch)
+		{
+			return false;
+		}
+		if (requirePresent)
+		{
+			return RepositoryCloneEpoch(expected.Id) == expected.CloneEpoch
+				&& expected.Repository is not null
+				&& current is not null
+				&& string.Equals(current.Id, expected.Repository.Id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(current.Url, expected.Repository.Url, StringComparison.OrdinalIgnoreCase);
+		}
+		return expected.Repository is null && current is null;
+	}
+
+	private long RepositoryEpoch(string id) =>
+		_repositoryEpochs.TryGetValue(id, out long epoch) ? epoch : 0;
+
+	private void AdvanceRepositoryEpoch(string id) =>
+		_repositoryEpochs[id] = checked(RepositoryEpoch(id) + 1);
+
+	private long RepositoryCloneEpoch(string id) =>
+		_repositoryCloneEpochs.TryGetValue(id, out long epoch) ? epoch : 0;
+
+	private void AdvanceRepositoryCloneEpoch(string id) =>
+		_repositoryCloneEpochs[id] = checked(RepositoryCloneEpoch(id) + 1);
 
 	// Corruption-tolerant load: a missing, empty, or malformed file reads as null (an empty workspace) rather
 	// than faulting — the same policy as PromptTemplateStore/FileTokenStore. The record's nullable lists let a
@@ -254,8 +655,15 @@ public sealed class WorkspaceStore
 
 		try
 		{
-			using FileStream stream = File.OpenRead(_path);
-			return JsonSerializer.Deserialize<PersistedState>(stream, SerializerOptions);
+			string json;
+			// Close the snapshot handle before parsing so an atomic save is not held up by JSON deserialization.
+			using (FileStream stream = new(
+				_path, FileMode.Open, FileAccess.Read, FileShare.Read))
+			using (StreamReader reader = new(stream))
+			{
+				json = reader.ReadToEnd();
+			}
+			return JsonSerializer.Deserialize<PersistedState>(json, SerializerOptions);
 		}
 		catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
 		{
@@ -283,7 +691,20 @@ public sealed class WorkspaceStore
 			File.WriteAllText(
 				temp,
 				JsonSerializer.Serialize(new PersistedState(_recent, _favorites, _repositories), SerializerOptions));
-			File.Move(temp, _path, overwrite: true);
+			for (int attempt = 1; ; attempt++)
+			{
+				try
+				{
+					File.Move(temp, _path, overwrite: true);
+					break;
+				}
+				catch (Exception ex) when (
+					attempt < SaveReplaceAttempts && IsPersistenceFailure(ex))
+				{
+					// Windows cannot replace a snapshot while a reader or scanner briefly holds it open.
+					Thread.Sleep(attempt * 5);
+				}
+			}
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
@@ -292,9 +713,24 @@ public sealed class WorkspaceStore
 		}
 	}
 
+	private static bool IsPersistenceFailure(Exception ex) =>
+		ex is IOException or UnauthorizedAccessException;
+
 	// Windows filesystem paths are case-insensitive, and the same file/folder can reach the store under
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+	private static bool PathIsInside(string candidate, string root)
+	{
+		if (!Path.IsPathFullyQualified(candidate) || !Path.IsPathFullyQualified(root))
+		{
+			return false;
+		}
+		string relative = Path.GetRelativePath(root, candidate);
+		return relative != ".."
+			&& !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+			&& !Path.IsPathFullyQualified(relative);
+	}
 
 	private static bool SameFavoriteIdentity(WorkspaceItem left, WorkspaceItem right)
 	{
@@ -333,7 +769,25 @@ public sealed class WorkspaceStore
 				return null;
 			}
 		}
-		if (kind == "remote")
+		if (kind is "clone" or "branch")
+		{
+			if (!item.IsFolder
+				|| !IsRepositoryId(item.RepositoryId)
+				|| !Path.IsPathFullyQualified(item.Path)
+				|| (kind == "clone" && item.Branch is not null)
+				|| (kind == "branch" && !IsRemoteBranch(item.Branch)))
+			{
+				return null;
+			}
+			try
+			{
+				return item with { Kind = kind, Path = Path.GetFullPath(item.Path) };
+			}
+			catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+			{
+				return null;
+			}
+		}		if (kind == "remote")
 		{
 			return IsRepositoryId(item.RepositoryId)
 				&& IsRemoteBranch(item.Branch)
@@ -394,7 +848,17 @@ public sealed class WorkspaceStore
 			// A legacy descriptor may not have recorded this field. Keep it unknown until metadata or a
 			// clone identifies the actual default; guessing "main" would misclassify master/trunk repos.
 			DefaultBranch = repo.DefaultBranch ?? string.Empty,
-			Clones = repo.Clones ?? [],
+			Clones = (repo.Clones ?? []).Select(NormalizeClone).ToArray(),
+		};
+
+	private static RegisteredClone NormalizeClone(RegisteredClone clone) =>
+		clone with
+		{
+			Branches = (clone.Branches ?? [])
+				.Where(branch => branch is not null && !string.IsNullOrWhiteSpace(branch.Name))
+				.Select(branch => branch with { Status = branch.Status ?? RepositoryStatusPayload.Empty })
+				.ToArray(),
+			Status = clone.Status ?? RepositoryStatusPayload.Empty,
 		};
 
 	// The on-disk shape: one JSON object holding the three lists. A private record (not the wire payload) so

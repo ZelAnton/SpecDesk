@@ -5,6 +5,14 @@
     "docDir": "specs",
     "readOnly": false
   },
+  "doc.openCompleted": {
+    "requestId": 17,
+    "succeeded": true
+  },
+  "doc.discardCompleted": {
+    "requestId": 18,
+    "succeeded": false
+  },
   "preview.html": {
     "html": "\u003Ch1\u003EBilling\u003C/h1\u003E",
     "lineMap": [
@@ -125,7 +133,30 @@
   "repo.cloneDestination": {
     "url": "acme/specs",
     "requestId": 7,
-    "path": "C:\\SpecDesk\\repos\\acme_specs"
+    "path": "C:\\SpecDesk\\repos\\product-specs",
+    "localName": "product-specs",
+    "exists": false
+  },
+  "repo.cloneConflict": {
+    "url": "acme/specs",
+    "localName": "product-specs",
+    "existingClonePath": "C:\\SpecDesk\\repos\\product-specs",
+    "message": "A local copy with that name already exists. Open it instead?"
+  },
+  "repo.confirmation": {
+    "operation": "deleteBranch",
+    "id": "acme/specs",
+    "clonePath": "C:\\SpecDesk\\repos\\product-specs",
+    "branch": "review-copy",
+    "message": "Delete this local working line?",
+    "warnings": [
+      "There are unfinished local edits.",
+      "There is one protected local work snapshot."
+    ],
+    "confirmationToken": "DD42A087"
+  },
+  "repo.operationCompleted": {
+    "requestId": 42
   },
   "repo.description": {
     "url": "acme/specs",
@@ -134,7 +165,7 @@
     "description": "Product specifications"
   },
   "chat.delta": {
-	"id": "7",
+    "id": "7",
     "text": "Here is a summary of the change: "
   },
   "chat.done": {
@@ -216,6 +247,16 @@
     "defaultBranch": "main",
     "path": "specs/billing.md"
   },
+  "window.state": {
+    "maximized": true
+  },
+  "window.closeRequested": {
+    "requestId": 23
+  },
+  "window.closeCompleted": {
+    "requestId": 23,
+    "succeeded": false
+  },
   "workspace.state": {
     "recent": [
       {
@@ -243,7 +284,38 @@
           {
             "id": "octo-specs",
             "path": "C:\\specs\\octo-specs",
-            "branches": ["review-copy"]
+            "currentBranch": "review-copy",
+            "branches": [
+              {
+                "name": "main",
+                "status": {
+                  "ahead": 0,
+                  "behind": 0,
+                  "hasUncommitted": false,
+                  "stashCount": 0,
+                  "hasConflicts": false
+                },
+                "canDelete": false
+              },
+              {
+                "name": "review-copy",
+                "status": {
+                  "ahead": 2,
+                  "behind": 1,
+                  "hasUncommitted": true,
+                  "stashCount": 1,
+                  "hasConflicts": false
+                },
+                "canDelete": true
+              }
+            ],
+            "status": {
+              "ahead": 2,
+              "behind": 1,
+              "hasUncommitted": true,
+              "stashCount": 3,
+              "hasConflicts": false
+            }
           }
         ]
       }

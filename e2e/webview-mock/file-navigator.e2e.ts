@@ -31,7 +31,7 @@ test.beforeEach(async ({ context }) => {
 });
 
 async function openFilesTool(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Files"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]').click();
 }
 
 test("the file navigator renders the host's tree and opens a clicked file", async ({ page }) => {

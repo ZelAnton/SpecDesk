@@ -12,10 +12,10 @@ public sealed class HostControllerGitHubTests
 	private static readonly string[] AuthorizedOrganizations = ["acme", "octo-labs"];
 	private static readonly string[] AccessibleRepositoryNames = ["acme/specs", "octocat/notes"];
 
-    private sealed class NoDialogs : IFileDialogs
+    private sealed class NoDialogs(string? openFolder = null) : IFileDialogs
     {
         public string? PickOpenFile() => null;
-        public string? PickOpenFolder() => null;
+        public string? PickOpenFolder() => openFolder;
 
         public string? PickSaveFile(string? suggestedPath) => null;
     }
@@ -23,7 +23,10 @@ public sealed class HostControllerGitHubTests
     private sealed class CreatingCloner(string destination) : IRepositoryCloner
     {
         public int CloneCalls { get; private set; }
-        public bool IsCloned(string destinationPath) => false;
+		public bool IsCloned(string destinationPath) => Directory.Exists(destinationPath);
+		public bool IsCloneOf(string destinationPath, string url) => IsCloned(destinationPath);
+		public bool IsCloneOfAtBranch(
+			string destinationPath, string url, string? expectedCurrentBranch) => IsCloneOf(destinationPath, url);
 
         public string CloneOrReuse(
             string url, string destinationPath, string? accessToken, CancellationToken cancellationToken)
@@ -71,6 +74,35 @@ public sealed class HostControllerGitHubTests
 		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
 			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
 			throw new NotSupportedException();
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+	}
+
+	private sealed class BlockingMetadataCatalog : IGitHubRepositoryCatalog
+	{
+		public TaskCompletionSource Started { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public TaskCompletionSource Release { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<string>>([]);
+
+		public async Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default)
+		{
+			Started.SetResult();
+			// Deliberately ignore cancellation: a remote provider can complete after local removal.
+			await Release.Task;
+			return new GitHubRepositoryMetadata("main", "Delayed metadata");
+		}
 
 		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
 			string owner, string name, string branch, string accessToken,
@@ -338,7 +370,8 @@ public sealed class HostControllerGitHubTests
 		WorkspaceStore? workspace = null,
 		IRepositoryCloner? cloner = null,
 		Action<string>? beforeSend = null,
-		IGitHubRepositoryCatalog? repositoryCatalog = null)
+		IGitHubRepositoryCatalog? repositoryCatalog = null,
+		IFileDialogs? dialogs = null)
     {
         List<string> sent = [];
         object gate = new();
@@ -352,7 +385,7 @@ public sealed class HostControllerGitHubTests
         }
 
         HostController controller = new(
-            StubRender, Send, new NoDialogs(), (_, _, _, _, _) => null,
+            StubRender, Send, dialogs ?? new NoDialogs(), (_, _, _, _, _) => null,
             new FakeVersioning(), NullLogger<HostController>.Instance,
             auth: auth, workspace: workspace, cloner: cloner, repositoryCatalog: repositoryCatalog);
         return (controller, sent, gate);
@@ -799,6 +832,284 @@ public sealed class HostControllerGitHubTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+	[Test]
+	public void UnregisterBeforeAuthorizationTakesPendingRegistrationPreventsLaterRegistration()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-unregister-before-take-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			OrdinaryRaceGitHubAuth auth = new(RaceStage.Terminal);
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, _, _) = Build(auth, workspace);
+			using (controller)
+			using (ManualResetEventSlim resumed = new(false))
+			{
+				controller.PendingRepoActionsResumedForTest = resumed;
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+				Assert.That(auth.FirstPaused.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
+				auth.ReleaseFirst.SetResult();
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void UnregisterAfterAuthorizationTakesPendingRegistrationPreventsResumeFromRegistering()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-unregister-after-take-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, _, _) = Build(auth, workspace);
+			using (controller)
+			using (ManualResetEventSlim taken = new(false))
+			using (ManualResetEventSlim release = new(false))
+			using (ManualResetEventSlim resumed = new(false))
+			{
+				controller.PendingRepoActionsTakenForTest = taken;
+				controller.PendingRepoActionsResumeForTest = release;
+				controller.PendingRepoActionsResumedForTest = resumed;
+				try
+				{
+					controller.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+					Assert.That(taken.Wait(TimeSpan.FromSeconds(2)), Is.True);
+					controller.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
+				}
+				finally
+				{
+					release.Set();
+				}
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestCase("open")]
+	[TestCase("clone")]
+	[TestCase("cloneToFolder")]
+	public void UnregisterBeforeAuthorizationTakesPendingRepositoryNavigationPreventsResurrection(
+		string action)
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(), "specdesk-auth-nav-unregister-before-take-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			const string id = "octo/specs";
+			OrdinaryRaceGitHubAuth auth = new(RaceStage.Terminal);
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			workspace.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{id}", "main", []));
+			CreatingCloner cloner = new(Path.Combine(root, "cloned"));
+			(HostController controller, _, _) = Build(
+				auth, workspace, cloner, dialogs: new NoDialogs(root));
+			using (controller)
+			using (ManualResetEventSlim resumed = new(false))
+			{
+				controller.PendingRepoActionsResumedForTest = resumed;
+				SendPendingRepositoryNavigation(controller, action, id);
+				Assert.That(auth.FirstPaused.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoUnregister, new UnregisterRepoPayload(id)));
+				auth.ReleaseFirst.SetResult();
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				Thread.Sleep(100);
+
+				Assert.Multiple(() =>
+				{
+					Assert.That(workspace.FindRepo(id), Is.Null);
+					Assert.That(cloner.CloneCalls, Is.Zero);
+				});
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[TestCase("open")]
+	[TestCase("clone")]
+	[TestCase("cloneToFolder")]
+	public void UnregisterAfterAuthorizationTakesPendingRepositoryNavigationPreventsResurrection(
+		string action)
+	{
+		string root = Path.Combine(
+			Path.GetTempPath(), "specdesk-auth-nav-unregister-after-take-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			const string id = "octo/specs";
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			workspace.RegisterRepo(new RegisteredRepo(id, id, $"https://github.com/{id}", "main", []));
+			CreatingCloner cloner = new(Path.Combine(root, "cloned"));
+			(HostController controller, _, _) = Build(
+				auth, workspace, cloner, dialogs: new NoDialogs(root));
+			using (controller)
+			using (ManualResetEventSlim taken = new(false))
+			using (ManualResetEventSlim release = new(false))
+			using (ManualResetEventSlim resumed = new(false))
+			{
+				controller.PendingRepoActionsTakenForTest = taken;
+				controller.PendingRepoActionsResumeForTest = release;
+				controller.PendingRepoActionsResumedForTest = resumed;
+				try
+				{
+					SendPendingRepositoryNavigation(controller, action, id);
+					Assert.That(taken.Wait(TimeSpan.FromSeconds(2)), Is.True);
+					controller.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.RepoUnregister, new UnregisterRepoPayload(id)));
+				}
+				finally
+				{
+					release.Set();
+				}
+				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				Thread.Sleep(100);
+
+				Assert.Multiple(() =>
+				{
+					Assert.That(workspace.FindRepo(id), Is.Null);
+					Assert.That(cloner.CloneCalls, Is.Zero);
+				});
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private static void SendPendingRepositoryNavigation(
+		HostController controller, string action, string id)
+	{
+		string message = action switch
+		{
+			"open" => IpcSerializer.SerializeEvent(
+				MessageKinds.RepoOpen, new RepoOpenPayload(id)),
+			"clone" => IpcSerializer.SerializeEvent(
+				MessageKinds.RepoClone, new RepoClonePayload(id)),
+			"cloneToFolder" => IpcSerializer.SerializeEvent(
+				MessageKinds.RepoCloneToFolder, new RepoCloneToFolderPayload(id, "specs-copy")),
+			_ => throw new ArgumentOutOfRangeException(nameof(action)),
+		};
+		controller.OnMessage(message);
+	}
+
+	[Test]
+	public void UnregisterWhileMetadataIsLoadingPreventsDelayedMetadataFromRestoringRegistration()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-unregister-metadata-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+			{
+				SignedIn = true,
+				Login = "octocat",
+			};
+			BlockingMetadataCatalog catalog = new();
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, _, _) = Build(
+				auth, workspace, repositoryCatalog: catalog);
+			using (controller)
+			{
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+				Assert.That(catalog.Started.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Not.Null);
+
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoUnregister, new UnregisterRepoPayload("octo/specs")));
+				catalog.Release.SetResult();
+
+				Assert.That(SpinWait.SpinUntil(
+					() => MetadataLookupCount(controller) == 0,
+					TimeSpan.FromSeconds(2)), Is.True);
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void SignOutBetweenImmediateRegistrationAndMetadataLeaseRollsBackTheNewDescriptor()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-register-boundary-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		using ManualResetEventSlim registrationPublished = new(false);
+		using ManualResetEventSlim releaseRegistration = new(false);
+		HostController? controller = null;
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+			{
+				SignedIn = true,
+				Login = "octocat",
+			};
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			BlockingMetadataCatalog catalog = new();
+			(HostController built, _, _) = Build(
+				auth,
+				workspace,
+				repositoryCatalog: catalog);
+			controller = built;
+			controller.RepoRegistrationPublishedForTest = registrationPublished;
+			controller.RepoRegistrationResumeForTest = releaseRegistration;
+			Task registration = Task.Run(() => controller.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs"))));
+			Assert.That(registrationPublished.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+			releaseRegistration.Set();
+
+			Assert.That(registration.Wait(TimeSpan.FromSeconds(2)), Is.True);
+			Assert.Multiple(() =>
+			{
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+				Assert.That(catalog.Started.Task.IsCompleted, Is.False);
+			});
+		}
+		finally
+		{
+			releaseRegistration.Set();
+			controller?.Dispose();
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	private static int MetadataLookupCount(HostController controller)
+	{
+		System.Reflection.FieldInfo? field = typeof(HostController).GetField(
+			"_repoMetadataLookups",
+			System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+		return ((System.Collections.ICollection?)field?.GetValue(controller))?.Count ?? -1;
+	}
 
     [Test]
     public void OpeningWhileSignedOut_ClonesAndOpensAfterAuthorization()

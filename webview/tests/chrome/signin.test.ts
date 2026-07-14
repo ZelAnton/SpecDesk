@@ -31,7 +31,7 @@ function el(id: string): HTMLElement {
   return found;
 }
 
-function mount() {
+function mount(copyText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)) {
   setupDom();
   const signIn = vi.fn();
   const cancelSignIn = vi.fn();
@@ -54,8 +54,9 @@ function mount() {
     cancelSignIn,
     signOut,
     openUrl,
+    copyText,
   });
-  return { controller, signIn, cancelSignIn, signOut, openUrl };
+  return { controller, signIn, cancelSignIn, signOut, openUrl, copyText };
 }
 
 describe("SignInController — account button", () => {
@@ -178,6 +179,64 @@ describe("SignInController — code bar", () => {
 
     el("github-open-btn").click();
     expect(openUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("copies the code before opening GitHub and reports success", async () => {
+    const copyText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined);
+    const { controller, openUrl } = mount(copyText);
+
+    controller.showCode({
+      userCode: "WXYZ-1234",
+      verificationUri: "https://github.com/login/device",
+    });
+    await Promise.resolve();
+
+    expect(copyText).toHaveBeenCalledWith("WXYZ-1234");
+    expect(copyText.mock.invocationCallOrder[0]).toBeLessThan(
+      openUrl.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(el("github-signin-text").textContent).toContain("Code copied");
+  });
+
+  it("keeps the visible code when clipboard access is denied", async () => {
+    const copyText = vi
+      .fn<(text: string) => Promise<void>>()
+      .mockRejectedValue(new Error("denied"));
+    const { controller } = mount(copyText);
+
+    controller.showCode({
+      userCode: "WXYZ-1234",
+      verificationUri: "https://github.com/login/device",
+    });
+    await Promise.resolve();
+
+    expect(el("github-signin-text").textContent).toContain("enter this code");
+    expect(el("github-user-code").textContent).toBe("WXYZ-1234");
+  });
+
+  it("does not overwrite a terminal sign-in error when clipboard copying finishes late", async () => {
+    let finishCopy: (() => void) | undefined;
+    const copyText = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCopy = resolve;
+        }),
+    );
+    const { controller } = mount(copyText);
+    controller.showCode({
+      userCode: "WXYZ-1234",
+      verificationUri: "https://github.com/login/device",
+    });
+    controller.applyAccount({
+      available: true,
+      signedIn: false,
+      message: "Your sign-in code expired.",
+    });
+
+    finishCopy?.();
+    await Promise.resolve();
+
+    expect(el("github-signin-text").textContent).toBe("Your sign-in code expired.");
   });
 
   it("cancels and closes the bar on cancel", () => {

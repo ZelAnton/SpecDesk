@@ -30,7 +30,10 @@
  *  - `heading` — an ATX heading of the given `level` (`#`×level in source, a `heading` node in PM);
  *  - `list`    — a bullet or ordered list (`ordered`);
  *  - `quote`   — a blockquote;
- *  - `fence`   — a fenced code block.
+ *  - `fence`   — a fenced code block;
+ *  - `link` / `image` — insertion-friendly inline Markdown nodes with editable placeholder targets;
+ *  - `table`   — a starter two-column table;
+ *  - `rule`    — a thematic break.
  */
 export type FormatKind =
   | {
@@ -39,10 +42,14 @@ export type FormatKind =
       readonly node: string;
       readonly mark: string;
     }
-  | { readonly type: "heading"; readonly level: 1 | 2 }
+  | { readonly type: "heading"; readonly level: 1 | 2 | 3 }
   | { readonly type: "list"; readonly ordered: boolean }
   | { readonly type: "quote" }
-  | { readonly type: "fence" };
+  | { readonly type: "fence" }
+  | { readonly type: "link" }
+  | { readonly type: "image" }
+  | { readonly type: "table" }
+  | { readonly type: "rule" };
 
 /** One formatting command's declaration. `label` is the button's `title` + `aria-label` (the two are
  *  identical); `hotkey` is the CodeMirror/ProseMirror keymap spelling for the keyboard shortcut. */
@@ -79,6 +86,12 @@ export const FORMAT_REGISTRY = [
     kind: { type: "inline", marker: "~~", node: "Strikethrough", mark: "strikethrough" },
   },
   {
+    id: "inlineCode",
+    label: "Inline code (Ctrl+`)",
+    hotkey: "Mod-`",
+    kind: { type: "inline", marker: "`", node: "InlineCode", mark: "code" },
+  },
+  {
     id: "h1",
     label: "Heading 1 (Ctrl+Alt+1)",
     hotkey: "Mod-Alt-1",
@@ -89,6 +102,12 @@ export const FORMAT_REGISTRY = [
     label: "Heading 2 (Ctrl+Alt+2)",
     hotkey: "Mod-Alt-2",
     kind: { type: "heading", level: 2 },
+  },
+  {
+    id: "h3",
+    label: "Heading 3 (Ctrl+Alt+3)",
+    hotkey: "Mod-Alt-3",
+    kind: { type: "heading", level: 3 },
   },
   {
     id: "bullet",
@@ -108,6 +127,25 @@ export const FORMAT_REGISTRY = [
     label: "Code block (Ctrl+Shift+E)",
     hotkey: "Mod-Shift-e",
     kind: { type: "fence" },
+  },
+  { id: "link", label: "Insert link (Ctrl+K)", hotkey: "Mod-k", kind: { type: "link" } },
+  {
+    id: "table",
+    label: "Insert table (Ctrl+Alt+T)",
+    hotkey: "Mod-Alt-t",
+    kind: { type: "table" },
+  },
+  {
+    id: "image",
+    label: "Insert image reference (Ctrl+Shift+I)",
+    hotkey: "Mod-Shift-i",
+    kind: { type: "image" },
+  },
+  {
+    id: "rule",
+    label: "Insert divider (Ctrl+Shift+R)",
+    hotkey: "Mod-Shift-r",
+    kind: { type: "rule" },
   },
 ] as const satisfies readonly FormatCommandDef[];
 
@@ -132,4 +170,11 @@ export function formatDef(command: FormatCommand): FormatCommandDef {
 /** Validate a `data-format` attribute (DOM boundary) into a {@link FormatCommand}; false for anything else. */
 export function isFormatCommand(value: string | undefined): value is FormatCommand {
   return value !== undefined && BY_ID.has(value);
+}
+
+/** Whether a command represents a state that can be toggled at the selection. Pure insertion actions
+ *  use ordinary buttons and therefore must not expose the WAI-ARIA toggle-button state. */
+export function isToggleFormat(command: FormatCommand): boolean {
+  const { type } = formatDef(command).kind;
+  return type !== "image" && type !== "table" && type !== "rule";
 }

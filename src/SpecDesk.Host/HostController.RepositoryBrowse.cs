@@ -15,6 +15,7 @@ public sealed partial class HostController
 	private CancellationTokenSource? _remoteFileCts;
 	private string? _remoteBrowseRepoId;
 	private string? _remoteFileRepoId;
+	private long _remoteFileRequestId;
 	private readonly object _remotePublishSync = new();
 	private const int MaxRemotePathChars = 4096;
 	private const int MaxRemotePathDepth = 64;
@@ -36,21 +37,37 @@ public sealed partial class HostController
 			return;
 		}
 
+		if (_auth is null)
+		{
+			SendError("GitHub access isn't available in this build. Ask your administrator for help.");
+			return;
+		}
+
 		string id = $"{owner}/{name}";
 		string? requestedBranch = payload?.Branch;
-		long intentGeneration = BeginRemoteBrowseIntent(id);
+		long navigationGeneration = ReserveWorkspaceNavigationIntent();
+		long intentGeneration = BeginRemoteBrowseIntent(id, navigationGeneration);
 		if (intentGeneration == 0
 			|| !EnsureGitHubAccess(new PendingRepoAction(
-				PendingRepoActionKind.Browse, owner, name, intentGeneration, requestedBranch)))
+				PendingRepoActionKind.Browse,
+				owner,
+				name,
+				NavigationGeneration: navigationGeneration,
+				RemoteGeneration: intentGeneration,
+				Branch: requestedBranch)))
 		{
 			return;
 		}
 
-		BrowseRepoCore(owner, name, intentGeneration, requestedBranch);
+		BrowseRepoCore(owner, name, intentGeneration, navigationGeneration, requestedBranch);
 	}
 
-	private long BeginRemoteBrowseIntent(string id)
+	private long BeginRemoteBrowseIntent(string id, long navigationGeneration)
 	{
+		long canceledRequestId;
+		long intentGeneration;
+		CancellationTokenSource? browseCts;
+		CancellationTokenSource? fileCts;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
@@ -61,18 +78,33 @@ public sealed partial class HostController
 				}
 				_remoteBrowseGeneration++;
 				_remoteFileGeneration++;
-				_remoteBrowseCts?.Cancel();
-				_remoteFileCts?.Cancel();
+				browseCts = _remoteBrowseCts;
+				fileCts = _remoteFileCts;
 				_remoteBrowseRepoId = null;
 				_remoteFileRepoId = null;
+				canceledRequestId = _remoteFileRequestId;
+				_remoteFileRequestId = 0;
 				_remoteBrowseIntentRepoId = id;
-				return ++_remoteBrowseIntentGeneration;
+				intentGeneration = ++_remoteBrowseIntentGeneration;
+				AcceptWorkspaceNavigationIntentLocked(navigationGeneration);
+				_workspaceRoot = null;
+				_workspaceRootGeneration++;
+				Emit(IpcSerializer.SerializeEvent(
+					MessageKinds.Tree,
+					new TreePayload(id, [])));
 			}
 		}
+		browseCts?.Cancel();
+		fileCts?.Cancel();
+		CompleteDocumentOpen(canceledRequestId, succeeded: false);
+		return intentGeneration;
 	}
-
 	private void BrowseRepoCore(
-		string owner, string name, long intentGeneration, string? requestedBranch = null)
+		string owner,
+		string name,
+		long intentGeneration,
+		long navigationGeneration,
+		string? requestedBranch = null)
 	{
 		if (_repositoryCatalog is null || _auth is null)
 		{
@@ -83,11 +115,16 @@ public sealed partial class HostController
 		RegisteredRepo? descriptor;
 		CancellationTokenSource cts;
 		long generation;
+		long canceledRequestId;
+		CancellationTokenSource? previousBrowseCts;
+		CancellationTokenSource? previousFileCts;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
 			{
-				if (_disposed || intentGeneration != _remoteBrowseIntentGeneration)
+				if (_disposed
+					|| intentGeneration != _remoteBrowseIntentGeneration
+					|| navigationGeneration != _workspaceNavigationIntentGeneration)
 				{
 					return;
 				}
@@ -96,9 +133,11 @@ public sealed partial class HostController
 				{
 					return;
 				}
-				_remoteBrowseCts?.Cancel();
-				_remoteFileCts?.Cancel();
+				previousBrowseCts = _remoteBrowseCts;
+				previousFileCts = _remoteFileCts;
 				_remoteFileRepoId = null;
+				canceledRequestId = _remoteFileRequestId;
+				_remoteFileRequestId = 0;
 				generation = Interlocked.Increment(ref _remoteBrowseGeneration);
 				Interlocked.Increment(ref _remoteFileGeneration);
 				cts = new CancellationTokenSource();
@@ -106,6 +145,9 @@ public sealed partial class HostController
 				_remoteBrowseRepoId = id;
 			}
 		}
+		previousBrowseCts?.Cancel();
+		previousFileCts?.Cancel();
+		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 		CancellationToken cancellationToken = cts.Token;
 		_ = Task.Run(async () =>
 		{
@@ -123,19 +165,19 @@ public sealed partial class HostController
 						branch = metadata.DefaultBranch;
 						lock (_remotePublishSync)
 						{
-							bool current;
 							lock (_sync)
 							{
-								current = !_disposed
+								bool current = !_disposed
 									&& generation == _remoteBrowseGeneration
+									&& navigationGeneration == _workspaceNavigationIntentGeneration
 									&& IsSameRegisteredRepository(id, descriptor.Url);
+								if (!current)
+								{
+									return false;
+								}
+								_workspace?.SetRepoDefaultBranch(descriptor, branch);
+								EmitWorkspaceState();
 							}
-							if (!current)
-							{
-								return false;
-							}
-							_workspace?.SetRepoDefaultBranch(descriptor, branch);
-							EmitWorkspaceState();
 						}
 					}
 
@@ -143,17 +185,18 @@ public sealed partial class HostController
 						await _repositoryCatalog.GetTreeAsync(owner, name, branch, token, ct);
 					lock (_remotePublishSync)
 					{
-						bool current;
 						lock (_sync)
 						{
-							current = !_disposed
+							bool current = !_disposed
 								&& generation == _remoteBrowseGeneration
+								&& navigationGeneration == _workspaceNavigationIntentGeneration
 								&& IsSameRegisteredRepository(id, descriptor.Url);
-						}
-						if (current)
-						{
-							Emit(IpcSerializer.SerializeEvent(
-								MessageKinds.Tree, BuildRemoteTree(owner, name, branch, entries)));
+							if (current)
+							{
+								RemoteBrowseTerminalPublishingForTest?.Invoke();
+								Emit(IpcSerializer.SerializeEvent(
+									MessageKinds.Tree, BuildRemoteTree(owner, name, branch, entries)));
+							}
 						}
 					}
 					return true;
@@ -168,6 +211,7 @@ public sealed partial class HostController
 				_logger.LogError(ex, "Could not browse GitHub repository {Repo}", id);
 				PublishRemoteBrowseErrorIfCurrent(
 					generation,
+					navigationGeneration,
 					id,
 					descriptor,
 					"Could not read that repository. Check your connection and access, then try again.");
@@ -176,7 +220,7 @@ public sealed partial class HostController
 			{
 				_logger.LogError(ex, "Unexpected failure browsing GitHub repository {Repo}", id);
 				PublishRemoteBrowseErrorIfCurrent(
-					generation, id, descriptor, "Could not read that repository.");
+					generation, navigationGeneration, id, descriptor, "Could not read that repository.");
 			}
 			finally
 			{
@@ -283,15 +327,25 @@ public sealed partial class HostController
 		return branch.Length > 0 && path.Length > 0 && !path.Split('/').Any(part => part is "" or "." or "..");
 	}
 
-	private void LoadRemoteFile(string owner, string name, string branch, string path, string wirePath)
+	private void LoadRemoteFile(
+		string owner,
+		string name,
+		string branch,
+		string path,
+		string wirePath,
+		long requestId,
+		long navigationGeneration)
 	{
 		if (_repositoryCatalog is null)
 		{
 			SendError("Browsing repositories online isn't available in this build.");
+			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
 		}
 		string id = $"{owner}/{name}";
 		long generation;
+		CancellationTokenSource? previousFileCts = null;
+		bool repositoryMissing = false;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
@@ -300,54 +354,97 @@ public sealed partial class HostController
 				{
 					return;
 				}
-				if (_workspace?.FindRepo(id) is null)
+				repositoryMissing = _workspace?.FindRepo(id) is null;
+				if (!repositoryMissing)
 				{
-					SendError("That repository is no longer registered.");
-					return;
+					previousFileCts = _remoteFileCts;
+					generation = Interlocked.Increment(ref _remoteFileGeneration);
+					_remoteFileRepoId = id;
+					_remoteFileRequestId = requestId;
 				}
-				_remoteFileCts?.Cancel();
-				generation = Interlocked.Increment(ref _remoteFileGeneration);
-				_remoteFileRepoId = id;
+				else
+				{
+					generation = 0;
+				}
 			}
 		}
-		PendingRepoAction action = new(
-			PendingRepoActionKind.File, owner, name, generation, branch, path, wirePath);
-		if (!EnsureGitHubAccess(action))
+		if (repositoryMissing)
 		{
+			SendError("That repository is no longer registered.");
+			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
 		}
-		LoadRemoteFileCore(owner, name, branch, path, wirePath, generation);
+		previousFileCts?.Cancel();
+		PendingRepoAction action = new(
+			PendingRepoActionKind.File,
+			owner,
+			name,
+			NavigationGeneration: navigationGeneration,
+			RemoteGeneration: generation,
+			Branch: branch,
+			Path: path,
+			WirePath: wirePath,
+			RequestId: requestId);
+		if (!EnsureGitHubAccess(action))
+		{
+			bool pending;
+			lock (_sync)
+			{
+				pending = _pendingRepoOpen?.Kind == PendingRepoActionKind.File
+					&& _pendingRepoOpen.RequestId == requestId;
+			}
+			if (!pending)
+			{
+				CompleteDocumentOpen(requestId, succeeded: false);
+			}
+			return;
+		}
+		LoadRemoteFileCore(
+			owner, name, branch, path, wirePath, generation, navigationGeneration, requestId);
 	}
 
 	private void LoadRemoteFileCore(
-		string owner, string name, string branch, string path, string wirePath, long generation)
+		string owner,
+		string name,
+		string branch,
+		string path,
+		string wirePath,
+		long generation,
+		long navigationGeneration,
+		long requestId)
 	{
 		if (_repositoryCatalog is null || _auth is null)
 		{
+			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
 		}
-		CancellationTokenSource cts;
+		CancellationTokenSource? cts = null;
+		CancellationTokenSource? previousFileCts = null;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
 			{
-				if (_disposed)
-				{
-					return;
-				}
 				string id = $"{owner}/{name}";
-				if (generation != _remoteFileGeneration
-					|| !string.Equals(_remoteFileRepoId, id, StringComparison.OrdinalIgnoreCase)
-					|| _workspace?.FindRepo(id) is null)
+				if (!_disposed
+					&& generation == _remoteFileGeneration
+					&& navigationGeneration == _workspaceNavigationIntentGeneration
+					&& _remoteFileRequestId == requestId
+					&& string.Equals(_remoteFileRepoId, id, StringComparison.OrdinalIgnoreCase)
+					&& _workspace?.FindRepo(id) is not null)
 				{
-					return;
+					previousFileCts = _remoteFileCts;
+					cts = new CancellationTokenSource();
+					_remoteFileCts = cts;
+					_remoteFileRepoId = id;
 				}
-				_remoteFileCts?.Cancel();
-				cts = new CancellationTokenSource();
-				_remoteFileCts = cts;
-				_remoteFileRepoId = id;
 			}
 		}
+		if (cts is null)
+		{
+			CompleteDocumentOpen(requestId, succeeded: false);
+			return;
+		}
+		previousFileCts?.Cancel();
 		CancellationToken cancellationToken = cts.Token;
 		_ = Task.Run(async () =>
 		{
@@ -356,45 +453,57 @@ public sealed partial class HostController
 				string text = await _auth.WithAccessTokenAsync(
 					(token, ct) => _repositoryCatalog.GetFileAsync(owner, name, branch, path, token, ct),
 					cancellationToken);
+				bool published;
 				lock (_remotePublishSync)
 				{
 					lock (_sync)
 					{
-						if (_disposed || generation != _remoteFileGeneration)
+						published = !_disposed
+							&& generation == _remoteFileGeneration
+							&& navigationGeneration == _workspaceNavigationIntentGeneration
+							&& _remoteFileRequestId == requestId;
+						if (published)
 						{
-							return;
+							RemoteFileTerminalPublishingForTest?.Invoke();
+							CancelAutosave();
+							_text = text;
+							_currentPath = null;
+							_repoRoot = null;
+							_remoteDocument = new RemoteDocumentContext(owner, name, branch, path);
+							_session = new DraftSession(
+								Lifecycle.stateName(Lifecycle.State.Published), null, null, false, 0, 0,
+								Interlocked.Read(ref _draftGeneration));
+							_remoteFileRequestId = 0;
+							Emit(IpcSerializer.SerializeEvent(
+								MessageKinds.DocLoaded,
+								new DocLoadedPayload(
+									wirePath, text, string.Empty, ReadOnly: true,
+									Repository: $"{owner}/{name}", Branch: branch, RepositoryPath: path)));
+							SendWorkspaceContext();
+							CompleteDocumentOpen(requestId, succeeded: true);
 						}
-						CancelAutosave();
-						_text = text;
-						_currentPath = null;
-						_repoRoot = null;
-						_remoteDocument = new RemoteDocumentContext(owner, name, branch, path);
-						_session = new DraftSession(
-							Lifecycle.stateName(Lifecycle.State.Published), null, null, false, 0, 0,
-							Interlocked.Read(ref _draftGeneration));
 					}
-
-					Emit(IpcSerializer.SerializeEvent(
-						MessageKinds.DocLoaded,
-						new DocLoadedPayload(
-							wirePath, text, string.Empty, ReadOnly: true,
-							Repository: $"{owner}/{name}", Branch: branch, RepositoryPath: path)));
-					SendWorkspaceContext();
+				}
+				if (!published)
+				{
+					CompleteDocumentOpen(requestId, succeeded: false);
 				}
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
-				// Superseded selection or app teardown.
+				// The invalidating navigation normally retires the request first; this is the fallback for
+				// cancellation sources that do not own that navigation transition.
+				CompleteDocumentOpen(requestId, succeeded: false);
 			}
 			catch (Exception ex) when (ex is HttpRequestException or InvalidDataException or InvalidOperationException)
 			{
 				_logger.LogError(ex, "Could not preview remote file {Repo}/{Path}", $"{owner}/{name}", path);
-				PublishRemoteFileErrorIfCurrent(generation, "Could not preview that file.");
+				PublishRemoteFileErrorIfCurrent(generation, navigationGeneration, requestId, "Could not preview that file.");
 			}
 			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Unexpected failure previewing remote file {Repo}/{Path}", $"{owner}/{name}", path);
-				PublishRemoteFileErrorIfCurrent(generation, "Could not preview that file.");
+				PublishRemoteFileErrorIfCurrent(generation, navigationGeneration, requestId, "Could not preview that file.");
 			}
 			finally
 			{
@@ -413,8 +522,47 @@ public sealed partial class HostController
 
 	private sealed record RemoteDocumentContext(string Owner, string Name, string Branch, string Path);
 
+	private bool TryInvalidateRemoteNavigationForWorkspacePublication(
+		WorkspaceRootPublication publication)
+	{
+		long canceledRequestId;
+		CancellationTokenSource? browseCts;
+		CancellationTokenSource? fileCts;
+		lock (_remotePublishSync)
+		{
+			lock (_sync)
+			{
+				if (!IsWorkspaceRootPublicationCurrentLocked(publication))
+				{
+					return false;
+				}
+				_remoteBrowseGeneration++;
+				_remoteBrowseIntentGeneration++;
+				_remoteBrowseIntentRepoId = null;
+				browseCts = _remoteBrowseCts;
+				_remoteBrowseRepoId = null;
+				_remoteFileGeneration++;
+				fileCts = _remoteFileCts;
+				_remoteFileRepoId = null;
+				canceledRequestId = _remoteFileRequestId;
+				_remoteFileRequestId = 0;
+				if (_pendingRepoOpen?.Kind is PendingRepoActionKind.Browse or PendingRepoActionKind.File)
+				{
+					_pendingRepoOpen = null;
+				}
+			}
+		}
+		browseCts?.Cancel();
+		fileCts?.Cancel();
+		CompleteDocumentOpen(canceledRequestId, succeeded: false);
+		return true;
+	}
+
 	private void InvalidateRemoteNavigation(bool browse, bool file)
 	{
+		long canceledRequestId = 0;
+		CancellationTokenSource? browseCts = null;
+		CancellationTokenSource? fileCts = null;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
@@ -424,7 +572,7 @@ public sealed partial class HostController
 					_remoteBrowseGeneration++;
 					_remoteBrowseIntentGeneration++;
 					_remoteBrowseIntentRepoId = null;
-					_remoteBrowseCts?.Cancel();
+					browseCts = _remoteBrowseCts;
 					_remoteBrowseRepoId = null;
 					if (_pendingRepoOpen?.Kind == PendingRepoActionKind.Browse)
 					{
@@ -434,8 +582,10 @@ public sealed partial class HostController
 				if (file)
 				{
 					_remoteFileGeneration++;
-					_remoteFileCts?.Cancel();
+					fileCts = _remoteFileCts;
 					_remoteFileRepoId = null;
+					canceledRequestId = _remoteFileRequestId;
+					_remoteFileRequestId = 0;
 					if (_pendingRepoOpen?.Kind == PendingRepoActionKind.File)
 					{
 						_pendingRepoOpen = null;
@@ -443,10 +593,15 @@ public sealed partial class HostController
 				}
 			}
 		}
+		browseCts?.Cancel();
+		fileCts?.Cancel();
+		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 	}
-
 	private void InvalidateRemoteRepository(string id)
 	{
+		long canceledRequestId = 0;
+		CancellationTokenSource? browseCts = null;
+		CancellationTokenSource? fileCts = null;
 		lock (_remotePublishSync)
 		{
 			lock (_sync)
@@ -455,7 +610,7 @@ public sealed partial class HostController
 				{
 					_remoteBrowseGeneration++;
 					_remoteBrowseIntentGeneration++;
-					_remoteBrowseCts?.Cancel();
+					browseCts = _remoteBrowseCts;
 					_remoteBrowseRepoId = null;
 				}
 				if (string.Equals(_remoteBrowseIntentRepoId, id, StringComparison.OrdinalIgnoreCase))
@@ -466,35 +621,44 @@ public sealed partial class HostController
 				if (string.Equals(_remoteFileRepoId, id, StringComparison.OrdinalIgnoreCase))
 				{
 					_remoteFileGeneration++;
-					_remoteFileCts?.Cancel();
+					fileCts = _remoteFileCts;
 					_remoteFileRepoId = null;
+					canceledRequestId = _remoteFileRequestId;
+					_remoteFileRequestId = 0;
 				}
 				if (_pendingRepoOpen?.Kind == PendingRepoActionKind.File
 					&& string.Equals(
 						$"{_pendingRepoOpen.Owner}/{_pendingRepoOpen.Name}", id,
 						StringComparison.OrdinalIgnoreCase))
 				{
+					canceledRequestId = _pendingRepoOpen.RequestId;
 					_pendingRepoOpen = null;
 				}
 			}
 		}
+		browseCts?.Cancel();
+		fileCts?.Cancel();
+		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 	}
-
 	private void PublishRemoteBrowseErrorIfCurrent(
-		long generation, string id, RegisteredRepo descriptor, string message)
+		long generation,
+		long navigationGeneration,
+		string id,
+		RegisteredRepo descriptor,
+		string message)
 	{
 		lock (_remotePublishSync)
 		{
-			bool current;
 			lock (_sync)
 			{
-				current = !_disposed
+				bool current = !_disposed
 					&& generation == _remoteBrowseGeneration
+					&& navigationGeneration == _workspaceNavigationIntentGeneration
 					&& IsSameRegisteredRepository(id, descriptor.Url);
-			}
-			if (current)
-			{
-				SendError(message);
+				if (current)
+				{
+					SendError(message);
+				}
 			}
 		}
 	}
@@ -505,18 +669,23 @@ public sealed partial class HostController
 		return current is not null && string.Equals(current.Url, url, StringComparison.OrdinalIgnoreCase);
 	}
 
-	private void PublishRemoteFileErrorIfCurrent(long generation, string message)
+	private void PublishRemoteFileErrorIfCurrent(
+		long generation, long navigationGeneration, long requestId, string message)
 	{
 		lock (_remotePublishSync)
 		{
-			bool current;
 			lock (_sync)
 			{
-				current = !_disposed && generation == _remoteFileGeneration;
-			}
-			if (current)
-			{
-				SendError(message);
+				bool current = !_disposed
+					&& generation == _remoteFileGeneration
+					&& navigationGeneration == _workspaceNavigationIntentGeneration
+					&& requestId == _remoteFileRequestId;
+				if (current)
+				{
+					_remoteFileRequestId = 0;
+					SendError(message);
+					CompleteDocumentOpen(requestId, succeeded: false);
+				}
 			}
 		}
 	}

@@ -11,12 +11,18 @@ describe("isFormatCommand (data-format DOM boundary)", () => {
       "bold",
       "italic",
       "strike",
+      "inlineCode",
       "h1",
       "h2",
+      "h3",
       "bullet",
       "ordered",
       "quote",
       "code",
+      "link",
+      "table",
+      "image",
+      "rule",
     ]) {
       expect(isFormatCommand(command)).toBe(true);
     }
@@ -63,6 +69,14 @@ describe("formatMarkdown — inline marks", () => {
 
   it("strike uses tildes", () => {
     expect(apply("x", "strike", 0, 1)).toEqual({ text: "~~x~~", sel: [2, 3] });
+  });
+
+  it("inline code uses backticks", () => {
+    expect(apply("value", "inlineCode", 0, 5)).toEqual({ text: "`value`", sel: [1, 6] });
+  });
+
+  it("inline code chooses a longer delimiter around content that contains a backtick", () => {
+    expect(apply("a`b", "inlineCode", 0, 3).text).toBe("`` a`b ``");
   });
 
   it("nests italic inside bold instead of stripping a bold asterisk", () => {
@@ -175,6 +189,38 @@ describe("formatMarkdown — block prefixes", () => {
 
   it("changes H1 to H2", () => {
     expect(apply("# Title", "h2", 0, 7).text).toBe("## Title");
+  });
+
+  it("changes H1 to H3", () => {
+    expect(apply("# Title", "h3", 0, 7).text).toBe("### Title");
+  });
+
+  it("inserts link and image placeholders with the target selected", () => {
+    expect(apply("guide", "link", 0, 5)).toEqual({
+      text: "[guide](https://)",
+      sel: [8, 16],
+    });
+    expect(apply("diagram", "image", 0, 7)).toEqual({
+      text: "![diagram](images/image.png)",
+      sel: [11, 27],
+    });
+  });
+
+  it("removes an existing link instead of nesting another link", () => {
+    expect(apply("[guide](https://example.com)", "link", 2, 5)).toEqual({
+      text: "guide",
+      sel: [0, 5],
+    });
+  });
+
+  it("inserts a divider as its own block", () => {
+    expect(apply("before after", "rule", 7).text).toBe("---\n\nbefore after");
+  });
+
+  it("inserts a starter table before the current block", () => {
+    expect(apply("after", "table", 2).text).toBe(
+      "| Column 1 | Column 2 |\n| --- | --- |\n| Value | Value |\n\nafter",
+    );
   });
 
   it("adds bullets to each selected line", () => {
@@ -293,7 +339,7 @@ describe("formatMarkdown — block prefixes", () => {
   // every block command, not just headings. Trigger: Ctrl+Home in a document with a leading blank line,
   // then click any block-format button.
   describe("caret at document position 0 with a leading blank line (S-15)", () => {
-    for (const command of ["h1", "h2", "bullet", "ordered", "quote", "code"] as const) {
+    for (const command of ["h1", "h2", "h3", "bullet", "ordered", "quote", "code"] as const) {
       it(`does not throw for ${command}`, () => {
         expect(() => formatMarkdown("\n# Title\n\npara\n", 0, 0, command)).not.toThrow();
       });

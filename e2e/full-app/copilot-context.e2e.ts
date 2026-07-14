@@ -26,7 +26,7 @@ const visibleRightTools = (page: Page): Promise<string[]> =>
     .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? ""));
 
 async function openFile(page: Page, name: string): Promise<void> {
-  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Files"]');
+  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]');
   if ((await filesMode.getAttribute("aria-expanded")) !== "true") {
     await filesMode.click();
   }
@@ -77,7 +77,7 @@ test("real Host packages Copilot 1.0.6 and exposes the honest signed-out chat bo
     "Assistant",
     "Outline",
     "Versions",
-    "Change history",
+    "History",
   ]);
   await openAssistant(page);
   await expect(page.locator("#right-dock .dock-title")).toHaveText("Assistant");
@@ -101,7 +101,7 @@ test("right tools keep Chat first and follow real named, detached, and file-type
     "Assistant",
     "Outline",
     "Versions",
-    "Change history",
+    "History",
   ]);
   await expect(page.locator('#right-dock .dock-rail-btn[aria-label="Comments"]')).toBeHidden();
   await page.screenshot({
@@ -126,7 +126,7 @@ test("right tools keep Chat first and follow real named, detached, and file-type
     "Assistant",
     "Outline",
     "Versions",
-    "Change history",
+    "History",
   ]);
   await page.screenshot({
     path: testInfo.outputPath("context-restored-markdown.png"),

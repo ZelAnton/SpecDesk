@@ -150,7 +150,11 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         return repo.Info.IsHeadDetached ? null : repo.Head.FriendlyName;
     }
 
-    public EditSession BeginEdit(string repoRoot, string branchName, string preferredBase)
+    public EditSession BeginEdit(
+        string repoRoot,
+        string branchName,
+        string preferredBase,
+        Action? onMutationStarting = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
         ArgumentException.ThrowIfNullOrEmpty(branchName);
@@ -185,31 +189,31 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
             throw new InvalidOperationException("The draft name must differ from the published branch.");
         }
 
-        // Refuse rather than silently discard someone else's uncommitted work: autosave writes the working
-        // copy to disk WITHOUT committing, so a *different* document's draft can leave the tree dirty on
-        // its own branch while this document's edit begins. A forced checkout below resets the ENTIRE
-        // working tree to branchName's commit, not just this document's file — if the tree is currently
-        // dirty on some other branch, that draft's unsaved autosave would be wiped with no way to recover
-        // it. Only skip the check when the dirty tree already belongs to the branch we're about to check
-        // out: resuming/restarting the SAME document's own abandoned session is expected to reset its own
-        // stray state (a separate, narrower concern — see the cross-restart lifecycle gap tracked
-        // elsewhere) and carries no risk of destroying a different document's work.
+        // Re-entering the current branch must preserve its working tree. A branch name is not proof that
+        // uncommitted files belong to this document, so forcing even a same-branch checkout could erase a
+        // different document's autosave. The callback still marks the host transition before it reloads
+        // the preserved working copy into the editor.
         bool alreadyOnTargetBranch =
             !repo.Info.IsHeadDetached && string.Equals(repo.Head.FriendlyName, branchName, StringComparison.Ordinal);
-        if (!alreadyOnTargetBranch && repo.RetrieveStatus(new StatusOptions { IncludeUntracked = false }).IsDirty)
+        if (alreadyOnTargetBranch)
+        {
+            onMutationStarting?.Invoke();
+            return new EditSession(repo.Head.FriendlyName, baseName);
+        }
+
+        // A forced switch resets the whole working tree, so tracked changes on any other branch fail closed.
+        if (repo.RetrieveStatus(new StatusOptions { IncludeUntracked = false }).IsDirty)
         {
             string dirtyBranch = repo.Info.IsHeadDetached ? repo.Head.Tip?.Sha ?? "HEAD" : repo.Head.FriendlyName;
             throw new DirtyWorkingTreeException(dirtyBranch);
         }
 
-        Branch working = repo.Branches[branchName] ?? repo.CreateBranch(branchName, tip);
-        // Force the checkout: in the new model autosave writes the working copy to disk WITHOUT
-        // committing, so a prior session on the SAME branch, abandoned without "Save a version" (and
-        // without Discard), leaves the working tree dirty. A plain checkout would throw
-        // CheckoutConflictException and block editing entirely. Beginning an edit means "switch to this
-        // branch's tip"; only the uncommitted stray changes are reset (saved versions on the branch are
-        // preserved). Matches Discard's use of a forced checkout. The guard above has already ruled out
-        // the tree being dirty on any OTHER branch.
+        Branch? existingWorking = repo.Branches[branchName];
+        Tree targetTree = existingWorking?.Tip?.Tree ?? tip.Tree;
+        EnsureLocalOnlyPathsAreNotOverwritten(repo, targetTree);
+        onMutationStarting?.Invoke();
+        Branch working = existingWorking ?? repo.CreateBranch(branchName, tip);
+        // The guards above protect tracked changes and local-only paths before the forced branch switch.
         Commands.Checkout(repo, working, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
         return new EditSession(working.FriendlyName, baseName);
     }
@@ -236,7 +240,7 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
             : new CommitResult(true, commit.Sha, commit.Author.When);
     }
 
-    public void Discard(string repoRoot, string workingBranch, string baseBranch)
+    public void BeginDiscard(string repoRoot, string workingBranch, string baseBranch)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
         ArgumentException.ThrowIfNullOrEmpty(workingBranch);
@@ -244,32 +248,61 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
 
         using Repository repo = new(repoRoot);
 
-        // Never delete the base branch itself. If the working and base names coincide (a name
-        // collision, or a session that reused the published branch), removing it would destroy the
-        // author's history and leave HEAD detached — there is then nothing to discard.
         if (string.Equals(workingBranch, baseBranch, StringComparison.Ordinal))
         {
-            return;
+            throw new InvalidOperationException("The draft branch must differ from the published branch.");
         }
 
-        Branch? @base = repo.Branches[baseBranch];
-        if (@base is not null)
+        Branch @base = repo.Branches[baseBranch]
+            ?? throw new InvalidOperationException($"The published branch '{baseBranch}' does not exist.");
+        EnsureLocalOnlyPathsAreNotOverwritten(repo, @base.Tip.Tree);
+        // Force the checkout: discarding is meant to throw away the draft's uncommitted working-tree
+        // changes. Keep the branch ref until the host confirms it can reload the published document,
+        // so a failed reload can safely check the draft back out and resume autosave.
+        Commands.Checkout(repo, @base, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+    }
+
+    private static void EnsureLocalOnlyPathsAreNotOverwritten(Repository repo, Tree targetTree)
+    {
+        foreach (StatusEntry entry in repo.RetrieveStatus(new StatusOptions
         {
-            // Force the checkout: discarding is meant to throw away the draft, so uncommitted
-            // working-tree changes must not block the return to the published version.
-            Commands.Checkout(repo, @base, new CheckoutOptions { CheckoutModifiers = CheckoutModifiers.Force });
+            IncludeIgnored = true,
+            IncludeUntracked = true,
+            RecurseIgnoredDirs = true,
+            RecurseUntrackedDirs = true,
+        }).Where(entry => (entry.State & (FileStatus.NewInWorkdir | FileStatus.Ignored)) != 0))
+        {
+            if (LibGit2RepositoryCloner.TargetTreeCollidesWithLocalPath(
+                repo.Info.WorkingDirectory, targetTree, entry.FilePath))
+            {
+                throw new ProtectedLocalFileException(entry.FilePath);
+            }
+        }
+    }
+
+    public void CompleteDiscard(string repoRoot, string workingBranch, string baseBranch)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(workingBranch);
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch);
+
+        using Repository repo = new(repoRoot);
+
+        if (string.Equals(workingBranch, baseBranch, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("The draft branch must differ from the published branch.");
         }
 
-        // Removing the working branch is safe now that it is no longer checked out. Skip it when it was
-        // never created/already gone, or — if the base was absent so the checkout above was skipped —
-        // when it is still the current HEAD (libgit2 refuses to remove the checked-out branch).
         Branch? working = repo.Branches[workingBranch];
-        if (working is not null && !working.IsCurrentRepositoryHead)
+        if (working?.IsCurrentRepositoryHead == true)
+        {
+            throw new InvalidOperationException("The draft branch is still checked out.");
+        }
+        if (working is not null)
         {
             repo.Branches.Remove(workingBranch);
         }
     }
-
     public string? RemoteUrl(string repoRoot, string remoteName = "origin")
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
@@ -320,19 +353,24 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
     public void PushBranch(
         string repoRoot,
         string branchName,
+        string expectedRepositoryUrl,
         string accessToken,
         string remoteName = "origin",
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(repoRoot);
         ArgumentException.ThrowIfNullOrEmpty(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(expectedRepositoryUrl);
         ArgumentException.ThrowIfNullOrEmpty(accessToken);
         ArgumentException.ThrowIfNullOrEmpty(remoteName);
         cancellationToken.ThrowIfCancellationRequested();
 
         using Repository repo = new(repoRoot);
+        LibGit2RepositoryCloner.EnsureExactWorkingTree(repo, repoRoot);
         Remote remote = repo.Network.Remotes[remoteName]
             ?? throw new InvalidOperationException($"The repository has no '{remoteName}' remote.");
+        LibGit2RepositoryCloner.EnsureRemoteMatchesExpectedRepository(remote, expectedRepositoryUrl);
+        LibGit2RepositoryCloner.EnsurePushUrlMatchesExpectedRepository(remote, expectedRepositoryUrl);
         Branch branch = repo.Branches[branchName]
             ?? throw new InvalidOperationException($"The repository has no branch '{branchName}'.");
 
@@ -344,7 +382,11 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         PushOptions options = new()
         {
             // See ResolveCredentials for why this only ever hands the token to an HTTPS github.com host.
-            CredentialsProvider = (url, _, _) => ResolveCredentials(url, accessToken),
+            CredentialsProvider = (url, _, _) =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return ResolveCredentials(url, accessToken);
+            },
             // Abort a stalled transfer when the caller cancels (the host bounds the send with a timeout).
             // The initial connect/handshake phase isn't surfaced through this callback, so a stall there
             // is bounded only by the OS socket timeout — a known LibGit2Sharp limitation.
