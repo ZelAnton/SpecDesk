@@ -7,6 +7,11 @@ namespace SpecDesk.Host;
 public sealed partial class HostController
 {
 	private readonly record struct AccountSession(long Generation, CancellationToken CancellationToken);
+	private sealed record PendingAccountApplication(
+		string PublicationId,
+		PendingRepoActions Actions);
+	private PendingAccountApplication? _pendingAccountApplication;
+	private PendingRepoActions? _pendingAccountCarryover;
 
 	// Serializes flow replacement with user-visible sign-in publications. _sync protects state; this gate
 	// guarantees an older flow can never publish after a newer flow has become current without holding
@@ -131,6 +136,13 @@ public sealed partial class HostController
 				previousCts = _signInCts;
 				cts = new CancellationTokenSource();
 				_signInCts = cts;
+				_signInFlowGeneration++;
+				if (_pendingAccountApplication is { } pendingApplication)
+				{
+					_pendingAccountCarryover = MergePendingRepoActions(
+						_pendingAccountCarryover, pendingApplication.Actions);
+					_pendingAccountApplication = null;
+				}
 			}
 		}
 		previousCts?.Cancel();
@@ -215,6 +227,9 @@ public sealed partial class HostController
 	{
 		PendingRepoActions? actions = null;
 		CancellationTokenSource? retiredAccountSession = null;
+		string? publicationId = null;
+		long accountGeneration = 0;
+		long signInFlowGeneration = 0;
 		lock (_signInPublishSync)
 		{
 			lock (_remotePublishSync)
@@ -225,7 +240,15 @@ public sealed partial class HostController
 					{
 						return;
 					}
-					actions = TakePendingRepoActions();
+					PendingRepoActions currentActions = TakePendingRepoActions();
+					actions = MergePendingRepoActions(_pendingAccountCarryover, currentActions);
+					_pendingAccountCarryover = null;
+					_pendingAccountApplication = null;
+					if (resume && (actions.Registrations.Length > 0 || actions.Open is not null))
+					{
+						publicationId = Guid.NewGuid().ToString("N");
+						_pendingAccountApplication = new PendingAccountApplication(publicationId, actions);
+					}
 					if (signedIn)
 					{
 						retiredAccountSession = RotateAccountSessionLocked();
@@ -239,6 +262,8 @@ public sealed partial class HostController
 						}
 						PublishRetiredRemoteAccountState(clearRemoteTree, clearRemoteDocument);
 					}
+					accountGeneration = _accountSessionGeneration;
+					signInFlowGeneration = _signInFlowGeneration;
 					_signInCts = null;
 				}
 			}
@@ -249,23 +274,111 @@ public sealed partial class HostController
 			PendingRepoActionsResumeForTest?.Wait();
 		}
 		CancelAndDispose(retiredAccountSession);
-		SendAccount(signedIn, login, message);
-		if (signedIn)
+		bool publicationIsCurrent;
+		bool completeStaleActions = false;
+		lock (_signInPublishSync)
 		{
-			RefreshAccountOrganizations(login);
+			lock (_sync)
+			{
+				publicationIsCurrent = !_disposed
+					&& _signInCts is null
+					&& accountGeneration == _accountSessionGeneration
+					&& signInFlowGeneration == _signInFlowGeneration;
+				if (!publicationIsCurrent
+					&& publicationId is not null
+					&& _pendingAccountApplication?.PublicationId == publicationId)
+				{
+					_pendingAccountApplication = null;
+					completeStaleActions = true;
+				}
+			}
+			if (publicationIsCurrent)
+			{
+				SendAccount(signedIn, login, message, publicationId: publicationId, completion: () =>
+				{
+					if (signedIn)
+					{
+						RefreshAccountOrganizations(login);
+					}
+					else
+					{
+						InvalidateAccountDetails();
+					}
+					if (actions is null || publicationId is not null)
+					{
+						return;
+					}
+					CompleteOutboundBatch(() =>
+					{
+						if (resume)
+						{
+							ResumePendingRepoActions(actions);
+							PendingRepoActionsResumedForTest?.Set();
+						}
+						else
+						{
+							CompletePendingDocumentOpen(actions);
+						}
+					});
+				});
+			}
 		}
-		else
+		if (!publicationIsCurrent)
 		{
-			InvalidateAccountDetails();
+			if (completeStaleActions)
+			{
+				CompletePendingDocumentOpen(actions);
+			}
+			return;
 		}
-		if (resume && actions is not null)
+	}
+
+	private static PendingRepoActions MergePendingRepoActions(
+		PendingRepoActions? earlier,
+		PendingRepoActions later)
+	{
+		if (earlier is null)
 		{
-			ResumePendingRepoActions(actions);
-			PendingRepoActionsResumedForTest?.Set();
+			return later;
 		}
-		else
+		Dictionary<string, PendingRepoAction> registrations = new(StringComparer.OrdinalIgnoreCase);
+		foreach (PendingRepoAction action in earlier.Registrations)
 		{
-			CompletePendingDocumentOpen(actions);
+			registrations[$"{action.Owner}/{action.Name}"] = action;
+		}
+		foreach (PendingRepoAction action in later.Registrations)
+		{
+			registrations[$"{action.Owner}/{action.Name}"] = action;
+		}
+		return new PendingRepoActions([.. registrations.Values], later.Open ?? earlier.Open);
+	}
+
+	private void OnGitHubAccountApplied(IpcMessage message)
+	{
+		GitHubAccountAppliedPayload? payload = SafeGetPayload<GitHubAccountAppliedPayload>(message);
+		if (string.IsNullOrWhiteSpace(payload?.PublicationId))
+		{
+			return;
+		}
+
+		PendingRepoActions? actions = null;
+		lock (_signInPublishSync)
+		{
+			lock (_sync)
+			{
+				if (!_disposed
+					&& _pendingAccountApplication is { } pending
+					&& string.Equals(pending.PublicationId, payload.PublicationId, StringComparison.Ordinal))
+				{
+					actions = pending.Actions;
+					_pendingAccountApplication = null;
+				}
+			}
+			if (actions is not null)
+			{
+				ResumePendingRepoActions(actions);
+				PendingRepoActionsResumedForTest?.Set();
+			}
 		}
 	}
 	private void OnGitHubSignInCancel()
@@ -277,9 +390,16 @@ public sealed partial class HostController
 		{
 			lock (_sync)
 			{
-				actions = TakePendingRepoActions();
+				PendingRepoActions currentActions = TakePendingRepoActions();
+				PendingRepoActions claimedActions = _pendingAccountApplication is { } application
+					? MergePendingRepoActions(application.Actions, currentActions)
+					: currentActions;
+				actions = MergePendingRepoActions(_pendingAccountCarryover, claimedActions);
+				_pendingAccountApplication = null;
+				_pendingAccountCarryover = null;
 				retiredSignIn = _signInCts;
 				_signInCts = null;
+				_signInFlowGeneration++;
 			}
 		}
 		retiredSignIn?.Cancel();
@@ -327,7 +447,14 @@ public sealed partial class HostController
 						{
 							cancellations.Add(RotateAccountSessionLocked());
 							RetirePublishInFlightLocked();
-							pendingActions = TakePendingRepoActions();
+							PendingRepoActions currentActions = TakePendingRepoActions();
+							PendingRepoActions claimedActions = _pendingAccountApplication is { } application
+								? MergePendingRepoActions(application.Actions, currentActions)
+								: currentActions;
+							pendingActions = MergePendingRepoActions(_pendingAccountCarryover, claimedActions);
+							_pendingAccountApplication = null;
+							_pendingAccountCarryover = null;
+							_signInFlowGeneration++;
 							if (_signInCts is not null) cancellations.Add(_signInCts);
 							_signInCts = null;
 							_accountDetailsGeneration++;
@@ -650,14 +777,20 @@ public sealed partial class HostController
 		string? message,
 		bool available = true,
 		IReadOnlyList<string>? organizations = null,
-		string? avatarUrl = null)
+		string? avatarUrl = null,
+		string? publicationId = null,
+		Action? completion = null)
 	{
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.GitHubAccount,
-			new GitHubAccountPayload(available, signedIn, login, message, organizations, avatarUrl)));
+			new GitHubAccountPayload(
+				available, signedIn, login, message, organizations, avatarUrl, publicationId)),
+			signedIn ? completion : null);
 		if (!signedIn)
 		{
-			SendRepositories([]);
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.GitHubRepositories,
+				new GitHubRepositoriesPayload([])), completion);
 		}
 	}
 

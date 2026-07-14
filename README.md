@@ -73,12 +73,12 @@ The formatting toolbar remains visible whenever a specification is open (disable
 and covers headings, lists, emphasis, inline and block code, quotes, links, starter tables, image references,
 and dividers.
 The global toolbar shows repository, version, path, and search only while a document is being edited;
-Start and Notifications retain just the SpecDesk identity and global account/notification actions.
+Start and Notifications retain the SpecDesk identity, signed-out **Sign in** action, and account avatar menu.
 The left, right, and bottom mode rails stay available around the document. Choose a mode icon to open its
 panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
 bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
 The bottom panel stops before the right mode rail, so chat and document tools remain reachable at every
-panel height. The dark status bar uses the same high-contrast treatment as the side rails.
+panel height. The status bar and panel rails use related muted shades while remaining visually distinct.
 On the Start screen, `Open Repository` reveals the Repositories panel, where repositories are registered and
 opened; the Start screen itself does not ask for a repository address. Favorite repositories, folders, and
 specs appear beside recent work for one-click return.
@@ -110,9 +110,10 @@ it does not provide a supported prefilled-code URL. SpecDesk therefore starts co
 clipboard before opening the browser and keeps it visible if clipboard access is unavailable. Removing the
 manual code step entirely would require a separate browser authorization-code flow with PKCE and a verified
 callback into the desktop app.
-The main toolbar also lets you connect or disconnect explicitly. While connected, the bottom status bar
-shows the GitHub username and organizations visible to the authorization; new authorizations request
-`read:org` in addition to repository and profile access.
+The title bar keeps **Sign in** visible while disconnected. Once connected, the avatar shows the GitHub
+profile image and opens the account menu for notifications, settings, help, updates, and disconnecting.
+The bottom status bar shows the GitHub username and organizations visible to the authorization; new
+authorizations request `read:org` in addition to repository and profile access.
 
 Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
 groups any number of named local copies beneath each repository and shows every known working line. Search
@@ -151,15 +152,9 @@ past unavailable or mismatched copies without contacting their remotes; it remai
 until that exact batch finishes. Disconnecting or changing GitHub accounts cancels the batch and every delayed Git
 credential callback before the previous token can be released again.
 
-**Get updates** verifies the local copy still belongs to the selected GitHub repository and remains on the
-working line shown in the UI before it flushes pending editor input, then performs only a clean fast-forward
-while both editor panes are locked; it refuses to overwrite local or divergent work. Switching a working line
-follows the same save-after-verification rule. If checkout or update changes local files but a later recovery
-or inspection step fails, SpecDesk closes the open specification instead of saving stale editor text into the
-newly selected working line.
-**Share changes** performs the identity check before using the transient GitHub credential, publishes only
-the selected current working line, never force-pushes, and asks the author to get newer GitHub versions first
-when needed. SpecDesk verifies the source again before showing any switch, get, or share result.
+Manual **Get updates** and **Share changes** controls are currently hidden while synchronization is being
+redesigned as an automatic, author-safe flow. Switching a working line still verifies the local copy and
+protects unfinished files before changing its contents.
 
 Repository cards keep the online source as the top-level choice and named local copies beneath it. Stars can
 keep a GitHub repository, exact local copy, branch, folder, or file in **Favorites**. Reopening a favorite

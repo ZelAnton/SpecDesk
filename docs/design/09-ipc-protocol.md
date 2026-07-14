@@ -39,6 +39,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled (focus-gated) and on window focus |
 | `action.publish` | `{}` | merge the PR (if permitted) — *not yet built (PoC-10)* |
 | `github.signIn` / `github.signInCancel` / `github.signOut` | `{}` | connect / cancel-connecting / disconnect a GitHub account (device flow) |
+| `github.accountApplied` | `{ publicationId }` | acknowledge that the correlated account boundary has been applied before the host resumes a queued authenticated repository action |
 | `doc.discard` | `{ requestId }` | abandon the draft after both editor debounces are flushed; both panes stay locked until the matching terminal result |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |
 | `comment.reply` | `{ id, body }` | reply in a thread |
@@ -104,7 +105,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `toast` | `{ level, message }` | plain-language notice |
 | `error` | `{ message }` | plain-language error (never a stack trace) |
 | `github.code` | `{ userCode, verificationUri }` | the one-time device code to display while connecting a GitHub account |
-| `github.account` | `{ available, signedIn, login?, message?, organizations? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` is the authorized organization-login list after it loads; `message` is a transient/failed sign-in line) |
+| `github.account` | `{ available, signedIn, login?, message?, organizations?, avatarUrl?, publicationId? }` | GitHub connection state for the account affordance and status bar (`available` false → the affordance hides; `organizations` and `avatarUrl` arrive after account details load; `message` is a transient/failed sign-in line; `publicationId` requires a `github.accountApplied` acknowledgement) |
 | `github.repositories` | `{ repositories: { fullName, description? }[] }` | case-insensitively de-duplicated repositories available to the connected account for owner/name autocomplete |
 | `repo.cloneDestination` | `{ url, localName, requestId, path?, exists, existingClonePath? }` | exact managed clone path and occupied-name recovery; `requestId` plus `localName` lets the webview ignore stale responses |
 | `repo.cloneConflict` | `{ url, localName, existingClonePath, message }` | a clone-time race occupied the reviewed name; the UI offers to open the existing copy |

@@ -118,6 +118,8 @@ public sealed record BranchSwitchResult(
 	bool RestoredSafetyCopy,
 	bool HasConflicts);
 
+public sealed record CloneRenameResult(string Path, LocalRepositoryInfo Repository);
+
 public sealed record RepositoryDeletionRisks(
 	bool HasUncommitted,
 	bool HasUnpushed,
@@ -174,6 +176,12 @@ public sealed class RepositoryQuarantinedCloneException : InvalidOperationExcept
 /// <summary>Local repository actions used by the manager-facing repository picker.</summary>
 public interface ILocalRepositoryManager : ILocalRepositoryInspector
 {
+	/// <summary>Validate the expected repository identity and inspect it from the same open handle.</summary>
+	LocalRepositoryInfo InspectExpected(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch);
+
 	/// <summary>Validate that the local copy belongs to <paramref name="expectedRepositoryUrl"/>, capture that
 	/// exact fetch endpoint, fetch updated remote references without reading mutable remote configuration again,
 	/// and return its inspected state from the same open repository handle. A supplied GitHub token is released
@@ -224,6 +232,35 @@ public interface ILocalRepositoryManager : ILocalRepositoryInspector
 		string expectedRepositoryUrl,
 		string expectedCurrentBranch,
 		string branch,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null);
+
+	/// <summary>Create and check out a new local working line at the current commit without publishing it.</summary>
+	LocalRepositoryInfo CreateBranch(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string expectedCurrentBranch,
+		string branch,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null);
+
+	/// <summary>Rename a local working line. The GitHub branch is never changed or deleted.</summary>
+	LocalRepositoryInfo RenameBranch(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string expectedCurrentBranch,
+		string branch,
+		string newBranch,
+		string defaultBranch,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null);
+
+	/// <summary>Move one exact local copy to a sibling folder with a new display/folder name.</summary>
+	CloneRenameResult RenameClone(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string localName,
 		Action? beforeMutation = null,
 		Action? onMutationStarting = null);
 

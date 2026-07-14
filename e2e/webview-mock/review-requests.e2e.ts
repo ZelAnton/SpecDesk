@@ -7,7 +7,9 @@ test.beforeEach(async ({ context }) => {
   await installMockHost(context);
 });
 
-test("Review mode loads assigned work and opens it on GitHub", async ({ page }, testInfo) => {
+test("Review mode loads assigned work and opens it in the pull-request view", async ({
+  page,
+}, testInfo) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
   await emit(page, {
@@ -51,6 +53,10 @@ test("Review mode loads assigned work and opens it on GitHub", async ({ page }, 
 
   await expect(reviewPanel.locator(".remote-review-title")).toHaveText("Payment terms");
   await reviewPanel.locator(".remote-review-open").click();
-  expect((await sentFrames(page)).some((frame) => frame.kind === "link.open")).toBe(true);
+  await waitForSent(page, "pr.details.request");
+  const detailsRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "pr.details.request",
+  );
+  expect(detailsRequest?.payload).toEqual({ repo: "octo/spec", number: 7 });
   await page.screenshot({ path: testInfo.outputPath("review-requests.png"), fullPage: true });
 });

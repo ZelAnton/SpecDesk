@@ -86,7 +86,8 @@ public sealed class ContractFixtureTests
 				Login: "octocat",
 				Message: null,
 				Organizations: ["acme", "octo-labs"],
-				AvatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4")),
+				AvatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
+				PublicationId: "account-publication-1")),
 		(MessageKinds.GitHubRepositories, new GitHubRepositoriesPayload(
 		[
 			new GitHubRepositoryOptionPayload("acme/specs", "Product specifications"),

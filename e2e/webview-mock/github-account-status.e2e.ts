@@ -21,8 +21,10 @@ test("GitHub sign-in, avatar identity, and account status use their dedicated ch
       login: "octocat",
       organizations: ["acme", "octo-labs"],
       avatarUrl: "https://avatars.githubusercontent.com/u/583231?v=4",
+      publicationId: "account-publication-1",
     },
   });
+  await waitForSent(page, "github.accountApplied");
 
   const signIn = page.locator("#toolbar #github-auth-btn");
   await expect(signIn).toBeHidden();

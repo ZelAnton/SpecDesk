@@ -738,6 +738,17 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		return Inspect(repository, knownDefaultBranch);
 	}
 
+	public LocalRepositoryInfo InspectExpected(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch)
+	{
+		using Repository repository = new(repositoryPath);
+		EnsureExactWorkingTree(repository, repositoryPath);
+		EnsureRepositoryIdentity(repository, expectedRepositoryUrl);
+		return Inspect(repository, knownDefaultBranch);
+	}
+
 	private static LocalRepositoryInfo Inspect(Repository repository, string knownDefaultBranch)
 	{
 		string defaultBranch = knownDefaultBranch;
@@ -881,6 +892,114 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		onMutationStarting?.Invoke();
 		Commands.Checkout(repository, target);
 		return RestoreSafetyCopy(repository, repository.Head.FriendlyName, createdSafetyCopy);
+	}
+
+	public LocalRepositoryInfo CreateBranch(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string expectedCurrentBranch,
+		string branch,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(branch);
+		using Repository repository = new(repositoryPath);
+		EnsureExactWorkingTree(repository, repositoryPath);
+		EnsureRepositoryIdentity(repository, expectedRepositoryUrl);
+		RequireCurrentBranch(repository, expectedCurrentBranch);
+		if (!Reference.IsValidName($"refs/heads/{branch}") || repository.Branches[branch] is not null)
+		{
+			throw new InvalidOperationException("Choose a different working-line name.");
+		}
+		beforeMutation?.Invoke();
+		onMutationStarting?.Invoke();
+		Branch created = repository.CreateBranch(branch, repository.Head.Tip);
+		Commands.Checkout(repository, created);
+		return Inspect(repository, branch);
+	}
+
+	public LocalRepositoryInfo RenameBranch(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string expectedCurrentBranch,
+		string branch,
+		string newBranch,
+		string defaultBranch,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(branch);
+		ArgumentException.ThrowIfNullOrWhiteSpace(newBranch);
+		using Repository repository = new(repositoryPath);
+		EnsureExactWorkingTree(repository, repositoryPath);
+		EnsureRepositoryIdentity(repository, expectedRepositoryUrl);
+		RequireCurrentBranch(repository, expectedCurrentBranch);
+		if (string.Equals(branch, defaultBranch, StringComparison.OrdinalIgnoreCase))
+		{
+			throw new InvalidOperationException("The main working line cannot be renamed.");
+		}
+		Branch? target = repository.Branches[branch];
+		if (target is null || target.IsRemote)
+		{
+			throw new InvalidOperationException("That working line is no longer available.");
+		}
+		if (!Reference.IsValidName($"refs/heads/{newBranch}") || repository.Branches[newBranch] is not null)
+		{
+			throw new InvalidOperationException("Choose a different working-line name.");
+		}
+		if (CountBranchStashes(repository, branch) > 0)
+		{
+			throw new InvalidOperationException("Restore or remove the protected work for this working line before renaming it.");
+		}
+		beforeMutation?.Invoke();
+		onMutationStarting?.Invoke();
+		repository.Branches.Rename(target, newBranch);
+		return Inspect(repository, defaultBranch);
+	}
+
+	public CloneRenameResult RenameClone(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string localName,
+		Action? beforeMutation = null,
+		Action? onMutationStarting = null)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(localName);
+		string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repositoryPath));
+		string parent = Directory.GetParent(source)?.FullName
+			?? throw new InvalidOperationException("That local-copy folder cannot be renamed.");
+		string destination = Path.GetFullPath(Path.Combine(parent, localName));
+		if (!string.Equals(Path.GetDirectoryName(destination), parent, StringComparison.OrdinalIgnoreCase)
+			|| File.Exists(destination)
+			|| Directory.Exists(destination))
+		{
+			throw new InvalidOperationException("A file or local copy already uses that name.");
+		}
+		using (Repository repository = new(source))
+		{
+			EnsureExactWorkingTree(repository, source);
+			EnsureRepositoryIdentity(repository, expectedRepositoryUrl);
+			EnsureNoLinkedWorktrees(repository);
+			beforeMutation?.Invoke();
+		}
+		onMutationStarting?.Invoke();
+		Directory.Move(source, destination);
+		try
+		{
+			using Repository renamed = new(destination);
+			EnsureExactWorkingTree(renamed, destination);
+			EnsureRepositoryIdentity(renamed, expectedRepositoryUrl);
+			return new CloneRenameResult(destination, Inspect(renamed, knownDefaultBranch));
+		}
+		catch
+		{
+			if (!Directory.Exists(source) && Directory.Exists(destination))
+			{
+				Directory.Move(destination, source);
+			}
+			throw;
+		}
 	}
 
 	private static BranchSwitchResult RestoreSafetyCopy(

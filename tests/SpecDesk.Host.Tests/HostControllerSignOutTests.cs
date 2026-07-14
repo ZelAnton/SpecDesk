@@ -225,7 +225,12 @@ public sealed class HostControllerSignOutTests
 				{
 					Assert.That(messages.Any(message => message.Kind == MessageKinds.RepoDescription), Is.False);
 					Assert.That(messages.Any(message => message.Kind == MessageKinds.DocLoaded), Is.False);
-					Assert.That(messages.Any(message => message.Kind == MessageKinds.Tree), Is.False);
+					TreePayload[] treeClears = messages
+						.Where(message => message.Kind == MessageKinds.Tree)
+						.Select(message => message.GetPayload<TreePayload>()!)
+						.ToArray();
+					Assert.That(treeClears, Is.Not.Empty);
+					Assert.That(treeClears.All(tree => tree.Root.Length == 0 && tree.Nodes.Count == 0), Is.True);
 					Assert.That(messages
 						.Where(message => message.Kind == MessageKinds.GitHubRepositories)
 						.Select(message => message.GetPayload<GitHubRepositoriesPayload>()!)

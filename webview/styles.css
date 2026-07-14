@@ -2561,20 +2561,6 @@ body:not([data-central-view="editor"]) #toolbar-search {
   background: var(--surface-raised);
 }
 
-.repo-add > summary {
-  padding: 0.5rem 0.65rem;
-  color: var(--text);
-  border-radius: var(--r-md);
-  font: 600 12px / 1.3 var(--font-ui);
-  cursor: pointer;
-}
-
-.repo-add[open] > summary {
-  border-bottom: 1px solid var(--border);
-  border-radius: var(--r-md) var(--r-md) 0 0;
-  background: var(--panel-header);
-}
-
 .repo-refresh {
   padding: 0.25rem 0.5rem;
   color: var(--text);
@@ -2855,7 +2841,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 .repo-row-header {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 0.1rem;
   padding: 0.35rem;
@@ -2863,7 +2849,6 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 .repo-open {
   flex: 1;
-  flex-basis: 100%;
   min-width: 0;
   padding: 0.25rem 0.5rem;
   text-align: left;
@@ -2902,16 +2887,6 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 .repo-open:hover {
   background: var(--surface-sunken);
-}
-
-.repo-clone-action {
-  padding: 0.25rem 0.4rem;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  font: 11px var(--font-ui);
-  cursor: pointer;
 }
 
 .repo-clones,
@@ -2955,34 +2930,6 @@ body:not([data-central-view="editor"]) #toolbar-search {
   flex-wrap: wrap;
   gap: 0.2rem;
   margin: 0 2.9rem 0.25rem 0.35rem;
-}
-
-.repo-sync-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  margin: 0 2.9rem 0.35rem 0.35rem;
-}
-
-.repo-sync-action {
-  padding: 0.2rem 0.45rem;
-  color: var(--text);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  font: 600 10px / 1.25 var(--font-ui);
-  cursor: pointer;
-}
-
-.repo-sync-action:hover {
-  border-color: var(--accent-soft-border);
-  background: var(--accent-soft);
-}
-
-.repo-sync-action:disabled {
-  color: var(--text-faint);
-  cursor: default;
-  background: var(--surface-sunken);
 }
 
 .repo-health-badge {
@@ -3100,6 +3047,165 @@ body:not([data-central-view="editor"]) #toolbar-search {
 .repo-remove:hover {
   background: var(--danger-bg);
   color: var(--danger-fg);
+}
+
+.repo-inline-action,
+.repo-item-delete,
+.repo-row-header .repo-star,
+.repo-clone-header .repo-star,
+.repo-branch-header .repo-star {
+  flex: none;
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0.23rem;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    opacity var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.repo-inline-action svg {
+  width: 100%;
+  height: 100%;
+}
+
+.repo-row-header .repo-inline-action,
+.repo-clone-header .repo-inline-action,
+.repo-branch-header .repo-inline-action,
+.repo-row-header .repo-star:not(.is-favorite),
+.repo-clone-header .repo-star:not(.is-favorite),
+.repo-branch-header .repo-star:not(.is-favorite),
+.repo-clone-header .repo-item-delete,
+.repo-branch-header .repo-item-delete {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.repo-row-header:hover > .repo-inline-action,
+.repo-row-header:focus-within > .repo-inline-action,
+.repo-clone-header:hover > .repo-inline-action,
+.repo-clone-header:focus-within > .repo-inline-action,
+.repo-branch-header:hover > .repo-inline-action,
+.repo-branch-header:focus-within > .repo-inline-action,
+.repo-row-header:hover > .repo-star,
+.repo-row-header:focus-within > .repo-star,
+.repo-clone-header:hover > .repo-star,
+.repo-clone-header:focus-within > .repo-star,
+.repo-branch-header:hover > .repo-star,
+.repo-branch-header:focus-within > .repo-star,
+.repo-clone-header:hover > .repo-item-delete,
+.repo-clone-header:focus-within > .repo-item-delete,
+.repo-branch-header:hover > .repo-item-delete,
+.repo-branch-header:focus-within > .repo-item-delete,
+.repo-star.is-favorite {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.repo-inline-action:hover,
+.repo-inline-action:focus-visible,
+.repo-star:hover,
+.repo-star:focus-visible {
+  color: var(--text);
+  background: var(--surface-sunken);
+}
+
+.repo-context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  min-width: 13rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.repo-context-menu[hidden] {
+  display: none;
+}
+
+.repo-context-menu button {
+  padding: 0.42rem 0.55rem;
+  color: var(--text);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  font: 12px / 1.3 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+#left-dock .repo-context-menu button:hover,
+#left-dock .repo-context-menu button:focus-visible {
+  background: var(--accent-soft);
+}
+
+.repo-context-menu button.is-danger {
+  color: var(--danger-fg);
+}
+
+.repo-name-dialog {
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 0;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+}
+
+.repo-name-dialog::backdrop {
+  background: color-mix(in srgb, var(--text-strong) 28%, transparent);
+}
+
+.repo-name-dialog form {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+}
+
+.repo-name-dialog label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--text-muted);
+  font: 12px var(--font-ui);
+}
+
+.repo-name-dialog-input {
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font: 13px var(--font-ui);
+}
+
+.repo-name-dialog-error {
+  margin: 0;
+  color: var(--danger-fg);
+  font: 12px / 1.4 var(--font-ui);
+}
+
+.repo-name-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.repo-name-dialog-actions button {
+  padding: 0.35rem 0.65rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  cursor: pointer;
 }
 
 .repo-empty {

@@ -40,6 +40,7 @@ public static class MessageKinds
 	public const string GitHubSignIn = "github.signIn";
 	public const string GitHubSignInCancel = "github.signInCancel";
 	public const string GitHubSignOut = "github.signOut";
+	public const string GitHubAccountApplied = "github.accountApplied";
 	public const string ChatSend = "chat.send";
 	public const string ChatAttachmentPick = "chat.attachment.pick";
 	public const string DocumentActivityRequest = "document.activity.request";
@@ -58,6 +59,9 @@ public static class MessageKinds
 	public const string RepoDescriptionRequest = "repo.description.request";
 	public const string RepoBrowse = "repo.browse";
 	public const string RepoSwitchBranch = "repo.switchBranch";
+	public const string RepoCreateBranch = "repo.createBranch";
+	public const string RepoRenameClone = "repo.renameClone";
+	public const string RepoRenameBranch = "repo.renameBranch";
 	public const string RepoDeleteClone = "repo.deleteClone";
 	public const string RepoDeleteBranch = "repo.deleteBranch";
 	public const string RepoRefreshAll = "repo.refreshAll";
@@ -468,7 +472,12 @@ public sealed record GitHubAccountPayload(
 	string? Login,
 	string? Message,
 	IReadOnlyList<string>? Organizations = null,
-	string? AvatarUrl = null);
+	string? AvatarUrl = null,
+	string? PublicationId = null);
+
+/// <summary>Payload of <c>github.accountApplied</c> (webview→native): confirms that the renderer has
+/// applied the correlated account boundary before authenticated work is resumed.</summary>
+public sealed record GitHubAccountAppliedPayload(string PublicationId);
 
 /// <summary>One repository available to the connected GitHub account.</summary>
 public sealed record GitHubRepositoryOptionPayload(string FullName, string? Description);
@@ -718,6 +727,25 @@ public sealed record RepoBrowsePayload(string Id, string? Branch = null);
 /// <summary>Switch one registered local copy to another working line. The host protects unfinished local
 /// work before switching and reopens the copy's files when the switch completes.</summary>
 public sealed record RepoSwitchBranchPayload(string Id, string ClonePath, string Branch, long RequestId = 0);
+
+public sealed record RepoCreateBranchPayload(
+	string Id,
+	string ClonePath,
+	string Branch,
+	long RequestId = 0);
+
+public sealed record RepoRenameClonePayload(
+	string Id,
+	string ClonePath,
+	string LocalName,
+	long RequestId = 0);
+
+public sealed record RepoRenameBranchPayload(
+	string Id,
+	string ClonePath,
+	string Branch,
+	string NewBranch,
+	long RequestId = 0);
 
 public sealed record RepoBranchActionPayload(string Id, string ClonePath, string Branch, long RequestId = 0);
 

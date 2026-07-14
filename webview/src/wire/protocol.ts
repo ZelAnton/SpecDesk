@@ -34,6 +34,7 @@ export const Kinds = {
   githubSignIn: "github.signIn",
   githubSignInCancel: "github.signInCancel",
   githubSignOut: "github.signOut",
+  githubAccountApplied: "github.accountApplied",
   chatSend: "chat.send",
   chatAttachmentPick: "chat.attachment.pick",
   documentActivityRequest: "document.activity.request",
@@ -52,6 +53,9 @@ export const Kinds = {
   repoDescriptionRequest: "repo.description.request",
   repoBrowse: "repo.browse",
   repoSwitchBranch: "repo.switchBranch",
+  repoCreateBranch: "repo.createBranch",
+  repoRenameClone: "repo.renameClone",
+  repoRenameBranch: "repo.renameBranch",
   repoDeleteClone: "repo.deleteClone",
   repoDeleteBranch: "repo.deleteBranch",
   repoRefreshAll: "repo.refreshAll",
@@ -483,6 +487,8 @@ export interface GitHubAccountPayload {
   organizations?: string[];
   /** GitHub's HTTPS profile image URL, after account details load. */
   avatarUrl?: string;
+  /** Opaque correlation acknowledged after this account boundary has been applied. */
+  publicationId?: string;
 }
 
 export interface GitHubRepositoryOptionPayload {
@@ -719,6 +725,19 @@ export interface RepoSwitchBranchPayload {
   clonePath: string;
   branch: string;
   requestId: number;
+}
+
+export interface RepoCreateBranchPayload extends RepoSwitchBranchPayload {}
+
+export interface RepoRenameClonePayload {
+  id: string;
+  clonePath: string;
+  localName: string;
+  requestId: number;
+}
+
+export interface RepoRenameBranchPayload extends RepoSwitchBranchPayload {
+  newBranch: string;
 }
 
 export interface RepoPullPayload extends RepoSwitchBranchPayload {}

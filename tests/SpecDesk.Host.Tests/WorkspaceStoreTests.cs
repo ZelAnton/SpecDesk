@@ -164,6 +164,148 @@ public sealed class WorkspaceStoreTests
 	}
 
 	[Test]
+	public void RenameCloneAndBranch_AtomicallyRemapRegistrationFavoritesAndRecents()
+	{
+		WorkspaceStore store = new(_path);
+		string oldPath = Path.Combine(_dir, "spec-copy");
+		string newPath = Path.Combine(_dir, "quarterly-specs");
+		RegisteredClone clone = new(
+			"spec-copy",
+			oldPath,
+			"draft",
+			[new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+				new RegisteredBranch("draft", RepositoryStatusPayload.Empty)],
+			RepositoryStatusPayload.Empty);
+		RegisteredRepo repo = new(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", [clone]);
+		store.RegisterRepo(repo);
+		store.SetFavorite(new WorkspaceItem(oldPath, "spec-copy", true, "clone", repo.Id), true);
+		store.SetFavorite(new WorkspaceItem(oldPath, "draft", true, "branch", repo.Id, "draft"), true);
+		store.SetFavorite(new WorkspaceItem(
+			Path.Combine(oldPath, "docs"), "docs", true), true);
+		store.SetFavorite(new WorkspaceItem(
+			Path.Combine(oldPath, "docs", "a.md"), "a.md", false), true);
+		store.AddRecent(new WorkspaceItem(oldPath, "spec-copy", true));
+		store.AddRecent(new WorkspaceItem(Path.Combine(oldPath, "docs", "a.md"), "a.md", false));
+
+		RegisteredClone moved = clone with { Id = "quarterly-specs", Path = newPath };
+		Assert.That(store.TryRenameRepoClone(
+			repo.Id, repo.Url, oldPath, clone.Id, moved, "main"), Is.True);
+		RegisteredClone renamedBranch = moved with
+		{
+			CurrentBranch = "approved-draft",
+			Branches = [new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+				new RegisteredBranch("approved-draft", RepositoryStatusPayload.Empty)],
+		};
+		Assert.That(store.TryRenameRepoBranch(
+			repo.Id, repo.Url, newPath, moved.Id, renamedBranch,
+			"draft", "approved-draft", "main"), Is.True);
+
+		WorkspaceStatePayload state = new WorkspaceStore(_path).State();
+		string[] expectedLocalPaths =
+		[
+			Path.Combine(newPath, "docs"),
+			Path.Combine(newPath, "docs", "a.md"),
+		];
+		string[] expectedLocalLabels = ["docs", "a.md"];
+		Assert.Multiple(() =>
+		{
+			Assert.That(state.Repositories.Single().Clones.Single().Id, Is.EqualTo("quarterly-specs"));
+			Assert.That(state.Repositories.Single().Clones.Single().Path, Is.EqualTo(newPath));
+			Assert.That(state.Favorites.Single(item => item.Kind == "clone").Path, Is.EqualTo(newPath));
+			Assert.That(state.Favorites.Single(item => item.Kind == "clone").Label, Is.EqualTo("quarterly-specs"));
+			Assert.That(state.Favorites.Single(item => item.Kind == "branch").Branch,
+				Is.EqualTo("approved-draft"));
+			Assert.That(state.Favorites.Single(item => item.Kind == "branch").Label,
+				Is.EqualTo("quarterly-specs · approved-draft"));
+			Assert.That(state.Favorites.Where(item => item.Kind == "local").Select(item => item.Path),
+				Is.EquivalentTo(expectedLocalPaths));
+			Assert.That(state.Favorites.Where(item => item.Kind == "local").Select(item => item.Label),
+				Is.EquivalentTo(expectedLocalLabels));
+			Assert.That(state.Recent[0].Path,
+				Is.EqualTo(Path.Combine(newPath, "docs", "a.md")));
+			Assert.That(state.Recent.Single(item => item.IsFolder).Path, Is.EqualTo(newPath));
+			Assert.That(state.Recent.Single(item => item.IsFolder).Label, Is.EqualTo("quarterly-specs"));
+		});
+	}
+
+	[Test]
+	public void RenameClone_PersistenceFailureRestoresTheOriginalInMemoryAndDurableState()
+	{
+		WorkspaceStore store = new(_path);
+		string oldPath = Path.Combine(_dir, "spec-copy");
+		string newPath = Path.Combine(_dir, "quarterly-specs");
+		RegisteredClone clone = new("spec-copy", oldPath, ["main"]);
+		RegisteredRepo repo = new(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", [clone]);
+		store.RegisterRepo(repo);
+		store.SetFavorite(new WorkspaceItem(oldPath, "spec-copy", true, "clone", repo.Id), true);
+		store.AddRecent(new WorkspaceItem(Path.Combine(oldPath, "README.md"), "README.md", false));
+		Directory.CreateDirectory(_path + ".tmp");
+
+		bool renamed = store.TryRenameRepoClone(
+			repo.Id,
+			repo.Url,
+			oldPath,
+			clone.Id,
+			clone with { Id = "quarterly-specs", Path = newPath },
+			"main");
+
+		WorkspaceStatePayload memory = store.State();
+		WorkspaceStatePayload durable = new WorkspaceStore(_path).State();
+		Assert.Multiple(() =>
+		{
+			Assert.That(renamed, Is.False);
+			Assert.That(memory.Repositories.Single().Clones.Single().Path, Is.EqualTo(oldPath));
+			Assert.That(memory.Favorites.Single().Path, Is.EqualTo(oldPath));
+			Assert.That(memory.Recent.Single().Path, Is.EqualTo(Path.Combine(oldPath, "README.md")));
+			Assert.That(durable.Repositories.Single().Clones.Single().Path, Is.EqualTo(oldPath));
+			Assert.That(durable.Favorites.Single().Path, Is.EqualTo(oldPath));
+			Assert.That(durable.Recent.Single().Path, Is.EqualTo(Path.Combine(oldPath, "README.md")));
+		});
+	}
+
+	[Test]
+	public void RenameBranch_PersistenceFailureRestoresTheOriginalRegistrationAndFavorite()
+	{
+		WorkspaceStore store = new(_path);
+		string clonePath = Path.Combine(_dir, "spec-copy");
+		RegisteredClone clone = new(
+			"spec-copy",
+			clonePath,
+			"draft",
+			[new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+				new RegisteredBranch("draft", RepositoryStatusPayload.Empty)],
+			RepositoryStatusPayload.Empty);
+		RegisteredRepo repo = new(
+			"octo/spec", "octo/spec", "https://github.com/octo/spec", "main", [clone]);
+		store.RegisterRepo(repo);
+		store.SetFavorite(new WorkspaceItem(clonePath, "draft", true, "branch", repo.Id, "draft"), true);
+		Directory.CreateDirectory(_path + ".tmp");
+		RegisteredClone renamed = clone with
+		{
+			CurrentBranch = "approved-draft",
+			Branches = [new RegisteredBranch("main", RepositoryStatusPayload.Empty),
+				new RegisteredBranch("approved-draft", RepositoryStatusPayload.Empty)],
+		};
+
+		bool committed = store.TryRenameRepoBranch(
+			repo.Id, repo.Url, clonePath, clone.Id, renamed,
+			"draft", "approved-draft", "main");
+
+		WorkspaceStatePayload memory = store.State();
+		WorkspaceStatePayload durable = new WorkspaceStore(_path).State();
+		Assert.Multiple(() =>
+		{
+			Assert.That(committed, Is.False);
+			Assert.That(memory.Repositories.Single().Clones.Single().CurrentBranch, Is.EqualTo("draft"));
+			Assert.That(memory.Favorites.Single().Branch, Is.EqualTo("draft"));
+			Assert.That(durable.Repositories.Single().Clones.Single().CurrentBranch, Is.EqualTo("draft"));
+			Assert.That(durable.Favorites.Single().Branch, Is.EqualTo("draft"));
+		});
+	}
+
+	[Test]
 	public void RegisterRepo_DedupesById_AndUnregisterRemovesIt()
 	{
 		WorkspaceStore store = new(_path);

@@ -569,6 +569,9 @@ public sealed class HostControllerRepositoryBrowseTests
 			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
 
 			Assert.That(WaitForTree(sent, gate, tree => tree.Root.Length == 0 && tree.Nodes.Count == 0), Is.Not.Null);
+			Assert.That(
+				WaitFor<GitHubAccountPayload>(sent, gate, MessageKinds.GitHubAccount)?.SignedIn,
+				Is.False);
 			lock (gate)
 			{
 				IpcMessage[] messages = sent.Select(IpcSerializer.TryDeserialize)
@@ -1069,6 +1072,7 @@ public sealed class HostControllerRepositoryBrowseTests
 					controller!.OnMessage(IpcSerializer.SerializeEvent(
 						MessageKinds.FolderOpen, new FolderOpenPayload(root)));
 				}
+				AcknowledgeAccountApplication(controller, message);
 			}
 			controller = new HostController(
 				(_, _) => new Renderer.RenderResult(string.Empty, []),
@@ -1086,6 +1090,8 @@ public sealed class HostControllerRepositoryBrowseTests
 				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
 				auth.ReleaseAuthorization.SetResult();
 				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				string localRoot = Path.GetFullPath(root);
+				Assert.That(WaitForTree(sent, gate, tree => tree.Root == localRoot), Is.Not.Null);
 
 				Assert.That(catalog.TreeCalls, Is.Zero);
 				lock (gate)
@@ -1099,7 +1105,7 @@ public sealed class HostControllerRepositoryBrowseTests
 					Assert.That(trees[0].Root, Is.EqualTo("octo/specs"));
 					Assert.That(trees[0].Nodes, Is.Empty);
 					Assert.That(trees[1].Root, Is.Empty);
-					Assert.That(trees[2].Root, Is.EqualTo(Path.GetFullPath(root)));
+					Assert.That(trees[2].Root, Is.EqualTo(localRoot));
 				}
 			}
 		}
@@ -1123,29 +1129,37 @@ public sealed class HostControllerRepositoryBrowseTests
 			CountingCatalog catalog = new();
 			List<string> sent = [];
 			object gate = new();
-			using HostController controller = new(
+			HostController? controller = null;
+			controller = new HostController(
 				(_, _) => new Renderer.RenderResult(string.Empty, []),
-				json => { lock (gate) { sent.Add(json); } },
+				json =>
+				{
+					lock (gate) { sent.Add(json); }
+					AcknowledgeAccountApplication(controller, IpcSerializer.TryDeserialize(json));
+				},
 				new NoDialogs(), (_, _, _, _, _) => null, new FakeVersioning(),
 				NullLogger<HostController>.Instance,
 				auth: auth, workspace: store, repositoryCatalog: catalog);
-			string wirePath = "github://octo/specs/feature%2FDocs/Docs%2FGuide.md";
-
-			controller.OnMessage(IpcSerializer.SerializeEvent(
-				MessageKinds.DocOpen, new DocOpenPayload(wirePath)));
-			Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
-			Assert.That(catalog.FileCalls, Is.Zero);
-			auth.ReleaseAuthorization.SetResult();
-			DocLoadedPayload loaded = WaitFor<DocLoadedPayload>(sent, gate, MessageKinds.DocLoaded)!;
-
-			Assert.Multiple(() =>
+			using (controller)
 			{
-				Assert.That(catalog.FileCalls, Is.EqualTo(1));
-				Assert.That(loaded.Path, Is.EqualTo(wirePath));
-				Assert.That(loaded.Repository, Is.EqualTo("octo/specs"));
-				Assert.That(loaded.Branch, Is.EqualTo("feature/Docs"));
-				Assert.That(loaded.RepositoryPath, Is.EqualTo("Docs/Guide.md"));
-			});
+				string wirePath = "github://octo/specs/feature%2FDocs/Docs%2FGuide.md";
+
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.DocOpen, new DocOpenPayload(wirePath)));
+				Assert.That(auth.AuthorizationStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+				Assert.That(catalog.FileCalls, Is.Zero);
+				auth.ReleaseAuthorization.SetResult();
+				DocLoadedPayload loaded = WaitFor<DocLoadedPayload>(sent, gate, MessageKinds.DocLoaded)!;
+
+				Assert.Multiple(() =>
+				{
+					Assert.That(catalog.FileCalls, Is.EqualTo(1));
+					Assert.That(loaded.Path, Is.EqualTo(wirePath));
+					Assert.That(loaded.Repository, Is.EqualTo("octo/specs"));
+					Assert.That(loaded.Branch, Is.EqualTo("feature/Docs"));
+					Assert.That(loaded.RepositoryPath, Is.EqualTo("Docs/Guide.md"));
+				});
+			}
 		}
 		finally
 		{
@@ -1222,6 +1236,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			CountingCatalog catalog = new();
 			List<string> sent = [];
 			object gate = new();
+			int navigationTriggered = 0;
 			HostController? controller = null;
 			void Send(string json)
 			{
@@ -1231,11 +1246,13 @@ public sealed class HostControllerRepositoryBrowseTests
 				}
 				IpcMessage? message = IpcSerializer.TryDeserialize(json);
 				if (message?.Kind == MessageKinds.GitHubAccount
-					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true)
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true
+					&& Interlocked.Exchange(ref navigationTriggered, 1) == 0)
 				{
 					controller!.OnMessage(IpcSerializer.SerializeEvent(
 						MessageKinds.FolderOpen, new FolderOpenPayload(root)));
 				}
+				AcknowledgeAccountApplication(controller, message);
 			}
 			controller = new HostController(
 				(_, _) => new Renderer.RenderResult(string.Empty, []), Send,
@@ -1290,6 +1307,7 @@ public sealed class HostControllerRepositoryBrowseTests
 			CountingCatalog catalog = new();
 			List<string> sent = [];
 			object gate = new();
+			int unregisterTriggered = 0;
 			HostController? controller = null;
 			void Send(string json)
 			{
@@ -1299,7 +1317,8 @@ public sealed class HostControllerRepositoryBrowseTests
 				}
 				IpcMessage? message = IpcSerializer.TryDeserialize(json);
 				if (message?.Kind == MessageKinds.GitHubAccount
-					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true)
+					&& message.GetPayload<GitHubAccountPayload>()?.SignedIn == true
+					&& Interlocked.Exchange(ref unregisterTriggered, 1) == 0)
 				{
 					string removed = matching ? repoA.Id : repoB.Id;
 					controller!.OnMessage(IpcSerializer.SerializeEvent(
@@ -1309,6 +1328,7 @@ public sealed class HostControllerRepositoryBrowseTests
 						store.RegisterRepo(repoA);
 					}
 				}
+				AcknowledgeAccountApplication(controller, message);
 			}
 			controller = new HostController(
 				(_, _) => new Renderer.RenderResult(string.Empty, []), Send,
@@ -1631,5 +1651,18 @@ public sealed class HostControllerRepositoryBrowseTests
 			Thread.Sleep(20);
 		}
 		return default;
+	}
+
+	private static void AcknowledgeAccountApplication(HostController? controller, IpcMessage? message)
+	{
+		string? publicationId = message?.Kind == MessageKinds.GitHubAccount
+			? message.GetPayload<GitHubAccountPayload>()?.PublicationId
+			: null;
+		if (publicationId is not null)
+		{
+			controller!.OnMessage(IpcSerializer.SerializeEvent(
+				MessageKinds.GitHubAccountApplied,
+				new GitHubAccountAppliedPayload(publicationId)));
+		}
 	}
 }

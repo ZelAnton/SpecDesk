@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
+- The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
+- Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
+
 ### Fixed
 
+- Interrupted or failed local-copy and working-line renames now recover the matching Git state, saved registration, favorites, and recent paths instead of leaving an unusable partial rename.
 - The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
 - The right panel now ends at the bottom panel instead of overlapping its workspace.
 - Bounded pull-request histories now disclose when earlier commits are not shown instead of appearing complete.
@@ -33,13 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
 - The status bar now identifies the active local copy, working line, and filename without repeating the full path.
 - The account avatar now shows the connected GitHub profile image with a neutral signed-out fallback and carries the notification-count badge.
 - Pull requests now open as in-app review documents with their description, author, reviewers, conversation, commits, checks, and draft state.
 - Pull-request conversations now combine general and file-review comments with replies, editing your own comments, and a focused bottom-panel reader.
 - The bottom Log now records bounded GitHub requests, view changes, context changes, and user actions without recording message contents or credentials.
 - Hovering selected text in Code and comment editors now offers an anchored compact Markdown formatting palette.
-- Each local copy now offers plain-language Get updates and Share changes actions for its current working line.
 - Local copies and working lines now show available upstream updates and known conflicts alongside local-work indicators.
 - Repositories now has one Refresh action that checks every registered local copy for upstream updates.
 - The Start page now shows favorite repositories, folders, and specs alongside recent work.

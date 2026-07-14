@@ -196,9 +196,11 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.message).toBeUndefined();
     expect(payload?.organizations).toEqual(["acme", "octo-labs"]);
     expect(payload?.avatarUrl).toBe("https://avatars.githubusercontent.com/u/583231?v=4");
+    expect(payload?.publicationId).toBe("account-publication-1");
     expect(
       parseGitHubAccount({ available: true, signedIn: true, organizations: ["acme", 7] }),
     ).toBeNull();
+    expect(parseGitHubAccount({ available: true, signedIn: true, publicationId: 7 })).toBeNull();
   });
 
   it("github.repositories", () => {

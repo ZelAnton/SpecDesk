@@ -329,6 +329,9 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   if (value.avatarUrl !== undefined && !isString(value.avatarUrl)) {
     return null;
   }
+  if (value.publicationId !== undefined && !isString(value.publicationId)) {
+    return null;
+  }
   // login / message are optional (exactOptionalPropertyTypes forbids an explicit undefined), so add them
   // only when present.
   const payload: GitHubAccountPayload = { available: value.available, signedIn: value.signedIn };
@@ -343,6 +346,9 @@ export function parseGitHubAccount(value: unknown): GitHubAccountPayload | null 
   }
   if (value.avatarUrl !== undefined) {
     payload.avatarUrl = value.avatarUrl;
+  }
+  if (value.publicationId !== undefined) {
+    payload.publicationId = value.publicationId;
   }
   return payload;
 }

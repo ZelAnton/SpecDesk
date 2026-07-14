@@ -101,6 +101,11 @@ public sealed class HostControllerWorkspaceTests
 		public LocalRepositoryInfo Inspect(string repositoryPath, string knownDefaultBranch) =>
 			Unexpected<LocalRepositoryInfo>();
 
+		public LocalRepositoryInfo InspectExpected(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch) => Unexpected<LocalRepositoryInfo>();
+
 		public LocalRepositoryInfo Fetch(
 			string repositoryPath,
 			string expectedRepositoryUrl,
@@ -133,6 +138,32 @@ public sealed class HostControllerWorkspaceTests
 			string branch,
 			Action? beforeMutation = null,
 			Action? onMutationStarting = null) => Unexpected<BranchSwitchResult>();
+
+		public LocalRepositoryInfo CreateBranch(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string expectedCurrentBranch,
+			string branch,
+			Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unexpected<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo RenameBranch(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string expectedCurrentBranch,
+			string branch,
+			string newBranch,
+			string defaultBranch,
+			Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unexpected<LocalRepositoryInfo>();
+
+		public CloneRenameResult RenameClone(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string localName,
+			Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unexpected<CloneRenameResult>();
 
 		public RepositoryDeletionRisks InspectDeletionRisks(
 			string repositoryPath,

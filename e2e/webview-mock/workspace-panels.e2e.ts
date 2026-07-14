@@ -90,7 +90,6 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
 
   // The clone menu sends `repo.cloneManaged` with the typed value (done first: opening a repo below reveals
   // the Files navigator and switches the left dock away from Repositories).
-  await repos.locator(".repo-add > summary").click();
   await expect(repos.locator(".repo-register-input")).toBeVisible();
   await repos.locator(".repo-register-input").fill("owner/name");
   await waitForSent(page, "repo.cloneDestination.request");

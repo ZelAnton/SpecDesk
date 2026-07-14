@@ -11,6 +11,8 @@
 
 import type {
   GitHubRepositoryOptionPayload,
+  RegisteredBranch,
+  RegisteredClone,
   RegisteredRepo,
   RepoCloneConflictPayload,
   RepoCloneDestinationPayload,
@@ -38,6 +40,9 @@ export interface RepositoriesCallbacks {
   onBrowseRepo(repo: RegisteredRepo): void;
   onOpenClone(repo: RegisteredRepo, clonePath: string): void;
   onSwitchBranch(repo: RegisteredRepo, clonePath: string, branch: string): void;
+  onCreateBranch(repo: RegisteredRepo, clonePath: string, branch: string): void;
+  onRenameClone(repo: RegisteredRepo, clonePath: string, localName: string): void;
+  onRenameBranch(repo: RegisteredRepo, clonePath: string, branch: string, newBranch: string): void;
   onOpenExistingClone(url: string, clonePath: string): void;
   onToggleFavorite?(repo: RegisteredRepo, favorite: boolean): void;
   onToggleCloneFavorite?(repo: RegisteredRepo, clonePath: string, favorite: boolean): void;
@@ -82,6 +87,12 @@ interface PendingManagedClone {
   readonly destination: string;
 }
 
+interface RepositoryMenuItem {
+  readonly label: string;
+  readonly danger?: boolean;
+  readonly run: () => void;
+}
+
 export class RepositoriesPanel implements PanelTool {
   readonly id = "repositories";
   readonly label = "Repositories";
@@ -109,8 +120,6 @@ export class RepositoriesPanel implements PanelTool {
   private operationWarningsEl: HTMLUListElement | null = null;
   private refreshEl: HTMLButtonElement | null = null;
   private repositorySummaryEl: HTMLElement | null = null;
-  private addRepositoryEl: HTMLDetailsElement | null = null;
-  private receivedInitialState = false;
   private refreshRequestId: number | null = null;
   private pendingOperation: RepoConfirmationPayload | null = null;
   private operationReturnFocus: HTMLButtonElement | null = null;
@@ -135,6 +144,12 @@ export class RepositoriesPanel implements PanelTool {
   private pendingConfirmation: PendingCloneConfirmation | null = null;
   private pendingManagedClone: PendingManagedClone | null = null;
   private confirmationReturnFocus: HTMLElement | null = null;
+  private contextMenuEl: HTMLElement | null = null;
+  private contextMenuReturnFocus: HTMLElement | null = null;
+  private nameDialogEl: HTMLDialogElement | null = null;
+  private nameDialogInputEl: HTMLInputElement | null = null;
+  private nameDialogErrorEl: HTMLElement | null = null;
+  private pendingNameAction: ((value: string) => void) | null = null;
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -320,12 +335,10 @@ export class RepositoriesPanel implements PanelTool {
       this.requestManagedClone();
     });
 
-    const addRepository = document.createElement("details");
+    const addRepository = document.createElement("section");
     addRepository.className = "repo-add";
-    addRepository.open = true;
-    const addSummary = document.createElement("summary");
-    addSummary.textContent = "Add or copy a repository";
-    addRepository.append(addSummary, form);
+    addRepository.setAttribute("aria-label", "Add or copy a repository");
+    addRepository.append(form);
 
     const empty = document.createElement("p");
     empty.className = "repo-empty";
@@ -372,7 +385,71 @@ export class RepositoriesPanel implements PanelTool {
       }
     });
 
-    root.append(actions, addRepository, confirmation, operationConfirmation, empty, list);
+    const contextMenu = document.createElement("div");
+    contextMenu.className = "repo-context-menu";
+    contextMenu.setAttribute("role", "menu");
+    contextMenu.hidden = true;
+
+    const nameDialog = document.createElement("dialog");
+    nameDialog.className = "repo-name-dialog";
+    const nameForm = document.createElement("form");
+    nameForm.method = "dialog";
+    const nameTitle = document.createElement("strong");
+    nameTitle.className = "repo-name-dialog-title";
+    const nameLabel = document.createElement("label");
+    nameLabel.textContent = "Name";
+    const nameInput = document.createElement("input");
+    nameInput.className = "repo-name-dialog-input";
+    nameInput.autocomplete = "off";
+    nameLabel.append(nameInput);
+    const nameError = document.createElement("p");
+    nameError.className = "repo-name-dialog-error";
+    nameError.setAttribute("role", "alert");
+    nameError.hidden = true;
+    const nameActions = document.createElement("div");
+    nameActions.className = "repo-name-dialog-actions";
+    const nameCancel = document.createElement("button");
+    nameCancel.type = "button";
+    nameCancel.textContent = "Cancel";
+    nameCancel.addEventListener("click", () => this.closeNameDialog());
+    const nameSubmit = document.createElement("button");
+    nameSubmit.type = "submit";
+    nameSubmit.textContent = "Continue";
+    nameActions.append(nameCancel, nameSubmit);
+    nameForm.append(nameTitle, nameLabel, nameError, nameActions);
+    nameForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const value = nameInput.value.trim();
+      const valid =
+        nameDialog.dataset.kind === "clone" ? isValidLocalName(value) : isValidBranchName(value);
+      if (!valid) {
+        nameError.textContent =
+          nameDialog.dataset.kind === "clone"
+            ? "Use a Windows folder name without path characters."
+            : "Use a valid working-line name without spaces or reserved sequences.";
+        nameError.hidden = false;
+        return;
+      }
+      const action = this.pendingNameAction;
+      this.closeNameDialog();
+      action?.(value);
+    });
+    nameDialog.addEventListener("close", () => {
+      this.pendingNameAction = null;
+      this.contextMenuReturnFocus?.focus();
+    });
+    nameDialog.append(nameForm);
+
+    root.append(
+      actions,
+      addRepository,
+      confirmation,
+      operationConfirmation,
+      empty,
+      list,
+      contextMenu,
+      nameDialog,
+    );
     body.appendChild(root);
     this.input = input;
     this.localNameInput = localNameInput;
@@ -398,7 +475,14 @@ export class RepositoriesPanel implements PanelTool {
     this.operationWarningsEl = operationWarnings;
     this.refreshEl = refresh;
     this.repositorySummaryEl = actionsHint;
-    this.addRepositoryEl = addRepository;
+    this.contextMenuEl = contextMenu;
+    this.nameDialogEl = nameDialog;
+    this.nameDialogInputEl = nameInput;
+    this.nameDialogErrorEl = nameError;
+    document.addEventListener("pointerdown", (event) => {
+      if (contextMenu.hidden || contextMenu.contains(event.target as Node)) return;
+      this.closeContextMenu();
+    });
     this.render();
   }
 
@@ -445,15 +529,6 @@ export class RepositoriesPanel implements PanelTool {
   setState(state: WorkspaceStatePayload): void {
     this.repos = state.repositories;
     this.favorites = state.favorites;
-    if (!this.receivedInitialState) {
-      this.receivedInitialState = true;
-      if (this.addRepositoryEl !== null) {
-        const authorIsUsingForm =
-          (this.input?.value.trim() ?? "") !== "" ||
-          this.addRepositoryEl.contains(document.activeElement);
-        this.addRepositoryEl.open = state.repositories.length === 0 || authorIsUsingForm;
-      }
-    }
     const cloneCount = state.repositories.reduce((count, repo) => count + repo.clones.length, 0);
     if (this.repositorySummaryEl !== null) {
       this.repositorySummaryEl.textContent =
@@ -501,9 +576,6 @@ export class RepositoriesPanel implements PanelTool {
   }
 
   focusPrimary(): void {
-    if (this.addRepositoryEl !== null) {
-      this.addRepositoryEl.open = true;
-    }
     this.input?.focus();
     this.input?.select();
   }
@@ -645,7 +717,6 @@ export class RepositoriesPanel implements PanelTool {
   }
 
   setDescription(payload: RepoDescriptionPayload): void {
-    this.syncSuggestedLocalName();
     if (
       payload.requestId !== this.descriptionRequestId ||
       this.input?.value.trim() !== payload.url
@@ -653,6 +724,11 @@ export class RepositoriesPanel implements PanelTool {
       return;
     }
     this.descriptionReady = payload.state === "found" || payload.state === "private";
+    const previousName = this.localNameInput?.value ?? "";
+    this.syncSuggestedLocalName();
+    if (this.localNameInput?.value !== previousName) {
+      this.scheduleDestination();
+    }
     if (this.descriptionEl !== null) {
       this.descriptionEl.hidden = false;
       const description = payload.description?.trim();
@@ -1100,23 +1176,20 @@ export class RepositoriesPanel implements PanelTool {
     open.append(repoName, repoContext);
     open.addEventListener("click", () => this.callbacks.onBrowseRepo(repo));
 
-    // The trailing remove control (an ×, like the dock's collapse button); the aria-label carries the
-    // accessible name so a screen reader announces which repository it removes.
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "repo-remove";
+    const remove = this.iconAction(
+      "delete",
+      `Remove repository ${repo.name} from SpecDesk`,
+      () => this.callbacks.onUnregister(repo.id),
+      "repo-remove",
+    );
     remove.dataset.id = repo.id;
-    remove.textContent = "×";
-    remove.setAttribute("aria-label", `Forget repository ${repo.name}`);
-    remove.title = "Remove from SpecDesk";
-    remove.addEventListener("click", () => this.callbacks.onUnregister(repo.id));
 
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "repo-clone-action";
-    copy.textContent = "New local copy";
-    copy.setAttribute("aria-label", `Create a new local copy of ${repo.name}`);
-    copy.addEventListener("click", () => this.prepareClone(repo));
+    const copy = this.iconAction(
+      "createCopy",
+      `Create a new local copy of ${repo.name}`,
+      () => this.prepareClone(repo),
+      "repo-create-copy",
+    );
 
     const favored = this.favorites.some(
       (item) =>
@@ -1133,9 +1206,20 @@ export class RepositoriesPanel implements PanelTool {
     star.innerHTML = icon("favorites");
     star.addEventListener("click", () => this.callbacks.onToggleFavorite?.(repo, !favored));
 
+    const more = this.iconAction(
+      "more",
+      `More actions for repository ${repo.name}`,
+      () => {
+        this.openContextMenu(more, this.repositoryMenuItems(repo, favored));
+      },
+      "repo-more",
+    );
+    more.setAttribute("aria-haspopup", "menu");
+
     const header = document.createElement("div");
     header.className = "repo-row-header";
-    header.append(open, copy, star, remove);
+    header.append(open, copy, star, remove, more);
+    this.bindContextMenu(header, open, () => this.repositoryMenuItems(repo, favored));
     li.append(header);
 
     if (repo.clones.length > 0) {
@@ -1177,59 +1261,46 @@ export class RepositoriesPanel implements PanelTool {
           this.operationKey("deleteClone", repo.id, clone.path, null),
           () => this.callbacks.onDeleteClone(repo, clone.path),
         );
+        const createBranch = this.iconAction(
+          "createBranch",
+          `Create a new working line in ${clone.id}`,
+          () =>
+            this.promptForName(
+              "New working line",
+              "branch",
+              "",
+              (branch) => this.callbacks.onCreateBranch(repo, clone.path, branch),
+              createBranch,
+            ),
+          "repo-create-branch",
+        );
+        const cloneMore = this.iconAction(
+          "more",
+          `More actions for local copy ${clone.id}`,
+          () => {
+            this.openContextMenu(cloneMore, this.cloneMenuItems(repo, clone, cloneFavored));
+          },
+          "repo-more",
+        );
+        cloneMore.setAttribute("aria-haspopup", "menu");
         const cloneHeader = document.createElement("div");
         cloneHeader.className = "repo-clone-header";
-        cloneHeader.append(cloneButton, cloneStar, cloneDelete);
+        cloneHeader.append(cloneButton, createBranch, cloneStar, cloneDelete, cloneMore);
+        this.bindContextMenu(cloneHeader, cloneButton, () =>
+          this.cloneMenuItems(repo, clone, cloneFavored),
+        );
         cloneRow.append(cloneHeader, this.statusSummary(clone.status, `Local copy ${clone.id}`));
-        const syncActions = document.createElement("div");
-        syncActions.className = "repo-sync-actions";
-        const getUpdates = document.createElement("button");
-        getUpdates.type = "button";
-        getUpdates.className = "repo-sync-action repo-pull";
-        getUpdates.textContent = "Get updates";
-        getUpdates.disabled = clone.currentBranch === null;
-        getUpdates.setAttribute(
-          "aria-label",
-          clone.currentBranch === null
-            ? "Get updates unavailable: no current working line"
-            : `Get updates for ${clone.currentBranch}`,
-        );
-        getUpdates.title =
-          clone.currentBranch === null
-            ? "This local copy has no current working line"
-            : `Get shared changes for ${clone.currentBranch}`;
-        getUpdates.addEventListener("click", () => {
-          if (clone.currentBranch !== null) {
-            this.callbacks.onPull(repo, clone.path, clone.currentBranch);
-          }
-        });
-        const share = document.createElement("button");
-        share.type = "button";
-        share.className = "repo-sync-action repo-push";
-        share.textContent = "Share changes";
-        share.disabled = clone.currentBranch === null;
-        share.setAttribute(
-          "aria-label",
-          clone.currentBranch === null
-            ? "Share changes unavailable: no current working line"
-            : `Share changes from ${clone.currentBranch}`,
-        );
-        share.title =
-          clone.currentBranch === null
-            ? "This local copy has no current working line"
-            : `Share saved versions from ${clone.currentBranch}`;
-        share.addEventListener("click", () => {
-          if (clone.currentBranch !== null) {
-            this.callbacks.onPush(repo, clone.path, clone.currentBranch);
-          }
-        });
-        syncActions.append(getUpdates, share);
-        cloneRow.append(syncActions);
 
         if (clone.branches.length > 0) {
           const branches = document.createElement("ul");
           branches.className = "repo-branches";
-          for (const branch of clone.branches) {
+          const sortedBranches = [...clone.branches].sort((left, right) => {
+            const leftDefault = left.name.toLowerCase() === repo.defaultBranch.toLowerCase();
+            const rightDefault = right.name.toLowerCase() === repo.defaultBranch.toLowerCase();
+            if (leftDefault !== rightDefault) return leftDefault ? -1 : 1;
+            return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+          });
+          for (const branch of sortedBranches) {
             const branchRow = document.createElement("li");
             branchRow.className = "repo-branch";
             branchRow.classList.toggle("is-current", clone.currentBranch === branch.name);
@@ -1278,6 +1349,21 @@ export class RepositoriesPanel implements PanelTool {
                 ),
               );
             }
+            const branchMore = this.iconAction(
+              "more",
+              `More actions for working line ${branch.name}`,
+              () =>
+                this.openContextMenu(
+                  branchMore,
+                  this.branchMenuItems(repo, clone, branch, branchFavored),
+                ),
+              "repo-more",
+            );
+            branchMore.setAttribute("aria-haspopup", "menu");
+            branchHeader.append(branchMore);
+            this.bindContextMenu(branchHeader, branchButton, () =>
+              this.branchMenuItems(repo, clone, branch, branchFavored),
+            );
             branchRow.append(
               branchHeader,
               this.statusSummary(branch.status, `Working line ${branch.name}`),
@@ -1297,9 +1383,6 @@ export class RepositoriesPanel implements PanelTool {
     if (this.input === null) {
       return;
     }
-    if (this.addRepositoryEl !== null) {
-      this.addRepositoryEl.open = true;
-    }
     this.input.value = repo.name;
     this.localNameCustomized = false;
     this.syncSuggestedLocalName();
@@ -1308,6 +1391,229 @@ export class RepositoriesPanel implements PanelTool {
     this.scheduleDescription();
     this.input.focus();
     this.input.select();
+  }
+
+  private iconAction(
+    iconName: string,
+    label: string,
+    run: () => void,
+    className: string,
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `repo-inline-action ${className}`;
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.innerHTML = icon(iconName);
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      run();
+    });
+    return button;
+  }
+
+  private repositoryMenuItems(repo: RegisteredRepo, favored: boolean): RepositoryMenuItem[] {
+    return [
+      { label: "View repository files", run: () => this.callbacks.onBrowseRepo(repo) },
+      { label: "Create local copy…", run: () => this.prepareClone(repo) },
+      {
+        label: favored ? "Remove from favorites" : "Add to favorites",
+        run: () => this.callbacks.onToggleFavorite?.(repo, !favored),
+      },
+      {
+        label: "Remove from SpecDesk",
+        danger: true,
+        run: () => this.callbacks.onUnregister(repo.id),
+      },
+    ];
+  }
+
+  private cloneMenuItems(
+    repo: RegisteredRepo,
+    clone: RegisteredClone,
+    favored: boolean,
+  ): RepositoryMenuItem[] {
+    return [
+      { label: "Open local copy", run: () => this.callbacks.onOpenClone(repo, clone.path) },
+      {
+        label: "Create working line…",
+        run: () =>
+          this.promptForName(
+            "New working line",
+            "branch",
+            "",
+            (name) => this.callbacks.onCreateBranch(repo, clone.path, name),
+            this.contextMenuReturnFocus,
+          ),
+      },
+      {
+        label: "Rename local copy…",
+        run: () =>
+          this.promptForName(
+            "Rename local copy",
+            "clone",
+            clone.id,
+            (name) => this.callbacks.onRenameClone(repo, clone.path, name),
+            this.contextMenuReturnFocus,
+          ),
+      },
+      {
+        label: favored ? "Remove from favorites" : "Add to favorites",
+        run: () => this.callbacks.onToggleCloneFavorite?.(repo, clone.path, !favored),
+      },
+      {
+        label: "Delete local copy…",
+        danger: true,
+        run: () => this.callbacks.onDeleteClone(repo, clone.path),
+      },
+    ];
+  }
+
+  private branchMenuItems(
+    repo: RegisteredRepo,
+    clone: RegisteredClone,
+    branch: RegisteredBranch,
+    favored: boolean,
+  ): RepositoryMenuItem[] {
+    const items: RepositoryMenuItem[] = [
+      {
+        label: clone.currentBranch === branch.name ? "Open working line" : "Switch and open",
+        run: () => this.callbacks.onSwitchBranch(repo, clone.path, branch.name),
+      },
+    ];
+    if (branch.name.toLowerCase() !== repo.defaultBranch.toLowerCase()) {
+      items.push({
+        label: "Rename working line…",
+        run: () =>
+          this.promptForName(
+            "Rename working line",
+            "branch",
+            branch.name,
+            (name) => this.callbacks.onRenameBranch(repo, clone.path, branch.name, name),
+            this.contextMenuReturnFocus,
+          ),
+      });
+    }
+    items.push({
+      label: favored ? "Remove from favorites" : "Add to favorites",
+      run: () => this.callbacks.onToggleBranchFavorite?.(repo, clone.path, branch.name, !favored),
+    });
+    if (branch.canDelete) {
+      items.push({
+        label: "Delete local working line…",
+        danger: true,
+        run: () => this.callbacks.onDeleteBranch(repo, clone.path, branch.name),
+      });
+    }
+    return items;
+  }
+
+  private bindContextMenu(
+    row: HTMLElement,
+    focusTarget: HTMLElement,
+    items: () => RepositoryMenuItem[],
+  ): void {
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      this.openContextMenu(focusTarget, items(), event.clientX, event.clientY);
+    });
+    focusTarget.addEventListener("keydown", (event) => {
+      if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        event.preventDefault();
+        this.openContextMenu(focusTarget, items());
+      }
+    });
+  }
+
+  private openContextMenu(
+    returnFocus: HTMLElement,
+    items: readonly RepositoryMenuItem[],
+    clientX?: number,
+    clientY?: number,
+  ): void {
+    const menu = this.contextMenuEl;
+    if (menu === null || items.length === 0) return;
+    this.contextMenuReturnFocus = returnFocus;
+    menu.replaceChildren(
+      ...items.map((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "menuitem");
+        button.textContent = item.label;
+        button.classList.toggle("is-danger", item.danger === true);
+        button.addEventListener("click", () => {
+          this.closeContextMenu(false);
+          item.run();
+        });
+        return button;
+      }),
+    );
+    menu.hidden = false;
+    const anchor = returnFocus.getBoundingClientRect();
+    menu.style.left = `${clientX ?? anchor.left}px`;
+    menu.style.top = `${clientY ?? anchor.bottom}px`;
+    const bounds = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(Number.parseFloat(menu.style.left), innerWidth - bounds.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(Number.parseFloat(menu.style.top), innerHeight - bounds.height - 8))}px`;
+    menu.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    menu.onkeydown = (event) => {
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeContextMenu();
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const direction = event.key === "ArrowDown" ? 1 : -1;
+        buttons[(index + direction + buttons.length) % buttons.length]?.focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        buttons[0]?.focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        buttons.at(-1)?.focus();
+      }
+    };
+  }
+
+  private closeContextMenu(restoreFocus = true): void {
+    if (this.contextMenuEl !== null) this.contextMenuEl.hidden = true;
+    if (restoreFocus) this.contextMenuReturnFocus?.focus();
+  }
+
+  private promptForName(
+    title: string,
+    kind: "clone" | "branch",
+    initialValue: string,
+    run: (value: string) => void,
+    returnFocus: HTMLElement | null,
+  ): void {
+    if (this.nameDialogEl === null || this.nameDialogInputEl === null) return;
+    this.closeContextMenu(false);
+    this.contextMenuReturnFocus = returnFocus;
+    this.pendingNameAction = run;
+    this.nameDialogEl.dataset.kind = kind;
+    const heading = this.nameDialogEl.querySelector<HTMLElement>(".repo-name-dialog-title");
+    if (heading !== null) heading.textContent = title;
+    this.nameDialogInputEl.value = initialValue;
+    if (this.nameDialogErrorEl !== null) this.nameDialogErrorEl.hidden = true;
+    if (typeof this.nameDialogEl.showModal === "function") {
+      this.nameDialogEl.showModal();
+    } else {
+      this.nameDialogEl.setAttribute("open", "");
+    }
+    this.nameDialogInputEl.focus();
+    this.nameDialogInputEl.select();
+  }
+
+  private closeNameDialog(): void {
+    if (this.nameDialogEl === null) return;
+    if (typeof this.nameDialogEl.close === "function") {
+      this.nameDialogEl.close();
+    } else {
+      this.nameDialogEl.removeAttribute("open");
+      this.nameDialogEl.dispatchEvent(new Event("close"));
+    }
   }
 
   private statusSummary(status: RepositoryStatusPayload, ownerLabel: string): HTMLElement {
@@ -1494,6 +1800,26 @@ function isValidLocalName(value: string): boolean {
     return false;
   }
   return !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(value);
+}
+
+function isValidBranchName(value: string): boolean {
+  const forbidden = " ~^:?*[\\";
+  return (
+    value !== "" &&
+    value.length <= 240 &&
+    !(
+      value.startsWith("-") ||
+      value.startsWith(".") ||
+      value.endsWith(".") ||
+      value.endsWith("/") ||
+      value.includes("..") ||
+      value.includes("@{") ||
+      [...value].some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || code === 127 || forbidden.includes(character);
+      })
+    )
+  );
 }
 
 function sameLocalPath(left: string, right: string): boolean {

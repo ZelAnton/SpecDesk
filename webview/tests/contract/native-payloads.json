@@ -164,7 +164,9 @@
     "organizations": [
       "acme",
       "octo-labs"
-    ]
+    ],
+    "avatarUrl": "https://avatars.githubusercontent.com/u/583231?v=4",
+    "publicationId": "account-publication-1"
   },
   "github.repositories": {
     "repositories": [
@@ -269,22 +271,18 @@
         "name": "specs",
         "path": "C:\\specs\\billing-repo\\specs",
         "isDirectory": true,
-        "children": [
-          {
-            "name": "billing.md",
-            "path": "C:\\specs\\billing-repo\\specs\\billing.md",
-            "isDirectory": false,
-            "children": []
-          }
-        ]
+        "children": [],
+        "hasChildren": true
       },
       {
         "name": "README.md",
         "path": "C:\\specs\\billing-repo\\README.md",
         "isDirectory": false,
-        "children": []
+        "children": [],
+        "hasChildren": false
       }
-    ]
+    ],
+    "requestId": 31
   },
   "workspace.context": {
     "repository": "billing-repo",
@@ -292,7 +290,8 @@
     "branch": "spec/billing-refunds",
     "branchState": "named",
     "defaultBranch": "main",
-    "path": "specs/billing.md"
+    "path": "specs/billing.md",
+    "localCopy": "billing-repo"
   },
   "window.state": {
     "maximized": true

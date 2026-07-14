@@ -35,6 +35,10 @@ const ICON_BODIES: Record<string, string> = {
   comment: `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
   versions: `<path d="M7 3h10v4H7z"/><path d="M5 7h14v14H5z"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="14" y2="16"/>`,
   history: `<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/><path d="M3 5v5h5"/>`,
+  createCopy: `<rect x="7" y="7" width="13" height="13" rx="2"/><path d="M4 16H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v1"/><line x1="13.5" y1="10" x2="13.5" y2="17"/><line x1="10" y1="13.5" x2="17" y2="13.5"/>`,
+  createBranch: `<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10"/><path d="M8 7c6 0 4 5 8 5"/><line x1="18" y1="5" x2="18" y2="9"/><line x1="16" y1="7" x2="20" y2="7"/>`,
+  more: `<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>`,
+  delete: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/>`,
   // dot fallback — an unknown mode
   fallback: `<circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>`,
 };

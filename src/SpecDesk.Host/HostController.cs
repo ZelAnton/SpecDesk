@@ -232,6 +232,7 @@ public sealed partial class HostController : IDisposable
 	// Cancels an in-flight GitHub sign-in (the long-running poll). Guarded by _sync; replaced on a new
 	// sign-in, cancelled on the cancel action and on Dispose.
 	private CancellationTokenSource? _signInCts;
+	private long _signInFlowGeneration;
 	// One cancellation/generation boundary for every operation authenticated as the current GitHub
 	// account. Sign-out rotates it while holding _signInPublishSync -> _sync; late work must cross the
 	// same publication gate and match the generation before it can mutate state or emit account data.
@@ -329,6 +330,7 @@ public sealed partial class HostController : IDisposable
 		_traceBridge = new TraceBridge(_logger, Logging.LogDirectory);
 		_logBridge = new LogBridge(
 			_logger, _dialogs, SendError, Logging.LogDirectory, () => _traceBridge.RenderTail(200));
+		RecoverPendingRepositoryRenames();
 	}
 
 	/// <summary>The repo working-tree root of the open document — the <c>app://</c> asset root.</summary>
@@ -361,6 +363,9 @@ public sealed partial class HostController : IDisposable
 							_autosaveTimer = null;
 							if (_signInCts is not null) cancellations.Add(_signInCts);
 							_signInCts = null;
+							_signInFlowGeneration++;
+							_pendingAccountApplication = null;
+							_pendingAccountCarryover = null;
 							_accountSessionGeneration++;
 							cancellations.Add(_accountSessionCts);
 							_accountDetailsGeneration++;
@@ -581,6 +586,9 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.GitHubSignOut:
 				OnGitHubSignOut();
 				break;
+			case MessageKinds.GitHubAccountApplied:
+				OnGitHubAccountApplied(message);
+				break;
 			case MessageKinds.ChatSend:
 				OnChatSend(message);
 				break;
@@ -628,6 +636,15 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.RepoSwitchBranch:
 				OnSwitchRepoBranch(message);
+				break;
+			case MessageKinds.RepoCreateBranch:
+				OnCreateRepoBranch(message);
+				break;
+			case MessageKinds.RepoRenameClone:
+				OnRenameRepoClone(message);
+				break;
+			case MessageKinds.RepoRenameBranch:
+				OnRenameRepoBranch(message);
 				break;
 			case MessageKinds.RepoDeleteClone:
 				OnDeleteRepoClone(message);

@@ -100,7 +100,11 @@ public sealed partial class HostController
 			new RepoOperationCompletedPayload(requestId)));
 
 	// Serve the current workspace state (the Start screen asks for it on load).
-	private void OnWorkspaceRequest() => EmitWorkspaceState(force: true);
+	private void OnWorkspaceRequest()
+	{
+		RecoverPendingRepositoryRenames();
+		EmitWorkspaceState(force: true);
+	}
 
 	// Toggle a file/folder as a favorite. The item is reconstructed from the path so the store keeps a display
 	// label and the file/folder distinction even though the webview only sends the path + the new flag.
@@ -1837,6 +1841,490 @@ public sealed partial class HostController
 			}
 		});
 	}
+
+	private void OnCreateRepoBranch(IpcMessage message)
+	{
+		RepoCreateBranchPayload? payload = SafeGetPayload<RepoCreateBranchPayload>(message);
+		if (payload is null || !IsValidLocalBranchName(payload.Branch)
+			|| !TryGetRegisteredClone(payload.Id, payload.ClonePath, out RegisteredRepo repo, out RegisteredClone clone)
+			|| clone.CurrentBranch is null
+			|| _repositoryInspector is not ILocalRepositoryManager manager)
+		{
+			SendError("Choose a valid new working-line name.");
+			CompleteRepositoryOperation(payload?.RequestId ?? 0);
+			return;
+		}
+		RunRepositoryMutation(
+			payload.Id,
+			payload.RequestId,
+			clone.Path,
+			transition => manager.CreateBranch(
+				clone.Path, repo.Url, clone.CurrentBranch, payload.Branch,
+				() => PersistDocumentRepositoryTransition(transition),
+				() => Interlocked.Increment(ref _draftGeneration)),
+			(repoState, currentClone) => _workspace?.TryUpdateRepoClone(
+				payload.Id, repo.Url, clone.Path, clone.Id,
+				ToRegisteredClone(currentClone.Id, currentClone.Path, repoState),
+				repoState.DefaultBranch) == true,
+			payload.Branch,
+			repo.DefaultBranch);
+	}
+
+	private void OnRenameRepoBranch(IpcMessage message)
+	{
+		RepoRenameBranchPayload? payload = SafeGetPayload<RepoRenameBranchPayload>(message);
+		if (payload is null || !IsValidLocalBranchName(payload.NewBranch)
+			|| !TryGetRegisteredClone(payload.Id, payload.ClonePath, out RegisteredRepo repo, out RegisteredClone clone)
+			|| clone.CurrentBranch is null
+			|| _repositoryInspector is not ILocalRepositoryManager manager)
+		{
+			SendError("Choose a valid new working-line name.");
+			CompleteRepositoryOperation(payload?.RequestId ?? 0);
+			return;
+		}
+		bool renamesCurrent = string.Equals(clone.CurrentBranch, payload.Branch, StringComparison.Ordinal);
+		RunRepositoryMutation(
+			payload.Id,
+			payload.RequestId,
+			clone.Path,
+			transition => manager.RenameBranch(
+				clone.Path, repo.Url, clone.CurrentBranch, payload.Branch, payload.NewBranch,
+				repo.DefaultBranch,
+				() => PersistDocumentRepositoryTransition(transition),
+				() => Interlocked.Increment(ref _draftGeneration)),
+			(repoState, currentClone) => _workspace?.TryRenameRepoBranch(
+				payload.Id, repo.Url, clone.Path, clone.Id,
+				ToRegisteredClone(currentClone.Id, currentClone.Path, repoState),
+				payload.Branch, payload.NewBranch, repoState.DefaultBranch) == true,
+			renamesCurrent ? payload.NewBranch : clone.CurrentBranch,
+			repo.DefaultBranch,
+			rollback: repoState => manager.RenameBranch(
+				clone.Path,
+				repo.Url,
+				repoState.CurrentBranch
+					?? throw new InvalidOperationException("The current working line changed during rename rollback."),
+				payload.NewBranch,
+				payload.Branch,
+				repo.DefaultBranch),
+			prepare: () => _workspace?.TryBeginRepoBranchRename(
+				payload.Id,
+				repo.Url,
+				clone.Path,
+				clone.Id,
+				payload.Branch,
+				payload.NewBranch,
+				repo.DefaultBranch) == true);
+	}
+
+	private void OnRenameRepoClone(IpcMessage message)
+	{
+		RepoRenameClonePayload? payload = SafeGetPayload<RepoRenameClonePayload>(message);
+		if (payload is null || !IsValidLocalCopyName(payload.LocalName)
+			|| !TryGetRegisteredClone(payload.Id, payload.ClonePath, out RegisteredRepo repo, out RegisteredClone clone)
+			|| _repositoryInspector is not ILocalRepositoryManager manager)
+		{
+			SendError("Choose a valid local-copy name.");
+			CompleteRepositoryOperation(payload?.RequestId ?? 0);
+			return;
+		}
+		if (!TryBeginLocalRepositoryAction(payload.Id, out CancellationTokenSource cts, out long generation))
+		{
+			SendError("Another local repository action is still finishing. Try again in a moment.");
+			CompleteRepositoryOperation(payload.RequestId);
+			return;
+		}
+		_ = Task.Run(() =>
+		{
+			DocumentRepositoryTransition? transition = null;
+			CloneRenameResult? movedClone = null;
+			string? intendedPath = null;
+			bool registrationCommitted = false;
+			bool renameJournaled = false;
+			try
+			{
+				intendedPath = Path.GetFullPath(Path.Combine(
+					Path.GetDirectoryName(Path.GetFullPath(clone.Path))!, payload.LocalName));
+				renameJournaled = _workspace?.TryBeginRepoCloneRename(
+					payload.Id,
+					repo.Url,
+					clone.Path,
+					clone.Id,
+					payload.LocalName,
+					intendedPath,
+					repo.DefaultBranch) == true;
+				if (!renameJournaled)
+				{
+					throw new InvalidOperationException(
+						"The local-copy rename could not be prepared safely. Try again.");
+				}
+				transition = BeginDocumentRepositoryTransition(clone.Path);
+				lock (_repoGate)
+				{
+					movedClone = manager.RenameClone(
+						clone.Path, repo.Url, repo.DefaultBranch, payload.LocalName,
+						() => PersistDocumentRepositoryTransition(transition),
+						() => Interlocked.Increment(ref _draftGeneration));
+				}
+				RegisteredClone renamed = ToRegisteredClone(
+					payload.LocalName, movedClone.Path, movedClone.Repository);
+				if (_workspace?.TryRenameRepoClone(
+					payload.Id, repo.Url, clone.Path, clone.Id, renamed,
+					movedClone.Repository.DefaultBranch) != true)
+				{
+					throw new InvalidOperationException(
+						"The local copy could not be saved under its new name.");
+				}
+				registrationCommitted = true;
+				renameJournaled = false;
+				if (!CanPublishLocalRepositoryAction(cts, generation, payload.Id))
+				{
+					return;
+				}
+				string? movedDocument = transition is null
+					? null
+					: Path.Combine(movedClone.Path, Path.GetRelativePath(clone.Path, transition.Path));
+				string? movedTreeRoot;
+				lock (_sync)
+				{
+					movedTreeRoot = RemapPathInsideRoot(_workspaceRoot, clone.Path, movedClone.Path);
+					if (movedTreeRoot is not null)
+					{
+						_workspaceRoot = movedTreeRoot;
+						_workspaceRootGeneration++;
+					}
+					string? movedRepoRoot = RemapPathInsideRoot(_repoRoot, clone.Path, movedClone.Path);
+					if (movedRepoRoot is not null)
+					{
+						_repoRoot = movedRepoRoot;
+					}
+				}
+				if (transition is not null && movedDocument is not null)
+				{
+					transition = new DocumentRepositoryTransition(movedDocument, transition.Text, transition.LineEnding);
+					CompleteDocumentRepositoryTransition(
+						transition,
+						string.Equals(movedClone.Repository.CurrentBranch, repo.DefaultBranch, StringComparison.OrdinalIgnoreCase)
+							? null
+							: movedClone.Repository.CurrentBranch,
+						repo.DefaultBranch);
+					transition = null;
+				}
+				if (movedTreeRoot is not null)
+				{
+					EmitTree(movedTreeRoot);
+				}
+				EmitWorkspaceState();
+				SendWorkspaceContext();
+			}
+			catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException
+				or IOException or UnauthorizedAccessException or ArgumentException)
+			{
+				if (movedClone is not null && !registrationCommitted)
+				{
+					try
+					{
+						RollbackCloneRename(manager, movedClone.Path, repo.Url, repo.DefaultBranch, clone.Path);
+						movedClone = null;
+					}
+					catch (Exception rollbackError) when (rollbackError is LibGit2SharpException
+						or InvalidOperationException or IOException or UnauthorizedAccessException
+						or ArgumentException)
+					{
+						_logger.LogError(rollbackError,
+							"Could not restore local repository copy after rename failure");
+					}
+				}
+				RecoverPendingRepositoryRenames(allowActiveAction: true);
+				renameJournaled = _workspace?.PendingRepositoryRenames().Any(pending =>
+					pending.Kind == "clone"
+					&& string.Equals(pending.RepositoryId, payload.Id, StringComparison.OrdinalIgnoreCase)
+					&& SameFullPath(pending.ClonePath, clone.Path)) == true;
+				bool recoveredUnderNewName = intendedPath is not null
+					&& _workspace?.FindRepo(payload.Id)?.Clones.Any(candidate =>
+						string.Equals(candidate.Id, payload.LocalName, StringComparison.Ordinal)
+						&& SameFullPath(candidate.Path, intendedPath)) == true;
+				bool originalInPlace = _cloner?.IsCloneOf(clone.Path, repo.Url) == true;
+				_logger.LogWarning(ex, "Could not rename local repository copy");
+				SendError(recoveredUnderNewName
+					? $"{ex.Message} SpecDesk recovered the local copy under its new name."
+					: originalInPlace
+					? $"{ex.Message} The original name is still in place."
+					: renameJournaled
+						? $"{ex.Message} SpecDesk will finish recovering this local copy when it starts again."
+						: ex.Message);
+			}
+			finally
+			{
+				CancelDocumentRepositoryTransition(transition);
+				CompleteRepositoryOperation(payload.RequestId);
+				FinishLocalRepositoryActionAfterOutbound(cts);
+			}
+		});
+	}
+
+	private static void RollbackCloneRename(
+		ILocalRepositoryManager manager,
+		string movedPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string originalPath)
+	{
+		string originalName = Path.GetFileName(Path.TrimEndingDirectorySeparator(originalPath));
+		_ = manager.RenameClone(
+			movedPath, expectedRepositoryUrl, knownDefaultBranch, originalName);
+	}
+
+	private void RecoverPendingRepositoryRenames(bool allowActiveAction = false)
+	{
+		if (_workspace is null || _repositoryInspector is not ILocalRepositoryManager manager)
+		{
+			return;
+		}
+		lock (_sync)
+		{
+			if (!allowActiveAction && _localRepositoryActionCts is not null)
+			{
+				return;
+			}
+		}
+		foreach (WorkspaceStore.PendingRepositoryRename pending in _workspace.PendingRepositoryRenames())
+		{
+			try
+			{
+				if (_cloner is null)
+				{
+					continue;
+				}
+				if (pending.Kind == "clone")
+				{
+					if (pending.NewPath is not string newPath)
+					{
+						continue;
+					}
+					bool newEntryExists = Directory.Exists(newPath) || File.Exists(newPath);
+					bool oldIsExpected = Directory.Exists(pending.ClonePath)
+						&& _cloner.IsCloneOf(pending.ClonePath, pending.RepositoryUrl);
+					bool newIsExpected = Directory.Exists(newPath)
+						&& _cloner.IsCloneOf(newPath, pending.RepositoryUrl);
+					if (oldIsExpected && !newEntryExists)
+					{
+						_ = _workspace.TryCancelRepositoryRename(
+							pending.Kind, pending.RepositoryId, pending.ClonePath);
+						continue;
+					}
+					if (!newIsExpected || oldIsExpected)
+					{
+						continue;
+					}
+					LocalRepositoryInfo recovered;
+					lock (_repoGate)
+					{
+						recovered = manager.InspectExpected(
+							newPath, pending.RepositoryUrl, pending.DefaultBranch);
+					}
+					_ = _workspace.TryRenameRepoClone(
+						pending.RepositoryId,
+						pending.RepositoryUrl,
+						pending.ClonePath,
+						pending.CloneId,
+						ToRegisteredClone(pending.NewName, newPath, recovered),
+						recovered.DefaultBranch);
+					continue;
+				}
+
+				if (!Directory.Exists(pending.ClonePath))
+				{
+					continue;
+				}
+				LocalRepositoryInfo branchState;
+				lock (_repoGate)
+				{
+					branchState = manager.InspectExpected(
+						pending.ClonePath, pending.RepositoryUrl, pending.DefaultBranch);
+				}
+				bool hasOriginalBranch = branchState.Branches.Any(branch => string.Equals(
+					branch.Name, pending.OriginalBranch, StringComparison.Ordinal));
+				bool hasNewBranch = branchState.Branches.Any(branch => string.Equals(
+					branch.Name, pending.NewName, StringComparison.Ordinal));
+				if (hasOriginalBranch && !hasNewBranch)
+				{
+					_ = _workspace.TryCancelRepositoryRename(
+						pending.Kind, pending.RepositoryId, pending.ClonePath);
+				}
+				else if (!hasOriginalBranch && hasNewBranch)
+				{
+					_ = _workspace.TryRenameRepoBranch(
+						pending.RepositoryId,
+						pending.RepositoryUrl,
+						pending.ClonePath,
+						pending.CloneId,
+						ToRegisteredClone(pending.CloneId, pending.ClonePath, branchState),
+						pending.OriginalBranch!,
+						pending.NewName,
+						branchState.DefaultBranch);
+				}
+			}
+			catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException
+				or IOException or UnauthorizedAccessException or ArgumentException)
+			{
+				_logger.LogWarning(ex,
+					"Could not recover interrupted {Kind} rename for {RepositoryId}",
+					pending.Kind,
+					pending.RepositoryId);
+			}
+		}
+	}
+
+	private static string? RemapPathInsideRoot(string? path, string oldRoot, string newRoot)
+	{
+		if (path is null)
+		{
+			return null;
+		}
+		string pathFull = Path.GetFullPath(path);
+		string oldFull = Path.GetFullPath(oldRoot);
+		if (!SameFullPath(pathFull, oldFull) && !AppAssetResolver.IsInside(oldFull, pathFull))
+		{
+			return null;
+		}
+		return SameFullPath(pathFull, oldFull)
+			? Path.GetFullPath(newRoot)
+			: Path.GetFullPath(Path.Combine(newRoot, Path.GetRelativePath(oldFull, pathFull)));
+	}
+
+	private void RunRepositoryMutation(
+		string id,
+		long requestId,
+		string clonePath,
+		Func<DocumentRepositoryTransition?, LocalRepositoryInfo> mutate,
+		Func<LocalRepositoryInfo, RegisteredClone, bool> commit,
+		string? resumedBranch,
+		string resumedDefaultBranch,
+		Func<LocalRepositoryInfo, LocalRepositoryInfo>? rollback = null,
+		Func<bool>? prepare = null)
+	{
+		if (!TryBeginNavigatingLocalRepositoryAction(
+			id,
+			out CancellationTokenSource cts,
+			out long generation,
+			out long navigationGeneration))
+		{
+			SendError("Another local repository action is still finishing. Try again in a moment.");
+			CompleteRepositoryOperation(requestId);
+			return;
+		}
+		_ = Task.Run(() =>
+		{
+			DocumentRepositoryTransition? transition = null;
+			LocalRepositoryInfo? result = null;
+			bool registrationCommitted = false;
+			try
+			{
+				if (prepare is not null && !prepare())
+				{
+					throw new InvalidOperationException(
+						"The working-line rename could not be prepared safely. Try again.");
+				}
+				transition = BeginDocumentRepositoryTransition(clonePath);
+				lock (_repoGate)
+				{
+					result = mutate(transition);
+				}
+				RegisteredClone? current = _workspace?.FindRepo(id)?.Clones.FirstOrDefault(candidate =>
+					SameFullPath(candidate.Path, clonePath));
+				if (!CanPublishLocalRepositoryAction(cts, generation, id)
+					|| current is null
+					|| !commit(result, current))
+				{
+					throw new InvalidOperationException("The local-copy registration changed while the working line was being updated.");
+				}
+				registrationCommitted = true;
+				CompleteDocumentRepositoryTransition(
+					transition,
+					string.Equals(resumedBranch, resumedDefaultBranch, StringComparison.OrdinalIgnoreCase)
+						? null
+						: resumedBranch,
+					resumedDefaultBranch);
+				transition = null;
+				EmitWorkspaceState();
+				SendWorkspaceContext();
+				WorkspaceStore.RepositoryRegistrationSnapshot? registrationIntent =
+					_workspace?.CaptureRepoRegistration(id);
+				RegisteredRepo? repo = registrationIntent?.Repository;
+				int slash = id.IndexOf('/', StringComparison.Ordinal);
+				if (repo is not null && slash > 0 && slash < id.Length - 1)
+				{
+					PreparedOpenedRepository prepared = PrepareOpenedRepository(
+						id[..slash], id[(slash + 1)..], clonePath, repo);
+					if (TryCommitOpenedRepository(
+						prepared,
+						registrationIntent,
+						requireStillRegistered: true,
+						navigationGeneration,
+						out WorkspaceRootPublication? publication,
+						localActionCts: cts,
+						localActionGeneration: generation)
+						&& publication is { } committedPublication)
+					{
+						PublishWorkspaceFolder(committedPublication);
+					}
+				}
+			}
+			catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException
+				or IOException or UnauthorizedAccessException or ArgumentException)
+			{
+				if (result is not null && !registrationCommitted && rollback is not null)
+				{
+					try
+					{
+						lock (_repoGate)
+						{
+							_ = rollback(result);
+						}
+					}
+					catch (Exception rollbackError) when (rollbackError is LibGit2SharpException
+						or InvalidOperationException or IOException or UnauthorizedAccessException
+						or ArgumentException)
+					{
+						_logger.LogError(rollbackError,
+							"Could not restore working line after rename failure");
+					}
+				}
+				RecoverPendingRepositoryRenames(allowActiveAction: true);
+				_logger.LogWarning(ex, "Could not update local repository working line");
+				SendError(ex.Message);
+			}
+			finally
+			{
+				CancelDocumentRepositoryTransition(transition);
+				CompleteRepositoryOperation(requestId);
+				FinishLocalRepositoryActionAfterOutbound(cts);
+			}
+		});
+	}
+
+	private static RegisteredClone ToRegisteredClone(
+		string id, string path, LocalRepositoryInfo info) =>
+		new(
+			id,
+			path,
+			info.CurrentBranch,
+			info.Branches.Select(branch => new RegisteredBranch(
+				branch.Name, ToRepositoryStatusPayload(branch.Status), branch.CanDelete)).ToArray(),
+			ToRepositoryStatusPayload(info.Status));
+
+	private static bool IsValidLocalBranchName(string value) =>
+		!string.IsNullOrWhiteSpace(value)
+		&& value.Length <= 240
+		&& !value.Any(char.IsControl)
+		&& LibGit2Sharp.Reference.IsValidName($"refs/heads/{value}");
+
+	private static bool IsValidLocalCopyName(string value) =>
+		!string.IsNullOrWhiteSpace(value)
+		&& value.Length <= 80
+		&& value is not "." and not ".."
+		&& value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+		&& value[^1] is not ' ' and not '.';
 
 	private sealed record RepositoryRefreshTarget(
 		string Id,

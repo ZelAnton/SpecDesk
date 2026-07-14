@@ -279,6 +279,50 @@ public sealed class HostControllerGitHubTests
         }
     }
 
+	private sealed class AuthorizedThenBlockingGitHubAuth : IGitHubAuth
+	{
+		private int _flow;
+		public TaskCompletionSource SecondFlowStarted { get; } =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+		{
+			int flow = Interlocked.Increment(ref _flow);
+			return Task.FromResult(new DeviceCodePrompt(
+				$"CODE-{flow}", new Uri("https://github.com/login/device"),
+				TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5), $"device-{flow}"));
+		}
+
+		public async Task<SignInResult> AwaitAuthorizationAsync(
+			DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+		{
+			if (prompt.UserCode == "CODE-1")
+			{
+				return SignInResult.Authorized("old-user");
+			}
+			SecondFlowStarted.SetResult();
+			try
+			{
+				await Task.Delay(Timeout.Infinite, cancellationToken);
+			}
+			catch (OperationCanceledException)
+			{
+				return SignInResult.TimedOut();
+			}
+			return SignInResult.TimedOut();
+		}
+
+		public bool IsSignedIn() => false;
+		public string? SignedInLogin() => null;
+		public Task<T> WithAccessTokenAsync<T>(
+			Func<string, CancellationToken, Task<T>> use,
+			CancellationToken cancellationToken = default) =>
+			use("gho_test", cancellationToken);
+		public void SignOut()
+		{
+		}
+	}
+
     private sealed class RacingStartGitHubAuth : IGitHubAuth
     {
         private int _startCount;
@@ -375,25 +419,78 @@ public sealed class HostControllerGitHubTests
 		IRepositoryCloner? cloner = null,
 		Action<string>? beforeSend = null,
 		IGitHubRepositoryCatalog? repositoryCatalog = null,
-		IFileDialogs? dialogs = null)
+		IFileDialogs? dialogs = null,
+		bool acknowledgeAccount = true)
     {
-        List<string> sent = [];
-        object gate = new();
+		List<string> sent = [];
+		object gate = new();
+		HostController? controller = null;
 		void Send(string json)
 		{
 			beforeSend?.Invoke(json);
 			lock (gate)
-            {
-                sent.Add(json);
-            }
-        }
+			{
+				sent.Add(json);
+			}
+			IpcMessage? message = IpcSerializer.TryDeserialize(json);
+			string? publicationId = message?.Kind == MessageKinds.GitHubAccount
+				? message.GetPayload<GitHubAccountPayload>()?.PublicationId
+				: null;
+			if (acknowledgeAccount && publicationId is not null)
+			{
+				controller!.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.GitHubAccountApplied,
+					new GitHubAccountAppliedPayload(publicationId)));
+			}
+		}
 
-        HostController controller = new(
+		controller = new HostController(
             StubRender, Send, dialogs ?? new NoDialogs(), (_, _, _, _, _) => null,
             new FakeVersioning(), NullLogger<HostController>.Instance,
             auth: auth, workspace: workspace, cloner: cloner, repositoryCatalog: repositoryCatalog);
-        return (controller, sent, gate);
-    }
+		return (controller, sent, gate);
+	}
+
+	[Test]
+	public void PendingRepositoryActionWaitsForTheMatchingAppliedAccountBoundary()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-account-ack-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, List<string> sent, object gate) = Build(
+				auth, workspace, acknowledgeAccount: false);
+			using (controller)
+			{
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+				GitHubAccountPayload account = WaitForKind(sent, gate, MessageKinds.GitHubAccount)!
+					.GetPayload<GitHubAccountPayload>()!;
+				Assert.That(account.PublicationId, Is.Not.Null.And.Not.Empty);
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.GitHubAccountApplied,
+					new GitHubAccountAppliedPayload("wrong-publication")));
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+
+				controller.OnMessage(IpcSerializer.SerializeEvent(
+					MessageKinds.GitHubAccountApplied,
+					new GitHubAccountAppliedPayload(account.PublicationId!)));
+				Assert.That(
+					SpinWait.SpinUntil(
+						() => workspace.FindRepo("octo/specs") is not null,
+						TimeSpan.FromSeconds(2)),
+					Is.True);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
 
     // Handlers reply from a background task; poll briefly for the expected message.
     private static IpcMessage? WaitForKind(List<string> sent, object gate, string kind)
@@ -905,6 +1002,114 @@ public sealed class HostControllerGitHubTests
 				}
 				Assert.That(resumed.Wait(TimeSpan.FromSeconds(2)), Is.True);
 
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void SignOutAfterAuthorizationTakesPendingActionPreventsStaleAccountPublication()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-signout-after-take-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"));
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, List<string> sent, object gate) = Build(auth, workspace);
+			using (controller)
+			using (ManualResetEventSlim taken = new(false))
+			using (ManualResetEventSlim release = new(false))
+			{
+				controller.PendingRepoActionsTakenForTest = taken;
+				controller.PendingRepoActionsResumeForTest = release;
+				try
+				{
+					controller.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+					Assert.That(taken.Wait(TimeSpan.FromSeconds(2)), Is.True);
+					controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+				}
+				finally
+				{
+					release.Set();
+				}
+
+				Assert.That(SpinWait.SpinUntil(() =>
+				{
+					lock (gate)
+					{
+						return sent.Any(json =>
+							IpcSerializer.TryDeserialize(json)?.Kind == MessageKinds.GitHubAccount);
+					}
+				}, TimeSpan.FromSeconds(2)), Is.True);
+				Thread.Sleep(100);
+				lock (gate)
+				{
+					GitHubAccountPayload[] accounts = sent
+						.Select(IpcSerializer.TryDeserialize)
+						.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+						.Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+						.ToArray();
+					Assert.That(accounts, Is.Not.Empty);
+					Assert.That(accounts[^1].SignedIn, Is.False);
+					Assert.That(accounts.Any(account => account.SignedIn), Is.False);
+				}
+				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
+			}
+		}
+		finally
+		{
+			Directory.Delete(root, recursive: true);
+		}
+	}
+
+	[Test]
+	public void CancelingANewerSignInRetiresAnOlderClaimedAccountPublication()
+	{
+		string root = Path.Combine(Path.GetTempPath(), "specdesk-auth-newer-cancel-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		try
+		{
+			AuthorizedThenBlockingGitHubAuth auth = new();
+			WorkspaceStore workspace = new(Path.Combine(root, "workspace.json"));
+			(HostController controller, List<string> sent, object gate) = Build(auth, workspace);
+			using (controller)
+			using (ManualResetEventSlim taken = new(false))
+			using (ManualResetEventSlim release = new(false))
+			{
+				controller.PendingRepoActionsTakenForTest = taken;
+				controller.PendingRepoActionsResumeForTest = release;
+				try
+				{
+					controller.OnMessage(IpcSerializer.SerializeEvent(
+						MessageKinds.RepoRegister, new RegisterRepoPayload("octo/specs")));
+					Assert.That(taken.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+					controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+					Assert.That(auth.SecondFlowStarted.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+					controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignInCancel));
+				}
+				finally
+				{
+					release.Set();
+				}
+
+				Thread.Sleep(150);
+				lock (gate)
+				{
+					GitHubAccountPayload[] accounts = sent
+						.Select(IpcSerializer.TryDeserialize)
+						.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+						.Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+						.ToArray();
+					Assert.That(accounts, Is.Not.Empty);
+					Assert.That(accounts.Any(account => account.SignedIn), Is.False);
+				}
 				Assert.That(workspace.FindRepo("octo/specs"), Is.Null);
 			}
 		}

@@ -1224,6 +1224,7 @@ function wire(): void {
       if (workspaceContextStatus) {
         workspaceContextStatus.hidden = !(localVisible || branchVisible || fileVisible);
       }
+      fileTree?.setContext(payload);
     });
   }
 
@@ -1352,6 +1353,9 @@ function wire(): void {
         }
         reviewRequestsPanel?.setSignedIn(payload.signedIn);
         pullRequestsPanel?.setSignedIn(payload.signedIn);
+        if (payload.publicationId !== undefined) {
+          ipc.send(Kinds.githubAccountApplied, { publicationId: payload.publicationId });
+        }
       }
     });
   }
@@ -1678,8 +1682,13 @@ function wire(): void {
     const files = new FileTree({
       onOpenFile: (path) => openDocument(path),
       onOpenFolder: () => openFolder(),
+      onRequestLevel: (path, requestId) =>
+        path === undefined
+          ? ipc.send(Kinds.treeRequest, { requestId })
+          : ipc.send(Kinds.treeRequest, { path, requestId }),
       onToggleFavorite: (item, favorite) =>
         ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
+      onShowEditor: () => centralFrame?.show(CENTRAL_VIEW_EDITOR),
     });
     fileTree = files;
 
@@ -1770,6 +1779,28 @@ function wire(): void {
         }
         revealWorkspaceFiles();
         ipc.send(Kinds.repoSwitchBranch, { id: repo.id, clonePath, branch, requestId });
+      },
+      onCreateBranch: (repo, clonePath, branch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        revealWorkspaceFiles();
+        ipc.send(Kinds.repoCreateBranch, { id: repo.id, clonePath, branch, requestId });
+      },
+      onRenameClone: (repo, clonePath, localName) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        ipc.send(Kinds.repoRenameClone, { id: repo.id, clonePath, localName, requestId });
+      },
+      onRenameBranch: (repo, clonePath, branch, newBranch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        ipc.send(Kinds.repoRenameBranch, {
+          id: repo.id,
+          clonePath,
+          branch,
+          newBranch,
+          requestId,
+        });
       },
       onOpenExistingClone: (url, clonePath) => ipc.send(Kinds.repoOpen, { url, clonePath }),
       onToggleFavorite: (repo, favorite) =>
