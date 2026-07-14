@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
+- The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
+- Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
+
 ### Fixed
 
+- Interrupted or failed local-copy and working-line renames now recover the matching Git state, saved registration, favorites, and recent paths instead of leaving an unusable partial rename.
 - Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
 - Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
 - Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.
@@ -28,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Each local copy now offers plain-language Get updates and Share changes actions for its current working line.
+- Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
 - Local copies and working lines now show available upstream updates and known conflicts alongside local-work indicators.
 - Repositories now has one Refresh action that checks every registered local copy for upstream updates.
 - The Start page now shows favorite repositories, folders, and specs alongside recent work.

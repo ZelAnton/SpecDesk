@@ -99,6 +99,97 @@ public sealed class LocalRepositoryManagerTests
 	}
 
 	[Test]
+	public void CreateBranch_CreatesAndChecksOutALocalWorkingLineWithoutLosingUnfinishedFiles()
+	{
+		File.WriteAllText(Path.Combine(_root, "notes.txt"), "unfinished");
+
+		LocalRepositoryInfo result = _manager.CreateBranch(
+			_root, _root, _baseBranch, "q3-review");
+
+		using Repository repository = new(_root);
+		Assert.Multiple(() =>
+		{
+			Assert.That(result.CurrentBranch, Is.EqualTo("q3-review"));
+			Assert.That(repository.Head.FriendlyName, Is.EqualTo("q3-review"));
+			Assert.That(repository.Branches["q3-review"], Is.Not.Null);
+			Assert.That(File.ReadAllText(Path.Combine(_root, "notes.txt")), Is.EqualTo("unfinished"));
+		});
+	}
+
+	[Test]
+	public void RenameBranch_UpdatesTheCurrentLocalNameAndRejectsTheMainWorkingLine()
+	{
+		using (Repository repository = new(_root))
+		{
+			Commands.Checkout(repository, "feature");
+		}
+
+		LocalRepositoryInfo result = _manager.RenameBranch(
+			_root, _root, "feature", "feature", "approved-draft", _baseBranch);
+
+		using Repository inspected = new(_root);
+		Assert.Multiple(() =>
+		{
+			Assert.That(result.CurrentBranch, Is.EqualTo("approved-draft"));
+			Assert.That(inspected.Head.FriendlyName, Is.EqualTo("approved-draft"));
+			Assert.That(inspected.Branches["feature"], Is.Null);
+			Assert.That(inspected.Branches["approved-draft"], Is.Not.Null);
+			Assert.That(
+				() => _manager.RenameBranch(
+					_root, _root, "approved-draft", _baseBranch, "renamed-main", _baseBranch),
+				Throws.InvalidOperationException);
+		});
+	}
+
+	[Test]
+	public void RenameClone_MovesOnlyTheExactLocalFolderAndReturnsItsInspectedState()
+	{
+		string original = _root;
+		CloneRenameResult result = _manager.RenameClone(
+			original, original, _baseBranch, "quarterly-specs");
+		_root = result.Path;
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(Directory.Exists(original), Is.False);
+			Assert.That(Directory.Exists(result.Path), Is.True);
+			Assert.That(Path.GetFileName(result.Path), Is.EqualTo("quarterly-specs"));
+			Assert.That(result.Repository.DefaultBranch, Is.EqualTo(_baseBranch));
+			Assert.That(File.ReadAllText(Path.Combine(result.Path, "spec.md")), Is.EqualTo("base"));
+		});
+	}
+
+	[Test]
+	public void RenameClone_LinkedWorktreeLeavesBothTreesInPlace()
+	{
+		string linkedPath = _root + "-linked-rename";
+		try
+		{
+			using (Repository repository = new(_root))
+			{
+				repository.Worktrees.Add("feature", "feature-linked-rename", linkedPath, isLocked: false);
+			}
+
+			RepositoryHasLinkedWorktreesException? error = Assert.Throws<RepositoryHasLinkedWorktreesException>(
+				() => _manager.RenameClone(_root, _root, _baseBranch, "renamed-with-linked-copy"));
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(error!.LinkedWorktrees, Has.Count.EqualTo(1));
+				Assert.That(Repository.IsValid(_root), Is.True);
+				Assert.That(Repository.IsValid(linkedPath), Is.True);
+				Assert.That(Directory.Exists(Path.Combine(
+					Directory.GetParent(_root)!.FullName,
+					"renamed-with-linked-copy")), Is.False);
+			});
+		}
+		finally
+		{
+			DeleteTestTree(linkedPath);
+		}
+	}
+
+	[Test]
 	public void SwitchBranchSafely_CreatesALocalTrackingBranchFromRemoteInventory()
 	{
 		using (Repository repository = new(_root))
@@ -781,6 +872,19 @@ public sealed class LocalRepositoryManagerTests
 			Assert.That(info.Branches.Single(branch => branch.Name == "feature").CanDelete, Is.True);
 			Assert.That(info.Branches.Single(branch => branch.Name == "remote-only").CanDelete, Is.False);
 		});
+	}
+
+	[Test]
+	public void InspectExpected_ValidatesOriginBeforeReturningRepositoryState()
+	{
+		LocalRepositoryInfo info = _manager.InspectExpected(_root, _root, _baseBranch);
+
+		Assert.That(info.DefaultBranch, Is.EqualTo(_baseBranch));
+		Assert.Throws<RepositoryIdentityMismatchException>(() =>
+			_manager.InspectExpected(
+				_root,
+				"https://github.com/other/repository.git",
+				_baseBranch));
 	}
 
 	[Test]

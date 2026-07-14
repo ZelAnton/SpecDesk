@@ -43,6 +43,10 @@ function ready() {
   const onBrowseRepo = vi.fn<(repo: RegisteredRepo) => void>();
   const onOpenClone = vi.fn<(repo: RegisteredRepo, path: string) => void>();
   const onSwitchBranch = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
+  const onCreateBranch = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
+  const onRenameClone = vi.fn<(repo: RegisteredRepo, path: string, localName: string) => void>();
+  const onRenameBranch =
+    vi.fn<(repo: RegisteredRepo, path: string, branch: string, newBranch: string) => void>();
   const onOpenExistingClone = vi.fn<(url: string, path: string) => void>();
   const onToggleFavorite = vi.fn<(repo: RegisteredRepo, favorite: boolean) => void>();
   const onToggleCloneFavorite =
@@ -67,6 +71,9 @@ function ready() {
     onBrowseRepo,
     onOpenClone,
     onSwitchBranch,
+    onCreateBranch,
+    onRenameClone,
+    onRenameBranch,
     onOpenExistingClone,
     onToggleFavorite,
     onToggleCloneFavorite,
@@ -98,6 +105,9 @@ function ready() {
     onBrowseRepo,
     onOpenClone,
     onSwitchBranch,
+    onCreateBranch,
+    onRenameClone,
+    onRenameBranch,
     onOpenExistingClone,
     onToggleFavorite,
     onToggleCloneFavorite,
@@ -134,7 +144,7 @@ describe("RepositoriesPanel", () => {
     panel.focusPrimary();
     expect(document.activeElement).toBe(input);
     panel.setState(STATE);
-    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(true);
+    expect(body.querySelector(".repo-add")?.tagName).toBe("SECTION");
   });
 
   it("refreshes all registered local copies from one action", () => {
@@ -168,14 +178,14 @@ describe("RepositoriesPanel", () => {
     expect(refresh?.disabled).toBe(true);
   });
 
-  it("gets and shares changes only for the clone's current working line", () => {
+  it("keeps synchronization status while removing manual Get and Share actions", () => {
     const { panel, body, onPull, onPush } = ready();
     panel.setState(STATE);
 
-    body.querySelector<HTMLButtonElement>(".repo-pull")?.click();
-    body.querySelector<HTMLButtonElement>(".repo-push")?.click();
-    expect(onPull).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "main");
-    expect(onPush).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "main");
+    expect(body.querySelector(".repo-pull")).toBeNull();
+    expect(body.querySelector(".repo-push")).toBeNull();
+    expect(onPull).not.toHaveBeenCalled();
+    expect(onPush).not.toHaveBeenCalled();
 
     panel.setState({
       ...STATE,
@@ -186,14 +196,8 @@ describe("RepositoriesPanel", () => {
         },
       ],
     });
-    expect(body.querySelector<HTMLButtonElement>(".repo-pull")?.disabled).toBe(true);
-    expect(body.querySelector<HTMLButtonElement>(".repo-push")?.disabled).toBe(true);
-    expect(body.querySelector(".repo-pull")?.getAttribute("aria-label")).toContain(
-      "no current working line",
-    );
-    expect(body.querySelector(".repo-push")?.getAttribute("aria-label")).toContain(
-      "no current working line",
-    );
+    expect(body.querySelector(".repo-pull")).toBeNull();
+    expect(body.querySelector(".repo-push")).toBeNull();
   });
 
   it("retains and refreshes the managed clone entry until a matching success state arrives", () => {
@@ -748,12 +752,12 @@ describe("RepositoriesPanel", () => {
     expect(body.querySelector(".repo-panel-actions span")?.textContent).toBe(
       "1 repository · 1 local copy",
     );
-    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(false);
+    expect(body.querySelector(".repo-add")?.tagName).toBe("SECTION");
     open?.click();
     expect(onBrowseRepo).toHaveBeenCalledWith(REPO);
 
     const remove = body.querySelector<HTMLButtonElement>(".repo-remove");
-    expect(remove?.getAttribute("aria-label")).toBe("Forget repository acme/specs");
+    expect(remove?.getAttribute("aria-label")).toBe("Remove repository acme/specs from SpecDesk");
     remove?.click();
     expect(onUnregister).toHaveBeenCalledWith("acme/specs");
   });
@@ -770,14 +774,128 @@ describe("RepositoriesPanel", () => {
     expect(onOpenClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
     body.querySelectorAll<HTMLButtonElement>(".repo-branch-open")[1]?.click();
     expect(onSwitchBranch).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "draft");
-    body.querySelector<HTMLButtonElement>(".repo-clone-action")?.click();
-    expect(body.querySelector<HTMLDetailsElement>(".repo-add")?.open).toBe(true);
+    body.querySelector<HTMLButtonElement>(".repo-create-copy")?.click();
     expect(input.value).toBe("acme/specs");
     expect(body.querySelector<HTMLInputElement>(".repo-local-name-input")?.value).toBe("specs");
     expect(document.activeElement).toBe(input);
-    expect(body.querySelector(".repo-clone-action")?.getAttribute("aria-label")).toContain(
+    expect(body.querySelector(".repo-create-copy")?.getAttribute("aria-label")).toContain(
       "acme/specs",
     );
+  });
+
+  it("sorts the actual default working line first and keeps the remainder deterministic", () => {
+    const { panel, body } = ready();
+    const firstClone = REPO.clones[0];
+    if (firstClone === undefined) throw new Error("repository fixture requires a local copy");
+    panel.setState({
+      ...STATE,
+      repositories: [
+        {
+          ...REPO,
+          defaultBranch: "trunk",
+          clones: [
+            {
+              ...firstClone,
+              branches: [
+                { name: "zebra", status: CLEAN_STATUS, canDelete: true },
+                { name: "main", status: CLEAN_STATUS, canDelete: true },
+                { name: "trunk", status: CLEAN_STATUS, canDelete: false },
+                { name: "alpha", status: CLEAN_STATUS, canDelete: true },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(
+      [...body.querySelectorAll(".repo-branch-open")].map((button) => button.textContent),
+    ).toEqual(["trunk", "alpha", "main", "zebra"]);
+  });
+
+  it("creates a working line from the progressive local-copy icon", () => {
+    const { panel, body, onCreateBranch } = ready();
+    panel.setState(STATE);
+    body.querySelector<HTMLButtonElement>(".repo-create-branch")?.click();
+    const dialog = body.querySelector<HTMLDialogElement>(".repo-name-dialog");
+    expect(dialog?.open).toBe(true);
+    const input = body.querySelector<HTMLInputElement>(".repo-name-dialog-input");
+    if (!input) throw new Error("name dialog missing");
+    input.value = "q3-review";
+    body
+      .querySelector<HTMLFormElement>(".repo-name-dialog form")
+      ?.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    expect(onCreateBranch).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "q3-review");
+  });
+
+  it("offers entity-specific keyboard context menus and rename actions", () => {
+    const { panel, body, onRenameClone, onRenameBranch, onUnregister } = ready();
+    panel.setState(STATE);
+
+    const clone = body.querySelector<HTMLButtonElement>(".repo-clone-open");
+    clone?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "F10",
+        shiftKey: true,
+        bubbles: true,
+      }),
+    );
+    const menu = body.querySelector<HTMLElement>(".repo-context-menu");
+    expect(menu?.hidden).toBe(false);
+    expect(
+      [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])].map((item) => item.textContent),
+    ).toEqual([
+      "Open local copy",
+      "Create working line…",
+      "Rename local copy…",
+      "Add to favorites",
+      "Delete local copy…",
+    ]);
+    [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+      .find((item) => item.textContent === "Rename local copy…")
+      ?.click();
+    const input = body.querySelector<HTMLInputElement>(".repo-name-dialog-input");
+    if (!input) throw new Error("name dialog missing");
+    input.value = "quarterly-specs";
+    body
+      .querySelector<HTMLFormElement>(".repo-name-dialog form")
+      ?.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    expect(onRenameClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "quarterly-specs");
+
+    const draft = [...body.querySelectorAll<HTMLButtonElement>(".repo-branch-open")].find(
+      (item) => item.textContent === "draft",
+    );
+    draft?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "ContextMenu",
+        bubbles: true,
+      }),
+    );
+    [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+      .find((item) => item.textContent === "Rename working line…")
+      ?.click();
+    input.value = "approved-draft";
+    body
+      .querySelector<HTMLFormElement>(".repo-name-dialog form")
+      ?.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+    expect(onRenameBranch).toHaveBeenCalledWith(
+      REPO,
+      "C:\\repos\\acme-specs",
+      "draft",
+      "approved-draft",
+    );
+
+    body.querySelector<HTMLButtonElement>(".repo-open")?.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 20,
+        clientY: 20,
+      }),
+    );
+    [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+      .find((item) => item.textContent === "Remove from SpecDesk")
+      ?.click();
+    expect(onUnregister).toHaveBeenCalledWith(REPO.id);
   });
 
   it("toggles the repository star and preserves its keyboard focus after state refresh", () => {

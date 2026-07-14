@@ -1715,6 +1715,28 @@ function wire(): void {
         revealWorkspaceFiles();
         ipc.send(Kinds.repoSwitchBranch, { id: repo.id, clonePath, branch, requestId });
       },
+      onCreateBranch: (repo, clonePath, branch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        revealWorkspaceFiles();
+        ipc.send(Kinds.repoCreateBranch, { id: repo.id, clonePath, branch, requestId });
+      },
+      onRenameClone: (repo, clonePath, localName) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        ipc.send(Kinds.repoRenameClone, { id: repo.id, clonePath, localName, requestId });
+      },
+      onRenameBranch: (repo, clonePath, branch, newBranch) => {
+        const requestId = beginRepositoryTransition();
+        if (requestId === null) return;
+        ipc.send(Kinds.repoRenameBranch, {
+          id: repo.id,
+          clonePath,
+          branch,
+          newBranch,
+          requestId,
+        });
+      },
       onOpenExistingClone: (url, clonePath) => ipc.send(Kinds.repoOpen, { url, clonePath }),
       onToggleFavorite: (repo, favorite) =>
         ipc.send(Kinds.workspaceFavorite, {

@@ -11,7 +11,7 @@ namespace SpecDesk.Host;
 /// workspace rather than faulting the app. Loaded once into memory on construction; every public method is
 /// guarded by a private lock, because recents can be recorded on the message thread from more than one handler
 /// (open a file, open a folder) so each read-modify-write-persist must stay atomic. A4 only STORES registered
-/// repos — no GitHub cloning yet (that comes later); URL parsing lives in the caller, not here.
+/// repos, plus a private crash-recovery journal for local renames. URL parsing lives in the caller, not here.
 /// </summary>
 public sealed class WorkspaceStore
 {
@@ -25,7 +25,7 @@ public sealed class WorkspaceStore
 		WriteIndented = true,
 	};
 
-	// Guards the three lists below: the message thread can drive AddRecent (from two open handlers),
+	// Guards the persisted lists below: the message thread can drive AddRecent (from two open handlers),
 	// SetFavorite, RegisterRepo/UnregisterRepo, and State() concurrently, so the whole read-modify-write and
 	// the snapshot must be serialized.
 	private readonly object _sync = new();
@@ -33,6 +33,7 @@ public sealed class WorkspaceStore
 	private readonly List<WorkspaceItem> _recent;
 	private readonly List<WorkspaceItem> _favorites;
 	private readonly List<RegisteredRepo> _repositories;
+	private readonly List<PendingRepositoryRename> _pendingRepositoryRenames;
 	private readonly Dictionary<string, long> _repositoryEpochs = new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, long> _repositoryCloneEpochs = new(StringComparer.OrdinalIgnoreCase);
 	private long _revision;
@@ -43,6 +44,16 @@ public sealed class WorkspaceStore
 		long CloneEpoch,
 		RegisteredRepo? Repository);
 	internal sealed record WorkspaceStateSnapshot(long Revision, WorkspaceStatePayload State);
+	internal sealed record PendingRepositoryRename(
+		string Kind,
+		string RepositoryId,
+		string RepositoryUrl,
+		string ClonePath,
+		string CloneId,
+		string NewName,
+		string? NewPath,
+		string? OriginalBranch,
+		string DefaultBranch);
 
 	public WorkspaceStore(string path)
 	{
@@ -61,6 +72,9 @@ public sealed class WorkspaceStore
 			.Select(item => item!)
 			.ToList() ?? [];
 		_repositories = state?.Repositories?.Select(NormalizeRepo).ToList() ?? [];
+		_pendingRepositoryRenames = state?.PendingRepositoryRenames?
+			.Where(IsValidPendingRepositoryRename)
+			.ToList() ?? [];
 	}
 
 	/// <summary>
@@ -446,6 +460,305 @@ public sealed class WorkspaceStore
 			return true;
 		}
 	}
+
+	internal IReadOnlyList<PendingRepositoryRename> PendingRepositoryRenames()
+	{
+		lock (_sync)
+		{
+			return [.. _pendingRepositoryRenames];
+		}
+	}
+
+	internal bool TryBeginRepoCloneRename(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId,
+		string newName,
+		string newPath,
+		string defaultBranch) =>
+		TryBeginRepositoryRename(new PendingRepositoryRename(
+			"clone", id, expectedUrl, clonePath, expectedCloneId,
+			newName, newPath, null, defaultBranch));
+
+	internal bool TryBeginRepoBranchRename(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId,
+		string oldBranch,
+		string newBranch,
+		string defaultBranch) =>
+		TryBeginRepositoryRename(new PendingRepositoryRename(
+			"branch", id, expectedUrl, clonePath, expectedCloneId,
+			newBranch, null, oldBranch, defaultBranch));
+
+	internal bool TryCancelRepositoryRename(string kind, string repositoryId, string clonePath)
+	{
+		lock (_sync)
+		{
+			int index = _pendingRepositoryRenames.FindIndex(candidate =>
+				candidate.Kind == kind
+				&& string.Equals(candidate.RepositoryId, repositoryId, StringComparison.OrdinalIgnoreCase)
+				&& SamePath(candidate.ClonePath, clonePath));
+			if (index < 0)
+			{
+				return true;
+			}
+			PendingRepositoryRename pending = _pendingRepositoryRenames[index];
+			_pendingRepositoryRenames.RemoveAt(index);
+			if (TrySave())
+			{
+				return true;
+			}
+			_pendingRepositoryRenames.Insert(index, pending);
+			return false;
+		}
+	}
+
+	private bool TryBeginRepositoryRename(PendingRepositoryRename pending)
+	{
+		lock (_sync)
+		{
+			if (!IsValidPendingRepositoryRename(pending)
+				|| _pendingRepositoryRenames.Any(existing =>
+					string.Equals(existing.RepositoryId, pending.RepositoryId, StringComparison.OrdinalIgnoreCase)))
+			{
+				return false;
+			}
+			RegisteredRepo? repo = _repositories.FirstOrDefault(existing =>
+				string.Equals(existing.Id, pending.RepositoryId, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Url, pending.RepositoryUrl, StringComparison.OrdinalIgnoreCase));
+			RegisteredClone? clone = repo?.Clones.FirstOrDefault(existing =>
+				SamePath(existing.Path, pending.ClonePath)
+				&& string.Equals(existing.Id, pending.CloneId, StringComparison.Ordinal));
+			if (clone is null)
+			{
+				return false;
+			}
+			if (pending.Kind == "clone" && (pending.NewPath is null || repo!.Clones.Any(existing =>
+				!SamePath(existing.Path, pending.ClonePath)
+				&& (SamePath(existing.Path, pending.NewPath)
+					|| string.Equals(existing.Id, pending.NewName, StringComparison.OrdinalIgnoreCase)))))
+			{
+				return false;
+			}
+			_pendingRepositoryRenames.Add(pending);
+			if (TrySave())
+			{
+				return true;
+			}
+			_pendingRepositoryRenames.RemoveAt(_pendingRepositoryRenames.Count - 1);
+			return false;
+		}
+	}
+
+	public bool TryRenameRepoClone(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId,
+		RegisteredClone updatedClone,
+		string inferredDefaultBranch)
+	{
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Url, expectedUrl, StringComparison.OrdinalIgnoreCase));
+			if (repoIndex < 0)
+			{
+				return false;
+			}
+			RegisteredRepo repo = _repositories[repoIndex];
+			List<RegisteredClone> clones = [.. repo.Clones];
+			int cloneIndex = clones.FindIndex(existing =>
+				SamePath(existing.Path, clonePath)
+				&& string.Equals(existing.Id, expectedCloneId, StringComparison.Ordinal));
+			if (cloneIndex < 0 || clones.Where((_, index) => index != cloneIndex).Any(clone =>
+				SamePath(clone.Path, updatedClone.Path)
+				|| string.Equals(clone.Id, updatedClone.Id, StringComparison.OrdinalIgnoreCase)))
+			{
+				return false;
+			}
+			RegisteredRepo originalRepo = repo;
+			WorkspaceItem[] originalFavorites = [.. _favorites];
+			WorkspaceItem[] originalRecent = [.. _recent];
+			PendingRepositoryRename[] originalPending = [.. _pendingRepositoryRenames];
+			long originalRevision = _revision;
+			bool hadCloneEpoch = _repositoryCloneEpochs.TryGetValue(id, out long originalCloneEpoch);
+			clones[cloneIndex] = updatedClone;
+			string defaultBranch = string.IsNullOrWhiteSpace(repo.DefaultBranch)
+				? inferredDefaultBranch
+				: repo.DefaultBranch;
+			_repositories[repoIndex] = repo with { Clones = clones, DefaultBranch = defaultBranch };
+			for (int index = 0; index < _favorites.Count; index++)
+			{
+				_favorites[index] = RemapClonePath(_favorites[index], id, clonePath, updatedClone.Path);
+			}
+			for (int index = 0; index < _recent.Count; index++)
+			{
+				_recent[index] = RemapLocalPath(_recent[index], clonePath, updatedClone.Path);
+			}
+			_pendingRepositoryRenames.RemoveAll(pending =>
+				pending.Kind == "clone"
+				&& string.Equals(pending.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& SamePath(pending.ClonePath, clonePath)
+				&& pending.NewPath is not null
+				&& SamePath(pending.NewPath, updatedClone.Path));
+			AdvanceRepositoryCloneEpoch(id);
+			_revision++;
+			if (TrySave())
+			{
+				return true;
+			}
+			_repositories[repoIndex] = originalRepo;
+			_favorites.Clear();
+			_favorites.AddRange(originalFavorites);
+			_recent.Clear();
+			_recent.AddRange(originalRecent);
+			_pendingRepositoryRenames.Clear();
+			_pendingRepositoryRenames.AddRange(originalPending);
+			_revision = originalRevision;
+			if (hadCloneEpoch)
+			{
+				_repositoryCloneEpochs[id] = originalCloneEpoch;
+			}
+			else
+			{
+				_repositoryCloneEpochs.Remove(id);
+			}
+			return false;
+		}
+	}
+
+	public bool TryRenameRepoBranch(
+		string id,
+		string expectedUrl,
+		string clonePath,
+		string expectedCloneId,
+		RegisteredClone updatedClone,
+		string oldBranch,
+		string newBranch,
+		string inferredDefaultBranch)
+	{
+		lock (_sync)
+		{
+			int repoIndex = _repositories.FindIndex(existing =>
+				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(existing.Url, expectedUrl, StringComparison.OrdinalIgnoreCase));
+			if (repoIndex < 0)
+			{
+				return false;
+			}
+			RegisteredRepo repo = _repositories[repoIndex];
+			List<RegisteredClone> clones = [.. repo.Clones];
+			int cloneIndex = clones.FindIndex(existing =>
+				SamePath(existing.Path, clonePath)
+				&& string.Equals(existing.Id, expectedCloneId, StringComparison.Ordinal));
+			if (cloneIndex < 0)
+			{
+				return false;
+			}
+			RegisteredRepo originalRepo = repo;
+			WorkspaceItem[] originalFavorites = [.. _favorites];
+			PendingRepositoryRename[] originalPending = [.. _pendingRepositoryRenames];
+			long originalRevision = _revision;
+			bool hadCloneEpoch = _repositoryCloneEpochs.TryGetValue(id, out long originalCloneEpoch);
+			clones[cloneIndex] = updatedClone;
+			string defaultBranch = string.IsNullOrWhiteSpace(repo.DefaultBranch)
+				? inferredDefaultBranch
+				: repo.DefaultBranch;
+			_repositories[repoIndex] = repo with { Clones = clones, DefaultBranch = defaultBranch };
+			for (int index = 0; index < _favorites.Count; index++)
+			{
+				WorkspaceItem item = _favorites[index];
+				if (string.Equals(item.Kind, "branch", StringComparison.OrdinalIgnoreCase)
+					&& string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+					&& SamePath(item.Path, clonePath)
+					&& string.Equals(item.Branch, oldBranch, StringComparison.Ordinal))
+				{
+					_favorites[index] = item with
+					{
+						Label = $"{updatedClone.Id} · {newBranch}",
+						Branch = newBranch,
+					};
+				}
+			}
+			_pendingRepositoryRenames.RemoveAll(pending =>
+				pending.Kind == "branch"
+				&& string.Equals(pending.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& SamePath(pending.ClonePath, clonePath)
+				&& string.Equals(pending.OriginalBranch, oldBranch, StringComparison.Ordinal)
+				&& string.Equals(pending.NewName, newBranch, StringComparison.Ordinal));
+			AdvanceRepositoryCloneEpoch(id);
+			_revision++;
+			if (TrySave())
+			{
+				return true;
+			}
+			_repositories[repoIndex] = originalRepo;
+			_favorites.Clear();
+			_favorites.AddRange(originalFavorites);
+			_pendingRepositoryRenames.Clear();
+			_pendingRepositoryRenames.AddRange(originalPending);
+			_revision = originalRevision;
+			if (hadCloneEpoch)
+			{
+				_repositoryCloneEpochs[id] = originalCloneEpoch;
+			}
+			else
+			{
+				_repositoryCloneEpochs.Remove(id);
+			}
+			return false;
+		}
+	}
+
+	private static WorkspaceItem RemapClonePath(
+		WorkspaceItem item, string repositoryId, string oldRoot, string newRoot)
+	{
+		bool contained = SamePath(item.Path, oldRoot) || PathIsInside(item.Path, oldRoot);
+		bool repositoryScoped = string.Equals(
+			item.RepositoryId, repositoryId, StringComparison.OrdinalIgnoreCase);
+		bool local = string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase);
+		if (!contained || (!repositoryScoped && !local))
+		{
+			return item;
+		}
+		string remapped = SamePath(item.Path, oldRoot)
+			? newRoot
+			: Path.Combine(newRoot, Path.GetRelativePath(oldRoot, item.Path));
+		return item with
+		{
+			Path = remapped,
+			Label = item.Kind.ToLowerInvariant() switch
+			{
+				"clone" => Path.GetFileName(newRoot),
+				"branch" => $"{Path.GetFileName(newRoot)} · {item.Branch}",
+				"local" => Path.GetFileName(remapped),
+				_ => item.Label,
+			},
+		};
+	}
+
+	private static WorkspaceItem RemapLocalPath(WorkspaceItem item, string oldRoot, string newRoot)
+	{
+		if ((!SamePath(item.Path, oldRoot) && !PathIsInside(item.Path, oldRoot))
+			|| !string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase))
+		{
+			return item;
+		}
+		string remapped = SamePath(item.Path, oldRoot)
+			? newRoot
+			: Path.Combine(newRoot, Path.GetRelativePath(oldRoot, item.Path));
+		return item with
+		{
+			Path = remapped,
+			Label = Path.GetFileName(remapped),
+		};
+	}
+
 	public bool TryRemoveRepoClone(
 		string id,
 		string expectedUrl,
@@ -479,6 +792,9 @@ public sealed class WorkspaceStore
 			_recent.RemoveAll(item =>
 				string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
 				&& (SamePath(item.Path, clonePath) || PathIsInside(item.Path, clonePath)));
+			_pendingRepositoryRenames.RemoveAll(pending =>
+				string.Equals(pending.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& SamePath(pending.ClonePath, clonePath));
 			AdvanceRepositoryCloneEpoch(id);
 			_revision++;
 			Save();
@@ -513,6 +829,9 @@ public sealed class WorkspaceStore
 			changed |= _recent.RemoveAll(item =>
 				string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
 				&& (SamePath(item.Path, clonePath) || PathIsInside(item.Path, clonePath))) > 0;
+			changed |= _pendingRepositoryRenames.RemoveAll(pending =>
+				string.Equals(pending.RepositoryId, id, StringComparison.OrdinalIgnoreCase)
+				&& SamePath(pending.ClonePath, clonePath)) > 0;
 			if (changed)
 			{
 				_revision++;
@@ -575,6 +894,8 @@ public sealed class WorkspaceStore
 				string.Equals(existing.Id, id, StringComparison.OrdinalIgnoreCase)) > 0;
 			changed |= _favorites.RemoveAll(item =>
 				string.Equals(item.RepositoryId, id, StringComparison.OrdinalIgnoreCase)) > 0;
+			changed |= _pendingRepositoryRenames.RemoveAll(pending =>
+				string.Equals(pending.RepositoryId, id, StringComparison.OrdinalIgnoreCase)) > 0;
 			_revision++;
 			if (changed)
 			{
@@ -678,7 +999,9 @@ public sealed class WorkspaceStore
 	// recorded from the MIDDLE of the open path (LoadFile / OnOpenFolder), so a persistence failure (a
 	// read-only or AV-locked workspace.json, a full disk) must NOT throw and unwind the rest of the open —
 	// the in-memory state is already updated and emitted; only the on-disk copy is skipped this time.
-	private void Save()
+	private void Save() => _ = TrySave();
+
+	private bool TrySave()
 	{
 		try
 		{
@@ -690,7 +1013,10 @@ public sealed class WorkspaceStore
 			string temp = _path + ".tmp";
 			File.WriteAllText(
 				temp,
-				JsonSerializer.Serialize(new PersistedState(_recent, _favorites, _repositories), SerializerOptions));
+				JsonSerializer.Serialize(
+					new PersistedState(
+						_recent, _favorites, _repositories, _pendingRepositoryRenames),
+					SerializerOptions));
 			for (int attempt = 1; ; attempt++)
 			{
 				try
@@ -705,11 +1031,13 @@ public sealed class WorkspaceStore
 					Thread.Sleep(attempt * 5);
 				}
 			}
+			return true;
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
 		{
 			// Swallowed by design (see above): the workspace history just isn't durable this time. Nothing to
 			// log to here — the store is deliberately dependency-free (no logger), matching PromptTemplateStore.
+			return false;
 		}
 	}
 
@@ -861,10 +1189,29 @@ public sealed class WorkspaceStore
 			Status = clone.Status ?? RepositoryStatusPayload.Empty,
 		};
 
-	// The on-disk shape: one JSON object holding the three lists. A private record (not the wire payload) so
+	private static bool IsValidPendingRepositoryRename(PendingRepositoryRename pending)
+	{
+		if (pending.Kind is not ("clone" or "branch")
+			|| !IsRepositoryId(pending.RepositoryId)
+			|| string.IsNullOrWhiteSpace(pending.RepositoryUrl)
+			|| string.IsNullOrWhiteSpace(pending.CloneId)
+			|| string.IsNullOrWhiteSpace(pending.NewName)
+			|| string.IsNullOrWhiteSpace(pending.DefaultBranch)
+			|| !Path.IsPathFullyQualified(pending.ClonePath))
+		{
+			return false;
+		}
+		return pending.Kind == "clone"
+			? pending.NewPath is not null && Path.IsPathFullyQualified(pending.NewPath)
+			: pending.NewPath is null && !string.IsNullOrWhiteSpace(pending.OriginalBranch);
+	}
+
+	// The on-disk shape: one JSON object holding the user-facing lists and the private rename journal. A private
+	// record (not the wire payload) so
 	// its lists can be nullable — a hand-edited or partially-written file with a missing/null list still loads.
 	private sealed record PersistedState(
 		List<WorkspaceItem>? Recent,
 		List<WorkspaceItem>? Favorites,
-		List<RegisteredRepo>? Repositories);
+		List<RegisteredRepo>? Repositories,
+		List<PendingRepositoryRename>? PendingRepositoryRenames = null);
 }

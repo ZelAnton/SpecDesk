@@ -329,6 +329,7 @@ public sealed partial class HostController : IDisposable
 		_traceBridge = new TraceBridge(_logger, Logging.LogDirectory);
 		_logBridge = new LogBridge(
 			_logger, _dialogs, SendError, Logging.LogDirectory, () => _traceBridge.RenderTail(200));
+		RecoverPendingRepositoryRenames();
 	}
 
 	/// <summary>The repo working-tree root of the open document — the <c>app://</c> asset root.</summary>
@@ -613,6 +614,15 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.RepoSwitchBranch:
 				OnSwitchRepoBranch(message);
+				break;
+			case MessageKinds.RepoCreateBranch:
+				OnCreateRepoBranch(message);
+				break;
+			case MessageKinds.RepoRenameClone:
+				OnRenameRepoClone(message);
+				break;
+			case MessageKinds.RepoRenameBranch:
+				OnRenameRepoBranch(message);
 				break;
 			case MessageKinds.RepoDeleteClone:
 				OnDeleteRepoClone(message);

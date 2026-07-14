@@ -47,6 +47,9 @@ export const Kinds = {
   repoDescriptionRequest: "repo.description.request",
   repoBrowse: "repo.browse",
   repoSwitchBranch: "repo.switchBranch",
+  repoCreateBranch: "repo.createBranch",
+  repoRenameClone: "repo.renameClone",
+  repoRenameBranch: "repo.renameBranch",
   repoDeleteClone: "repo.deleteClone",
   repoDeleteBranch: "repo.deleteBranch",
   repoRefreshAll: "repo.refreshAll",
@@ -649,6 +652,19 @@ export interface RepoSwitchBranchPayload {
   clonePath: string;
   branch: string;
   requestId: number;
+}
+
+export interface RepoCreateBranchPayload extends RepoSwitchBranchPayload {}
+
+export interface RepoRenameClonePayload {
+  id: string;
+  clonePath: string;
+  localName: string;
+  requestId: number;
+}
+
+export interface RepoRenameBranchPayload extends RepoSwitchBranchPayload {
+  newBranch: string;
 }
 
 export interface RepoPullPayload extends RepoSwitchBranchPayload {}
