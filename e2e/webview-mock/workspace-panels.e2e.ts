@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openDockTool } from "../lib/dock";
 import { emit, installMockHost, sentFrames, waitForSent } from "../lib/mock-host";
 import { BASE_URL, serveBundle } from "../lib/serve-bundle";
 
@@ -29,12 +30,7 @@ test.beforeEach(async ({ context }) => {
   await installMockHost(context);
 });
 
-/** Select a left-rail mode; choosing an inactive mode opens its panel in the same action. */
-async function openPanel(page: import("@playwright/test").Page, label: string): Promise<void> {
-  await page.locator(`#left-dock .dock-rail-btn[aria-label="${label}"]`).click();
-}
-
-test("requests the workspace store on startup and populates the Recent panel", async ({ page }) => {
+test("requests the workspace store on startup and populates Navigator history", async ({ page }) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
 
@@ -42,19 +38,19 @@ test("requests the workspace store on startup and populates the Recent panel", a
   expect((await sentFrames(page)).some((f) => f.kind === "workspace.request")).toBe(true);
 
   await emit(page, STATE);
-  await openPanel(page, "Recent");
+  await openDockTool(page, "left", "Navigator");
 
   const recent = page.locator('#left-dock [data-tool="recent"]');
   await expect(recent.locator(".workspace-open")).toHaveText(["repo", "intro.md"]);
 
-  // A file row opens the document (a plain file open does not reveal Files, so the Recent panel stays up).
+  // A file row opens the document (a plain file open does not reveal Files, so Navigator stays up).
   await recent.locator(".workspace-open", { hasText: "intro.md" }).click();
   expect((await sentFrames(page)).find((f) => f.kind === "doc.open")?.payload).toMatchObject({
     path: "C:\\specs\\repo\\intro.md",
   });
 
   // The `repo` folder is not a favorite yet — its star adds it (done before the folder open below, which
-  // reveals the Files navigator and switches the left dock away from Recent).
+  // reveals the Files navigator and switches the left dock away from Navigator).
   await recent.locator(".workspace-list-row", { hasText: "repo" }).locator(".workspace-star").click();
   expect((await sentFrames(page)).find((f) => f.kind === "workspace.favorite")?.payload).toMatchObject({
     path: "C:\\specs\\repo",
@@ -68,11 +64,11 @@ test("requests the workspace store on startup and populates the Recent panel", a
   });
 });
 
-test("the Favorites panel lists the starred items", async ({ page }) => {
+test("the Navigator Favorites section lists the starred items", async ({ page }) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
   await emit(page, STATE);
-  await openPanel(page, "Favorites");
+  await openDockTool(page, "left", "Navigator");
 
   const favorites = page.locator('#left-dock [data-tool="favorites"]');
   await expect(favorites.locator(".workspace-open")).toHaveText(["intro.md"]);
@@ -86,13 +82,16 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
   await emit(page, STATE);
-  await openPanel(page, "Repositories");
+  await openDockTool(page, "left", "Repositories");
 
   const repos = page.locator('#left-dock [data-tool="repositories"]');
-  await expect(repos.locator(".repo-open")).toHaveText(["acme/specs"]);
+  await expect(repos.locator(".repo-open .repo-name")).toHaveText(["acme/specs"]);
+  await expect(repos.locator(".repo-open .repo-kind")).toHaveText(["GitHub · 0 local copies"]);
 
   // The clone menu sends `repo.cloneManaged` with the typed value (done first: opening a repo below reveals
   // the Files navigator and switches the left dock away from Repositories).
+  await repos.locator(".repo-add > summary").click();
+  await expect(repos.locator(".repo-register-input")).toBeVisible();
   await repos.locator(".repo-register-input").fill("owner/name");
   await waitForSent(page, "repo.cloneDestination.request");
   const destinationRequest = (await sentFrames(page)).find(

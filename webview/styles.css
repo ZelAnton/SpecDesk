@@ -2413,6 +2413,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 .repo-clone-confirm-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.35rem;
   margin-top: 0.6rem;
@@ -2434,8 +2435,9 @@ body:not([data-central-view="editor"]) #toolbar-search {
 }
 
 .repo-register-input {
-  flex: 1;
-  min-width: 0;
+  box-sizing: border-box;
+  flex: 1 1 10rem;
+  min-width: min(10rem, 100%);
   padding: 0.35rem 0.5rem;
   color: var(--text);
   background: var(--surface);

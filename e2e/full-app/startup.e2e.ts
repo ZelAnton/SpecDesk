@@ -27,9 +27,30 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
   for (const edge of ["left", "right", "bottom"] as const) {
     await expect(page.locator("#" + edge + "-dock")).toHaveClass(/dock--collapsed/);
   }
+  const titlebar = page.locator("#app-title");
+  const minimize = page.getByRole("button", { name: "Minimize" });
   const maximize = page.getByRole("button", { name: "Maximize" });
+  const close = page.getByRole("button", { name: "Close" });
+  await expect(titlebar).toBeVisible();
+  await expect(minimize).toBeVisible();
+  await expect(maximize).toBeVisible();
+  await expect(close).toBeVisible();
+
+  // Drive the real WebView2 input path. The first mousedown enters Photino's native caption loop; only a
+  // genuine second mousedown can prove that the titlebar still toggles the actual native window.
+  await titlebar.dblclick();
+  let restore = page.getByRole("button", { name: "Restore" });
+  await expect(restore).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({
+    path: testInfo.outputPath("chromeless-titlebar-maximized.png"),
+    fullPage: true,
+  });
+  await titlebar.dblclick();
+  await expect(maximize).toHaveAttribute("aria-pressed", "false");
+
+  // Keep the explicit button route covered independently from the titlebar gesture.
   await maximize.click();
-  const restore = page.getByRole("button", { name: "Restore" });
+  restore = page.getByRole("button", { name: "Restore" });
   await expect(restore).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({ path: testInfo.outputPath("chromeless-window-maximized.png"), fullPage: true });
   await restore.click();
@@ -71,8 +92,10 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
   await page.screenshot({ path: testInfo.outputPath("final.png"), fullPage: true });
 });
 
-test("the chromeless window keeps the standard Alt+F4 close path", async () => {
-  postNativeAltF4(requireProcessId(ctx));
+test("the custom Close button completes the native close handshake", async () => {
+  const close = ctx.page.getByRole("button", { name: "Close" });
+  await expect(close).toBeVisible();
+  await close.click();
   await expect.poll(() => ctx.app.process.exitCode).not.toBeNull();
 });
 
@@ -85,21 +108,9 @@ function requireProcessId(fullApp: FullApp): number {
 }
 
 function resizeNativeWindow(processId: number, width: number, height: number): void {
-  invokeNativeWindowHelper(processId, "resize", width, height);
-}
-
-function postNativeAltF4(processId: number): void {
-  invokeNativeWindowHelper(processId, "alt-f4", 0, 0);
-}
-
-function invokeNativeWindowHelper(
-  processId: number,
-  action: "resize" | "alt-f4",
-  width: number,
-  height: number,
-): void {
   const script = `
-param([int]$ProcessId, [string]$Action, [int]$Width, [int]$Height)
+& {
+param([int]$TargetProcessId, [int]$Width, [int]$Height)
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -107,33 +118,19 @@ public static class SpecDeskNativeWindowTest {
   [DllImport("user32.dll", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool MoveWindow(IntPtr handle, int x, int y, int width, int height, bool repaint);
-  [DllImport("user32.dll", SetLastError = true)]
-  [return: MarshalAs(UnmanagedType.Bool)]
-  public static extern bool PostMessage(IntPtr handle, uint message, UIntPtr wParam, IntPtr lParam);
 }
 "@
-$process = Get-Process -Id $ProcessId
+$process = Get-Process -Id $TargetProcessId
 $handle = $process.MainWindowHandle
 if ($handle -eq [IntPtr]::Zero) { throw "SpecDesk main window was not created." }
-if ($Action -eq "resize") {
-  if (-not [SpecDeskNativeWindowTest]::MoveWindow($handle, 120, 100, $Width, $Height, $true)) {
-    throw "MoveWindow failed."
-  }
-} else {
-  # WM_SYSKEYDOWN/UP with the F4 scan code and the ALT context bit set follows the real Alt+F4 path.
-  $down = [IntPtr](1 -bor (0x3E -shl 16) -bor (1 -shl 29))
-  $up = [IntPtr](1 -bor (0x3E -shl 16) -bor (1 -shl 29) -bor (1 -shl 30) -bor ([uint32]1 -shl 31))
-  if (-not [SpecDeskNativeWindowTest]::PostMessage($handle, 0x0104, [UIntPtr]0x73, $down)) {
-    throw "Posting Alt+F4 key-down failed."
-  }
-  if (-not [SpecDeskNativeWindowTest]::PostMessage($handle, 0x0105, [UIntPtr]0x73, $up)) {
-    throw "Posting Alt+F4 key-up failed."
-  }
+if (-not [SpecDeskNativeWindowTest]::MoveWindow($handle, 120, 100, $Width, $Height, $true)) {
+  throw "MoveWindow failed."
 }
+} -TargetProcessId ${processId} -Width ${width} -Height ${height}
 `;
   execFileSync(
     "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script, processId.toString(), action, width.toString(), height.toString()],
+    ["-NoProfile", "-NonInteractive", "-Command", script],
     { stdio: "pipe" },
   );
 }

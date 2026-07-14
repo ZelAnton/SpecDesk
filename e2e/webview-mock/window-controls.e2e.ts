@@ -14,12 +14,20 @@ test("in-content window controls route commands and reflect native maximize stat
   await waitForSent(page, "ready");
 
   await expect(page.getByRole("group", { name: "Window controls" })).toBeVisible();
+  await page.locator("#app-title").click();
+  let kinds = (await sentFrames(page)).map((frame) => frame.kind);
+  expect(kinds.filter((kind) => kind === "window.drag")).toHaveLength(1);
+  expect(kinds.filter((kind) => kind === "window.toggleMaximize")).toHaveLength(0);
+
+  // Reload for an independent real double-click sequence: Playwright supplies the browser's trusted
+  // mousedown click counts, while the mock host bridge gets a fresh outbound-frame list.
+  await page.reload();
+  await waitForSent(page, "ready");
   await page.getByRole("button", { name: "Minimize" }).click();
   await page.getByRole("button", { name: "Maximize" }).click();
-  await page.locator("#app-title").dispatchEvent("pointerdown", { button: 0 });
   await page.locator("#app-title").dblclick();
 
-  const kinds = (await sentFrames(page)).map((frame) => frame.kind);
+  kinds = (await sentFrames(page)).map((frame) => frame.kind);
   expect(kinds).toContain("window.minimize");
   expect(kinds.filter((kind) => kind === "window.toggleMaximize")).toHaveLength(2);
   expect(kinds.filter((kind) => kind === "window.drag")).toHaveLength(1);

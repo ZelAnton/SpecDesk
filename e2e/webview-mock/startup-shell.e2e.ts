@@ -31,7 +31,7 @@ test("startup stays on Start with every optional panel collapsed", async ({ page
   await expect(page.locator("#app-title")).toBeVisible();
   await expect(page.locator("#repository-context")).toBeHidden();
   await expect(page.locator("#toolbar-search")).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Start" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "SpecDesk" })).toBeVisible();
   for (const edge of ["left", "right", "bottom"] as const) {
     const dock = page.locator("#" + edge + "-dock");
     await expect(dock).toHaveClass(/dock--collapsed/);

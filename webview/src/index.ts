@@ -1304,14 +1304,14 @@ function wire(): void {
       target === toolbarEl ||
       (target instanceof Element && target.closest("#app-title, #repository-context") !== null);
 
-    toolbarEl?.addEventListener("pointerdown", (event) => {
+    toolbarEl?.addEventListener("mousedown", (event) => {
       if (event.button !== 0 || isInteractive(event.target) || !isDragSurface(event.target)) {
         return;
       }
       event.preventDefault();
       // The native caption drag owns the message loop until pointer-up, so a later DOM double-click is not
-      // a reliable signal. MouseEvent.detail already counts presses: route the second press to maximize
-      // before entering another drag loop.
+      // a reliable signal. A mousedown's MouseEvent.detail carries the browser's click count: route the
+      // second press to maximize before entering another drag loop.
       if (event.detail >= 2) {
         ipc.send(Kinds.windowToggleMaximize);
       } else {

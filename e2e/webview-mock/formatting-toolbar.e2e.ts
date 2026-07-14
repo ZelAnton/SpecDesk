@@ -16,10 +16,12 @@ test("the complete formatting toolbar stays discoverable and edits source Markdo
 
   const toolbar = page.locator("#format-bar");
   await expect(toolbar).toBeVisible();
-  await expect(toolbar).toBeDisabled();
+  await expect(toolbar).toHaveAttribute("disabled", "");
+  await expect(toolbar.getByRole("button").first()).toBeDisabled();
 
   await emit(page, { kind: "status", payload: { state: "draft", label: "Saved" } });
-  await expect(toolbar).toBeEnabled();
+  await expect(toolbar).not.toHaveAttribute("disabled", "");
+  await expect(toolbar.getByRole("button").first()).toBeEnabled();
   for (const name of [
     "Bold (Ctrl+B)",
     "Inline code (Ctrl+`)",

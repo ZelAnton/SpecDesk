@@ -72,7 +72,9 @@ test("the Start screen opens the Repositories panel without its own repo input",
   await expect(
     page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]'),
   ).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator("#repo-input")).toBeFocused();
+  await expect(
+    page.getByRole("combobox", { name: "Repository owner/name or GitHub URL" }),
+  ).toBeFocused();
   expect((await sentFrames(page)).some((frame) => frame.kind === "repo.open")).toBe(false);
   await page.screenshot({ path: testInfo.outputPath("start-repositories.png"), fullPage: true });
 });
@@ -147,18 +149,66 @@ test("local copies and branches open their files directly", async ({ page }, tes
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
   await emit(page, {
+    kind: "github.account",
+    payload: {
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: ["acme", "octo-labs"],
+    },
+  });
+  await expect(page.locator("#toolbar #github-auth-btn")).toHaveText("Sign out @octocat");
+  await expect(page.locator("#status-bar #github-account-status")).toHaveText(
+    "GitHub: @octocat · Organizations: acme, octo-labs",
+  );
+  const cleanStatus = {
+    ahead: 0,
+    behind: 0,
+    hasUncommitted: false,
+    stashCount: 0,
+    hasConflicts: false,
+  };
+  const repositoryFavorite = {
+    path: "acme/specs",
+    label: "acme/specs",
+    isFolder: true,
+    kind: "repository",
+    repositoryId: "acme/specs",
+  } as const;
+  const cloneFavorite = {
+    path: "C:\\SpecDesk\\repos\\quarterly-specs",
+    label: "quarterly-specs",
+    isFolder: true,
+    kind: "clone",
+    repositoryId: "acme/specs",
+  } as const;
+  const branchFavorite = {
+    path: "C:\\SpecDesk\\repos\\quarterly-specs",
+    label: "quarterly-specs · draft",
+    isFolder: true,
+    kind: "branch",
+    repositoryId: "acme/specs",
+    branch: "draft",
+  } as const;
+  type FavoriteItem =
+    | typeof repositoryFavorite
+    | typeof cloneFavorite
+    | typeof branchFavorite;
+  const repositoryFavorites: readonly FavoriteItem[] = [repositoryFavorite];
+  const cloneFavorites: readonly FavoriteItem[] = [repositoryFavorite, cloneFavorite];
+  const allFavorites: readonly FavoriteItem[] = [
+    repositoryFavorite,
+    cloneFavorite,
+    branchFavorite,
+  ];
+  const localStateFor = (
+    draftStatus: typeof cleanStatus,
+    favorites: readonly FavoriteItem[] = repositoryFavorites,
+  ) => ({
     kind: "workspace.state",
     payload: {
       recent: [],
-      favorites: [
-        {
-          path: "acme/specs",
-          label: "acme/specs",
-          isFolder: true,
-          kind: "repository",
-          repositoryId: "acme/specs",
-        },
-      ],
+      favorites,
       repositories: [
         {
           id: "acme/specs",
@@ -173,118 +223,247 @@ test("local copies and branches open their files directly", async ({ page }, tes
               branches: [
                 {
                   name: "main",
-                  status: {
-                    ahead: 0,
-                    behind: 0,
-                    hasUncommitted: false,
-                    stashCount: 0,
-                    hasConflicts: false,
-                  },
+                  canDelete: false,
+                  status: cleanStatus,
                 },
                 {
                   name: "draft",
-                  status: {
-                    ahead: 2,
-                    behind: 1,
-                    hasUncommitted: true,
-                    stashCount: 1,
-                    hasConflicts: true,
-                  },
+                  canDelete: true,
+                  status: draftStatus,
                 },
               ],
-              status: {
-                ahead: 2,
-                behind: 1,
-                hasUncommitted: true,
-                stashCount: 1,
-                hasConflicts: true,
-              },
+              status: draftStatus,
             },
           ],
         },
       ],
     },
   });
+  const divergentState = localStateFor({
+    ahead: 2,
+    behind: 1,
+    hasUncommitted: true,
+    stashCount: 1,
+    hasConflicts: true,
+  });
+  const pullReadyState = localStateFor({ ...cleanStatus, behind: 1 });
+  const cleanState = localStateFor(cleanStatus);
+  const pushReadyState = localStateFor({ ...cleanStatus, ahead: 2 });
+  const cloneFavoriteState = localStateFor(cleanStatus, cloneFavorites);
+  const branchFavoriteState = localStateFor(cleanStatus, allFavorites);
+  const deleteRiskState = localStateFor(
+    {
+      ...cleanStatus,
+      ahead: 1,
+      hasUncommitted: true,
+      stashCount: 1,
+    },
+    allFavorites,
+  );
+  await emit(page, divergentState);
   await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
   const browseCount = (await sentFrames(page)).filter((frame) => frame.kind === "repo.browse").length;
-  await page.getByRole("button", { name: "Repository acme/specs" }).click();
+  await page.getByRole("button", { name: "Repository acme/specs", exact: true }).click();
   await expect(page.locator('#left-dock .dock-tool[data-tool="repositories"]')).toBeVisible();
   await expect(page.locator(".repo-row.is-highlighted")).toContainText("acme/specs");
   expect((await sentFrames(page)).filter((frame) => frame.kind === "repo.browse")).toHaveLength(
     browseCount,
   );
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  // Selecting a repository favorite already reveals and focuses the Repositories panel.
+  const refreshFrameCount = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "repo.refreshAll",
+  ).length;
   await page.getByRole("button", { name: "Refresh" }).click();
-  expect((await sentFrames(page)).some((frame) => frame.kind === "repo.refreshAll")).toBe(true);
+  await expect
+    .poll(
+      async () =>
+        (await sentFrames(page)).filter((frame) => frame.kind === "repo.refreshAll").length,
+    )
+    .toBe(refreshFrameCount + 1);
+  const refreshPayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.refreshAll")
+    .at(refreshFrameCount)?.payload as { requestId?: unknown } | undefined;
+  const refreshRequestId = refreshPayload?.requestId;
+  expect(refreshRequestId).toEqual(expect.any(Number));
+  expect(refreshRequestId).toBeGreaterThan(0);
+  await emit(page, divergentState);
+  await emit(page, {
+    kind: "repo.operationCompleted",
+    payload: { requestId: refreshRequestId },
+  });
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
   await expect(page.locator(".repo-branch-open")).toHaveText(["main", "draft"]);
   await expect(page.getByText("2 not shared")).toHaveCount(2);
   await expect(page.getByText("1 update available")).toHaveCount(2);
   await expect(page.getByText("Unsaved changes")).toHaveCount(2);
   await expect(page.getByText("1 held change")).toHaveCount(2);
   await expect(page.getByText("Conflict needs attention")).toHaveCount(2);
+  await emit(page, pullReadyState);
+  await expect(page.getByText("1 update available")).toHaveCount(2);
+  await expect(page.getByText("2 not shared")).toHaveCount(0);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  await expect(page.getByText("1 held change")).toHaveCount(0);
+  await expect(page.getByText("Conflict needs attention")).toHaveCount(0);
+  const pullFrameCount = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "repo.pull",
+  ).length;
   await page.getByRole("button", { name: "Get updates" }).click();
-  await page.getByRole("button", { name: "Share changes" }).click();
-  const syncFrames = (await sentFrames(page)).filter(
-    (frame) => frame.kind === "repo.pull" || frame.kind === "repo.push",
-  );
-  expect(syncFrames.slice(-2).map((frame) => ({ kind: frame.kind, payload: frame.payload }))).toEqual([
-    {
-      kind: "repo.pull",
-      payload: {
-        id: "acme/specs",
-        clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
-        branch: "draft",
-      },
-    },
-    {
-      kind: "repo.push",
-      payload: {
-        id: "acme/specs",
-        clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
-        branch: "draft",
-      },
-    },
-  ]);
-  await expect(page.getByRole("button", { name: /Switch quarterly-specs to draft/ })).toHaveAttribute(
-    "aria-current",
-    "true",
-  );
-  await expect(page.locator(".repo-add")).not.toHaveAttribute("open");
-  await page.screenshot({ path: testInfo.outputPath("repository-copy-branches.png"), fullPage: true });
-  await page.getByRole("button", { name: "Create a new local copy of acme/specs" }).click();
-  await expect(page.locator(".repo-add")).toHaveAttribute("open");
-  await expect(page.locator(".repo-register-input")).toBeFocused();
-  await expect(page.locator(".repo-local-name-input")).toHaveValue("specs");
-  await page.getByRole("button", { name: "Favorite local copy quarterly-specs" }).click();
-  await page.getByRole("button", { name: "Favorite branch draft in quarterly-specs" }).click();
-  const favoriteFrames = (await sentFrames(page)).filter(
-    (frame) => frame.kind === "workspace.favorite",
-  );
-  expect(favoriteFrames.slice(-2).map((frame) => frame.payload)).toEqual([
-    {
-      path: "C:\\SpecDesk\\repos\\quarterly-specs",
-      repositoryId: "acme/specs",
-      kind: "clone",
-      isFolder: true,
-      favorite: true,
-    },
-    {
-      path: "C:\\SpecDesk\\repos\\quarterly-specs",
-      repositoryId: "acme/specs",
-      branch: "draft",
-      kind: "branch",
-      isFolder: true,
-      favorite: true,
-    },
-  ]);
-  await page.getByRole("button", { name: "Delete branch draft in quarterly-specs locally" }).click();
-  expect(
-    (await sentFrames(page)).filter((frame) => frame.kind === "repo.deleteBranch").at(-1)?.payload,
-  ).toEqual({
+  await expect
+    .poll(
+      async () => (await sentFrames(page)).filter((frame) => frame.kind === "repo.pull").length,
+    )
+    .toBe(pullFrameCount + 1);
+  const pullPayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.pull")
+    .at(pullFrameCount)?.payload as { requestId?: unknown } | undefined;
+  expect(pullPayload).toMatchObject({
     id: "acme/specs",
     clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
     branch: "draft",
   });
+  const pullRequestId = pullPayload?.requestId;
+  expect(pullRequestId).toEqual(expect.any(Number));
+  expect(pullRequestId).toBeGreaterThan(0);
+  await emit(page, cleanState);
+  await emit(page, {
+    kind: "repo.operationCompleted",
+    payload: { requestId: pullRequestId },
+  });
+  await expect(page.getByText("1 update available")).toHaveCount(0);
+  await expect(page.getByText("2 not shared")).toHaveCount(0);
+  await emit(page, pushReadyState);
+  await expect(page.getByText("2 not shared")).toHaveCount(2);
+  await expect(page.getByText("1 update available")).toHaveCount(0);
+  const pushFrameCount = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "repo.push",
+  ).length;
+  await page.getByRole("button", { name: "Share changes" }).click();
+  await expect
+    .poll(
+      async () => (await sentFrames(page)).filter((frame) => frame.kind === "repo.push").length,
+    )
+    .toBe(pushFrameCount + 1);
+  const pushPayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.push")
+    .at(pushFrameCount)?.payload;
+  expect(pushPayload).toEqual({
+    id: "acme/specs",
+    clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
+    branch: "draft",
+  });
+  await emit(page, cleanState);
+  await expect(page.getByText("2 not shared")).toHaveCount(0);
+  await expect(page.getByText("1 update available")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Switch quarterly-specs to draft/ })).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  const favoriteFrameCount = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "workspace.favorite",
+  ).length;
+  await page
+    .getByRole("button", { name: "Favorite local copy quarterly-specs", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await sentFrames(page)).filter((frame) => frame.kind === "workspace.favorite").length,
+    )
+    .toBe(favoriteFrameCount + 1);
+  let favoriteFrames = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "workspace.favorite",
+  );
+  expect(favoriteFrames.at(favoriteFrameCount)?.payload).toEqual({
+    path: "C:\\SpecDesk\\repos\\quarterly-specs",
+    repositoryId: "acme/specs",
+    kind: "clone",
+    isFolder: true,
+    favorite: true,
+  });
+  await emit(page, cloneFavoriteState);
+  await expect(
+    page.locator('#left-dock [data-tool="favorites"] .workspace-item-label'),
+  ).toHaveText(["acme/specs", "quarterly-specs"]);
+  await expect(
+    page.getByRole("button", { name: "Favorite local copy quarterly-specs", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page
+    .getByRole("button", { name: "Favorite branch draft in quarterly-specs", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await sentFrames(page)).filter((frame) => frame.kind === "workspace.favorite").length,
+    )
+    .toBe(favoriteFrameCount + 2);
+  favoriteFrames = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "workspace.favorite",
+  );
+  expect(favoriteFrames.at(favoriteFrameCount + 1)?.payload).toEqual({
+    path: "C:\\SpecDesk\\repos\\quarterly-specs",
+    repositoryId: "acme/specs",
+    branch: "draft",
+    kind: "branch",
+    isFolder: true,
+    favorite: true,
+  });
+  await emit(page, branchFavoriteState);
+  await expect(
+    page.locator('#left-dock [data-tool="favorites"] .workspace-item-label'),
+  ).toHaveText(["acme/specs", "quarterly-specs", "quarterly-specs · draft"]);
+  await expect(
+    page.getByRole("button", { name: "Favorite branch draft in quarterly-specs", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".repo-add")).not.toHaveAttribute("open");
+  await page.screenshot({ path: testInfo.outputPath("repository-copy-branches.png"), fullPage: true });
+
+  await page.locator(".repo-clone-open").click();
+  expect((await sentFrames(page)).filter((frame) => frame.kind === "repo.open").at(-1)?.payload).toEqual({
+    url: "https://github.com/acme/specs",
+    clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
+  });
+  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
+
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await page.getByRole("button", { name: "Switch quarterly-specs to draft and open its files" }).click();
+  const switchPayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.switchBranch")
+    .at(-1)?.payload as { requestId?: unknown } | undefined;
+  expect(switchPayload).toMatchObject({
+    id: "acme/specs",
+    clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
+    branch: "draft",
+  });
+  const switchRequestId = switchPayload?.requestId;
+  expect(switchRequestId).toEqual(expect.any(Number));
+  expect(switchRequestId).toBeGreaterThan(0);
+  await emit(page, branchFavoriteState);
+  await emit(page, {
+    kind: "repo.operationCompleted",
+    payload: { requestId: switchRequestId },
+  });
+  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
+
+  await emit(page, deleteRiskState);
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
+  await expect(page.getByText("1 not shared")).toHaveCount(2);
+  await expect(page.getByText("Unsaved changes")).toHaveCount(2);
+  await expect(page.getByText("1 held change")).toHaveCount(2);
+  await expect(
+    page.locator('#left-dock [data-tool="favorites"] .workspace-item-label'),
+  ).toHaveText(["acme/specs", "quarterly-specs", "quarterly-specs · draft"]);
+  await page.getByRole("button", { name: "Delete branch draft in quarterly-specs locally" }).click();
+  const initialDeletePayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.deleteBranch")
+    .at(-1)?.payload as { requestId?: unknown } | undefined;
+  expect(initialDeletePayload).toMatchObject({
+    id: "acme/specs",
+    clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
+    branch: "draft",
+  });
+  const initialDeleteRequestId = initialDeletePayload?.requestId;
+  expect(initialDeleteRequestId).toEqual(expect.any(Number));
+  expect(initialDeleteRequestId).toBeGreaterThan(0);
   await emit(page, {
     kind: "repo.confirmation",
     payload: {
@@ -301,28 +480,132 @@ test("local copies and branches open their files directly", async ({ page }, tes
       confirmationToken: "branch-risk-v1",
     },
   });
-  await expect(page.locator(".repo-operation-confirmation")).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("delete-branch-warning.png"), fullPage: true });
-  await page.getByRole("button", { name: "Delete local branch" }).click();
-  expect(
-    (await sentFrames(page)).filter((frame) => frame.kind === "repo.deleteBranch").at(-1)?.payload,
-  ).toMatchObject({ branch: "draft", confirmationToken: "branch-risk-v1" });
-
-  await page.locator(".repo-clone-open").click();
-  expect((await sentFrames(page)).filter((frame) => frame.kind === "repo.open").at(-1)?.payload).toEqual({
-    url: "https://github.com/acme/specs",
-    clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
+  await emit(page, {
+    kind: "repo.operationCompleted",
+    payload: { requestId: initialDeleteRequestId },
   });
-  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
-
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]').click();
-  await page.getByRole("button", { name: "Switch quarterly-specs to draft and open its files" }).click();
-  expect(
-    (await sentFrames(page)).filter((frame) => frame.kind === "repo.switchBranch").at(-1)?.payload,
-  ).toEqual({
+  const operationConfirmation = page.locator(".repo-operation-confirmation");
+  await expect(operationConfirmation).toBeVisible();
+  const keepAction = operationConfirmation.getByRole("button", { name: "Keep it", exact: true });
+  const deleteAction = operationConfirmation.getByRole("button", {
+    name: "Delete local branch",
+    exact: true,
+  });
+  const confirmationBox = await operationConfirmation.boundingBox();
+  const keepBox = await keepAction.boundingBox();
+  const deleteBox = await deleteAction.boundingBox();
+  if (confirmationBox === null || keepBox === null || deleteBox === null) {
+    throw new Error("The local-branch warning and both of its actions must participate in layout");
+  }
+  const viewport = page.viewportSize();
+  if (viewport === null) {
+    throw new Error("The local-branch warning requires a viewport for its containment check");
+  }
+  for (const actionBox of [keepBox, deleteBox]) {
+    expect(actionBox.x).toBeGreaterThanOrEqual(confirmationBox.x);
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(
+      confirmationBox.x + confirmationBox.width,
+    );
+    expect(actionBox.x).toBeGreaterThanOrEqual(0);
+    expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(viewport.width);
+  }
+  const confirmationWidths = await operationConfirmation.evaluate((element) => ({
+    client: element.clientWidth,
+    scroll: element.scrollWidth,
+  }));
+  expect(confirmationWidths.scroll).toBeLessThanOrEqual(confirmationWidths.client);
+  await page.screenshot({ path: testInfo.outputPath("delete-branch-warning.png"), fullPage: true });
+  await deleteAction.click();
+  const confirmedDeletePayload = (await sentFrames(page))
+    .filter((frame) => frame.kind === "repo.deleteBranch")
+    .at(-1)?.payload as { requestId?: unknown } | undefined;
+  expect(confirmedDeletePayload).toMatchObject({
     id: "acme/specs",
     clonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
     branch: "draft",
+    confirmationToken: "branch-risk-v1",
   });
-  await expect(page.locator('#left-dock .dock-tool[data-tool="files"]')).toBeVisible();
+  const confirmedDeleteRequestId = confirmedDeletePayload?.requestId;
+  expect(confirmedDeleteRequestId).toEqual(expect.any(Number));
+  expect(confirmedDeleteRequestId).toBeGreaterThan(0);
+  expect(confirmedDeleteRequestId).not.toBe(initialDeleteRequestId);
+  await emit(page, {
+    kind: "workspace.state",
+    payload: {
+      recent: [],
+      favorites: cloneFavorites,
+      repositories: [
+        {
+          id: "acme/specs",
+          name: "acme/specs",
+          url: "https://github.com/acme/specs",
+          defaultBranch: "main",
+          clones: [
+            {
+              id: "quarterly-specs",
+              path: "C:\\SpecDesk\\repos\\quarterly-specs",
+              currentBranch: "main",
+              branches: [
+                {
+                  name: "main",
+                  canDelete: false,
+                  status: {
+                    ahead: 0,
+                    behind: 0,
+                    hasUncommitted: false,
+                    stashCount: 0,
+                    hasConflicts: false,
+                  },
+                },
+              ],
+              status: {
+                ahead: 0,
+                behind: 0,
+                hasUncommitted: false,
+                stashCount: 0,
+                hasConflicts: false,
+              },
+            },
+          ],
+        },
+      ],
+    },
+  });
+  await emit(page, {
+    kind: "repo.operationCompleted",
+    payload: { requestId: confirmedDeleteRequestId },
+  });
+  await expect(page.locator(".repo-branch-open")).toHaveText(["main"]);
+  await expect(
+    page.getByRole("button", {
+      name: "Switch quarterly-specs to draft and open its files",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "Delete branch draft in quarterly-specs locally",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(page.locator(".repo-clone-current")).toHaveText("main");
+  await expect(
+    page.getByRole("button", {
+      name: "Switch quarterly-specs to main and open its files",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-current", "true");
+  await expect(
+    page.locator('#left-dock [data-tool="favorites"] .workspace-open[aria-label^="Branch draft "]'),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('#left-dock [data-tool="favorites"] .workspace-item-label'),
+  ).toHaveText(["acme/specs", "quarterly-specs"]);
+
+  // Exercise the copy form last: opening it starts debounced destination/description work that changes
+  // the form's layout, so it must not interfere with the independent row-action click checks above.
+  await page.getByRole("button", { name: "Create a new local copy of acme/specs" }).click();
+  await expect(page.locator(".repo-add")).toHaveAttribute("open");
+  await expect(page.locator(".repo-register-input")).toBeFocused();
+  await expect(page.locator(".repo-local-name-input")).toHaveValue("specs");
 });

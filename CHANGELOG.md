@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Double-clicking the in-content title bar now maximizes or restores the window instead of starting a second drag.
+- Local-work deletion warnings now keep both the cancel and delete actions inside narrow repository panels.
+- Repository entry now keeps a usable text field and moves copy actions to the next row in narrow panels.
 - Reopening a specification while an older review request is still finishing no longer blocks editing the reopened document.
 - Completing an older repository operation no longer replaces a repository, folder, or file opened later.
 - Concurrent workspace refreshes no longer restore an older repository or favorites list.

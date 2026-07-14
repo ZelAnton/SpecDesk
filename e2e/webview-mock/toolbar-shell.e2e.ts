@@ -76,7 +76,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
   );
   await expect(statusBar).toHaveCSS(
     "color",
-    await leftRail.evaluate((element) => getComputedStyle(element).color),
+    await filesMode.evaluate((element) => getComputedStyle(element).color),
   );
 
   // The bottom panel owns only the workspace column. The right rail spans both rows and therefore remains

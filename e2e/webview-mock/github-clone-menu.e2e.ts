@@ -50,7 +50,7 @@ test("Clone menu offers managed and chosen-folder destinations", async ({ page }
   await expect(toggle).toHaveAttribute("aria-label", "More clone options");
   await primary.click();
   await expect(page.locator(".repo-clone-confirmation")).toBeVisible();
-  await page.getByRole("button", { name: "No" }).click();
+  await page.getByRole("button", { name: "No", exact: true }).click();
   await expect(page.locator(".repo-clone-menu")).toBeHidden();
   await toggle.click();
   const actions = page.locator('.repo-clone-menu [role="menuitem"]');

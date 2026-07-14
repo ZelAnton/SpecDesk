@@ -49,6 +49,10 @@ test("Edit -> type -> autosave-to-disk -> Save version commits to the fixture re
   // The app auto-loaded the fixture welcome.md; both real editors are up.
   await expect(page.locator("#editor .cm-editor")).toHaveCount(1);
   await expect(page.locator("#formatted .ProseMirror")).toHaveCount(1);
+  await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
+  await page.locator('#left-dock .nav-item[data-view="editor"]').click();
+  await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "editor");
   await waitForGeometrySettle(page);
 
   // 1) Edit -> the host suggests a draft name from .spectool.toml's `spec/{docSlug}-{date:yyyyMMdd}`.

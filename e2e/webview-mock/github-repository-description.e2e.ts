@@ -18,6 +18,22 @@ test("repository description is visible before Clone is enabled", async ({ page 
   await expect(page.locator(".repo-description")).toHaveText("Repository description: loading…");
   await expect(clone).toBeDisabled();
 
+  await waitForSent(page, "repo.cloneDestination.request");
+  const destinationRequest = (await sentFrames(page)).find(
+    (frame) => frame.kind === "repo.cloneDestination.request",
+  );
+  await emit(page, {
+    kind: "repo.cloneDestination",
+    payload: {
+      url: "acme/specs",
+      requestId: (destinationRequest?.payload as { requestId: number }).requestId,
+      localName: "specs",
+      exists: false,
+      path: "C:\\SpecDesk\\repos\\acme_specs",
+    },
+  });
+  await expect(clone).toBeDisabled();
+
   await waitForSent(page, "repo.description.request");
   const request = (await sentFrames(page)).find(
     (frame) => frame.kind === "repo.description.request",

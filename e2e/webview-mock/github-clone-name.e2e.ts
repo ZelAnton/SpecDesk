@@ -18,21 +18,36 @@ test("a local copy can be named and an occupied name offers the existing copy", 
   await page.locator(".repo-register-input").fill("acme/specs");
   await expect(page.locator(".repo-local-name-input")).toHaveValue("specs");
   await page.locator(".repo-local-name-input").fill("quarterly-specs");
-  await waitForSent(page, "repo.cloneDestination.request");
-  const destinationRequests = (await sentFrames(page)).filter(
-    (frame) => frame.kind === "repo.cloneDestination.request",
-  );
-  const occupiedRequest = destinationRequests.at(-1);
-  expect(occupiedRequest?.payload).toMatchObject({
-    url: "acme/specs",
-    localName: "quarterly-specs",
+  await expect
+    .poll(async () =>
+      (await sentFrames(page)).some((frame) => {
+        const payload = frame.payload as { url?: unknown; localName?: unknown } | undefined;
+        return (
+          frame.kind === "repo.cloneDestination.request" &&
+          payload?.url === "acme/specs" &&
+          payload.localName === "quarterly-specs"
+        );
+      }),
+    )
+    .toBe(true);
+  const occupiedRequest = (await sentFrames(page)).findLast((frame) => {
+    const payload = frame.payload as { url?: unknown; localName?: unknown } | undefined;
+    return (
+      frame.kind === "repo.cloneDestination.request" &&
+      payload?.url === "acme/specs" &&
+      payload.localName === "quarterly-specs"
+    );
   });
+  const occupiedRequestId = (occupiedRequest?.payload as { requestId?: unknown } | undefined)
+    ?.requestId;
+  expect(occupiedRequestId).toEqual(expect.any(Number));
+  expect(occupiedRequestId).toBeGreaterThan(0);
   await emit(page, {
     kind: "repo.cloneDestination",
     payload: {
       url: "acme/specs",
       localName: "quarterly-specs",
-      requestId: (occupiedRequest?.payload as { requestId: number }).requestId,
+      requestId: occupiedRequestId,
       path: "C:\\SpecDesk\\repos\\quarterly-specs",
       exists: true,
       existingClonePath: "C:\\SpecDesk\\repos\\quarterly-specs",
@@ -64,16 +79,36 @@ test("a local copy can be named and an occupied name offers the existing copy", 
   });
 
   await page.locator(".repo-local-name-input").fill("quarterly-specs-2");
-  await page.waitForTimeout(150);
-  const availableRequest = (await sentFrames(page))
-    .filter((frame) => frame.kind === "repo.cloneDestination.request")
-    .at(-1);
+  await expect
+    .poll(async () =>
+      (await sentFrames(page)).some((frame) => {
+        const payload = frame.payload as { url?: unknown; localName?: unknown } | undefined;
+        return (
+          frame.kind === "repo.cloneDestination.request" &&
+          payload?.url === "acme/specs" &&
+          payload.localName === "quarterly-specs-2"
+        );
+      }),
+    )
+    .toBe(true);
+  const availableRequest = (await sentFrames(page)).findLast((frame) => {
+    const payload = frame.payload as { url?: unknown; localName?: unknown } | undefined;
+    return (
+      frame.kind === "repo.cloneDestination.request" &&
+      payload?.url === "acme/specs" &&
+      payload.localName === "quarterly-specs-2"
+    );
+  });
+  const availableRequestId = (availableRequest?.payload as { requestId?: unknown } | undefined)
+    ?.requestId;
+  expect(availableRequestId).toEqual(expect.any(Number));
+  expect(availableRequestId).toBeGreaterThan(0);
   await emit(page, {
     kind: "repo.cloneDestination",
     payload: {
       url: "acme/specs",
       localName: "quarterly-specs-2",
-      requestId: (availableRequest?.payload as { requestId: number }).requestId,
+      requestId: availableRequestId,
       path: "C:\\SpecDesk\\repos\\quarterly-specs-2",
       exists: false,
     },
