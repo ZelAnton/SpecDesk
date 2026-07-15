@@ -1,3 +1,4 @@
+import { createTokenizer } from "../../editors/md-config.js";
 import { type FormatCommand, formatMarkdown } from "../../editors/md-format.js";
 import type { PrCommentPayload, PrDetailsPayload, PrListItemPayload } from "../../wire/protocol.js";
 import { activityStream } from "../activity-stream.js";
@@ -14,6 +15,84 @@ const MINI_FORMATS: readonly { id: FormatCommand; label: string }[] = [
   { id: "bullet", label: "List" },
   { id: "quote", label: "Quote" },
 ];
+
+const PR_MARKDOWN = createTokenizer();
+// PR prose is untrusted GitHub content. Raw HTML is already disabled by createTokenizer; links and
+// images are deliberately rendered as inert text so the native review document neither navigates the
+// WebView nor loads third-party resources merely because an author opened a change request.
+PR_MARKDOWN.renderer.rules.link_open = () => "";
+PR_MARKDOWN.renderer.rules.link_close = () => "";
+PR_MARKDOWN.renderer.rules.image = (tokens, index) =>
+  PR_MARKDOWN.utils.escapeHtml(tokens[index]?.content ?? "");
+PR_MARKDOWN.renderer.rules.heading_open = (tokens, index) => {
+  const sourceLevel = Number.parseInt(tokens[index]?.tag.slice(1) ?? "1", 10);
+  return `<h${Math.min(6, sourceLevel + 2)}>`;
+};
+PR_MARKDOWN.renderer.rules.heading_close = (tokens, index) => {
+  const sourceLevel = Number.parseInt(tokens[index]?.tag.slice(1) ?? "1", 10);
+  return `</h${Math.min(6, sourceLevel + 2)}>`;
+};
+
+function renderMarkdownText(host: HTMLElement, source: string, empty: string): void {
+  host.classList.add("sd-doc", "pr-view-markdown");
+  host.innerHTML = PR_MARKDOWN.render(source.trim().length > 0 ? source : empty);
+}
+
+function initials(login: string): string {
+  const clean = login.replace(/^@/, "").trim();
+  return (clean.slice(0, 2) || "?").toLocaleUpperCase();
+}
+
+function person(login: string, detail?: string): HTMLElement {
+  const root = document.createElement("span");
+  root.className = "pr-person";
+  const avatar = document.createElement("span");
+  avatar.className = "pr-person-avatar";
+  avatar.setAttribute("aria-hidden", "true");
+  avatar.textContent = initials(login);
+  const text = document.createElement("span");
+  const name = document.createElement("strong");
+  name.textContent = login;
+  text.appendChild(name);
+  if (detail !== undefined) {
+    const role = document.createElement("small");
+    role.textContent = detail;
+    text.appendChild(role);
+  }
+  root.append(avatar, text);
+  return root;
+}
+
+function reviewState(details: PrDetailsPayload, fallback?: string): string {
+  if (details.isDraft) return "Draft";
+  if (fallback !== undefined && fallback.trim().length > 0) return fallback;
+  switch (details.state.toLocaleLowerCase()) {
+    case "merged":
+      return "Accepted";
+    case "closed":
+      return "Closed";
+    default:
+      return "In review";
+  }
+}
+
+function checkSummary(state: string): { label: string; kind: string } {
+  switch (state.toLocaleLowerCase()) {
+    case "success":
+      return { label: "Checks passed", kind: "passed" };
+    case "failure":
+    case "error":
+      return { label: "Checks need attention", kind: "failed" };
+    case "pending":
+    case "expected":
+      return { label: "Checks are running", kind: "pending" };
+    case "neutral":
+    case "skipped":
+      return { label: "No checks required", kind: "neutral" };
+    default:
+      return { label: "Check status unavailable", kind: "unknown" };
+  }
+}
 
 function selectedTextRects(input: HTMLTextAreaElement): DOMRect[] {
   const { selectionStart, selectionEnd } = input;
@@ -222,11 +301,11 @@ export class PrCommentsPanel implements PanelTool {
     if (this.details === null) {
       const hint = document.createElement("p");
       hint.className = "dock-placeholder-hint";
-      hint.textContent = "Open a pull request to see its comments.";
+      hint.textContent = "Open a change request to see its comments.";
       this.body.appendChild(hint);
       return;
     }
-    const compose = formattedTextarea("pr-comment-compose", "New pull request comment");
+    const compose = formattedTextarea("pr-comment-compose", "New change-request comment");
     const send = document.createElement("button");
     send.type = "button";
     send.textContent = "Comment";
@@ -238,8 +317,7 @@ export class PrCommentsPanel implements PanelTool {
       const warning = document.createElement("p");
       warning.className = "pr-comments-incomplete";
       warning.setAttribute("role", "status");
-      warning.textContent =
-        "Some comments are not shown. Open this review on GitHub for the complete history.";
+      warning.textContent = "Some comments aren't available right now.";
       this.body.appendChild(warning);
     }
 
@@ -351,6 +429,7 @@ export class PullRequestView {
   private readonly root: HTMLElement;
   private current: PrListItemPayload | null = null;
   private details: PrDetailsPayload | null = null;
+  private loadError: string | null = null;
   private requestGeneration = 0;
 
   constructor(
@@ -364,7 +443,7 @@ export class PullRequestView {
     this.root = document.createElement("section");
     this.root.id = "pull-request-view";
     this.root.className = "pull-request-view";
-    this.root.setAttribute("aria-label", "Pull request");
+    this.root.setAttribute("aria-label", "Change request");
     host.appendChild(this.root);
     frame.register({ id: this.id, el: this.root });
   }
@@ -373,6 +452,7 @@ export class PullRequestView {
     this.current = item;
     this.requestGeneration++;
     this.details = null;
+    this.loadError = null;
     this.comments.setDetails(null);
     this.renderLoading(item);
     frame.show(this.id);
@@ -383,6 +463,7 @@ export class PullRequestView {
   clear(): void {
     this.current = null;
     this.details = null;
+    this.loadError = null;
     this.requestGeneration++;
     this.comments.setDetails(null);
     this.root.replaceChildren();
@@ -392,9 +473,20 @@ export class PullRequestView {
     if (this.current === null) return;
     const current = this.current;
     const generation = ++this.requestGeneration;
-    const details = await this.load(current.repo, current.number);
+    let details: PrDetailsPayload;
+    try {
+      details = await this.load(current.repo, current.number);
+    } catch {
+      if (this.current !== current || generation !== this.requestGeneration) return;
+      this.details = null;
+      this.loadError = "Couldn't load this change request. Check your connection and try again.";
+      this.comments.setDetails(null);
+      this.render();
+      return;
+    }
     if (this.current !== current || generation !== this.requestGeneration) return;
     this.details = details;
+    this.loadError = details.error ?? null;
     this.comments.setDetails(details.error === undefined ? details : null);
     if (details.error === undefined) this.onContext?.(details.repo, details.headBranch);
     this.render();
@@ -406,11 +498,11 @@ export class PullRequestView {
     header.className = "pr-view-header";
     const eyebrow = document.createElement("p");
     eyebrow.className = "pr-view-eyebrow";
-    eyebrow.textContent = `${item.repo} · #${item.number}`;
+    eyebrow.textContent = `Change request ${item.number} · ${item.repo}`;
     const title = document.createElement("h1");
-    title.textContent = item.title || `Review #${item.number}`;
+    title.textContent = item.title || `Change request ${item.number}`;
     const badge = document.createElement("span");
-    badge.className = "status-badge";
+    badge.className = `status-badge is-${item.status}`;
     badge.textContent = item.label;
     header.append(eyebrow, title, badge);
     const body = document.createElement("div");
@@ -419,7 +511,7 @@ export class PullRequestView {
     const loading = document.createElement("p");
     loading.className = "pr-view-state";
     loading.setAttribute("role", "status");
-    loading.textContent = "Loading description, history, and comments…";
+    loading.textContent = "Loading the description, people, history, and conversation…";
     state.appendChild(loading);
     body.appendChild(state);
     this.root.append(header, body);
@@ -428,28 +520,35 @@ export class PullRequestView {
   private render(): void {
     this.root.replaceChildren();
     const details = this.details;
-    if (details === null || details.error !== undefined) {
+    if (details === null || this.loadError !== null) {
       const current = this.current;
       const header = document.createElement("header");
       header.className = "pr-view-header";
       const eyebrow = document.createElement("p");
       eyebrow.className = "pr-view-eyebrow";
-      eyebrow.textContent = current ? `${current.repo} · #${current.number}` : "Review";
+      eyebrow.textContent = current
+        ? `Change request ${current.number} · ${current.repo}`
+        : "Change request";
       const title = document.createElement("h1");
-      title.textContent = current?.title || (current ? `Review #${current.number}` : "Review");
+      title.textContent =
+        current?.title || (current ? `Change request ${current.number}` : "Change request");
       header.append(eyebrow, title);
       const body = document.createElement("div");
       body.className = "pr-view-body";
       const state = document.createElement("section");
+      state.className = "pr-view-state-card";
       const error = document.createElement("p");
       error.className = "pr-view-state pr-view-state--error";
       error.setAttribute("role", "alert");
-      error.textContent = details?.error ?? "Couldn't load this review.";
+      error.textContent = this.loadError ?? details?.error ?? "Couldn't load this change request.";
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "pr-view-retry";
       retry.textContent = "Try again";
-      retry.addEventListener("click", () => void this.refresh());
+      retry.addEventListener("click", () => {
+        if (this.current !== null) this.renderLoading(this.current);
+        void this.refresh();
+      });
       state.append(error, retry);
       body.appendChild(state);
       this.root.append(header, body);
@@ -457,45 +556,87 @@ export class PullRequestView {
     }
     const header = document.createElement("header");
     header.className = "pr-view-header";
+    const headerMain = document.createElement("div");
+    headerMain.className = "pr-view-header-main";
     const eyebrow = document.createElement("p");
     eyebrow.className = "pr-view-eyebrow";
-    eyebrow.textContent = `${details.repo} · #${details.number}`;
+    eyebrow.textContent = `Change request ${details.number} · ${details.repo}`;
     const title = document.createElement("h1");
     title.textContent = details.title;
     const badges = document.createElement("div");
     badges.className = "pr-view-badges";
     const state = document.createElement("span");
-    state.className = "status-badge";
-    state.textContent = details.isDraft ? "Draft" : "Ready for review";
-    const branch = document.createElement("span");
-    branch.textContent = `${details.headBranch} → ${details.baseBranch}`;
-    badges.append(state, branch);
-    const author = document.createElement("p");
-    author.className = "pr-view-author";
-    author.textContent = `Opened by ${details.author}`;
-    header.append(eyebrow, title, badges, author);
+    state.className = "status-badge pr-view-status";
+    state.classList.add(`is-${this.current?.status ?? "inReview"}`);
+    state.textContent = reviewState(details, this.current?.label);
+    badges.append(state);
+    headerMain.append(eyebrow, title, badges);
+
+    const route = document.createElement("div");
+    route.className = "pr-view-route";
+    route.setAttribute("aria-label", "Proposed version and destination");
+    const proposed = document.createElement("span");
+    const proposedLabel = document.createElement("small");
+    proposedLabel.textContent = "Proposed version";
+    const proposedName = document.createElement("strong");
+    proposedName.textContent = details.headBranch;
+    proposed.append(proposedLabel, proposedName);
+    const arrow = document.createElement("span");
+    arrow.className = "pr-view-route-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "→";
+    const target = document.createElement("span");
+    const targetLabel = document.createElement("small");
+    targetLabel.textContent = "Will update";
+    const targetName = document.createElement("strong");
+    targetName.textContent = details.baseBranch;
+    target.append(targetLabel, targetName);
+    route.append(proposed, arrow, target);
+    header.append(headerMain, route);
 
     const body = document.createElement("div");
     body.className = "pr-view-body";
     const description = document.createElement("section");
+    description.className = "pr-view-description";
     const descTitle = document.createElement("h2");
     descTitle.textContent = "Description";
-    const desc = document.createElement("p");
-    desc.textContent = details.body || "No description provided.";
+    const desc = document.createElement("div");
+    renderMarkdownText(desc, details.body, "_No description was provided._");
     description.append(descTitle, desc);
 
     const reviewers = document.createElement("section");
+    reviewers.className = "pr-view-people";
     const reviewersTitle = document.createElement("h2");
-    reviewersTitle.textContent = "Reviewers";
+    reviewersTitle.textContent = "People";
+    const authorGroup = document.createElement("div");
+    authorGroup.className = "pr-view-person-group";
+    const authorLabel = document.createElement("h3");
+    authorLabel.textContent = "Proposed by";
+    authorGroup.append(authorLabel, person(details.author, "Author"));
+    const reviewerGroup = document.createElement("div");
+    reviewerGroup.className = "pr-view-person-group";
+    const reviewerLabel = document.createElement("h3");
+    reviewerLabel.textContent = "Reviewers";
     const reviewerList = document.createElement("div");
     reviewerList.className = "pr-reviewers";
-    reviewerList.textContent =
-      details.reviewers.map((item) => item.login).join(", ") || "No reviewers requested";
+    if (details.reviewers.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "pr-view-empty";
+      empty.textContent = "No reviewers have been requested yet.";
+      reviewerList.appendChild(empty);
+    } else {
+      for (const reviewer of details.reviewers) {
+        reviewerList.appendChild(
+          person(reviewer.login, reviewer.kind === "team" ? "Team" : "Reviewer"),
+        );
+      }
+    }
+    reviewerGroup.append(reviewerLabel, reviewerList);
     const reviewerForm = document.createElement("form");
     reviewerForm.className = "pr-reviewer-form";
     const reviewerInput = document.createElement("input");
-    reviewerInput.placeholder = "name or org/team";
-    reviewerInput.setAttribute("aria-label", "Reviewer handles");
+    reviewerInput.placeholder = "GitHub name or team";
+    reviewerInput.setAttribute("aria-label", "GitHub name or team to request a review from");
     const request = document.createElement("button");
     request.type = "submit";
     request.textContent = "Request review";
@@ -518,48 +659,67 @@ export class PullRequestView {
           request.disabled = false;
         });
     });
-    reviewers.append(reviewersTitle, reviewerList, reviewerForm);
+    reviewers.append(reviewersTitle, authorGroup, reviewerGroup, reviewerForm);
 
     const timeline = document.createElement("section");
+    timeline.className = "pr-view-history";
     const timelineTitle = document.createElement("h2");
     timelineTitle.textContent = "History";
+    const timelineIntro = document.createElement("p");
+    timelineIntro.className = "pr-view-section-intro";
+    timelineIntro.textContent = "Saved versions, oldest first.";
     const timelineList = document.createElement("ol");
     timelineList.className = "pr-timeline";
     const events = details.commits
       .map((commit) => ({
         when: commit.when,
         title: commit.title,
-        meta: `${commit.shortOid} · Checks: ${commit.checkState}`,
+        shortOid: commit.shortOid,
+        checks: checkSummary(commit.checkState),
       }))
-      .sort((a, b) => Date.parse(b.when) - Date.parse(a.when));
+      .sort((a, b) => Date.parse(a.when) - Date.parse(b.when));
     for (const event of events) {
       const row = document.createElement("li");
+      row.className = "pr-timeline-entry";
+      const marker = document.createElement("span");
+      marker.className = "pr-timeline-marker";
+      marker.setAttribute("aria-hidden", "true");
+      const content = document.createElement("div");
+      content.className = "pr-timeline-content";
       const text = document.createElement("strong");
       text.textContent = event.title;
       const meta = document.createElement("span");
-      meta.textContent = `${event.meta} · ${new Date(event.when).toLocaleString()}`;
-      row.append(text, meta);
+      meta.textContent = `Saved version ${event.shortOid} · ${new Date(event.when).toLocaleString()}`;
+      const checks = document.createElement("span");
+      checks.className = `pr-check-state is-${event.checks.kind}`;
+      checks.textContent = event.checks.label;
+      content.append(text, meta, checks);
+      row.append(marker, content);
       timelineList.appendChild(row);
     }
     if (events.length === 0) {
       const empty = document.createElement("li");
-      empty.textContent = "No versions are shown for this review.";
+      empty.className = "pr-view-empty";
+      empty.textContent = "No saved versions are available for this change request.";
       timelineList.appendChild(empty);
     }
-    timeline.append(timelineTitle);
+    timeline.append(timelineTitle, timelineIntro);
     if (details.commitsIncomplete) {
       const warning = document.createElement("p");
       warning.className = "pr-comments-incomplete";
       warning.setAttribute("role", "status");
-      warning.textContent =
-        "Some earlier versions are not shown. Open this review on GitHub for the complete history.";
+      warning.textContent = "Some earlier saved versions aren't available right now.";
       timeline.appendChild(warning);
     }
     timeline.appendChild(timelineList);
 
     const conversation = document.createElement("section");
+    conversation.className = "pr-view-conversation";
     const conversationTitle = document.createElement("h2");
     conversationTitle.textContent = "Comments";
+    const conversationIntro = document.createElement("p");
+    conversationIntro.className = "pr-view-section-intro";
+    conversationIntro.textContent = `${details.comments.length} ${details.comments.length === 1 ? "comment" : "comments"}`;
     const conversationList = document.createElement("ol");
     conversationList.className = "pr-view-comments";
     for (const comment of details.comments) {
@@ -567,19 +727,18 @@ export class PullRequestView {
       row.className = "pr-view-comment";
       const meta = document.createElement("div");
       meta.className = "pr-view-comment-meta";
-      const author = document.createElement("strong");
-      author.textContent = comment.author;
+      meta.appendChild(person(comment.author));
       const when = document.createElement("time");
       when.dateTime = comment.createdAt;
       when.textContent = new Date(comment.createdAt).toLocaleString();
-      meta.append(author, when);
+      meta.appendChild(when);
       if (comment.path.length > 0) {
         const path = document.createElement("code");
         path.textContent = comment.path;
         meta.appendChild(path);
       }
-      const text = document.createElement("p");
-      text.textContent = comment.body;
+      const text = document.createElement("div");
+      renderMarkdownText(text, comment.body, "_Empty comment._");
       row.append(meta, text);
       conversationList.appendChild(row);
     }
@@ -591,7 +750,7 @@ export class PullRequestView {
         : "No comments yet.";
       conversationList.appendChild(empty);
     }
-    conversation.append(conversationTitle);
+    conversation.append(conversationTitle, conversationIntro);
     if (details.commentsIncomplete && details.comments.length > 0) {
       const warning = document.createElement("p");
       warning.className = "pr-comments-incomplete";
@@ -604,10 +763,10 @@ export class PullRequestView {
     const changes = document.createElement("section");
     changes.className = "pr-changes-placeholder";
     const changesTitle = document.createElement("h2");
-    changesTitle.textContent = "Changes";
+    changesTitle.textContent = "Document changes";
     const changesText = document.createElement("p");
     changesText.textContent =
-      "The file-by-file changes view will be added in the next review milestone.";
+      "A document-by-document comparison will appear here in a future update.";
     changes.append(changesTitle, changesText);
 
     body.append(description, reviewers, timeline, conversation, changes);

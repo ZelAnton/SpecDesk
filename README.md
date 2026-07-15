@@ -88,10 +88,12 @@ Choosing **Open Repository** also places keyboard focus in repository search, re
 The left-panel Review mode shows open review requests assigned to the connected account, including requests
 for GitHub teams whose membership is visible to SpecDesk.
 Change requests shows the connected user's active work: open requests they authored or otherwise participated
-in. Selecting one, choosing one from **My reviews**, or entering its GitHub URL opens the same review document
-inside SpecDesk with its description, participants, conversation,
-commits, checks, and draft/readiness state. The Comments panel brings together general conversation and
-existing file review threads; it supports general comments, replies, and editing comments authored by the connected user. Selecting a comment opens its complete text in
+in. Selecting one, choosing one from **My reviews**, or entering its GitHub URL opens the same calm review
+document inside SpecDesk. It renders the description as safe, non-navigating Markdown, identifies the author
+and reviewers, explains the proposed and destination versions, and presents saved versions oldest-first with
+plain-language check states beside the complete available conversation. The Comments panel brings together
+general conversation and existing file review threads; it supports general comments, replies, and editing
+comments authored by the connected user. Selecting a comment opens its complete text in
 the bottom panel. If comments are temporarily unavailable, the description and version history remain usable.
 Closed and merged requests are intentionally excluded from this working list.
 
@@ -163,6 +165,8 @@ protects unfinished files before changing its contents.
 Repository cards keep the online source as the top-level choice and named local copies beneath it. Stars can
 keep a GitHub repository, exact local copy, branch, folder, or file in **Favorites**. Reopening a favorite
 retains its exact identity; choosing a repository favorite opens Repositories and highlights that source.
+An empty star appears only when its row is hovered or receives keyboard focus, while an existing favorite's
+filled star remains visible.
 Context menus offer rename only for local non-main working lines without protected work; online-only and
 GitHub main lines remain aligned with the remote repository instead of exposing a local operation that cannot succeed.
 Removing a registered repository removes only its SpecDesk registration and related favorites; local folders and branches, plus every GitHub resource, remain untouched.

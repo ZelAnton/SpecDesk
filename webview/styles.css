@@ -343,9 +343,12 @@ button {
 }
 
 .pull-request-view {
+  flex: 1;
   min-width: 0;
+  min-height: 0;
   overflow: auto;
-  background: var(--canvas);
+  container-type: inline-size;
+  background: linear-gradient(180deg, var(--surface-sunken) 0, var(--canvas) 13rem);
 }
 
 .pr-view-header,
@@ -355,12 +358,19 @@ button {
 }
 
 .pr-view-header {
-  padding: 32px 0 20px;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(14rem, auto);
+  gap: var(--space-5);
+  align-items: end;
+  padding: 36px 0 24px;
 }
 
 .pr-view-header h1 {
-  margin: 8px 0;
+  max-width: 46rem;
+  margin: 8px 0 12px;
+  color: var(--text-strong);
+  font: 600 clamp(1.55rem, 3vw, 2.15rem) / 1.17 var(--font-doc-head);
+  letter-spacing: -0.018em;
 }
 
 .pr-view-eyebrow,
@@ -379,17 +389,180 @@ button {
   flex-wrap: wrap;
 }
 
+.pr-view-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.pr-view-status {
+  padding: 3px 9px;
+  color: var(--info-fg);
+  border: 1px solid var(--info-border);
+  border-radius: var(--r-pill);
+  background: var(--info-bg);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pr-view-status.is-approved {
+  color: var(--ok-fg);
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.pr-view-status.is-changesRequested {
+  color: var(--warn-fg);
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.pr-view-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  min-width: min(23rem, 100%);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.pr-view-route > span:not(.pr-view-route-arrow) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pr-view-route small {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.pr-view-route strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-view-route-arrow {
+  color: var(--text-muted);
+  font-size: 18px;
+}
+
 .pr-view-body {
   display: grid;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+  gap: var(--space-5);
   padding: 24px 0 40px;
 }
 
 .pr-view-body > section {
-  padding: 20px;
+  min-width: 0;
+  padding: var(--space-5);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  background: var(--surface);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.pr-view-body h2 {
+  margin: 0 0 var(--space-3);
+  color: var(--text-strong);
+  font: 600 17px / 1.3 var(--font-doc-head);
+}
+
+.pr-view-description {
+  grid-column: 1;
+}
+
+.pr-view-people {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.pr-view-history,
+.pr-view-conversation,
+.pr-changes-placeholder,
+.pr-view-state-card {
+  grid-column: 1 / -1;
+}
+
+.pr-view-section-intro,
+.pr-view-empty {
+  margin: -6px 0 var(--space-4);
+  color: var(--text-muted);
+}
+
+.pr-view-person-group + .pr-view-person-group {
+  margin-top: var(--space-5);
+}
+
+.pr-view-person-group h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font: 600 11px / 1.3 var(--font-ui);
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.pr-person {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pr-person-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft-border);
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pr-person > span:last-child {
+  display: grid;
+  min-width: 0;
+}
+
+.pr-person small {
+  color: var(--text-muted);
+}
+
+.pr-reviewers {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.pr-reviewer-form {
+  margin-top: var(--space-5);
+}
+
+.pr-reviewer-form input {
+  min-width: 0;
+  width: 100%;
+}
+
+.pr-view-markdown {
+  overflow-wrap: anywhere;
+}
+
+.pr-view-markdown > :last-child {
+  margin-bottom: 0;
 }
 
 .pr-timeline,
@@ -411,6 +584,64 @@ button {
   gap: 4px;
   padding: 12px;
   border-bottom: 1px solid var(--border);
+}
+
+.pr-timeline-entry {
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: var(--space-3);
+  border-bottom: 0;
+}
+
+.pr-timeline-marker {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.pr-timeline-content {
+  display: grid;
+  gap: 4px;
+}
+
+.pr-timeline-content > span:not(.pr-check-state) {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pr-check-state {
+  justify-self: start;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pr-check-state.is-passed {
+  color: var(--ok-fg);
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+
+.pr-check-state.is-failed {
+  color: var(--danger-fg);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.pr-check-state.is-pending {
+  color: var(--warn-fg);
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.pr-view-comment:last-child,
+.pr-timeline-entry:last-child {
+  border-bottom: 0;
 }
 
 .pr-view-comment-meta {
@@ -442,6 +673,28 @@ button {
   background: var(--surface-raised);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
+}
+
+@container (width <= 760px) {
+  .pr-view-header,
+  .pr-view-body {
+    width: min(100% - 2rem, 58rem);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pr-view-route,
+  .pr-view-description,
+  .pr-view-people,
+  .pr-view-history,
+  .pr-view-conversation,
+  .pr-changes-placeholder,
+  .pr-view-state-card {
+    grid-column: 1;
+  }
+
+  .pr-view-people {
+    grid-row: auto;
+  }
 }
 
 .pr-comment-open {
@@ -2601,6 +2854,35 @@ button.context-panel:hover {
   color: var(--text);
 }
 
+/* Favorite toggles share one disclosure rule in every entity list. An unselected star stays out of the
+   visual hierarchy until its row is hovered, while keyboard focus reveals it before it is operated.
+   Selected stars remain visible so their state — and the way to remove them — is always discoverable. */
+.workspace-star:not(.is-favorite) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-star:not(.is-favorite):focus-visible,
+:is(
+    .workspace-list-row,
+    .file-tree-row,
+    .repo-row-header,
+    .repo-clone-header,
+    .repo-branch-header
+  ):hover
+  > .workspace-star,
+:is(
+    .workspace-list-row,
+    .file-tree-row,
+    .repo-row-header,
+    .repo-clone-header,
+    .repo-branch-header
+  ):focus-within
+  > .workspace-star {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* A favorited item: the star fills in the accent colour (the concept's highlight language — no one-off hue). */
 .workspace-star.is-favorite {
   color: var(--accent);
@@ -3184,9 +3466,6 @@ button.context-panel:hover {
 .repo-row-header .repo-inline-action,
 .repo-clone-header .repo-inline-action,
 .repo-branch-header .repo-inline-action,
-.repo-row-header .repo-star:not(.is-favorite),
-.repo-clone-header .repo-star:not(.is-favorite),
-.repo-branch-header .repo-star:not(.is-favorite),
 .repo-clone-header .repo-item-delete,
 .repo-branch-header .repo-item-delete {
   opacity: 0;
@@ -3199,12 +3478,6 @@ button.context-panel:hover {
 .repo-clone-header:focus-within > .repo-inline-action,
 .repo-branch-header:hover > .repo-inline-action,
 .repo-branch-header:focus-within > .repo-inline-action,
-.repo-row-header:hover > .repo-star,
-.repo-row-header:focus-within > .repo-star,
-.repo-clone-header:hover > .repo-star,
-.repo-clone-header:focus-within > .repo-star,
-.repo-branch-header:hover > .repo-star,
-.repo-branch-header:focus-within > .repo-star,
 .repo-clone-header:hover > .repo-item-delete,
 .repo-clone-header:focus-within > .repo-item-delete,
 .repo-branch-header:hover > .repo-item-delete,

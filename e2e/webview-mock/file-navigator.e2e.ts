@@ -57,6 +57,31 @@ test("the file navigator renders identity, filter, and the host root level", asy
   await expect(page.locator("#left-dock .file-tree-file")).toHaveText(["README.md"]);
   await expect(page.locator("#left-dock .file-tree-folder")).toHaveAttribute("aria-expanded", "false");
 
+  const fileRow = page.locator("#left-dock .file-tree-row", { hasText: "README.md" });
+  const fileStar = fileRow.locator(".file-tree-star");
+  await expect(fileStar).toHaveCSS("opacity", "0");
+  await fileRow.hover();
+  await expect(fileStar).toHaveCSS("opacity", "1");
+  await fileRow.locator(".file-tree-file").focus();
+  await expect(fileStar).toHaveCSS("opacity", "1");
+
+  await emit(page, {
+    kind: "workspace.state",
+    payload: {
+      recent: [],
+      favorites: [
+        {
+          path: "C:\\specs\\repo\\README.md",
+          label: "README.md",
+          isFolder: false,
+        },
+      ],
+      repositories: [],
+    },
+  });
+  await page.locator("#left-dock .file-tree-filter").hover();
+  await expect(fileRow.locator(".file-tree-star")).toHaveCSS("opacity", "1");
+
   const filter = page.locator("#left-dock .file-tree-filter");
   await filter.fill("read");
   await expect(page.locator("#left-dock .file-tree-folder")).toHaveCount(0);

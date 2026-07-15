@@ -258,7 +258,7 @@ test("opens a pull request, comments, and the selected-comment reader inside Spe
   });
 
   await expect(page.locator("#pull-request-view h1")).toHaveText("Clarify the refund window");
-  await expect(page.locator("#pull-request-view")).toContainText("Checks: success");
+  await expect(page.locator("#pull-request-view")).toContainText("Checks passed");
   await page.locator('#right-dock .dock-rail-btn[aria-label="Comments"]').click();
   await expect(page.locator(".pr-comment-row")).toContainText("billing.md");
   const commentDraft = page.locator(".pr-comment-compose textarea");
@@ -273,6 +273,23 @@ test("opens a pull request, comments, and the selected-comment reader inside Spe
   await expect(commentFormat).toBeVisible();
   await commentFormat.getByTitle("Bold").click();
   await expect(commentDraft).toHaveValue("**clarify** this");
+  await page
+    .locator(".pr-comment-compose")
+    .getByRole("button", { name: "Comment", exact: true })
+    .click();
+  await waitForSent(page, "pr.comment.create");
+  const mutationRequest = (await sentFrames(page))
+    .filter((frame) => frame.kind === "pr.comment.create")
+    .at(-1);
+  if (mutationRequest?.id === undefined) throw new Error("missing comment mutation correlation");
+  await emit(page, {
+    kind: "pr.mutationCompleted",
+    id: mutationRequest.id,
+    payload: { succeeded: true },
+  });
+  await expect(page.locator('#bottom-dock [aria-label="Application activity"]')).toContainText(
+    "Saved change request update",
+  );
   await page.locator(".pr-comment-open").click();
   await expect(page.locator("#bottom-dock .selected-pr-comment")).toContainText(
     "Please make the date explicit.",

@@ -94,13 +94,16 @@ describe("pull request experience", () => {
     );
 
     expect(frame.active()).toBe("pull-request");
+    expect(host.querySelector("#pull-request-view")?.getAttribute("aria-label")).toBe(
+      "Change request",
+    );
     expect(host.textContent).toContain("Clarify refunds");
     expect(host.textContent).toContain("Explain the refund window.");
-    expect(host.textContent).toContain("Checks: success");
+    expect(host.textContent).toContain("Checks passed");
     expect(host.textContent).toContain("Comments");
     expect(host.textContent).toContain("Please clarify.");
     expect(host.textContent).toContain("Request review");
-    expect(host.textContent).toContain("file-by-file changes view");
+    expect(host.textContent).toContain("document-by-document comparison");
     expect(onContext).toHaveBeenCalledWith("octo/spec", "spec/refunds");
   });
 
@@ -134,7 +137,9 @@ describe("pull request experience", () => {
     );
 
     expect(host.querySelector("h1")?.textContent).toBe("Clarify refunds");
-    expect(host.textContent).toContain("Loading description, history, and comments");
+    expect(host.textContent).toContain(
+      "Loading the description, people, history, and conversation",
+    );
     resolveDetails({ ...DETAILS, error: "GitHub details are temporarily unavailable." });
     await opened;
 
@@ -176,7 +181,7 @@ describe("pull request experience", () => {
     );
 
     expect(host.textContent).toContain("Explain the refund window.");
-    expect(host.textContent).toContain("Checks: success");
+    expect(host.textContent).toContain("Checks passed");
     expect(host.textContent).toContain("Comments couldn't be loaded");
   });
 
@@ -193,6 +198,9 @@ describe("pull request experience", () => {
     );
     panel.mount(panelHost);
     panel.setDetails(DETAILS);
+    expect(panelHost.querySelector("textarea")?.getAttribute("aria-label")).toBe(
+      "New change-request comment",
+    );
 
     const textarea = panelHost.querySelector<HTMLTextAreaElement>(".pr-comment-compose textarea");
     if (textarea === null) throw new Error("missing comment editor");
@@ -241,7 +249,7 @@ describe("pull request experience", () => {
     panel.mount(panelHost);
     panel.setDetails({ ...DETAILS, commentsIncomplete: true });
 
-    expect(panelHost.textContent).toContain("Some comments are not shown");
+    expect(panelHost.textContent).toContain("Some comments aren't available");
     expect(panelHost.querySelector('[role="status"]')).not.toBeNull();
   });
 
@@ -278,7 +286,92 @@ describe("pull request experience", () => {
       frame,
     );
 
-    expect(host.textContent).toContain("Some earlier versions are not shown");
+    expect(host.textContent).toContain("Some earlier saved versions aren't available");
+  });
+
+  it("renders PR prose as inert Markdown without external navigation or resource loads", async () => {
+    const host = document.createElement("div");
+    const home = document.createElement("section");
+    host.appendChild(home);
+    const frame = new CentralFrame(host);
+    frame.register({ id: "home", el: home });
+    const comments = new PrCommentsPanel(
+      mutations(),
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+    );
+    const sourceComment = DETAILS.comments.at(0);
+    if (sourceComment === undefined) throw new Error("missing fixture comment");
+    const view = new PullRequestView(
+      host,
+      frame,
+      vi.fn().mockResolvedValue({
+        ...DETAILS,
+        body: "# Important\n\nRead **this** [guide](https://example.test). <script>bad()</script>\n\n![tracker](https://example.test/pixel.png)",
+        comments: [{ ...sourceComment, body: "Use `thirty days` [here](javascript:bad())" }],
+      }),
+      mutations(),
+      comments,
+    );
+
+    await view.open(
+      {
+        number: 42,
+        repo: "octo/spec",
+        title: DETAILS.title,
+        url: DETAILS.url,
+        role: "author",
+        status: "inReview",
+        label: "In review",
+      },
+      frame,
+    );
+
+    expect(host.querySelectorAll("h1")).toHaveLength(1);
+    expect(host.querySelector(".pr-view-description h3")?.textContent).toBe("Important");
+    expect(host.querySelector(".pr-view-description strong")?.textContent).toBe("this");
+    expect(host.querySelector(".pr-view-comment code")?.textContent).toBe("thirty days");
+    expect(host.querySelector(".pr-view-markdown a")).toBeNull();
+    expect(host.querySelector(".pr-view-markdown img")).toBeNull();
+    expect(host.querySelector("script")).toBeNull();
+    expect(host.textContent).toContain("<script>bad()</script>");
+  });
+
+  it("turns a rejected details request into a retryable native error document", async () => {
+    const host = document.createElement("div");
+    const home = document.createElement("section");
+    host.appendChild(home);
+    const frame = new CentralFrame(host);
+    frame.register({ id: "home", el: home });
+    const comments = new PrCommentsPanel(
+      mutations(),
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+    );
+    const view = new PullRequestView(
+      host,
+      frame,
+      vi.fn().mockRejectedValue(new Error("offline")),
+      mutations(),
+      comments,
+    );
+
+    await view.open(
+      {
+        number: 42,
+        repo: "octo/spec",
+        title: DETAILS.title,
+        url: DETAILS.url,
+        role: "author",
+        status: "inReview",
+        label: "In review",
+      },
+      frame,
+    );
+
+    expect(host.querySelector("h1")?.textContent).toBe(DETAILS.title);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Couldn't load");
+    expect(host.querySelector<HTMLButtonElement>(".pr-view-retry")).not.toBeNull();
   });
 
   it("clears rendered review and selected-comment data at an account boundary", async () => {

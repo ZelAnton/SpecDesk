@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The left rail now orders Navigator, Repositories, Change requests, and Disk before the contextual Outline mode.
 - Repository, local-copy, file, and change-request context now appears in compact panels above the active central view and links to the matching left-panel mode.
 - The bottom panel is now fully hidden by default and opens from one dedicated toggle at the foot of the right rail instead of leaving a collapsed bottom toolbar.
+- The in-app change-request document now presents safe Markdown descriptions, people, proposed and destination versions, chronological saved versions with plain-language checks, and comments in a responsive manager-focused layout.
+- Empty favorite stars now appear only while their entity is hovered or keyboard-focused in every list, while existing favorites remain visible.
 - Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
 - The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
 - Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.

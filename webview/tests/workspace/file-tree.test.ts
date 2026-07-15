@@ -311,6 +311,26 @@ describe("FileTree", () => {
     );
   });
 
+  it("marks only existing Disk favorites as selected and keeps both toggles keyboard-addressable", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    tree.setFavorites([
+      {
+        path: "C:\\specs\\repo\\README.md",
+        label: "README.md",
+        isFolder: false,
+      },
+    ]);
+
+    const [folderStar, fileStar] = body.querySelectorAll<HTMLButtonElement>(".file-tree-star");
+    expect(folderStar?.classList.contains("is-favorite")).toBe(false);
+    expect(folderStar?.getAttribute("aria-pressed")).toBe("false");
+    expect(folderStar?.tabIndex).toBe(0);
+    expect(fileStar?.classList.contains("is-favorite")).toBe(true);
+    expect(fileStar?.getAttribute("aria-pressed")).toBe("true");
+    expect(fileStar?.tabIndex).toBe(0);
+  });
+
   it("keeps case-distinct GitHub folders independent", () => {
     const { tree, body, onRequestLevel } = ready();
     const upper = remoteWirePath("octo/specs", "main", "Docs");

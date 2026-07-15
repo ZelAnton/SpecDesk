@@ -43,6 +43,19 @@ test("requests the workspace store on startup and populates Navigator history", 
   const recent = page.locator('#left-dock [data-tool="recent"]');
   await expect(recent.locator(".workspace-open")).toHaveText(["repo", "intro.md"]);
 
+  const unfavoredRow = recent.locator(".workspace-list-row", { hasText: "repo" });
+  const unfavoredStar = unfavoredRow.locator(".workspace-star");
+  await expect(unfavoredStar).toHaveCSS("opacity", "0");
+  await unfavoredRow.hover();
+  await expect(unfavoredStar).toHaveCSS("opacity", "1");
+  await unfavoredRow.locator(".workspace-open").focus();
+  await expect(unfavoredStar).toHaveCSS("opacity", "1");
+
+  const favoredStar = recent
+    .locator(".workspace-list-row", { hasText: "intro.md" })
+    .locator(".workspace-star");
+  await expect(favoredStar).toHaveCSS("opacity", "1");
+
   // A file row opens the document (a plain file open does not reveal Files, so Navigator stays up).
   await recent.locator(".workspace-open", { hasText: "intro.md" }).click();
   expect((await sentFrames(page)).find((f) => f.kind === "doc.open")?.payload).toMatchObject({
@@ -51,7 +64,8 @@ test("requests the workspace store on startup and populates Navigator history", 
 
   // The `repo` folder is not a favorite yet — its star adds it (done before the folder open below, which
   // reveals the Files navigator and switches the left dock away from Navigator).
-  await recent.locator(".workspace-list-row", { hasText: "repo" }).locator(".workspace-star").click();
+  await unfavoredRow.hover();
+  await unfavoredStar.click();
   expect((await sentFrames(page)).find((f) => f.kind === "workspace.favorite")?.payload).toMatchObject({
     path: "C:\\specs\\repo",
     favorite: true,
@@ -87,6 +101,10 @@ test("the Repositories panel opens a repo and registers a new one", async ({ pag
   const repos = page.locator('#left-dock [data-tool="repositories"]');
   await expect(repos.locator(".repo-open .repo-name")).toHaveText(["acme/specs"]);
   await expect(repos.locator(".repo-open .repo-kind")).toHaveText(["GitHub · 0 local copies"]);
+  const repositoryStar = repos.locator(".repo-row-header .repo-star");
+  await expect(repositoryStar).toHaveCSS("opacity", "0");
+  await repos.locator(".repo-row-header").hover();
+  await expect(repositoryStar).toHaveCSS("opacity", "1");
 
   // The clone menu sends `repo.cloneManaged` with the typed value (done first: opening a repo below reveals
   // the Files navigator and switches the left dock away from Repositories).
