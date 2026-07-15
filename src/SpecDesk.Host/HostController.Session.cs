@@ -1922,6 +1922,9 @@ public sealed partial class HostController
 			: _lifecycleResolvedOnce
 				? (Lifecycle.stateName(Lifecycle.State.Published), null, null)
 				: ResolveInitialLifecycle(repoRoot);
+		string? documentBranch = !string.IsNullOrWhiteSpace(resumedBranch)
+			? resumedBranch
+			: ResolveDocumentBranch(repoRoot);
 		lock (_sync)
 		{
 			if (_disposed
@@ -1966,7 +1969,7 @@ public sealed partial class HostController
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
-			new DocLoadedPayload(path, text, DocRelativeDir(), Branch: branch)));
+			new DocLoadedPayload(path, text, DocRelativeDir(), Branch: documentBranch)));
 		SendWorkspaceContext();
 
 		// A4: a user-opened file just loaded successfully is now the most-recent workspace item (emits
@@ -2078,6 +2081,29 @@ public sealed partial class HostController
 			"Resuming a draft left checked out from a previous session: {Branch} (base {Base})",
 			currentBranch, baseBranch);
 		return (Lifecycle.stateName(Lifecycle.State.Draft), currentBranch, baseBranch);
+	}
+
+	private string? ResolveDocumentBranch(string repoRoot)
+	{
+		if (!IsRepoVersioned(repoRoot))
+		{
+			return null;
+		}
+
+		try
+		{
+			lock (_repoGate)
+			{
+				string? branch = _versioning.CurrentBranch(repoRoot);
+				return branch is "(no branch)" ? null : branch;
+			}
+		}
+		catch (Exception ex) when (ex is LibGit2SharpException or InvalidOperationException)
+		{
+			// Branch identity enriches local comments but must never make an otherwise readable file fail to open.
+			_logger.LogWarning(ex, "Could not read the document branch for {Root}", repoRoot);
+			return null;
+		}
 	}
 
 	private void OnImagePaste(IpcMessage message)

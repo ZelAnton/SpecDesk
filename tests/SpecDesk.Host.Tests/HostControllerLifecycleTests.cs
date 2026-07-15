@@ -419,7 +419,7 @@ public sealed class HostControllerLifecycleTests
             new EditPayload(@"My New\Draft!")));
 
 		StatusPayload? status = LatestStatus();
-		DocLoadedPayload? loaded = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+		DocLoadedPayload? loaded = LatestDocLoaded();
 		Assert.Multiple(() =>
 		{
 			Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
@@ -691,7 +691,7 @@ public sealed class HostControllerLifecycleTests
         DocDiscardCompletedPayload? completed = WaitForPayload<DocDiscardCompletedPayload>(
             MessageKinds.DocDiscardCompleted,
             candidate => candidate.RequestId == 73);
-        DocLoadedPayload? loaded = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+		DocLoadedPayload? loaded = LatestDocLoaded();
         Assert.Multiple(() =>
         {
             Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(73, Succeeded: true)));
@@ -1124,6 +1124,23 @@ public sealed class HostControllerLifecycleTests
 
         return null;
     }
+
+	private DocLoadedPayload? LatestDocLoaded()
+	{
+		lock (_gate)
+		{
+			for (int i = _sent.Count - 1; i >= 0; i--)
+			{
+				IpcMessage? message = IpcSerializer.TryDeserialize(_sent[i]);
+				if (message is not null && message.Kind == MessageKinds.DocLoaded)
+				{
+					return message.GetPayload<DocLoadedPayload>();
+				}
+			}
+		}
+
+		return null;
+	}
 
     private WorkspaceContextPayload? LatestWorkspaceContext()
     {
