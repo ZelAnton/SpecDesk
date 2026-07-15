@@ -393,6 +393,7 @@ button {
 }
 
 .pr-timeline,
+.pr-view-comments,
 .pr-comments-list,
 .activity-log {
   display: grid;
@@ -403,12 +404,44 @@ button {
 }
 
 .pr-timeline li,
+.pr-view-comment,
 .pr-comment-row,
 .activity-log-entry {
   display: grid;
   gap: 4px;
   padding: 12px;
   border-bottom: 1px solid var(--border);
+}
+
+.pr-view-comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--text-muted);
+}
+
+.pr-view-comment-meta strong {
+  color: var(--text-strong);
+}
+
+.pr-view-comment p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.pr-view-comment--empty {
+  color: var(--text-muted);
+}
+
+.pr-view-retry {
+  min-height: 30px;
+  margin-top: 12px;
+  padding: 0 12px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
 }
 
 .pr-comment-open {

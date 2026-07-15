@@ -85,11 +85,11 @@ describe("ReviewsPanel", () => {
   };
 
   it("toggles open, renders each review, and opens one on click", async () => {
-    const openUrl = vi.fn();
+    const openReview = vi.fn();
     const panel = new ReviewsPanel({
       ...elements(),
       requestReviews: () => Promise.resolve(twoReviews),
-      openUrl,
+      openReview,
     });
 
     await panel.open();
@@ -105,7 +105,8 @@ describe("ReviewsPanel", () => {
     expect(first.querySelector(".review-state")?.textContent).toBe("Changes requested");
 
     first.click();
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/o/r/pull/42");
+    expect(openReview).toHaveBeenCalledWith(twoReviews.items[0]);
+    expect(el("reviews-panel").hidden).toBe(true);
   });
 
   it("does not fan out concurrent host queries on rapid re-opens", async () => {
@@ -113,7 +114,7 @@ describe("ReviewsPanel", () => {
     const requestReviews = vi.fn(
       () => new Promise<PrListPayload>((resolve) => (resolveLoad = resolve)),
     );
-    const panel = new ReviewsPanel({ ...elements(), requestReviews, openUrl: vi.fn() });
+    const panel = new ReviewsPanel({ ...elements(), requestReviews, openReview: vi.fn() });
 
     void panel.open();
     void panel.open();
@@ -134,7 +135,7 @@ describe("ReviewsPanel", () => {
     const panel = new ReviewsPanel({
       ...elements(),
       requestReviews: () => Promise.resolve({ items: [], error: "Couldn't load your reviews." }),
-      openUrl: vi.fn(),
+      openReview: vi.fn(),
     });
 
     await panel.open();
@@ -147,7 +148,7 @@ describe("ReviewsPanel", () => {
     const panel = new ReviewsPanel({
       ...elements(),
       requestReviews: () => Promise.reject(new Error("transport failure")),
-      openUrl: vi.fn(),
+      openReview: vi.fn(),
     });
 
     await panel.open();
@@ -156,33 +157,42 @@ describe("ReviewsPanel", () => {
     expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
   });
 
-  it("opens a valid pull-request link by URL and rejects anything else", () => {
-    const openUrl = vi.fn();
+  it("opens a valid pull-request link in SpecDesk and rejects anything else", () => {
+    const openReview = vi.fn();
     // Constructed for its side effect: it wires the url-open button's click listener.
     new ReviewsPanel({
       ...elements(),
       requestReviews: () => Promise.resolve({ items: [] }),
-      openUrl,
+      openReview,
     });
     const urlInput = input("reviews-url-input");
 
     urlInput.value = "https://example.com/not-a-pr";
     el("reviews-url-open").click();
-    expect(openUrl).not.toHaveBeenCalled();
+    expect(openReview).not.toHaveBeenCalled();
     expect(el("reviews-status").textContent).toContain("doesn't look like");
 
     urlInput.value = "https://github.com/octo/spec-repo/pull/123";
     el("reviews-url-open").click();
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/octo/spec-repo/pull/123");
+    expect(openReview).toHaveBeenCalledWith({
+      number: 123,
+      title: "Review #123",
+      url: "https://github.com/octo/spec-repo/pull/123",
+      repo: "octo/spec-repo",
+      role: "reviewer",
+      status: "inReview",
+      label: "In review",
+    });
     expect(urlInput.value).toBe("");
+    expect(el("reviews-panel").hidden).toBe(true);
   });
 
-  it("closes on the close button and invalidates an in-flight load", async () => {
+  it("does not render an in-flight load after the panel is closed", async () => {
     let resolveLoad: (payload: PrListPayload) => void = () => {};
     const panel = new ReviewsPanel({
       ...elements(),
       requestReviews: () => new Promise<PrListPayload>((resolve) => (resolveLoad = resolve)),
-      openUrl: vi.fn(),
+      openReview: vi.fn(),
     });
 
     // Open (load in flight), then close before it resolves.
@@ -195,5 +205,35 @@ describe("ReviewsPanel", () => {
     resolveLoad(twoReviews);
     await flush();
     expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
+  });
+
+  it("starts a fresh load after an account change and ignores the retired account reply", async () => {
+    const resolves: Array<(payload: PrListPayload) => void> = [];
+    const requestReviews = vi.fn(
+      () => new Promise<PrListPayload>((resolve) => resolves.push(resolve)),
+    );
+    const panel = new ReviewsPanel({ ...elements(), requestReviews, openReview: vi.fn() });
+
+    void panel.open();
+    expect(requestReviews).toHaveBeenCalledTimes(1);
+
+    panel.clearAccountState();
+    expect(el("reviews-panel").hidden).toBe(true);
+    void panel.open();
+    expect(requestReviews).toHaveBeenCalledTimes(2);
+
+    resolves[0]?.(twoReviews);
+    await flush();
+    expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
+    expect(el("reviews-status").textContent).toBe("Loading your reviews…");
+
+    const nextAccountReview = twoReviews.items[1];
+    if (nextAccountReview === undefined) {
+      throw new Error("expected a review for the replacement account");
+    }
+    resolves[1]?.({ items: [nextAccountReview] });
+    await flush();
+    expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(1);
+    expect(el("reviews-list").textContent).toContain("Payment terms");
   });
 });

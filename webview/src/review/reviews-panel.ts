@@ -13,18 +13,18 @@ export interface ReviewsPanelDeps {
   urlOpenBtn: HTMLButtonElement | null;
   /** Fetch the user's open reviews from the host (a correlated request). */
   requestReviews: () => Promise<PrListPayload>;
-  /** Open a review's page in the OS browser (the host re-validates the scheme). */
-  openUrl: (url: string) => void;
+  /** Open a review in SpecDesk's central pull-request document. */
+  openReview: (item: PrListItemPayload) => void;
 }
 
 /** A GitHub pull-request web URL, e.g. https://github.com/owner/repo/pull/123. */
-const PR_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+(?:[/?#].*)?$/i;
+const PR_URL = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/([1-9]\d*)(?:[/?#].*)?$/i;
 
 /**
  * The "My reviews" panel (PoC-5): a browse list of the open pull requests the signed-in user authored or
- * was asked to review, each opening on GitHub, plus a field to open any review by pasting its link. It owns
- * no IPC knowledge — the integrator supplies {@link ReviewsPanelDeps}. Plain language only; the author
- * never sees git/PR vocabulary (a "pull request" is a "review").
+ * was asked to review, each opening in SpecDesk's review document, plus a field to open any review by
+ * pasting its link. It owns no IPC knowledge — the integrator supplies {@link ReviewsPanelDeps}. Plain
+ * language only; the author never sees git/PR vocabulary (a "pull request" is a "review").
  */
 export class ReviewsPanel {
   private readonly panel: HTMLElement | null;
@@ -37,6 +37,7 @@ export class ReviewsPanel {
   // mid-flight) never fan out a second concurrent host query — the one in flight renders into the panel if
   // it's still open when it resolves.
   private loading = false;
+  private requestGeneration = 0;
 
   constructor(private readonly deps: ReviewsPanelDeps) {
     this.panel = deps.panel;
@@ -65,6 +66,7 @@ export class ReviewsPanel {
       return;
     }
     this.loading = true;
+    const generation = ++this.requestGeneration;
     setText(this.status, "Loading your reviews…");
     if (this.list) {
       this.list.replaceChildren();
@@ -73,22 +75,35 @@ export class ReviewsPanel {
       const payload = await this.deps.requestReviews();
       // Render only into a still-open panel — if the author closed it while the fetch was in flight, the
       // reply must not populate a hidden panel (and a later reopen fetches fresh once loading clears).
-      if (this.panel && !this.panel.hidden) {
+      if (generation === this.requestGeneration && this.panel && !this.panel.hidden) {
         this.render(payload);
       }
     } catch {
       // The host query rejected (correlation timeout, transport failure, etc.) — fall back to an error state
       // instead of leaving the panel stuck on "Loading your reviews…" forever.
-      if (this.panel && !this.panel.hidden) {
+      if (generation === this.requestGeneration && this.panel && !this.panel.hidden) {
         setText(this.status, "Couldn't load your reviews. Try again later.");
       }
     } finally {
-      this.loading = false;
+      if (generation === this.requestGeneration) {
+        this.loading = false;
+      }
     }
   }
 
   close(): void {
     setHidden(this.panel, true);
+  }
+
+  clearAccountState(): void {
+    this.requestGeneration++;
+    this.loading = false;
+    this.close();
+    this.list?.replaceChildren();
+    setText(this.status, "");
+    if (this.urlInput) {
+      this.urlInput.value = "";
+    }
   }
 
   private render(payload: PrListPayload): void {
@@ -117,7 +132,10 @@ export class ReviewsPanel {
     const open = document.createElement("button");
     open.type = "button";
     open.className = "review-open";
-    open.addEventListener("click", () => this.deps.openUrl(item.url));
+    open.addEventListener("click", () => {
+      this.deps.openReview(item);
+      this.close();
+    });
 
     const title = document.createElement("span");
     title.className = "review-title";
@@ -140,14 +158,25 @@ export class ReviewsPanel {
 
   private openByUrl(): void {
     const raw = this.urlInput?.value.trim() ?? "";
-    if (!PR_URL.test(raw)) {
+    const match = PR_URL.exec(raw);
+    const number = Number(match?.[3]);
+    if (match === null || !Number.isSafeInteger(number) || number <= 0 || number > 2_147_483_647) {
       setText(this.status, "That doesn't look like a GitHub review link.");
       return;
     }
-    this.deps.openUrl(raw);
+    this.deps.openReview({
+      number,
+      title: `Review #${number}`,
+      url: raw,
+      repo: `${match[1]}/${match[2]}`,
+      role: "reviewer",
+      status: "inReview",
+      label: "In review",
+    });
     if (this.urlInput) {
       this.urlInput.value = "";
     }
     setText(this.status, "");
+    this.close();
   }
 }

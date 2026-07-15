@@ -4,8 +4,7 @@ import type { PanelTool } from "../panel-tool.js";
 
 export interface ReviewRequestsCallbacks {
   request(): Promise<PrListPayload>;
-  openUrl(url: string): void;
-  openReview?(item: PrListItemPayload): void;
+  openReview(item: PrListItemPayload): void;
 }
 
 export interface RemoteReviewListConfig {
@@ -156,11 +155,7 @@ export class ReviewRequestsPanel implements PanelTool {
     const open = document.createElement("button");
     open.type = "button";
     open.className = "remote-review-open";
-    open.addEventListener("click", () =>
-      this.callbacks.openReview === undefined
-        ? this.callbacks.openUrl(item.url)
-        : this.callbacks.openReview(item),
-    );
+    open.addEventListener("click", () => this.callbacks.openReview(item));
     const title = document.createElement("span");
     title.className = "remote-review-title";
     title.textContent = item.title || `Review #${item.number}`;

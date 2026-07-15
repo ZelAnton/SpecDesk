@@ -205,6 +205,7 @@ public sealed class GitHubReviewClient : IGitHubReview
     private const int MaxPullRequestCommentsPageBytes = 8_388_608;
     private const int MaxPullRequestCommentsTotalCharacters = 4_194_304;
     private const int MaxPullRequestCommentPages = 10;
+    private static readonly TimeSpan PullRequestCommentsTimeout = TimeSpan.FromSeconds(5);
     private readonly HttpClient _http;
 
     public GitHubReviewClient(HttpClient http) => _http = http;
@@ -441,9 +442,29 @@ public sealed class GitHubReviewClient : IGitHubReview
             && TryProperty(rootData, "viewer", out JsonElement viewerNode)
             ? GitHubHttp.StringOf(viewerNode, "login")
             : string.Empty;
-        (IReadOnlyList<PullRequestComment> comments, bool commentsIncomplete) =
-            await ListPullRequestCommentsAsync(
-                accessToken, owner, repo, pullNumber, viewer, timeout.Token);
+        IReadOnlyList<PullRequestComment> comments = [];
+        bool commentsIncomplete = true;
+        using (CancellationTokenSource commentsTimeout =
+            CancellationTokenSource.CreateLinkedTokenSource(timeout.Token))
+        {
+            commentsTimeout.CancelAfter(PullRequestCommentsTimeout);
+            try
+            {
+                (comments, commentsIncomplete) = await ListPullRequestCommentsAsync(
+                    accessToken, owner, repo, pullNumber, viewer, commentsTimeout.Token);
+            }
+            catch (OperationCanceledException) when (
+                !cancellationToken.IsCancellationRequested && !timeout.IsCancellationRequested)
+            {
+                // Comments are supplementary; keep the PR document usable when their short budget expires.
+            }
+            catch (Exception exception) when (
+                exception is HttpRequestException or InvalidDataException or JsonException)
+            {
+                // GitHub exposes core PR data and comments through separate endpoints. A comments failure
+                // must not discard the already-loaded title, description, reviewers, and commit history.
+            }
+        }
 
         List<PullRequestCommit> commits = [];
         bool commitsIncomplete = false;

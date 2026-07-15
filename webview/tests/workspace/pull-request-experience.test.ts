@@ -58,7 +58,7 @@ function mutations(): PullRequestMutations {
 }
 
 describe("pull request experience", () => {
-  it("renders the in-app PR document with review, history, CI and changes placeholder", async () => {
+  it("renders the in-app PR document with description, history, comments, CI and changes placeholder", async () => {
     const host = document.createElement("div");
     host.dataset.view = "home";
     const home = document.createElement("section");
@@ -95,10 +95,89 @@ describe("pull request experience", () => {
 
     expect(frame.active()).toBe("pull-request");
     expect(host.textContent).toContain("Clarify refunds");
+    expect(host.textContent).toContain("Explain the refund window.");
     expect(host.textContent).toContain("Checks: success");
+    expect(host.textContent).toContain("Comments");
+    expect(host.textContent).toContain("Please clarify.");
     expect(host.textContent).toContain("Request review");
     expect(host.textContent).toContain("file-by-file changes view");
     expect(onContext).toHaveBeenCalledWith("octo/spec", "spec/refunds");
+  });
+
+  it("shows the native review shell while details load and preserves it after a load error", async () => {
+    const host = document.createElement("div");
+    const home = document.createElement("section");
+    host.appendChild(home);
+    const frame = new CentralFrame(host);
+    frame.register({ id: "home", el: home });
+    const comments = new PrCommentsPanel(
+      mutations(),
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+    );
+    let resolveDetails: (value: PrDetailsPayload) => void = () => {};
+    const load = vi.fn(
+      () => new Promise<PrDetailsPayload>((resolve) => (resolveDetails = resolve)),
+    );
+    const view = new PullRequestView(host, frame, load, mutations(), comments);
+    const opened = view.open(
+      {
+        number: 42,
+        repo: "octo/spec",
+        title: "Clarify refunds",
+        url: DETAILS.url,
+        role: "author",
+        status: "inReview",
+        label: "In review",
+      },
+      frame,
+    );
+
+    expect(host.querySelector("h1")?.textContent).toBe("Clarify refunds");
+    expect(host.textContent).toContain("Loading description, history, and comments");
+    resolveDetails({ ...DETAILS, error: "GitHub details are temporarily unavailable." });
+    await opened;
+
+    expect(host.querySelector("h1")?.textContent).toBe("Clarify refunds");
+    expect(host.textContent).toContain("GitHub details are temporarily unavailable.");
+    expect(host.querySelector<HTMLButtonElement>(".pr-view-retry")?.textContent).toBe("Try again");
+  });
+
+  it("keeps the review document available when only comments are incomplete", async () => {
+    const host = document.createElement("div");
+    const home = document.createElement("section");
+    host.appendChild(home);
+    const frame = new CentralFrame(host);
+    frame.register({ id: "home", el: home });
+    const comments = new PrCommentsPanel(
+      mutations(),
+      vi.fn(),
+      vi.fn().mockResolvedValue(undefined),
+    );
+    const view = new PullRequestView(
+      host,
+      frame,
+      vi.fn().mockResolvedValue({ ...DETAILS, comments: [], commentsIncomplete: true }),
+      mutations(),
+      comments,
+    );
+
+    await view.open(
+      {
+        number: 42,
+        repo: "octo/spec",
+        title: DETAILS.title,
+        url: DETAILS.url,
+        role: "author",
+        status: "inReview",
+        label: "In review",
+      },
+      frame,
+    );
+
+    expect(host.textContent).toContain("Explain the refund window.");
+    expect(host.textContent).toContain("Checks: success");
+    expect(host.textContent).toContain("Comments couldn't be loaded");
   });
 
   it("formats a selected comment draft and opens a selected comment in the bottom detail panel", () => {

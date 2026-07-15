@@ -27,10 +27,10 @@ function deferred<T>() {
 
 function ready(request = vi.fn<() => Promise<PrListPayload>>()) {
   const host = document.createElement("div");
-  const openUrl = vi.fn();
-  const panel = new ReviewRequestsPanel({ request, openUrl });
+  const openReview = vi.fn();
+  const panel = new ReviewRequestsPanel({ request, openReview });
   panel.mount(host);
-  return { host, panel, request, openUrl };
+  return { host, panel, request, openReview };
 }
 
 describe("ReviewRequestsPanel", () => {
@@ -40,7 +40,7 @@ describe("ReviewRequestsPanel", () => {
       .mockResolvedValueOnce({ items: [] })
       .mockResolvedValueOnce({ items: [], error: "GitHub is unavailable." })
       .mockResolvedValueOnce(REVIEW);
-    const { host, panel, openUrl } = ready(request);
+    const { host, panel, openReview } = ready(request);
     expect(host.querySelector(".remote-review-list")?.getAttribute("data-state")).toBe("auth");
 
     panel.setSignedIn(true);
@@ -57,7 +57,7 @@ describe("ReviewRequestsPanel", () => {
     await panel.refresh();
     expect(host.querySelector(".remote-review-title")?.textContent).toBe("Payment terms");
     host.querySelector<HTMLButtonElement>(".remote-review-open")?.click();
-    expect(openUrl).toHaveBeenCalledWith("https://github.com/octo/spec/pull/7");
+    expect(openReview).toHaveBeenCalledWith(REVIEW.items[0]);
   });
 
   it("ignores an older request that resolves after a newer refresh", async () => {

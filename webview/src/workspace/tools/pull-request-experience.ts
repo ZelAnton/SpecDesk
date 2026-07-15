@@ -402,20 +402,57 @@ export class PullRequestView {
 
   private renderLoading(item: PrListItemPayload): void {
     this.root.replaceChildren();
+    const header = document.createElement("header");
+    header.className = "pr-view-header";
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "pr-view-eyebrow";
+    eyebrow.textContent = `${item.repo} · #${item.number}`;
+    const title = document.createElement("h1");
+    title.textContent = item.title || `Review #${item.number}`;
+    const badge = document.createElement("span");
+    badge.className = "status-badge";
+    badge.textContent = item.label;
+    header.append(eyebrow, title, badge);
+    const body = document.createElement("div");
+    body.className = "pr-view-body";
+    const state = document.createElement("section");
     const loading = document.createElement("p");
     loading.className = "pr-view-state";
-    loading.textContent = `Loading ${item.repo} #${item.number}…`;
-    this.root.appendChild(loading);
+    loading.setAttribute("role", "status");
+    loading.textContent = "Loading description, history, and comments…";
+    state.appendChild(loading);
+    body.appendChild(state);
+    this.root.append(header, body);
   }
 
   private render(): void {
     this.root.replaceChildren();
     const details = this.details;
     if (details === null || details.error !== undefined) {
+      const current = this.current;
+      const header = document.createElement("header");
+      header.className = "pr-view-header";
+      const eyebrow = document.createElement("p");
+      eyebrow.className = "pr-view-eyebrow";
+      eyebrow.textContent = current ? `${current.repo} · #${current.number}` : "Review";
+      const title = document.createElement("h1");
+      title.textContent = current?.title || (current ? `Review #${current.number}` : "Review");
+      header.append(eyebrow, title);
+      const body = document.createElement("div");
+      body.className = "pr-view-body";
+      const state = document.createElement("section");
       const error = document.createElement("p");
       error.className = "pr-view-state pr-view-state--error";
+      error.setAttribute("role", "alert");
       error.textContent = details?.error ?? "Couldn't load this review.";
-      this.root.appendChild(error);
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "pr-view-retry";
+      retry.textContent = "Try again";
+      retry.addEventListener("click", () => void this.refresh());
+      state.append(error, retry);
+      body.appendChild(state);
+      this.root.append(header, body);
       return;
     }
     const header = document.createElement("header");
@@ -488,18 +525,13 @@ export class PullRequestView {
     timelineTitle.textContent = "History";
     const timelineList = document.createElement("ol");
     timelineList.className = "pr-timeline";
-    const events = [
-      ...details.commits.map((commit) => ({
+    const events = details.commits
+      .map((commit) => ({
         when: commit.when,
         title: commit.title,
         meta: `${commit.shortOid} · Checks: ${commit.checkState}`,
-      })),
-      ...details.comments.map((comment) => ({
-        when: comment.createdAt,
-        title: comment.body,
-        meta: `Comment by ${comment.author}`,
-      })),
-    ].sort((a, b) => Date.parse(b.when) - Date.parse(a.when));
+      }))
+      .sort((a, b) => Date.parse(b.when) - Date.parse(a.when));
     for (const event of events) {
       const row = document.createElement("li");
       const text = document.createElement("strong");
@@ -508,6 +540,11 @@ export class PullRequestView {
       meta.textContent = `${event.meta} · ${new Date(event.when).toLocaleString()}`;
       row.append(text, meta);
       timelineList.appendChild(row);
+    }
+    if (events.length === 0) {
+      const empty = document.createElement("li");
+      empty.textContent = "No versions are shown for this review.";
+      timelineList.appendChild(empty);
     }
     timeline.append(timelineTitle);
     if (details.commitsIncomplete) {
@@ -520,6 +557,50 @@ export class PullRequestView {
     }
     timeline.appendChild(timelineList);
 
+    const conversation = document.createElement("section");
+    const conversationTitle = document.createElement("h2");
+    conversationTitle.textContent = "Comments";
+    const conversationList = document.createElement("ol");
+    conversationList.className = "pr-view-comments";
+    for (const comment of details.comments) {
+      const row = document.createElement("li");
+      row.className = "pr-view-comment";
+      const meta = document.createElement("div");
+      meta.className = "pr-view-comment-meta";
+      const author = document.createElement("strong");
+      author.textContent = comment.author;
+      const when = document.createElement("time");
+      when.dateTime = comment.createdAt;
+      when.textContent = new Date(comment.createdAt).toLocaleString();
+      meta.append(author, when);
+      if (comment.path.length > 0) {
+        const path = document.createElement("code");
+        path.textContent = comment.path;
+        meta.appendChild(path);
+      }
+      const text = document.createElement("p");
+      text.textContent = comment.body;
+      row.append(meta, text);
+      conversationList.appendChild(row);
+    }
+    if (details.comments.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "pr-view-comment pr-view-comment--empty";
+      empty.textContent = details.commentsIncomplete
+        ? "Comments couldn't be loaded. The rest of the review is still available."
+        : "No comments yet.";
+      conversationList.appendChild(empty);
+    }
+    conversation.append(conversationTitle);
+    if (details.commentsIncomplete && details.comments.length > 0) {
+      const warning = document.createElement("p");
+      warning.className = "pr-comments-incomplete";
+      warning.setAttribute("role", "status");
+      warning.textContent = "Some comments may not be shown.";
+      conversation.appendChild(warning);
+    }
+    conversation.appendChild(conversationList);
+
     const changes = document.createElement("section");
     changes.className = "pr-changes-placeholder";
     const changesTitle = document.createElement("h2");
@@ -529,7 +610,7 @@ export class PullRequestView {
       "The file-by-file changes view will be added in the next review milestone.";
     changes.append(changesTitle, changesText);
 
-    body.append(description, reviewers, timeline, changes);
+    body.append(description, reviewers, timeline, conversation, changes);
     this.root.append(header, body);
   }
 }

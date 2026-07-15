@@ -141,6 +141,37 @@ public sealed class GitHubReviewTests
 	}
 
 	[Test]
+	public async Task GetPullRequestDetailsAsync_KeepsCoreDocumentWhenCommentsFail()
+	{
+		const string metadata = """
+			{"data":{"viewer":{"login":"octo"},"repository":{"pullRequest":{"number":42,
+			"title":"Review title","body":"Review description","url":"https://github.com/octo/spec/pull/42",
+			"state":"OPEN","isDraft":false,"baseRefName":"main","headRefName":"spec/review",
+			"author":{"login":"octo"},"reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},
+			"commits":{"totalCount":1,"nodes":[{"commit":{"oid":"abcdef","abbreviatedOid":"abcdef0",
+			"messageHeadline":"Document history","committedDate":"2026-07-14T09:00:00Z",
+			"statusCheckRollup":{"state":"SUCCESS"}}}]}}}}}
+			""";
+		using ScriptedHttpMessageHandler handler = new(
+			(HttpStatusCode.OK, metadata),
+			(HttpStatusCode.Forbidden, "{}"));
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		PullRequestDetails details = await client.GetPullRequestDetailsAsync("token", "octo", "spec", 42);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(details.Title, Is.EqualTo("Review title"));
+			Assert.That(details.Body, Is.EqualTo("Review description"));
+			Assert.That(details.Commits.Single().Title, Is.EqualTo("Document history"));
+			Assert.That(details.Comments, Is.Empty);
+			Assert.That(details.CommentsIncomplete, Is.True);
+			Assert.That(handler.Requests, Has.Count.EqualTo(2));
+		});
+	}
+
+	[Test]
 	public async Task GetPullRequestDetailsAsync_MarksCommentsIncompleteAtThePagingSafetyLimit()
 	{
 		const string metadata = """

@@ -525,6 +525,11 @@ function wire(): void {
     const summary = context.file?.path ?? context.branch?.name ?? context.repository?.id ?? "Start";
     activityStream.add("Context", `Active context: ${summary}`);
   };
+  const openPullRequest = (item: PrListItemPayload): void => {
+    if (pullRequestView === undefined || centralFrame === undefined) return;
+    void pullRequestView.open(item, centralFrame);
+    applyActiveContext(activeContextModel.pullRequestLoading());
+  };
   const setContext = (element: HTMLElement | null, text: string): void => {
     if (element) {
       element.textContent = text;
@@ -1293,7 +1298,7 @@ function wire(): void {
       centralFrame?.show(CENTRAL_VIEW_NOTIFICATIONS);
     });
 
-    // "My reviews" browse panel (PoC-5): lists the user's open reviews and opens any by link, on GitHub.
+    // "My reviews" is a compact launcher into the same native review document as the left PR panels.
     const reviewsPanel = new ReviewsPanel({
       panel: reviewsPanelEl,
       list: reviewsList,
@@ -1306,7 +1311,7 @@ function wire(): void {
           items: [],
           error: "Couldn't load your reviews. Check your connection and try again.",
         }),
-      openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
+      openReview: openPullRequest,
     });
     reviewsBtn?.addEventListener("click", () => void reviewsPanel.open());
     ipc.on(Kinds.githubCode, (message) => {
@@ -1321,6 +1326,7 @@ function wire(): void {
         const nextIdentity = payload.available && payload.signedIn ? (payload.login ?? "") : null;
         if (nextIdentity !== githubAccountIdentity) {
           githubAccountIdentity = nextIdentity;
+          reviewsPanel.clearAccountState();
           activityStream.clear();
           fileTree?.clearAccountState();
           repositoriesPanel?.clearAccountState();
@@ -1916,12 +1922,6 @@ function wire(): void {
     prCommentsPanel = prComments;
     selectedCommentPanel = selectedComment;
     const activityLog = new ActivityLogPanel();
-    const openReview = (item: PrListItemPayload): void => {
-      if (pullRequestView === undefined || centralFrame === undefined) return;
-      void pullRequestView.open(item, centralFrame);
-      applyActiveContext(activeContextModel.pullRequestLoading());
-    };
-
     const reviewRequests = new ReviewRequestsPanel({
       request: () =>
         requestSuggestion(
@@ -1933,8 +1933,7 @@ function wire(): void {
           },
           { scope: "reviewRequests" },
         ),
-      openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
-      openReview,
+      openReview: openPullRequest,
     });
     reviewRequestsPanel = reviewRequests;
     const pullRequests = new PullRequestsPanel({
@@ -1948,8 +1947,7 @@ function wire(): void {
           },
           { scope: "pullRequests" },
         ),
-      openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
-      openReview,
+      openReview: openPullRequest,
     });
     pullRequestsPanel = pullRequests;
     ipc.on(Kinds.githubRepositories, (message) => {

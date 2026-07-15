@@ -29,7 +29,7 @@ describe("PullRequestsPanel", () => {
     };
     const host = document.createElement("div");
     const request = vi.fn().mockResolvedValue(payload);
-    const panel = new PullRequestsPanel({ request, openUrl: vi.fn() });
+    const panel = new PullRequestsPanel({ request, openReview: vi.fn() });
     panel.mount(host);
     expect(panel.id).toBe("pullRequests");
     expect(panel.label).toBe("Pull Requests");
@@ -49,7 +49,7 @@ describe("PullRequestsPanel", () => {
     const host = document.createElement("div");
     const panel = new PullRequestsPanel({
       request: vi.fn().mockResolvedValue({ items: [] }),
-      openUrl: vi.fn(),
+      openReview: vi.fn(),
     });
     panel.mount(host);
     panel.setSignedIn(true);
