@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The bottom panel is now fully hidden by default and opens from one dedicated toggle at the foot of the right rail instead of leaving a collapsed bottom toolbar.
 - The in-app change-request document now presents safe Markdown descriptions, people, proposed and destination versions, chronological saved versions with plain-language checks, and comments in a responsive manager-focused layout.
 - Empty favorite stars now appear only while their entity is hovered or keyboard-focused in every list, while existing favorites remain visible.
+- Split temporarily keeps Code at its natural height without inserting alignment spacers.
+- Selected-text formatting now uses a stationary, descriptive toolbar in both Code and Formatted views.
 - Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
 - The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
 - Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
@@ -52,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Selected text can carry local inline comments in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
 - Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
 - The status bar now identifies the active local copy, working line, and filename without repeating the full path.
 - The account avatar now shows the connected GitHub profile image with a neutral signed-out fallback and carries the notification-count badge.

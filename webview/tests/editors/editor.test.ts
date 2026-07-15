@@ -2,6 +2,7 @@
 import type { EditorView } from "@codemirror/view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarkdownEditor } from "../../src/editors/editor.js";
+import type { SourceSelection } from "../../src/editors/selection-comments.js";
 
 /** The editor's CodeMirror view, for test setup (dispatching a selection). Test-only internal access —
  *  the one unavoidable cast is isolated here rather than repeated at each call site. */
@@ -15,6 +16,7 @@ function mount(
   onDebug?: (summary: () => string, perFrame?: boolean) => void,
   onEditAttempt?: () => void,
   onChange: (text: string, version: number) => void = () => {},
+  onAddComment?: (selection: SourceSelection, body: string) => void,
 ): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -28,6 +30,7 @@ function mount(
     onEditAttempt: onEditAttempt ?? (() => {}),
     onFocus: () => {},
     onOpenLink: () => {},
+    ...(onAddComment ? { onAddComment } : {}),
     ...(onDebug ? { onDebug } : {}),
   });
   return { ed, host };
@@ -654,15 +657,13 @@ describe("MarkdownEditor selected-text formatting palette", () => {
       toJSON: () => ({}),
     });
     const view = viewOf(ed);
-    const position = vi.spyOn(view, "posAtCoords").mockReturnValue(2);
     vi.spyOn(view, "coordsAtPos").mockReturnValue({
       left: 10,
       right: 11,
       top: 10,
       bottom: 20,
     });
-    view.scrollDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: 10, clientY: 10 }));
-    expect(position).toHaveBeenCalled();
+    view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     expect(toolbar?.hidden).toBe(false);
     const bold = host.querySelector<HTMLButtonElement>(
       '.selection-format-popover--code [data-format="bold"]',
@@ -671,6 +672,164 @@ describe("MarkdownEditor selected-text formatting palette", () => {
     bold?.click();
 
     expect(ed.getText()).toBe("**hello**");
+  });
+
+  it("stays fixed while the pointer moves and exposes descriptive, styled controls", () => {
+    const { ed, host } = mount();
+    ed.setText("hello");
+    viewOf(ed).dispatch({ selection: { anchor: 0, head: 5 } });
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 200));
+    vi.spyOn(viewOf(ed), "coordsAtPos").mockReturnValue({
+      left: 40,
+      right: 41,
+      top: 50,
+      bottom: 66,
+    });
+    viewOf(ed).scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+
+    const toolbar = host.querySelector<HTMLElement>(".selection-format-popover--code");
+    const before = { left: toolbar?.style.left, top: toolbar?.style.top };
+    viewOf(ed).scrollDOM.dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 300, clientY: 170, bubbles: true }),
+    );
+    expect({ left: toolbar?.style.left, top: toolbar?.style.top }).toEqual(before);
+    expect(toolbar?.querySelector('[data-format="bold"]')?.textContent).toBe("Bold");
+    expect(toolbar?.querySelector('[data-format="bold"]')?.classList).toContain(
+      "selection-format-button--bold",
+    );
+    expect(toolbar?.querySelector('[data-format="inlineCode"]')?.textContent).toBe("Code");
+    expect(toolbar?.querySelector(".selection-comment-open")?.getAttribute("aria-label")).toBe(
+      "Add comment to selection",
+    );
+  });
+
+  it("opens for a keyboard selection and Escape returns focus to Code", () => {
+    const { ed, host } = mount();
+    ed.setText("keyboard selection");
+    const view = viewOf(ed);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 200));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.contentDOM.focus();
+    view.dispatch({ selection: { anchor: 0, head: 8 } });
+    const toolbar = host.querySelector<HTMLElement>(".selection-format-popover--code");
+    expect(toolbar?.hidden).toBe(false);
+    const bold = toolbar?.querySelector<HTMLButtonElement>('[data-format="bold"]');
+    bold?.focus();
+    expect(document.activeElement).toBe(bold);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(toolbar?.hidden).toBe(true);
+    expect(view.hasFocus).toBe(true);
+  });
+
+  it("does not serialize or parse the whole document while a keyboard selection moves", () => {
+    const { ed, host } = mount();
+    ed.setText(Array.from({ length: 5_000 }, (_, index) => `line ${index}`).join("\n"));
+    const view = viewOf(ed);
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 200));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    const serialize = vi.spyOn(ed, "getText");
+    view.contentDOM.focus();
+
+    for (let head = 1; head <= 100; head++) view.dispatch({ selection: { anchor: 0, head } });
+
+    expect(serialize).not.toHaveBeenCalled();
+    expect(host.querySelector<HTMLElement>(".selection-format-popover--code")?.hidden).toBe(false);
+  });
+
+  it("anchors a first-list-item comment on that item rather than after the whole list", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mount(
+      undefined,
+      undefined,
+      () => {},
+      (selection, body) => {
+        drafts.push({ selection, body });
+      },
+    );
+    const markdown = "- first selected item\n- second item\n- third item\n";
+    ed.setText(markdown);
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 2, head: markdown.indexOf("item") + 4 } });
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 200));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "First item only";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+
+    expect(drafts[0]?.selection).toMatchObject({ anchorLine: 0, quote: "first selected item" });
+  });
+
+  it("cancels an open comment composer when another document is loaded", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mount(
+      undefined,
+      undefined,
+      () => {},
+      (selection, body) => {
+        drafts.push({ selection, body });
+      },
+    );
+    ed.setText("old document");
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 0, head: 3 } });
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 200));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "belongs to old document";
+
+    ed.setText("new document", true, false);
+    expect(host.querySelector<HTMLElement>(".selection-format-popover--code")?.hidden).toBe(true);
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+    expect(drafts).toHaveLength(0);
+  });
+
+  it("adds a table-safe visual comment without mutating Markdown", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mount(
+      undefined,
+      undefined,
+      () => {},
+      (selection, body) => {
+        drafts.push({ selection, body });
+      },
+    );
+    const markdown = "| A | B |\n| - | - |\n| one | two |\n\nAfter\n";
+    ed.setText(markdown);
+    const view = viewOf(ed);
+    view.dispatch({ selection: { anchor: 2, head: markdown.indexOf("two") + 3 } });
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "Clarify this table";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+
+    const draft = drafts[0];
+    expect(draft).toBeDefined();
+    if (draft === undefined) throw new Error("Expected a comment draft");
+    expect(draft.selection.anchorLine).toBe(2);
+    expect(draft.body).toBe("Clarify this table");
+    ed.setComments([
+      {
+        ...draft.selection,
+        id: "c1",
+        body: "Clarify this table",
+        createdAt: "2026-07-16T00:00:00.000Z",
+      },
+    ]);
+    expect(host.querySelector(".selection-comment-block--code")?.textContent).toContain(
+      "Clarify this table",
+    );
+    expect(ed.getText()).toBe(markdown);
+    ed.setText(markdown, true);
+    expect(host.querySelector(".selection-comment-block--code")?.textContent).toContain(
+      "Clarify this table",
+    );
   });
 });
 

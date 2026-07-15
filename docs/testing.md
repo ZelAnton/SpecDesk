@@ -14,7 +14,7 @@ it has passed the rung that actually exercises what it changed — not merely th
 | 1 | **Unit** | `dotnet test SpecDesk.slnx` · `cd webview && npm test` | Logic in isolation (F#/C# domain, TS modules). Fastest. | dev + CI (.NET all-OS; webview ubuntu) |
 | 2 | **Contract fixtures** | part of the unit runs | The native↔webview wire contract can't drift silently (C#/F# ↔ TS pinned by JSON fixtures). | dev + CI |
 | 3 | **jsdom delivery gate** | `cd webview && npm run test:delivery` | The *shipped* `webview.js` bundle is present and wired — real modules, real `index.ts`, but **rigged (synthetic) layout**. | dev + CI |
-| 4 | **Layer 1 — Playwright + real Chromium** | `cd e2e && npm run e2e` | **Real rendered geometry** of the bundle against a mock host: spacer heights, per-anchor pane alignment, list indentation, scroll coupling — the things jsdom can't render. Screenshots. | dev + ubuntu CI |
+| 4 | **Layer 1 — Playwright + real Chromium** | `cd e2e && npm run e2e` | **Real rendered geometry** of the bundle against a mock host: the current no-spacer Split policy, selection overlays, list indentation, and scroll coupling — the things jsdom can't render. Screenshots. | dev + ubuntu CI |
 | 5 | **Layer 2 — full app over CDP** | `cd e2e && npm run e2e:app` | The **real `SpecDesk.Host.exe`** (Photino + WebView2) over a disposable git repo: native startup (ready → auto-load → lifecycle-from-git → render), and **native effects** (autosave-to-disk, git commit). | **Windows only, local** |
 
 Rungs 1–4 run in CI on every push/PR. **Rung 5 is Windows-only and local** (Photino needs a real window

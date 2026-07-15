@@ -51,11 +51,9 @@ const SCROLL_SETTLE_MS = 120;
  * `loadDoc` deliberately does not do (it waits only for mount). Use after a load or a scroll before
  * probing geometry.
  *
- * Requires at least one spacer, so it can't accept a "settled" reading BEFORE the first reconcile has
- * applied spacers (two empty frames at mount would otherwise settle on pre-spacer geometry). Every
- * geometry scenario loads a spacer-producing document, so this holds; a 0-spacer doc would time out
- * (loudly) rather than mis-settle. The signature store is reset per call so each settle is
- * self-contained and can't false-positive against a prior call's stale-but-equal value.
+ * A stable empty spacer set is valid while the product's Code-side spacer gate is disabled. Pane scroll
+ * positions remain part of the signature, so this still waits for the real editor layout to settle.
+ * The signature store is reset per call so each settle is self-contained and can't false-positive.
  */
 export async function waitForGeometrySettle(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -64,9 +62,6 @@ export async function waitForGeometrySettle(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
       const spacers = Array.from(document.querySelectorAll("#editor .cm-sync-spacer"));
-      if (spacers.length === 0) {
-        return false;
-      }
       const editor = document.querySelector("#editor .cm-scroller") as HTMLElement | null;
       const formatted = document.querySelector("#formatted") as HTMLElement | null;
       const signature = JSON.stringify({

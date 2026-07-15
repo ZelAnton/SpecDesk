@@ -118,6 +118,7 @@ public sealed class HostControllerFilesystemTests
 		Assert.That(loaded, Is.Not.Null);
 		Assert.That(loaded!.Path, Is.EqualTo(file));
 		Assert.That(loaded.Text, Is.EqualTo("# Readme"));
+		Assert.That(loaded.Branch, Is.EqualTo("main"));
 	}
 
 	[Test]

@@ -370,6 +370,7 @@ export class HeightSync {
   // (onGeometryChange firing repeatedly, applyMode's own direct call, …) requests at most one retry, but a
   // FRESH gate later (a genuinely new edit) is free to request its own.
   private settleRetryScheduled = false;
+  private readonly spacerInsertionEnabled: boolean;
 
   constructor(
     editor: MarkdownEditor,
@@ -380,11 +381,15 @@ export class HeightSync {
     // load, has no onChange to drive the gate's ordinary recovery path) and index.ts for how it's wired
     // (reconcileHeights(), i.e. back through the SAME generation-aware scheduler, not a bespoke timer).
     onSettleRetry?: () => void,
+    // Product runtime gate. The spacer algorithm remains available and unit-tested, but the current
+    // Split experience deliberately disables Code-side padding while its UX is reassessed.
+    spacerInsertionEnabled = true,
   ) {
     this.editor = editor;
     this.source = source;
     this.onDebug = onDebug;
     this.onSettleRetry = onSettleRetry;
+    this.spacerInsertionEnabled = spacerInsertionEnabled;
   }
 
   /**
@@ -516,6 +521,16 @@ export class HeightSync {
         () => "height-sync: deferred — stale anchor line(s) outside the editor's current document",
       );
       return null;
+    }
+    if (!this.spacerInsertionEnabled) {
+      const changed = this.apply(0, []);
+      this.onDebug?.(() => "height-sync: Code spacer insertion disabled");
+      return snapshotFromGeometry(
+        geometry,
+        editorTops.map((top) => top ?? 0),
+        { lead: 0, spacers: [] },
+        changed,
+      );
     }
     const anchors: AnchorMetrics[] = geometry.map((block, index) => ({
       lineEnd: block.lineEnd,

@@ -1066,7 +1066,8 @@ public sealed partial class HostController
 				"Editing {Doc} on branch {Branch} (base {Base})", docSlug, editSession!.Branch, editSession.BaseBranch);
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.DocLoaded,
-				new DocLoadedPayload(activeTransition.Path, checkedOutText!, DocRelativeDir())));
+				new DocLoadedPayload(
+					activeTransition.Path, checkedOutText!, DocRelativeDir(), Branch: editSession.Branch)));
 			SendLifecycleStatus();
 			lock (_sync)
 			{
@@ -1373,7 +1374,8 @@ public sealed partial class HostController
 			_logger.LogInformation("Discarded draft on {Branch}", transition.Branch);
 			Emit(IpcSerializer.SerializeEvent(
 				MessageKinds.DocLoaded,
-				new DocLoadedPayload(transition.Path, revertedText, DocRelativeDir())));
+				new DocLoadedPayload(
+					transition.Path, revertedText, DocRelativeDir(), Branch: transition.BaseBranch)));
 			SendWorkspaceContext();
 			SendLifecycleStatus();
 			return true;
@@ -1964,7 +1966,7 @@ public sealed partial class HostController
 		_logger.LogInformation("Loaded {Path} ({Length} chars); repo root {Root}", path, text.Length, repoRoot);
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.DocLoaded,
-			new DocLoadedPayload(path, text, DocRelativeDir())));
+			new DocLoadedPayload(path, text, DocRelativeDir(), Branch: branch)));
 		SendWorkspaceContext();
 
 		// A4: a user-opened file just loaded successfully is now the most-recent workspace item (emits

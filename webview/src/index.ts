@@ -12,6 +12,7 @@ import { SignInController } from "./chrome/signin.js";
 import { isSplit, isViewMode, paneVisibility, type ViewMode } from "./chrome/view-mode.js";
 import { MarkdownEditor } from "./editors/editor.js";
 import { FormattedEditor } from "./editors/formatted.js";
+import { SelectionCommentSession, selectionDocumentKey } from "./editors/selection-comments.js";
 import { Preview } from "./review/preview.js";
 import { ReviewController } from "./review/review.js";
 import { ReviewsPanel } from "./review/reviews-panel.js";
@@ -657,6 +658,19 @@ function wire(): void {
       docVersion += 1;
       ipc.send(Kinds.editorChanged, { text }, { version: docVersion });
     };
+    const selectionComments = new SelectionCommentSession();
+    const renderSelectionComments = (): void => {
+      const comments = selectionComments.all();
+      editor.setComments(comments);
+      formatted.setComments(comments);
+      reconcileHeights();
+    };
+    const addSelectionComment = (
+      selection: Parameters<SelectionCommentSession["add"]>[0],
+      body: string,
+    ): void => {
+      if (selectionComments.add(selection, body) !== null) renderSelectionComments();
+    };
 
     // Cross-pane highlight sync: a single active source line (the caret line) and a single hovered
     // source line, shown in BOTH panes — the source editor highlights the line, the formatted view
@@ -714,6 +728,7 @@ function wire(): void {
       review.clear();
       sendDoc(text);
       updateOutline(text);
+      selectionComments.reanchor(text);
       const mirrored = shouldMirrorInto(text, formatted);
       trace("mirror", "mirror.change", {
         source: "editor",
@@ -730,12 +745,17 @@ function wire(): void {
           splitSync.syncFrom("editor");
         }
       }
+      // Resolve both panes only after the passive document has caught up. Building new-line anchors
+      // against its old document and then mapping those widgets through the mirror patch moves them
+      // twice (especially visible when an edit is inserted before a comment).
+      renderSelectionComments();
       reconcileHeights();
     };
     const onFormattedChange = (text: string): void => {
       review.clear();
       sendDoc(text);
       updateOutline(text);
+      selectionComments.reanchor(text);
       const mirrored = shouldMirrorInto(text, editor);
       trace("mirror", "mirror.change", {
         source: "formatted",
@@ -750,6 +770,7 @@ function wire(): void {
           splitSync.syncFrom("formatted");
         }
       }
+      renderSelectionComments();
       reconcileHeights();
     };
 
@@ -798,6 +819,7 @@ function wire(): void {
       },
       // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
+      onAddComment: addSelectionComment,
     });
 
     // The formatted (WYSIWYG) editor — a sibling view of the same Markdown. Edits serialize back via
@@ -829,6 +851,7 @@ function wire(): void {
       onActiveChange: () => formatToolbar.refresh(),
       // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
+      onAddComment: addSelectionComment,
     });
 
     // The source editor is padded to match the formatted view's block heights (formatted is the fixed
@@ -849,6 +872,9 @@ function wire(): void {
       // HeightSync.scheduleSettleRetry for why this exists (a silent doc-load setText has no onChange to
       // drive the gate's ordinary recovery path).
       () => reconcileHeights(),
+      // Temporarily keep Code natural in Split. HeightSync remains wired so scroll maps still use both
+      // panes, while reconcile actively clears any spacer decorations left by an earlier mode/runtime.
+      false,
     );
 
     // The single scroll coordinator, now that both panes exist. It owns each pane's scrollTop for Split
@@ -1007,6 +1033,14 @@ function wire(): void {
         // source editor's own getText() silently LF-only while the formatted pane's kept the CRLF, a
         // persistent mismatch height-sync's pane-consistency gate correctly refused to pad against).
         const text = normalizeLineEndings(payload.text);
+        // A local path is absolute, so it distinguishes clones; the branch component prevents a note
+        // on docs/spec.md in one working line from being projected into another working line's content.
+        // Remote paths already encode repository/branch, but keeping the explicit fields makes the key
+        // robust if that wire representation changes later.
+        selectionComments.setDocument(
+          selectionDocumentKey(payload.path, payload.repository, payload.branch),
+          text,
+        );
         // Silent: the host already has this text (it just sent it) — a non-silent setText would fire
         // the source editor's onChange after its 120ms debounce, round-tripping it back to the host as
         // a spurious editor.changed (bumping docVersion and triggering a redundant re-render) even
@@ -1024,6 +1058,7 @@ function wire(): void {
         // silent by construction (ProseMirror updateState, not a dispatched transaction), so this sends
         // nothing either.
         formatted.setText(text);
+        renderSelectionComments();
         lifecycleChrome.setDocumentReadOnly(payload.readOnly);
         // Refresh the outline for the freshly loaded document.
         updateOutline(text);

@@ -303,6 +303,115 @@ button {
   padding: 0 4px;
 }
 
+.selection-format-popover--code button,
+.selection-format-popover--formatted button {
+  min-width: 2rem;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.selection-format-popover--code button:hover,
+.selection-format-popover--code button[aria-pressed="true"],
+.selection-format-popover--formatted button:hover,
+.selection-format-popover--formatted button[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.selection-format-commands {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.selection-format-button--bold {
+  font-weight: 700;
+}
+
+.selection-format-button--italic {
+  font-style: italic;
+}
+
+.selection-format-button--strike {
+  text-decoration: line-through;
+}
+
+.selection-format-button--code {
+  font-family: var(--font-mono);
+}
+
+.selection-comment-open {
+  margin-left: 3px;
+  color: var(--accent);
+}
+
+.selection-comment-compose {
+  display: grid;
+  gap: 6px;
+  width: min(20rem, calc(100vw - 32px));
+}
+
+.selection-comment-compose[hidden] {
+  display: none;
+}
+
+.selection-comment-compose textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+  padding: 7px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.selection-comment-compose > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.selection-comment-block {
+  box-sizing: border-box;
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-xs);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.selection-comment-block strong::after {
+  content: " · local, not on GitHub";
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.selection-comment-block p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.selection-comment-block--formatted {
+  width: 100%;
+  margin: 10px 0;
+}
+
 .markdown-compose {
   display: grid;
   gap: 8px;

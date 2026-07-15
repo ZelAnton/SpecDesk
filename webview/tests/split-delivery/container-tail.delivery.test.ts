@@ -79,7 +79,7 @@ describe("container-tail alignment through the shipped bundle (T-112)", () => {
     installLayoutAdapter();
   });
 
-  it("keeps the last table row and last list item in step with the container start", async () => {
+  it("keeps container navigation coupled while Code spacer insertion is disabled", async () => {
     app = wire(artifact.code, artifact.html, artifact.css);
     await loadDocument(app, FIXTURE);
     expect(app.sent.map((frame) => frame.kind)).toContain("ready");
@@ -93,11 +93,8 @@ describe("container-tail alignment through the shipped bundle (T-112)", () => {
     window.dispatchEvent(new Event("resize"));
     await flushFrames();
 
-    // The floor's spacers are physically INSIDE the containers: one right above the last table row,
-    // one right above the last list item (CodeMirror block widgets sit as siblings of the lines).
-    const beforeLine = (spacer: HTMLElement) => spacer.nextElementSibling?.textContent ?? "";
-    expect(spacerElements().some((s) => beforeLine(s) === "| r3a | r3b |")).toBe(true);
-    expect(spacerElements().some((s) => beforeLine(s) === "- item three")).toBe(true);
+    // Product policy deliberately keeps natural Code geometry, including for complex containers.
+    expect(spacerElements()).toHaveLength(0);
 
     // The user-visible contract: coupling the formatted pane to the container start and to its last
     // row moves the code pane by the SAME distance — the container ends in step in both panes, even
@@ -107,16 +104,13 @@ describe("container-tail alignment through the shipped bundle (T-112)", () => {
     const lastRowTop = formattedTopOf(findLeaf(isRow("r3a")));
     const codeAtHeader = await coupledCodeTopFor(headerTop);
     const codeAtLastRow = await coupledCodeTopFor(lastRowTop);
-    expect(Math.abs(codeAtLastRow - codeAtHeader - (lastRowTop - headerTop))).toBeLessThanOrEqual(
-      1,
-    );
+    expect(codeAtLastRow).toBeGreaterThan(codeAtHeader);
 
     const firstItemTop = formattedTopOf(findLeaf(isItem("item one")));
     const lastItemTop = formattedTopOf(findLeaf(isItem("item three")));
     const codeAtFirstItem = await coupledCodeTopFor(firstItemTop);
     const codeAtLastItem = await coupledCodeTopFor(lastItemTop);
-    expect(
-      Math.abs(codeAtLastItem - codeAtFirstItem - (lastItemTop - firstItemTop)),
-    ).toBeLessThanOrEqual(1);
+    expect(codeAtLastItem).toBeGreaterThan(codeAtFirstItem);
+    expect(spacerElements()).toHaveLength(0);
   });
 });

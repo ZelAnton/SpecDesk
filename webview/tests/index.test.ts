@@ -816,6 +816,8 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     text = "";
     scroll = 0;
 
+    constructor(private readonly pane: Pane) {}
+
     getText(): string {
       return this.text;
     }
@@ -830,6 +832,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
 
     mirror(text: string): void {
       this.text = text;
+      paneEvents.push(`${this.pane}.mirror`);
     }
 
     setEditable(): void {
@@ -850,6 +853,10 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
 
     clearDiff(): void {
       return;
+    }
+
+    setComments(): void {
+      paneEvents.push(`${this.pane}.comments`);
     }
 
     applyFormat(): void {
@@ -1057,6 +1064,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
   let editorCallbacks: EditorCallbacks | undefined;
   let formattedCallbacks: FormattedCallbacks | undefined;
   let splitSyncInstances: MockSplitSync[];
+  let paneEvents: string[];
 
   async function flushFrame(): Promise<void> {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -1064,13 +1072,14 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
 
   beforeEach(() => {
     splitSyncInstances = [];
+    paneEvents = [];
     editorCallbacks = undefined;
     formattedCallbacks = undefined;
 
     vi.doMock("../src/editors/editor.js", () => ({
       MarkdownEditor: class extends MockPane {
         constructor(_host: HTMLElement, callbacks: EditorCallbacks) {
-          super();
+          super("editor");
           editorCallbacks = callbacks;
         }
       },
@@ -1078,7 +1087,7 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     vi.doMock("../src/editors/formatted.js", () => ({
       FormattedEditor: class extends MockPane {
         constructor(_host: HTMLElement, callbacks: FormattedCallbacks) {
-          super();
+          super("formatted");
           formattedCallbacks = callbacks;
         }
       },
@@ -1121,6 +1130,15 @@ describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsd
     expect(splitSyncInstances[0]?.reconciledCount).toBe(1);
     // index.ts no longer chooses a re-align source; that is the coordinator's active-pane state now.
     expect(splitSyncInstances[0]?.syncFromCalls).toEqual([]);
+  });
+
+  it("mirrors a formatted edit before resolving the new comment anchors in either pane", async () => {
+    await mountApp();
+    paneEvents = [];
+
+    formattedCallbacks?.onChange("inserted before an existing comment\n");
+
+    expect(paneEvents).toEqual(["editor.mirror", "editor.comments", "formatted.comments"]);
   });
 
   it("delegates a settling scroll to the coordinator symmetrically for both panes", async () => {

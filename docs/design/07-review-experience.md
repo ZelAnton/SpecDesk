@@ -52,6 +52,15 @@ A comment's `[LineStart, LineEnd]` resolves through `lineMap` to a rendered node
 marker sits beside that node in the preview (and a gutter marker in the source pane). Clicking
 opens the thread.
 
+The current editor increment implements this as a clone-, branch-, and document-keyed in-session local
+store shared by Code and Formatted views. Exact source offsets are mapped through an ordered line/intraline
+multi-range diff after an edit; the
+selected quote remains presentation metadata rather than an ambiguous text-search anchor. Comment cards
+are block widgets after the last selected line or list item, so they push following content down; a
+selection inside a table anchors after the whole table rather than inside a row or cell. The cards
+are labelled **local, not on GitHub** and do not change the Markdown. Durable host storage, identities,
+threads, and the GitHub projection below remain the next persistence stage.
+
 ### GitHub sync
 
 GitHub PR review comments anchor to `(path, commit_id, line, side)` within the **diff**. So:

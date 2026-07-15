@@ -5,6 +5,8 @@ import type { EditorView } from "prosemirror-view";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FormattedEditor } from "../../src/editors/formatted.js";
 import type { MdBlock } from "../../src/editors/md-blocks.js";
+import type { SourceSelection } from "../../src/editors/selection-comments.js";
+import { SelectionCommentSession } from "../../src/editors/selection-comments.js";
 import { log } from "../../src/util/log.js";
 
 // Runtime check of the ProseMirror integration (which can't be verified headlessly in the app):
@@ -41,7 +43,10 @@ const x = 1;
 Trailing paragraph.
 `;
 
-function mountWithHost(): { ed: FormattedEditor; host: HTMLDivElement } {
+function mountWithHost(onAddComment?: (selection: SourceSelection, body: string) => void): {
+  ed: FormattedEditor;
+  host: HTMLDivElement;
+} {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const ed = new FormattedEditor(host, {
@@ -54,9 +59,173 @@ function mountWithHost(): { ed: FormattedEditor; host: HTMLDivElement } {
     onFocus: () => {},
     onActiveChange: () => {},
     onOpenLink: () => {},
+    ...(onAddComment ? { onAddComment } : {}),
   });
   return { ed, host };
 }
+
+describe("FormattedEditor selected-text toolbar and comments", () => {
+  it("uses the shared readable toolbar and keeps it stationary and interactive", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("hello world\n");
+    ed.setEditable(true);
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+
+    const toolbar = host.querySelector<HTMLElement>(".selection-format-popover--formatted");
+    expect(toolbar?.hidden).toBe(false);
+    expect(toolbar?.querySelector('[data-format="bold"]')?.textContent).toBe("Bold");
+    const position = { left: toolbar?.style.left, top: toolbar?.style.top };
+    document.dispatchEvent(new MouseEvent("mousemove", { clientX: 300, clientY: 180 }));
+    expect({ left: toolbar?.style.left, top: toolbar?.style.top }).toEqual(position);
+    host.querySelector<HTMLButtonElement>('[data-format="bold"]')?.click();
+    expect(ed.getText()).toContain("**hello** world");
+  });
+
+  it("creates a local selection comment and places a table comment after the table", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mountWithHost((selection, body) => {
+      drafts.push({ selection, body });
+    });
+    const markdown = "| A | B |\n| - | - |\n| one | two |\n\nAfter\n";
+    ed.setText(markdown);
+    const view = viewOf(ed);
+    const table = view.state.doc.child(0);
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 2, table.nodeSize - 1)),
+    );
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "Check these values";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+    const draft = drafts[0];
+    expect(draft).toBeDefined();
+    if (draft === undefined) throw new Error("Expected a comment draft");
+    expect(draft.selection.anchorLine).toBe(2);
+    expect(draft.selection.quote).toContain("A | B |");
+    expect(draft.selection.quote).toContain("| one | two");
+
+    const session = new SelectionCommentSession();
+    session.setDocument("table.md", markdown);
+    session.add(draft.selection, "Check these values");
+    session.reanchor(`Intro\n\n${markdown}`);
+    const mapped = session.all()[0];
+    expect(mapped).toMatchObject({ fromLine: 2, anchorLine: 4 });
+    if (mapped === undefined) throw new Error("Expected mapped table comment");
+
+    ed.setText(`Intro\n\n${markdown}`);
+    ed.setComments([
+      {
+        ...mapped,
+        id: "f1",
+        body: "Check these values",
+        createdAt: "2026-07-16T00:00:00.000Z",
+      },
+    ]);
+    const tableElement = host.querySelector("table");
+    const comment = host.querySelector(".selection-comment-block--formatted");
+    expect(tableElement).not.toBeNull();
+    expect(comment).not.toBeNull();
+    expect(tableElement?.contains(comment)).toBe(false);
+    if (tableElement === null || comment === null) throw new Error("Expected table and comment");
+    expect(follows(tableElement, comment)).toBe(true);
+    expect(ed.getText()).toBe(`Intro\n\n${markdown}`);
+  });
+
+  it("keeps a partial paragraph selection exact in the local comment metadata", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    ed.setText("hello world\n");
+    const view = viewOf(ed);
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "Only hello";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+
+    expect(drafts[0]?.selection).toMatchObject({
+      fromOffset: 0,
+      toOffset: 5,
+      anchorLine: 0,
+      quote: "hello",
+    });
+  });
+
+  it("keeps an endpoint at a paragraph boundary associated with the paragraph on its left", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    ed.setText("first paragraph\n\nsecond paragraph\n");
+    const view = viewOf(ed);
+    const secondBlockStart = view.state.doc.child(0).nodeSize;
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, secondBlockStart)),
+    );
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "First paragraph only";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+
+    expect(drafts[0]?.selection).toMatchObject({
+      toLine: 0,
+      anchorLine: 0,
+      quote: "first paragraph",
+    });
+  });
+
+  it("places a first-list-item comment inside that item without widening to the whole list", () => {
+    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    const markdown = "- first selected item\n- second item\n- third item\n";
+    ed.setText(markdown);
+    const view = viewOf(ed);
+    let textFrom = -1;
+    view.state.doc.descendants((node, position) => {
+      if (textFrom < 0 && node.isText && node.text?.startsWith("first selected item")) {
+        textFrom = position;
+      }
+    });
+    if (textFrom < 0) throw new Error("Expected first list item text");
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, textFrom, textFrom + 19)),
+    );
+    vi.spyOn(host, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 500, 250));
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
+    view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
+    host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
+    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
+    if (textarea) textarea.value = "First item only";
+    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
+    const draft = drafts[0];
+    if (draft === undefined) throw new Error("Expected list comment draft");
+    expect(draft.selection).toMatchObject({ anchorLine: 0, quote: "first selected item" });
+
+    ed.setComments([
+      {
+        ...draft.selection,
+        id: "list-1",
+        body: draft.body,
+        createdAt: "2026-07-16T00:00:00.000Z",
+      },
+    ]);
+    const items = host.querySelectorAll("li");
+    const comment = host.querySelector(".selection-comment-block--formatted");
+    expect(items[0]?.contains(comment)).toBe(true);
+    expect(items[1]?.contains(comment)).toBe(false);
+    expect(ed.getText()).toBe(markdown);
+  });
+});
 
 function mount(): FormattedEditor {
   return mountWithHost().ed;

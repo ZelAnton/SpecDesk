@@ -418,11 +418,13 @@ public sealed class HostControllerLifecycleTests
             MessageKinds.DocEdit,
             new EditPayload(@"My New\Draft!")));
 
-        StatusPayload? status = LatestStatus();
-        Assert.Multiple(() =>
-        {
-            Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
-            Assert.That(status!.Branch, Is.EqualTo("My_New/Draft"));
+		StatusPayload? status = LatestStatus();
+		DocLoadedPayload? loaded = FindKind(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(versioning.BeginEditCalls, Is.EqualTo(1));
+			Assert.That(status!.Branch, Is.EqualTo("My_New/Draft"));
+			Assert.That(loaded!.Branch, Is.EqualTo("My_New/Draft"));
         });
     }
 
@@ -694,6 +696,7 @@ public sealed class HostControllerLifecycleTests
         {
             Assert.That(completed, Is.EqualTo(new DocDiscardCompletedPayload(73, Succeeded: true)));
             Assert.That(loaded!.Text, Is.EqualTo("# Billing"));
+            Assert.That(loaded.Branch, Is.EqualTo("main"));
             Assert.That(File.ReadAllText(_docPath), Is.EqualTo("# Billing"));
             Assert.That(LatestStatus()!.State, Is.EqualTo("published"));
         });

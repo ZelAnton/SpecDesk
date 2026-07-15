@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { type FullApp, launchAndAttach, stopAndDump } from "../lib/full-app";
-import { collectGeometry, waitForGeometrySettle } from "../lib/geometry";
+import { collectGeometry } from "../lib/geometry";
 
 // Layer 2: the REAL SpecDesk.Host.exe (Photino + WebView2), driven over CDP against a disposable git
 // fixture repo. This proves the whole native startup path Layer 1's mock host can't: ready → auto-load
@@ -117,10 +117,11 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
   // Auto-retried so a status word that lands a beat after the render can't flake it.
   await expect(page.locator("#status")).not.toBeEmpty();
 
-  // The full render + height-sync pipeline ran in the real WebView2: settle, then real spacers exist.
-  await waitForGeometrySettle(page);
+  // Code-side spacer insertion is temporarily disabled; the real app must keep its natural source
+  // layout rather than reintroducing legacy padding during startup.
+  await page.waitForTimeout(250);
   const geometry = await collectGeometry(page);
-  expect(geometry.spacers.length).toBeGreaterThan(0);
+  expect(geometry.spacers).toHaveLength(0);
 
   // Evidence the agent reads — the real app's pixels.
   await page.screenshot({ path: testInfo.outputPath("final.png"), fullPage: true });

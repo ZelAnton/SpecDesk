@@ -17,6 +17,8 @@ export interface MdBlock {
   text: string;
   lineStart: number;
   lineEnd: number;
+  /** Container kind when the top-level block needs selection-specific placement semantics. */
+  containerKind?: "table" | "list";
   /**
    * For a top-level **table** or **list**: the 0-based source line where each direct child (table row
    * / list item) begins, in document order. Lets the formatted view highlight the row/item under the
@@ -64,6 +66,7 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
   const starts: number[] = [];
   // The child (row/item) source lines of each top-level table/list, keyed by the container's start.
   const childStartsByLine = new Map<number, number[]>();
+  const containerKindByLine = new Map<number, "table" | "list">();
   // The end of each top-level block's node content (the token's map end), keyed by its start line.
   const contentEndByLine = new Map<number, number>();
   for (let i = 0; i < tokens.length; i++) {
@@ -79,6 +82,7 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
     if (!isTable && !isList) {
       continue;
     }
+    containerKindByLine.set(token.map[0], isTable ? "table" : "list");
     // Scan this container's tokens (everything until the next level-0 token, its close) for direct
     // children: table rows (`tr_open`, never nested in GFM) or list items one level deep (so items of
     // a nested sub-list, two levels deeper, are not mistaken for direct items).
@@ -123,6 +127,7 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
     // start line, so look those up under the node's real start rather than the block's.
     const contentKey = i === 0 && firstContentStart !== undefined ? firstContentStart : start;
     const childLineStarts = childStartsByLine.get(contentKey);
+    const containerKind = containerKindByLine.get(contentKey);
     const contentLineEnd = contentEndByLine.get(contentKey);
     const contentLineStart = i === 0 ? firstContentStart : undefined;
     blocks.push({
@@ -131,6 +136,7 @@ export function splitTopLevelBlocks(md: string): MdBlock[] {
       lineEnd: end - 1,
       // Only set when present — exactOptionalPropertyTypes forbids an explicit `undefined`.
       ...(childLineStarts !== undefined ? { childLineStarts } : {}),
+      ...(containerKind !== undefined ? { containerKind } : {}),
       ...(contentLineEnd !== undefined ? { contentLineEnd } : {}),
       ...(contentLineStart !== undefined ? { contentLineStart } : {}),
     });

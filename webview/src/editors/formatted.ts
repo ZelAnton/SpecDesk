@@ -42,6 +42,8 @@ import {
   disabledFormats as computeDisabledFormats,
 } from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
+import type { SelectionComment, SourceSelection } from "./selection-comments.js";
+import { SelectionToolbar } from "./selection-toolbar.js";
 import { buildLeafAnchors } from "./sync-anchors.js";
 
 const DEBOUNCE_MS = 120;
@@ -117,6 +119,29 @@ const diffPlugin = new Plugin<DecorationSet>({
     decorations: (state) => diffKey.getState(state) ?? DecorationSet.empty,
   },
 });
+
+const commentKey = new PluginKey<DecorationSet>("sd-selection-comments");
+const commentPlugin = new Plugin<DecorationSet>({
+  key: commentKey,
+  state: {
+    init: () => DecorationSet.empty,
+    apply: (tr, set) => decorationMeta(tr, commentKey) ?? set.map(tr.mapping, tr.doc),
+  },
+  props: { decorations: (state) => commentKey.getState(state) ?? DecorationSet.empty },
+});
+
+function commentDOM(comment: SelectionComment): HTMLElement {
+  const element = document.createElement("aside");
+  element.className = "selection-comment-block selection-comment-block--formatted";
+  element.dataset.commentId = comment.id;
+  element.setAttribute("aria-label", "Comment on selected text");
+  const label = document.createElement("strong");
+  label.textContent = "Comment";
+  const body = document.createElement("p");
+  body.textContent = comment.body;
+  element.append(label, body);
+  return element;
+}
 
 /** The inline strikethrough span standing in for words deleted inside a changed paragraph/heading. */
 function removedWordDOM(text: string): HTMLElement {
@@ -240,6 +265,8 @@ export interface FormattedEditorCallbacks {
    *  never navigate itself). In read mode a plain click opens it; while editing it takes Ctrl/Cmd-click
    *  so a plain click can still place the caret. */
   onOpenLink: (url: string) => void;
+  /** Add a session annotation against the shared Markdown source-line selection. */
+  onAddComment?: (selection: SourceSelection, body: string) => void;
 }
 
 export class FormattedEditor {
@@ -319,6 +346,8 @@ export class FormattedEditor {
   private caretNavigated = false;
   // rAF-throttled caret reporter; assigned in the constructor (needs `this.view`).
   private readonly reportCaret: () => void;
+  private readonly selectionToolbar: SelectionToolbar;
+  private comments: readonly SelectionComment[] = [];
 
   constructor(parent: HTMLElement, callbacks: FormattedEditorCallbacks) {
     this.scrollEl = parent;
@@ -406,6 +435,11 @@ export class FormattedEditor {
           this.caretNavigated = !changed;
           this.reportCaret();
           this.onActiveChange();
+          if (tr.selectionSet && !next.selection.empty && this.view.hasFocus()) {
+            this.selectionToolbar?.show();
+          } else {
+            this.selectionToolbar?.selectionChanged();
+          }
         }
       },
     });
@@ -441,6 +475,7 @@ export class FormattedEditor {
     this.scrollEl.addEventListener("scroll", () => {
       reportScroll();
       reportScrollSettle?.();
+      this.selectionToolbar?.hide();
     });
 
     // Report the caret's block as a source line for cross-pane highlight sync (index.ts pushes the
@@ -448,6 +483,45 @@ export class FormattedEditor {
     // originating transaction.
     this.reportCaret = rafThrottle(() => {
       this.onCursor(this.sourceLineForPos(this.view.state.selection.$head), this.caretNavigated);
+    });
+
+    this.selectionToolbar = new SelectionToolbar({
+      parent,
+      surface: "formatted",
+      hasSelection: () => !this.view.state.selection.empty,
+      selection: () => this.currentSourceSelection(),
+      anchor: () => {
+        const { from, to } = this.view.state.selection;
+        if (from === to) return null;
+        const coords = this.view.coordsAtPos(to);
+        return new DOMRect(
+          coords.left,
+          coords.top,
+          coords.right - coords.left,
+          coords.bottom - coords.top,
+        );
+      },
+      format: (command) => this.format(command),
+      addComment: (selection, body) => callbacks.onAddComment?.(selection, body),
+      active: () => this.activeFormats(),
+      disabled: () => this.disabledFormats(),
+    });
+    this.view.dom.addEventListener("pointerup", (event) => {
+      if (!this.selectionToolbar.contains(event.target)) this.selectionToolbar.show();
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (
+        !this.selectionToolbar.contains(event.target) &&
+        !this.view.dom.contains(event.target as Node)
+      ) {
+        this.selectionToolbar.hide();
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && this.selectionToolbar.isVisible()) {
+        this.selectionToolbar.hide();
+        this.view.focus();
+      }
     });
 
     // Report the block under the mouse as a source line for cross-pane hover sync (index.ts pushes the
@@ -460,6 +534,10 @@ export class FormattedEditor {
         this.onHover(null);
         return;
       }
+      const { from, to } = this.view.state.selection;
+      if (!this.selectionToolbar.isVisible() && from !== to && at.pos >= from && at.pos <= to) {
+        this.selectionToolbar.show();
+      }
       this.onHover(this.sourceLineForPos(this.view.state.doc.resolve(at.pos)));
     });
     this.view.dom.addEventListener("mousemove", (event) => {
@@ -468,6 +546,110 @@ export class FormattedEditor {
       reportHover();
     });
     this.view.dom.addEventListener("mouseleave", () => this.onHover(null));
+  }
+
+  private currentSourceSelection(): SourceSelection | null {
+    const selection = this.view.state.selection;
+    if (selection.empty) return null;
+    const map = this.blockMap();
+    if (map.isEmpty) return null;
+    const firstIndex = Math.min(selection.$from.index(0), map.entries.length - 1);
+    // A non-empty selection ending exactly at a top-level boundary owns the block on its LEFT, not the
+    // next block whose start position happens to equal selection.to.
+    const lastResolved = this.view.state.doc.resolve(Math.max(selection.from, selection.to - 1));
+    const lastIndex = Math.min(lastResolved.index(0), map.entries.length - 1);
+    const firstEntry = map.entryAt(firstIndex);
+    const entry = map.entryAt(lastIndex);
+    if (firstEntry === null || entry === null) return null;
+    const markdown = this.getText();
+    const sourceStarts: number[] = [];
+    let sourceStart = 0;
+    for (const block of this.blocks) {
+      sourceStarts.push(sourceStart);
+      sourceStart += block.text.length + 1;
+    }
+    /** Align PM text leaves with their verbatim source occurrences inside one top-level block. This
+     * keeps a one-word formatted selection as that word (rather than widening it to the whole block),
+     * while retaining Markdown punctuation between selected leaves. When an exotic escaped construct
+     * cannot be aligned, the caller deliberately falls back to the containing block boundary. */
+    const sourceOffsetFor = (index: number, pos: number, assoc: -1 | 1): number | null => {
+      const candidate = map.entryAt(index);
+      const base = sourceStarts[index];
+      if (candidate === null || base === undefined) return null;
+      let searchFrom = 0;
+      let lastSourceEnd = 0;
+      let resolved: number | null = null;
+      let failed = false;
+      candidate.node.descendants((node, relativePos) => {
+        if (resolved !== null || failed) return false;
+        if (!node.isText) return true;
+        const text = node.text ?? "";
+        const sourceAt = candidate.block.text.indexOf(text, searchFrom);
+        if (sourceAt < 0) {
+          failed = true;
+          return false;
+        }
+        const pmFrom = candidate.from + 1 + relativePos;
+        const pmTo = pmFrom + text.length;
+        if (pos < pmFrom || (assoc < 0 && pos === pmFrom)) {
+          resolved = base + sourceAt;
+        } else if (pos <= pmTo) {
+          resolved = base + sourceAt + Math.max(0, Math.min(text.length, pos - pmFrom));
+        }
+        searchFrom = sourceAt + text.length;
+        lastSourceEnd = searchFrom;
+        return false;
+      });
+      if (resolved !== null) return resolved;
+      if (failed) return null;
+      if (pos <= candidate.from) return base;
+      return base + (assoc < 0 && lastSourceEnd > 0 ? lastSourceEnd : candidate.block.text.length);
+    };
+    const firstBlockOffset = sourceStarts[firstIndex] ?? 0;
+    const lastBlockOffset = sourceStarts[lastIndex] ?? firstBlockOffset;
+    const fromOffset = sourceOffsetFor(firstIndex, selection.from, 1) ?? firstBlockOffset;
+    const toOffset = Math.max(
+      fromOffset,
+      sourceOffsetFor(lastIndex, selection.to, -1) ?? lastBlockOffset + entry.block.text.length,
+    );
+    const lineInBlock = (blockIndex: number, absoluteOffset: number): number => {
+      const base = sourceStarts[blockIndex] ?? 0;
+      const block = this.blocks[blockIndex];
+      if (block === undefined) return 0;
+      const local = Math.max(0, Math.min(block.text.length, absoluteOffset - base));
+      return block.lineStart + block.text.slice(0, local).split("\n").length - 1;
+    };
+    const fromLine = lineInBlock(firstIndex, fromOffset);
+    const toLine = lineInBlock(lastIndex, Math.max(lastBlockOffset, toOffset - 1));
+    const tableAnchor = entry.block.containerKind === "table";
+    const anchorLine = tableAnchor
+      ? (entry.block.contentLineEnd ?? entry.block.lineEnd + 1) - 1
+      : toLine;
+    const nextLine = tableAnchor ? -1 : markdown.indexOf("\n", toOffset);
+    const anchorOffset = tableAnchor
+      ? (() => {
+          const relativeLine = Math.max(0, anchorLine - entry.block.lineStart);
+          const lines = entry.block.text.split("\n");
+          let offset = lastBlockOffset;
+          for (let line = 0; line <= relativeLine && line < lines.length; line++) {
+            offset += lines[line]?.length ?? 0;
+            if (line < relativeLine) offset += 1;
+          }
+          return offset;
+        })()
+      : nextLine < 0
+        ? markdown.length
+        : nextLine;
+    return {
+      fromLine,
+      toLine,
+      anchorLine,
+      anchorKind: tableAnchor ? "table" : "line",
+      fromOffset,
+      toOffset,
+      anchorOffset,
+      quote: markdown.slice(fromOffset, toOffset),
+    };
   }
 
   private freshState(doc: PmNode): EditorState {
@@ -480,6 +662,7 @@ export class FormattedEditor {
         keymap(baseKeymap),
         highlightPlugin,
         diffPlugin,
+        commentPlugin,
         // Read-only gate: while not in a draft, block document edits and offer to start one — the
         // formatted-mode parity of the source editor's "type in a read-only doc → start a draft".
         // Selection-only transactions pass through, so the caret still works.
@@ -506,6 +689,7 @@ export class FormattedEditor {
 
   /** Replace the document from Markdown (on load and on switching into formatted mode). */
   setText(md: string): void {
+    this.selectionToolbar?.hide();
     trace("render", "render.setText", { len: md.length });
     this.original = md;
     this.blocks = splitTopLevelBlocks(md);
@@ -530,6 +714,7 @@ export class FormattedEditor {
     // if a review overlay is showing, its diff marks (so a mode-switch re-hydration doesn't drop them).
     this.pushHighlights();
     this.pushDiff();
+    this.pushComments();
   }
 
   /**
@@ -606,6 +791,7 @@ export class FormattedEditor {
     // line may now resolve to a different node against the refreshed block map — re-assert them.
     this.pushHighlights();
     this.pushDiff();
+    this.pushComments();
   }
 
   /** Re-base the block-splice baseline + cached block map onto the just-mirrored source, and prime the
@@ -955,6 +1141,35 @@ export class FormattedEditor {
    *  pm-commands.ts's `disabledFormats`. */
   disabledFormats(): Set<FormatCommand> {
     return computeDisabledFormats(this.view.state);
+  }
+
+  /** Render session comments without modifying Markdown. List anchors resolve inside the selected item;
+   * tables deliberately remain whole-block anchors so a card can never enter a row or cell. */
+  setComments(comments: readonly SelectionComment[]): void {
+    this.comments = comments;
+    this.pushComments();
+  }
+
+  private pushComments(): void {
+    const map = this.blockMap();
+    const decorations: Decoration[] = [];
+    for (const [index, comment] of this.comments.entries()) {
+      const entry = map.entryForScroll(comment.anchorLine);
+      if (entry !== null) {
+        const narrowed =
+          entry.block.containerKind === "list" ? map.nodeRange(comment.anchorLine, true) : null;
+        const position = narrowed === null ? entry.to : Math.max(narrowed[0], narrowed[1] - 1);
+        decorations.push(
+          Decoration.widget(position, () => commentDOM(comment), {
+            side: index + 1,
+            key: comment.id,
+          }),
+        );
+      }
+    }
+    const set = DecorationSet.create(this.view.state.doc, decorations);
+    this.view.dispatch(this.view.state.tr.setMeta(commentKey, set));
+    this.geometryCache.invalidate();
   }
 
   /** Drop block measurements after CSS changes the pane's width or visibility. The browser reflows the

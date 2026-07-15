@@ -40,8 +40,15 @@ test("the complete formatting toolbar stays discoverable and edits source Markdo
   const source = page.locator("#editor .cm-content");
   await source.click();
   await page.keyboard.press("Control+A");
-  const selectionToolbar = page.getByRole("toolbar", { name: "Format selected Markdown" });
+  const selectionToolbar = page.getByRole("toolbar", {
+    name: "Format selected text or add a comment",
+  });
+  await expect(selectionToolbar).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(selectionToolbar.getByRole("button", { name: "Bold", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
   await expect(selectionToolbar).toBeHidden();
+  await expect(source).toBeFocused();
   await page.locator("#editor .cm-selectionBackground").first().hover();
   await expect(selectionToolbar).toBeVisible();
   const editorBox = await page.locator("#editor").boundingBox();
@@ -61,8 +68,6 @@ test("the complete formatting toolbar stays discoverable and edits source Markdo
   await page.keyboard.type(`${"long source text ".repeat(12)}target`);
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Control+Shift+ArrowLeft");
-  await expect(selectionToolbar).toBeHidden();
-  await page.locator("#editor .cm-selectionBackground").last().hover();
   await expect(selectionToolbar).toBeVisible();
   const narrowEditorBox = await page.locator("#editor").boundingBox();
   const narrowSelectionBox = await selectionToolbar.boundingBox();
@@ -94,5 +99,8 @@ test("the complete formatting toolbar stays discoverable and edits source Markdo
     narrowEditorBox.y + narrowEditorBox.height,
   );
 
-  await page.screenshot({ path: testInfo.outputPath("complete-formatting-toolbar.png"), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath("complete-formatting-toolbar.png"),
+    fullPage: true,
+  });
 });

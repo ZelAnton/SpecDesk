@@ -42,6 +42,8 @@ import { FORMAT_REGISTRY, type FormatKind } from "./format-registry.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { computeTextPatch } from "./mirror-patch.js";
+import type { SelectionComment, SourceSelection } from "./selection-comments.js";
+import { SelectionToolbar } from "./selection-toolbar.js";
 
 const DEBOUNCE_MS = 120;
 /** Idle gap after the last scroll event before we treat scrolling as finished and re-snap. */
@@ -130,6 +132,42 @@ const spacerField = StateField.define<DecorationSet>({
       if (effect.is(setSpacersEffect)) {
         mapped = effect.value;
       }
+    }
+    return mapped;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+class CommentWidget extends WidgetType {
+  constructor(readonly comment: SelectionComment) {
+    super();
+  }
+
+  override eq(other: CommentWidget): boolean {
+    return other.comment.id === this.comment.id && other.comment.body === this.comment.body;
+  }
+
+  toDOM(): HTMLElement {
+    const element = document.createElement("aside");
+    element.className = "selection-comment-block selection-comment-block--code";
+    element.dataset.commentId = this.comment.id;
+    element.setAttribute("aria-label", "Comment on selected text");
+    const label = document.createElement("strong");
+    label.textContent = "Comment";
+    const body = document.createElement("p");
+    body.textContent = this.comment.body;
+    element.append(label, body);
+    return element;
+  }
+}
+
+const setCommentsEffect = StateEffect.define<DecorationSet>();
+const commentField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, tr) {
+    let mapped = decorations.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(setCommentsEffect)) mapped = effect.value;
     }
     return mapped;
   },
@@ -504,6 +542,8 @@ export interface EditorCallbacks {
   onFocus: () => void;
   /** Fired with an http/https URL the author Ctrl/Cmd-clicked in the source, to open in the OS browser. */
   onOpenLink: (url: string) => void;
+  /** Add a session annotation against the shared Markdown source-line selection. */
+  onAddComment?: (selection: SourceSelection, body: string) => void;
   /** Diagnostics for the height-sync reconcile path (T-084) — mirrors {@link HeightSync}'s own optional
    *  `onDebug`. Fired when {@link naturalLineTops}/{@link setSpacers} refuse a stale anchor instead of
    *  silently clamping it to the last line (see those methods). `summary` is a **thunk** so the
@@ -549,9 +589,8 @@ export class MarkdownEditor {
   // lands mid-measure (posAtCoords returns null, e.g. during a layout rebuild) so a transient miss
   // does not report line 0 and yank the passive Split pane back to the top of the document.
   private lastTopVisibleLineExact = 0;
-  private readonly selectionToolbar: HTMLDivElement;
-  private selectionToolbarHovered = false;
-  private selectionToolbarAnchor: { x: number; y: number } | null = null;
+  private readonly selectionToolbar: SelectionToolbar;
+  private comments: readonly SelectionComment[] = [];
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -588,9 +627,11 @@ export class MarkdownEditor {
         cursorLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
         cursorNavigated = !update.docChanged;
         reportCursor();
-        this.selectionToolbarHovered = false;
-        this.selectionToolbarAnchor = null;
-        this.updateSelectionToolbar();
+        if (update.selectionSet && !update.state.selection.main.empty && update.view.hasFocus) {
+          this.selectionToolbar?.show();
+        } else {
+          this.selectionToolbar?.selectionChanged();
+        }
       }
       // The editor relaid out for a reason other than a content edit or our own spacer dispatch →
       // re-equalize. Two cases matter: a real relayout transaction (a wrap toggle), AND — with no
@@ -610,7 +651,7 @@ export class MarkdownEditor {
         !update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setSpacersEffect)))
       ) {
         this.onGeometryChange();
-        this.updateSelectionToolbar();
+        this.selectionToolbar?.selectionChanged();
       }
     });
 
@@ -639,6 +680,7 @@ export class MarkdownEditor {
           // Programmatic dispatches (setText, image insert, spacers) still apply under readOnly.
           this.editable.of(EditorState.readOnly.of(true)),
           spacerField,
+          commentField,
           hoverLineField,
           activeLineField,
           diffField,
@@ -676,41 +718,49 @@ export class MarkdownEditor {
       }),
     });
 
-    this.selectionToolbar = document.createElement("div");
-    this.selectionToolbar.className = "selection-format-popover selection-format-popover--code";
-    this.selectionToolbar.setAttribute("role", "toolbar");
-    this.selectionToolbar.setAttribute("aria-label", "Format selected Markdown");
-    this.selectionToolbar.hidden = true;
-    this.selectionToolbar.addEventListener("pointerenter", () => {
-      this.selectionToolbarHovered = true;
+    this.selectionToolbar = new SelectionToolbar({
+      parent,
+      surface: "code",
+      hasSelection: () => !this.view.state.selection.main.empty,
+      selection: () => {
+        const { from, to } = this.view.state.selection.main;
+        if (from === to) return null;
+        const doc = this.view.state.doc;
+        const fromLine = doc.lineAt(from).number - 1;
+        const toLine = doc.lineAt(Math.max(from, to - 1)).number - 1;
+        // Lezer is incremental, so this table check is cheap even while Shift+Arrow updates a selection.
+        // It avoids reparsing the whole Markdown document on every selection gesture.
+        let syntax: SyntaxTreeNode | null = syntaxTree(this.view.state).resolveInner(to - 1, -1);
+        while (syntax !== null && syntax.name !== "Table") syntax = syntax.parent;
+        const anchorOffset = syntax?.name === "Table" ? syntax.to : doc.line(toLine + 1).to;
+        const anchorLine = doc.lineAt(Math.max(0, anchorOffset - 1)).number - 1;
+        return {
+          fromLine,
+          toLine,
+          anchorLine,
+          anchorKind: syntax?.name === "Table" ? "table" : "line",
+          fromOffset: from,
+          toOffset: to,
+          anchorOffset,
+          quote: doc.sliceString(from, to),
+        };
+      },
+      anchor: () => {
+        const { from, to } = this.view.state.selection.main;
+        if (from === to) return null;
+        const coords = this.view.coordsAtPos(to);
+        if (coords === null) return null;
+        return new DOMRect(
+          coords.left,
+          coords.top,
+          coords.right - coords.left,
+          coords.bottom - coords.top,
+        );
+      },
+      format: (command) => this.applyFormat(command),
+      addComment: (selection, body) => callbacks.onAddComment?.(selection, body),
+      active: () => this.activeFormats(),
     });
-    this.selectionToolbar.addEventListener("pointerleave", () => {
-      this.selectionToolbarHovered = false;
-      this.selectionToolbarAnchor = null;
-      this.updateSelectionToolbar();
-    });
-    const miniCommands: readonly FormatCommand[] = [
-      "bold",
-      "italic",
-      "strike",
-      "inlineCode",
-      "link",
-      "bullet",
-      "quote",
-    ];
-    for (const command of miniCommands) {
-      const definition = FORMAT_REGISTRY.find((item) => item.id === command);
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.format = command;
-      button.title = definition?.label ?? command;
-      button.setAttribute("aria-label", definition?.label ?? command);
-      button.textContent = (definition?.label ?? command).slice(0, 1);
-      button.addEventListener("pointerdown", (event) => event.preventDefault());
-      button.addEventListener("click", () => this.applyFormat(command));
-      this.selectionToolbar.appendChild(button);
-    }
-    parent.appendChild(this.selectionToolbar);
 
     // Live sync runs every frame (sub-line precise). When scrolling stops, fire a settle callback
     // so the preview can be re-snapped exactly to the editor's top — the live frames can lag a
@@ -720,12 +770,10 @@ export class MarkdownEditor {
     this.view.scrollDOM.addEventListener("scroll", () => {
       reportScroll();
       reportScrollSettle();
-      this.selectionToolbarHovered = false;
-      this.selectionToolbarAnchor = null;
-      this.updateSelectionToolbar();
+      this.selectionToolbar.hide();
     });
     if (typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(() => this.updateSelectionToolbar()).observe(parent);
+      new ResizeObserver(() => this.selectionToolbar.hide()).observe(parent);
     }
 
     let hoverX = 0;
@@ -737,24 +785,35 @@ export class MarkdownEditor {
     this.view.scrollDOM.addEventListener("mousemove", (event) => {
       hoverX = event.clientX;
       hoverY = event.clientY;
-      const pos = this.view.posAtCoords({ x: hoverX, y: hoverY });
-      const { from, to } = this.view.state.selection.main;
-      this.selectionToolbarHovered = pos !== null && from !== to && pos >= from && pos <= to;
-      this.selectionToolbarAnchor = this.selectionToolbarHovered ? { x: hoverX, y: hoverY } : null;
-      this.updateSelectionToolbar();
+      if (!this.selectionToolbar.isVisible()) {
+        const pos = this.view.posAtCoords({ x: hoverX, y: hoverY });
+        const { from, to } = this.view.state.selection.main;
+        if (pos !== null && from !== to && pos >= from && pos <= to) {
+          this.selectionToolbar.show();
+        }
+      }
       reportHover();
+    });
+    this.view.scrollDOM.addEventListener("pointerup", (event) => {
+      if (!this.selectionToolbar.contains(event.target)) this.selectionToolbar.show();
     });
     this.view.scrollDOM.addEventListener("mouseleave", (event) => {
       this.onHover(null);
+      if (this.selectionToolbar.contains(event.relatedTarget)) return;
+    });
+    document.addEventListener("pointerdown", (event) => {
       if (
-        event.relatedTarget instanceof Node &&
-        this.selectionToolbar.contains(event.relatedTarget)
+        !this.selectionToolbar.contains(event.target) &&
+        !this.view.dom.contains(event.target as Node)
       ) {
-        return;
+        this.selectionToolbar.hide();
       }
-      this.selectionToolbarHovered = false;
-      this.selectionToolbarAnchor = null;
-      this.updateSelectionToolbar();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && this.selectionToolbar.isVisible()) {
+        this.selectionToolbar.hide();
+        this.view.focus();
+      }
     });
 
     // A `beforeinput` only fires for modifying actions (typing, deletion, paste) — never for caret
@@ -768,38 +827,6 @@ export class MarkdownEditor {
 
     // Report focus so the formatting toolbar can route to this pane when it is the active one in Split.
     this.view.contentDOM.addEventListener("focus", () => this.onFocus());
-  }
-
-  private updateSelectionToolbar(): void {
-    if (this.selectionToolbar === undefined) return;
-    const { from, to } = this.view.state.selection.main;
-    const anchor = this.selectionToolbarAnchor;
-    if (from === to || !this.selectionToolbarHovered || anchor === null) {
-      this.selectionToolbar.hidden = true;
-      return;
-    }
-    const parentRect = this.selectionToolbar.parentElement?.getBoundingClientRect();
-    if (parentRect === undefined) {
-      this.selectionToolbar.hidden = true;
-      return;
-    }
-    this.selectionToolbar.hidden = false;
-    if (
-      anchor.x < parentRect.left ||
-      anchor.x > parentRect.right ||
-      anchor.y < parentRect.top ||
-      anchor.y > parentRect.bottom
-    ) {
-      this.selectionToolbar.hidden = true;
-      return;
-    }
-    const toolbarRect = this.selectionToolbar.getBoundingClientRect();
-    const maximumLeft = Math.max(8, parentRect.width - toolbarRect.width - 8);
-    const maximumTop = Math.max(8, parentRect.height - toolbarRect.height - 8);
-    const desiredTop = anchor.y - parentRect.top - toolbarRect.height - 8;
-    const fallbackTop = anchor.y - parentRect.top + 8;
-    this.selectionToolbar.style.left = `${Math.min(maximumLeft, Math.max(8, anchor.x - parentRect.left))}px`;
-    this.selectionToolbar.style.top = `${Math.min(maximumTop, Math.max(8, desiredTop >= 8 ? desiredTop : fallbackTop))}px`;
   }
 
   /**
@@ -881,6 +908,7 @@ export class MarkdownEditor {
    * dropped rather than restored at a now-meaningless clamped position.
    */
   setText(text: string, silent = false, sameDocument = silent): void {
+    this.selectionToolbar?.hide();
     this.suppressChange = silent;
     // sameDocument = mirroring the same logical content (Split mirror / mode-switch hydration): keep
     // pending image-insert markers, restored verbatim (see restoreMarkersEffect above) rather than
@@ -900,6 +928,9 @@ export class MarkdownEditor {
         markerEffect,
       ],
     });
+    // A whole-document mode-switch hydration cannot meaningfully map block widgets through one giant
+    // replacement. Re-resolve them from their source anchors against the new CodeMirror document.
+    this.setComments(this.comments);
     // Clear in case the text was identical and no docChanged fired to consume the flag.
     this.suppressChange = false;
   }
@@ -1269,6 +1300,22 @@ export class MarkdownEditor {
       );
     }
     this.view.dispatch({ effects: setSpacersEffect.of(Decoration.set(ranges, true)) });
+  }
+
+  /** Render session comments as block widgets after their source anchor line. Widgets are visual-only:
+   * the Markdown document is never changed. */
+  setComments(comments: readonly SelectionComment[]): void {
+    this.comments = comments;
+    const ranges: Range<Decoration>[] = [];
+    for (const comment of comments) {
+      const line = Math.min(Math.max(comment.anchorLine + 1, 1), this.view.state.doc.lines);
+      ranges.push(
+        Decoration.widget({ widget: new CommentWidget(comment), block: true, side: 1 }).range(
+          this.view.state.doc.line(line).to,
+        ),
+      );
+    }
+    this.view.dispatch({ effects: setCommentsEffect.of(Decoration.set(ranges, true)) });
   }
 
   /** Faintly highlight the source line under the mouse (null clears it). */

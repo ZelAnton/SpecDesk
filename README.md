@@ -13,6 +13,11 @@ attachments can be removed before sending.
 In Split view, the line or formatted block under the pointer is mirrored into both panes with a sand
 highlight; the caret remains a separate blue highlight.
 The right panel also exposes the selected document's saved versions, comments, and history.
+Selecting text in either Code or Formatted view offers the same stationary formatting toolbar and a local
+comment action. Local comments render after the last selected line or list item (after the complete table
+for table text),
+remain attached while navigating between documents in the current session, and are clearly identified as
+not yet posted to GitHub; they never alter the Markdown file.
 Pending input is saved before switching specifications or closing the window; if a close-time write fails, SpecDesk stays open and explains the problem. Discard temporarily locks both editing views while returning to the published version. A safely restored draft becomes editable again with autosave resumed; if its working line cannot be verified after a failure, SpecDesk closes the document instead of risking a write to the published version.
 Starting Edit keeps the exact specification locked until its editable working line is ready and reloaded. Concurrent navigation, repository updates, or window close wait or are rejected; if the working line changes but the reload fails, SpecDesk closes the document instead of exposing stale text. Reopening the current working line preserves its unfinished files, and any working-line change or discard stops before overwriting an untracked or ignored local file.
 Assistant is the first mode on that panel's toolbar so chat stays in a consistent position.
