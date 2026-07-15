@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Remote-only working lines and lines with protected work no longer offer local rename actions that cannot succeed.
 - Interrupted or failed local-copy and working-line renames now recover the matching Git state, saved registration, favorites, and recent paths instead of leaving an unusable partial rename.
-- The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
+- The borderless Windows shell now restores native edge and corner resizing around the WebView while restored, keeps maximized edges border-free and non-resizable, and maximizes within the monitor work area without covering the taskbar.
 - The right panel now ends at the bottom panel instead of overlapping its workspace.
 - Bounded pull-request histories now disclose when earlier commits are not shown instead of appearing complete.
 - Disconnecting or changing GitHub accounts now immediately closes private online documents and clears their Folder tree and context.

@@ -48,8 +48,10 @@ npx playwright test webview-mock/split-geometry.e2e.ts   # one scenario
 Launches the built `SpecDesk.Host.exe` with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`
 (WebView2 exposes CDP), an isolated `WEBVIEW2_USER_DATA_FOLDER`, and `SPECDESK_DATA_ROOT` pointing at a
 disposable temp data root seeded with a git fixture repo. Playwright attaches via `connectOverCDP` and
-drives the real page. It asserts native effects the mock host can't: autosave writing to the fixture
-`welcome.md` on disk, and Save-version committing to the real repo on the host-suggested `spec/…` branch.
+drives the real page. It asserts native effects the mock host can't: real Windows edge/corner cursors and
+pointer-driven sizing, border-free non-resizable maximized edges, work-area-bounded maximize, autosave writing to the fixture `welcome.md` on disk,
+and Save-version committing to the real repo on the host-suggested `spec/…` branch. The native resize
+scenario also writes structured HWND/style/cursor/geometry evidence beside its success screenshot.
 
 ```sh
 cd e2e && npm run e2e:app         # builds the host, launches it, attaches, runs the full-app specs

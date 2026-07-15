@@ -191,9 +191,23 @@ internal static class NativeWindowDrag
 internal sealed class NativeWindowChrome : IDisposable
 {
 	private const int GwlpWndProc = -4;
+	private const int GwlStyle = -16;
+	private const string ApplyResizableFrameMessageName = "SpecDesk.NativeWindowChrome.ApplyResizableFrame";
+	private const int FrameProbeIntervalMilliseconds = 50;
+	private const int SlowFrameProbeIntervalMilliseconds = 1000;
+	private const int MaximumFrameProbeCount = 200;
 	private const uint WmGetMinMaxInfo = 0x0024;
+	private const uint WmNcCalcSize = 0x0083;
 	private const uint WmNcHitTest = 0x0084;
 	private const uint MonitorDefaultToNearest = 0x00000002;
+	private const long WsThickFrame = 0x00040000;
+	private const long WsMinimizeBox = 0x00020000;
+	private const long WsMaximizeBox = 0x00010000;
+	private const uint SwpNoSize = 0x0001;
+	private const uint SwpNoMove = 0x0002;
+	private const uint SwpNoZOrder = 0x0004;
+	private const uint SwpNoActivate = 0x0010;
+	private const uint SwpFrameChanged = 0x0020;
 	private const int SmCxSizeFrame = 32;
 	private const int SmCySizeFrame = 33;
 	private const int SmCxPaddedBorder = 92;
@@ -202,14 +216,32 @@ internal sealed class NativeWindowChrome : IDisposable
 	private readonly nint _windowHandle;
 	private readonly WindowProcedure _procedure;
 	private readonly nint _previousProcedure;
-	private bool _disposed;
+	private readonly uint _applyResizableFrameMessage;
+	private readonly Action<nint>? _frameApplied;
+	private readonly Action<Exception>? _frameFailed;
+	private Timer? _applyResizableFrameTimer;
+	private int _frameProbeCount;
+	private int _frameMessageQueued;
+	private volatile bool _disposed;
+	private bool _resizableFrameApplied;
 
-	private NativeWindowChrome(nint windowHandle)
+	private NativeWindowChrome(
+		nint windowHandle,
+		Action<nint>? frameApplied,
+		Action<Exception>? frameFailed)
 	{
 		_windowHandle = windowHandle;
+		_frameApplied = frameApplied;
+		_frameFailed = frameFailed;
+		_applyResizableFrameMessage = RegisterWindowMessage(ApplyResizableFrameMessageName);
+		if (_applyResizableFrameMessage == 0)
+		{
+			throw new InvalidOperationException(
+				$"Could not register the native sizing-frame message (Win32 error {Marshal.GetLastPInvokeError()}).");
+		}
 		_procedure = WindowProc;
 		Marshal.SetLastPInvokeError(0);
-		_previousProcedure = SetWindowProcedure(
+		_previousProcedure = SetWindowValue(
 			windowHandle,
 			GwlpWndProc,
 			Marshal.GetFunctionPointerForDelegate(_procedure));
@@ -218,15 +250,44 @@ internal sealed class NativeWindowChrome : IDisposable
 			throw new InvalidOperationException(
 				$"Could not attach the native window chrome handler (Win32 error {Marshal.GetLastPInvokeError()}).");
 		}
+		// WindowCreated can run before Photino's WebView child is visible. Wait for that native child so
+		// SWP_FRAMECHANGED cannot re-enter WebView2 while its construction is incomplete.
+		Timer frameTimer = new(
+			static state => ((NativeWindowChrome)state!).QueueResizableFrame(),
+			this,
+			Timeout.Infinite,
+			Timeout.Infinite);
+		_applyResizableFrameTimer = frameTimer;
+		if (!frameTimer.Change(FrameProbeIntervalMilliseconds, FrameProbeIntervalMilliseconds))
+		{
+			_applyResizableFrameTimer = null;
+			frameTimer.Dispose();
+			_ = SetWindowValue(windowHandle, GwlpWndProc, _previousProcedure);
+			throw new InvalidOperationException("Could not start the native sizing-frame probe timer.");
+		}
 	}
 
-	public static NativeWindowChrome? Attach(nint windowHandle)
+	public static NativeWindowChrome? Attach(
+		nint windowHandle,
+		Action<nint>? frameApplied = null,
+		Action<Exception>? frameFailed = null)
 	{
 		if (!OperatingSystem.IsWindows() || windowHandle == nint.Zero)
 		{
 			return null;
 		}
-		return new NativeWindowChrome(windowHandle);
+		return new NativeWindowChrome(windowHandle, frameApplied, frameFailed);
+	}
+
+	private bool ApplyResizableFrame()
+	{
+		if (_disposed || _resizableFrameApplied)
+		{
+			return false;
+		}
+		EnsureResizableFrame(_windowHandle);
+		_resizableFrameApplied = true;
+		return true;
 	}
 
 	public void Dispose()
@@ -236,38 +297,69 @@ internal sealed class NativeWindowChrome : IDisposable
 			return;
 		}
 		_disposed = true;
+		Interlocked.Exchange(ref _applyResizableFrameTimer, null)?.Dispose();
 		if (IsWindow(_windowHandle) && _previousProcedure != nint.Zero)
 		{
-			_ = SetWindowProcedure(_windowHandle, GwlpWndProc, _previousProcedure);
+			_ = SetWindowValue(_windowHandle, GwlpWndProc, _previousProcedure);
 		}
 		GC.KeepAlive(_procedure);
 	}
 
 	private nint WindowProc(nint windowHandle, uint message, nuint wParam, nint lParam)
 	{
-		if (message == WmNcHitTest && !IsZoomed(windowHandle) && GetWindowRect(windowHandle, out NativeRect rect))
+		if (message == _applyResizableFrameMessage)
 		{
-			int x = unchecked((short)((long)lParam & 0xffff));
-			int y = unchecked((short)(((long)lParam >> 16) & 0xffff));
-			uint dpi = GetDpiForWindow(windowHandle);
-			if (dpi == 0)
+			try
 			{
-				dpi = DefaultDpi;
+				if (ApplyResizableFrame())
+				{
+					_frameApplied?.Invoke(windowHandle);
+				}
 			}
-			int horizontal = MetricForDpi(SmCxSizeFrame, dpi) + MetricForDpi(SmCxPaddedBorder, dpi);
-			int vertical = MetricForDpi(SmCySizeFrame, dpi) + MetricForDpi(SmCxPaddedBorder, dpi);
-			WindowHitTest hit = WindowChromeGeometry.HitTest(
-				new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom),
-				new WindowPoint(x, y),
-				Math.Max(1, horizontal),
-				Math.Max(1, vertical));
-			if (hit != WindowHitTest.Client)
+			catch (Exception exception)
 			{
-				return (nint)(int)hit;
+				ReportFrameFailure(exception);
 			}
+			return nint.Zero;
 		}
-		else if (message == WmGetMinMaxInfo && lParam != nint.Zero)
+		if (message == WmNcCalcSize && IsZoomed(windowHandle))
 		{
+			// WS_THICKFRAME must remain available for restored-window sizing, but Windows otherwise
+			// reserves its dark non-client inset around a maximized chromeless window.
+			return nint.Zero;
+		}
+		if (message == WmNcHitTest)
+		{
+			if (IsZoomed(windowHandle))
+			{
+				return (nint)(int)WindowHitTest.Client;
+			}
+			if (GetWindowRect(windowHandle, out NativeRect rect))
+			{
+				int x = unchecked((short)((long)lParam & 0xffff));
+				int y = unchecked((short)(((long)lParam >> 16) & 0xffff));
+				uint dpi = GetDpiForWindow(windowHandle);
+				if (dpi == 0)
+				{
+					dpi = DefaultDpi;
+				}
+				int horizontal = MetricForDpi(SmCxSizeFrame, dpi) + MetricForDpi(SmCxPaddedBorder, dpi);
+				int vertical = MetricForDpi(SmCySizeFrame, dpi) + MetricForDpi(SmCxPaddedBorder, dpi);
+				WindowHitTest hit = WindowChromeGeometry.HitTest(
+					new WindowRect(rect.Left, rect.Top, rect.Right, rect.Bottom),
+					new WindowPoint(x, y),
+					Math.Max(1, horizontal),
+					Math.Max(1, vertical));
+				if (hit != WindowHitTest.Client)
+				{
+					return (nint)(int)hit;
+				}
+			}
+			return CallWindowProc(_previousProcedure, windowHandle, message, wParam, lParam);
+		}
+		if (message == WmGetMinMaxInfo && lParam != nint.Zero)
+		{
+			nint result = CallWindowProc(_previousProcedure, windowHandle, message, wParam, lParam);
 			nint monitor = MonitorFromWindow(windowHandle, MonitorDefaultToNearest);
 			NativeMonitorInfo info = new() { Size = (uint)Marshal.SizeOf<NativeMonitorInfo>() };
 			if (monitor != nint.Zero && GetMonitorInfo(monitor, ref info))
@@ -279,11 +371,78 @@ internal sealed class NativeWindowChrome : IDisposable
 				minMax.MaxPosition = new NativePoint(bounds.X, bounds.Y);
 				minMax.MaxSize = new NativePoint(bounds.Width, bounds.Height);
 				Marshal.StructureToPtr(minMax, lParam, false);
-				return nint.Zero;
+				return result;
 			}
+			return result;
 		}
 
 		return CallWindowProc(_previousProcedure, windowHandle, message, wParam, lParam);
+	}
+
+	private void QueueResizableFrame()
+	{
+		if (!HasVisibleChildWindow(_windowHandle))
+		{
+			if (Interlocked.Increment(ref _frameProbeCount) == MaximumFrameProbeCount)
+			{
+				Timer? frameTimer = Volatile.Read(ref _applyResizableFrameTimer);
+				if (!_disposed && frameTimer is not null)
+				{
+					if (frameTimer.Change(
+						SlowFrameProbeIntervalMilliseconds,
+						SlowFrameProbeIntervalMilliseconds))
+					{
+						ReportFrameFailure(new TimeoutException(
+							"Photino's WebView child did not become visible within ten seconds; native resize will keep retrying once per second."));
+					}
+					else
+					{
+						ReportFrameFailure(new InvalidOperationException(
+							"The native sizing-frame probe timer could not continue."));
+					}
+				}
+			}
+			return;
+		}
+		if (Interlocked.CompareExchange(ref _frameMessageQueued, 1, 0) != 0)
+		{
+			return;
+		}
+		Interlocked.Exchange(ref _applyResizableFrameTimer, null)?.Dispose();
+		if (_disposed)
+		{
+			return;
+		}
+		if (!PostMessage(_windowHandle, _applyResizableFrameMessage, nuint.Zero, nint.Zero))
+		{
+			ReportFrameFailure(new InvalidOperationException(
+				$"Could not queue the native sizing frame (Win32 error {Marshal.GetLastPInvokeError()})."));
+		}
+	}
+
+	private static bool HasVisibleChildWindow(nint parentWindow)
+	{
+		nint childWindow = nint.Zero;
+		while ((childWindow = FindWindowEx(parentWindow, childWindow, null, null)) != nint.Zero)
+		{
+			if (IsWindowVisible(childWindow))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void ReportFrameFailure(Exception exception)
+	{
+		try
+		{
+			_frameFailed?.Invoke(exception);
+		}
+		catch (Exception)
+		{
+			// A diagnostic callback must never let a logging failure escape a native window procedure or timer.
+		}
 	}
 
 	private static int MetricForDpi(int index, uint dpi)
@@ -298,7 +457,48 @@ internal sealed class NativeWindowChrome : IDisposable
 		}
 	}
 
-	private static nint SetWindowProcedure(nint windowHandle, int index, nint value) =>
+	private static void EnsureResizableFrame(nint windowHandle)
+	{
+		Marshal.SetLastPInvokeError(0);
+		nint currentStyle = GetWindowValue(windowHandle, GwlStyle);
+		if (currentStyle == nint.Zero && Marshal.GetLastPInvokeError() != 0)
+		{
+			throw new InvalidOperationException(
+				$"Could not read the native window style (Win32 error {Marshal.GetLastPInvokeError()}).");
+		}
+
+		nint resizableStyle = new(currentStyle.ToInt64() | WsThickFrame | WsMinimizeBox | WsMaximizeBox);
+		if (resizableStyle != currentStyle)
+		{
+			Marshal.SetLastPInvokeError(0);
+			nint previousStyle = SetWindowValue(windowHandle, GwlStyle, resizableStyle);
+			if (previousStyle == nint.Zero && Marshal.GetLastPInvokeError() != 0)
+			{
+				throw new InvalidOperationException(
+					$"Could not enable the native sizing frame (Win32 error {Marshal.GetLastPInvokeError()}).");
+			}
+		}
+
+		if (!SetWindowPos(
+			windowHandle,
+			nint.Zero,
+			0,
+			0,
+			0,
+			0,
+			SwpNoMove | SwpNoSize | SwpNoZOrder | SwpNoActivate | SwpFrameChanged))
+		{
+			throw new InvalidOperationException(
+				$"Could not apply the native sizing frame (Win32 error {Marshal.GetLastPInvokeError()}).");
+		}
+	}
+
+	private static nint GetWindowValue(nint windowHandle, int index) =>
+		nint.Size == 8
+			? GetWindowLongPtr64(windowHandle, index)
+			: new nint(GetWindowLong32(windowHandle, index));
+
+	private static nint SetWindowValue(nint windowHandle, int index, nint value) =>
 		nint.Size == 8
 			? SetWindowLongPtr64(windowHandle, index, value)
 			: new nint(SetWindowLong32(windowHandle, index, value.ToInt32()));
@@ -348,6 +548,30 @@ internal sealed class NativeWindowChrome : IDisposable
 	[DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
 	private static extern int SetWindowLong32(nint windowHandle, int index, int value);
 
+	[DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+	private static extern nint GetWindowLongPtr64(nint windowHandle, int index);
+
+	[DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+	private static extern int GetWindowLong32(nint windowHandle, int index);
+
+	[DllImport("user32.dll", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool SetWindowPos(
+		nint windowHandle,
+		nint insertAfter,
+		int x,
+		int y,
+		int width,
+		int height,
+		uint flags);
+
+	[DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode, SetLastError = true)]
+	private static extern uint RegisterWindowMessage(string messageName);
+
+	[DllImport("user32.dll", EntryPoint = "PostMessageW", SetLastError = true)]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool PostMessage(nint windowHandle, uint message, nuint wParam, nint lParam);
+
 	[DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
 	private static extern nint CallWindowProc(
 		nint previousProcedure, nint windowHandle, uint message, nuint wParam, nint lParam);
@@ -372,6 +596,17 @@ internal sealed class NativeWindowChrome : IDisposable
 	[DllImport("user32.dll")]
 	[return: MarshalAs(UnmanagedType.Bool)]
 	private static extern bool IsWindow(nint windowHandle);
+
+	[DllImport("user32.dll")]
+	[return: MarshalAs(UnmanagedType.Bool)]
+	private static extern bool IsWindowVisible(nint windowHandle);
+
+	[DllImport("user32.dll", EntryPoint = "FindWindowExW", CharSet = CharSet.Unicode)]
+	private static extern nint FindWindowEx(
+		nint parentWindow,
+		nint childAfter,
+		string? className,
+		string? windowName);
 
 	[DllImport("user32.dll")]
 	private static extern nint MonitorFromWindow(nint windowHandle, uint flags);

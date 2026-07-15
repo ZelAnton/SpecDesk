@@ -164,7 +164,23 @@ internal static class Program
 			// Attach while the created window is still on its owning UI thread and keep the delegate rooted
 			// until the message loop has ended.
 			.RegisterWindowCreatedHandler((_, _) =>
-				nativeWindowChrome = NativeWindowChrome.Attach(window!.WindowHandle))
+			{
+				try
+				{
+					nativeWindowChrome = NativeWindowChrome.Attach(
+						window!.WindowHandle,
+						frameApplied: handle => startup.LogInformation(
+							"Native resize frame enabled for window 0x{WindowHandle:X}",
+							handle),
+						frameFailed: exception => startup.LogError(
+							exception,
+							"Native resize frame could not be enabled"));
+				}
+				catch (InvalidOperationException exception)
+				{
+					startup.LogError(exception, "Native window chrome could not be attached");
+				}
+			})
 			// Fires synchronously on the UI thread as soon as WM_CLOSE is dispatched, ahead of the
 			// native window (and its message queue) being torn down — see DialogClosingGrace above.
 			// The first close is deferred while the webview flushes and the host persists; the coordinator's
