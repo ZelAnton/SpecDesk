@@ -1168,6 +1168,53 @@ public sealed class HostControllerReviewTests
         });
     }
 
+	[Test]
+	public void ListPullRequests_when_signed_out_uses_change_request_terms()
+	{
+		using HostController controller = Build(
+			new FakeVersioning(),
+			new FakeGitHubAuth(signedIn: false),
+			new FakeGitHubReview(),
+			startDraft: false);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.PrListRequest, new PrListRequestPayload("pullRequests"), id: "pull-list"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+		PrListPayload? payload = reply?.GetPayload<PrListPayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply?.Id, Is.EqualTo("pull-list"));
+			Assert.That(payload?.Items, Is.Empty);
+			Assert.That(payload?.Error, Is.EqualTo(
+				"Connect a GitHub account to see change requests."));
+		});
+	}
+
+	[Test]
+	public void ListPullRequests_on_failure_uses_change_request_terms()
+	{
+		FakeGitHubReview review = new() { ThrowOnListPullRequests = true };
+		using HostController controller = Build(
+			new FakeVersioning(),
+			new FakeGitHubAuth(signedIn: true),
+			review,
+			startDraft: false);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.PrListRequest, new PrListRequestPayload("pullRequests"), id: "pull-list"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+		PrListPayload? payload = reply?.GetPayload<PrListPayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply?.Id, Is.EqualTo("pull-list"));
+			Assert.That(payload?.Items, Is.Empty);
+			Assert.That(payload?.Error, Is.EqualTo(
+				"Couldn't load change requests. Check your connection and try again."));
+		});
+	}
+
     [Test]
     public void PullRequestDetails_are_correlated_and_mapped_for_the_in_app_document()
     {

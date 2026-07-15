@@ -24,7 +24,7 @@ interface PendingLevel {
 
 export class FileTree implements PanelTool {
   readonly id = "files";
-  readonly label = "Folders";
+  readonly label = "Disk";
   readonly icon = icon("files");
 
   private rootEl: HTMLElement | null = null;

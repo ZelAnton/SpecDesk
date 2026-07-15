@@ -267,7 +267,7 @@ export function wire(code: string, html: string, css: string): WiredApp {
  *  document mounted but hidden until the author chooses Document; this geometry harness must render it. */
 export async function loadDocument(app: WiredApp, text: string): Promise<void> {
   app.emit({ kind: "doc.loaded", payload: { path: "spec.md", text, docDir: "", readOnly: false } });
-  document.querySelector<HTMLElement>('.dock-rail-btn[aria-label="Editor"]')?.click();
+  document.querySelector<HTMLElement>('.dock-rail-btn[aria-label="Outline"]')?.click();
   await flushFrames();
 }
 

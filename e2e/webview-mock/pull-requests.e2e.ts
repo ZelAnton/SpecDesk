@@ -14,7 +14,7 @@ test("Pull Requests mode lists authored and involved open work", async ({ page }
     kind: "github.account",
     payload: { available: true, signedIn: true, login: "alice" },
   });
-  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   await waitForSent(page, "pr.list.request");
   const request = (await sentFrames(page)).find(
     (frame) =>

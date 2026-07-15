@@ -104,14 +104,14 @@ test("a tree from a plain document load does NOT reveal the Files panel", async 
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");
 
-  // Loading reveals the contextual Editor mode. A later tree must not replace it with Folders.
+  // Loading reveals the contextual Outline mode. A later tree must not replace it with Disk.
   await loadDoc(page, { path: "C:\\specs\\repo\\doc.md", text: "# Doc" });
-  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Editor"]')).toHaveAttribute(
+  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Outline"]')).toHaveAttribute(
     "aria-expanded",
     "true",
   );
   await emit(page, TREE);
-  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]')).toHaveAttribute(
+  await expect(page.locator('#left-dock .dock-rail-btn[aria-label="Disk"]')).toHaveAttribute(
     "aria-expanded",
     "false",
   );

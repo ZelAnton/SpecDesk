@@ -7,9 +7,9 @@
  * DockCallbacks.onChange} so the owner can persist it; the owner also observes the centre's size to
  * re-measure the editor, so the dock stays free of any editor/sync knowledge.
  *
- * A collapsed dock keeps its mode rail visible, so the same active icon that collapsed it can expand it
- * again. Side rails stay vertical; the collapsed bottom rail becomes a horizontal toolbar along the window
- * edge and returns to the left side when expanded. Only the main panel and splitter disappear.
+ * A collapsed side dock keeps its mode rail visible, so the same active icon that collapsed it can expand
+ * again. A dock can instead omit its rail and leave layout completely when closed; the workspace uses that
+ * form for the bottom panel because its toggle lives at the foot of the right rail.
  */
 
 import { SegmentedControl, type SegmentedOption } from "../chrome/segmented-control.js";
@@ -19,6 +19,15 @@ import type { PanelTool } from "./panel-tool.js";
 export interface DockCallbacks {
   /** Persist this dock's state after a user change (open/close, mode switch, resize-end). */
   onChange(): void;
+}
+
+export interface DockOptions {
+  /** Omit this dock's own mode rail. Used by the bottom panel, which is toggled from the right rail. */
+  readonly showRail?: boolean;
+  /** Remove a closed dock from layout instead of retaining a collapsed rail. */
+  readonly hideWhenClosed?: boolean;
+  /** Stable focus destination when a rail-less dock is closed from inside its panel. */
+  readonly focusAfterClose?: () => void;
 }
 
 /** How far one arrow-key press resizes the dock (px) — a coarse, predictable keyboard step. */
@@ -80,6 +89,7 @@ export class Dock {
     private readonly tools: readonly PanelTool[],
     initial: DockState,
     private readonly callbacks: DockCallbacks,
+    private readonly options: DockOptions = {},
   ) {
     // A persisted mode is honoured only if it still names one of this dock's tools (the tool set can change
     // between releases); otherwise fall back to the first tool. An empty dock has no active mode.
@@ -134,8 +144,12 @@ export class Dock {
     // Collapsing hides the main panel. If focus is inside it, move focus to the still-visible active mode
     // icon first so a keyboard user isn't dropped to <body> mid-tab-order.
     const activeButton = this.railButtons.get(this.modeId);
-    if (!next && activeButton !== undefined && this.el.contains(document.activeElement)) {
-      activeButton.focus();
+    if (!next && this.el.contains(document.activeElement)) {
+      if (activeButton !== undefined) {
+        activeButton.focus();
+      } else {
+        this.options.focusAfterClose?.();
+      }
     }
     if (!next) {
       this.activeTool()?.onHide?.();
@@ -246,14 +260,39 @@ export class Dock {
     }
   }
 
+  /** Add a non-mode action to the end of a side rail. It deliberately sits outside the radiogroup so its
+   *  pressed state and keyboard semantics remain those of a toggle button, not a selectable panel mode. */
+  addRailAction(
+    id: string,
+    label: string,
+    iconMarkup: string,
+    onActivate: () => void,
+  ): HTMLButtonElement | null {
+    if (this.railEl === null) return null;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dock-rail-action";
+    button.dataset.action = id;
+    button.innerHTML = iconMarkup;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", "false");
+    button.title = label;
+    button.addEventListener("click", onActivate);
+    this.railEl.appendChild(button);
+    return button;
+  }
+
   private applyOpen(): void {
-    this.el.hidden = this.availableToolIds.size === 0;
+    this.el.hidden =
+      this.availableToolIds.size === 0 || (this.options.hideWhenClosed === true && !this.isOpen);
     this.el.classList.toggle("dock--collapsed", !this.isOpen);
     this.splitter.hidden = !this.isOpen;
-    this.railEl?.setAttribute(
-      "aria-orientation",
-      this.edge === "bottom" && !this.isOpen ? "horizontal" : "vertical",
-    );
+    this.railEl
+      ?.querySelector(".dock-mode-list")
+      ?.setAttribute(
+        "aria-orientation",
+        this.edge === "bottom" && !this.isOpen ? "horizontal" : "vertical",
+      );
     for (const [id, button] of this.railButtons) {
       button.setAttribute("aria-expanded", String(id === this.modeId && this.isOpen));
     }
@@ -325,7 +364,7 @@ export class Dock {
 
     // Every non-empty dock has a mode rail: besides switching tools, its active icon is the dock's sole
     // expand/collapse control while the main panel is hidden. The rail sits on the dock's OUTER edge.
-    const rail = this.tools.length > 0 ? this.buildRail() : null;
+    const rail = this.tools.length > 0 && this.options.showRail !== false ? this.buildRail() : null;
     if (this.edge === "right") {
       this.el.appendChild(main);
       if (rail !== null) {
@@ -350,9 +389,11 @@ export class Dock {
   private buildRail(): { el: HTMLElement; control: SegmentedControl<string> } {
     const rail = document.createElement("div");
     rail.className = "dock-rail";
-    rail.setAttribute("role", "radiogroup");
-    rail.setAttribute("aria-orientation", "vertical");
-    rail.setAttribute("aria-label", `${EDGE_LABEL[this.edge]} mode`);
+    const modes = document.createElement("div");
+    modes.className = "dock-mode-list";
+    modes.setAttribute("role", "radiogroup");
+    modes.setAttribute("aria-orientation", "vertical");
+    modes.setAttribute("aria-label", `${EDGE_LABEL[this.edge]} mode`);
 
     const options: SegmentedOption<string>[] = this.tools.map((tool) => {
       const button = document.createElement("button");
@@ -369,10 +410,11 @@ export class Dock {
       button.dataset.tool = tool.id;
       button.setAttribute("aria-controls", `${this.el.id || `${this.edge}-dock`}-main`);
       this.railButtons.set(tool.id, button);
-      rail.appendChild(button);
+      modes.appendChild(button);
       return { el: button, value: tool.id };
     });
 
+    rail.appendChild(modes);
     return { el: rail, control: new SegmentedControl(options, (id) => this.activateMode(id)) };
   }
 

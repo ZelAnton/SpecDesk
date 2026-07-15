@@ -20,13 +20,13 @@ test("renders GitHub, context, view, and user-operation activity in the bottom L
     kind: "github.account",
     payload: { available: true, signedIn: true, login: "alice" },
   });
-  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   await waitForSent(page, "pr.list.request");
   await page.locator("#open-btn").click();
 
   await page.locator("#github-btn").click();
   await page.locator("#account-notifications").click();
-  await page.locator('#bottom-dock .dock-rail-btn[aria-label="Log"]').click();
+  await page.locator('#right-dock [data-action="bottom-panel"]').click();
 
   const log = page.getByRole("list", { name: "Application activity" });
   await expect(log).toBeVisible();

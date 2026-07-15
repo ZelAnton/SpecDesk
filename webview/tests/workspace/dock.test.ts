@@ -57,7 +57,9 @@ function key(el: HTMLElement, k: string): void {
 describe("Dock chrome", () => {
   it("builds an icon rail per tool, a header title, and a body container per tool", () => {
     const { dockEl } = harness();
-    expect(dockEl.querySelector(".dock-rail")?.getAttribute("aria-orientation")).toBe("vertical");
+    expect(dockEl.querySelector(".dock-mode-list")?.getAttribute("aria-orientation")).toBe(
+      "vertical",
+    );
     const buttons = dockEl.querySelectorAll<HTMLButtonElement>(".dock-rail-btn");
     expect(buttons).toHaveLength(2);
     // Icon-only buttons: the label is the accessible name (aria-label), and each renders its icon svg.
@@ -96,6 +98,41 @@ describe("Dock chrome", () => {
     expect(dockEl.querySelectorAll(".dock-rail-btn")).toHaveLength(1);
     expect(dockEl.querySelector(".dock-title")?.textContent).toBe("Solo");
     expect(dockEl.hidden).toBe(false);
+  });
+
+  it("can hide a rail-less dock completely until an external control opens it", () => {
+    document.body.innerHTML = `<div id="host"><div id="dock"></div></div>`;
+    const dockEl = document.querySelector<HTMLElement>("#dock");
+    if (dockEl === null) throw new Error("no #dock");
+    const focusAfterClose = vi.fn();
+    const dock = new Dock(
+      dockEl,
+      "bottom",
+      [tool("log", "Log")],
+      { open: false, size: 200, mode: "log" },
+      { onChange: vi.fn() },
+      { showRail: false, hideWhenClosed: true, focusAfterClose },
+    );
+    expect(dockEl.hidden).toBe(true);
+    expect(dockEl.querySelector(".dock-rail")).toBeNull();
+    dock.setOpen(true);
+    expect(dockEl.hidden).toBe(false);
+    dockEl.querySelector<HTMLButtonElement>(".dock-collapse")?.focus();
+    dock.setOpen(false);
+    expect(dockEl.hidden).toBe(true);
+    expect(focusAfterClose).toHaveBeenCalledOnce();
+  });
+
+  it("adds a separate toggle action after the mode radiogroup", () => {
+    const { dockEl, dock } = harness({ edge: "right" });
+    const activate = vi.fn();
+    const action = dock.addRailAction("bottom-panel", "Bottom panel", "<svg></svg>", activate);
+    expect(action).not.toBeNull();
+    expect(dockEl.querySelector(".dock-mode-list")?.getAttribute("role")).toBe("radiogroup");
+    expect(action?.parentElement?.classList.contains("dock-rail")).toBe(true);
+    expect(action?.getAttribute("role")).toBeNull();
+    action?.click();
+    expect(activate).toHaveBeenCalledOnce();
   });
 });
 
@@ -326,7 +363,7 @@ describe("Dock resize", () => {
       edge: "bottom",
       initial: { open: false, size: 200, mode: "a" },
     });
-    const rail = dockEl.querySelector(".dock-rail");
+    const rail = dockEl.querySelector(".dock-mode-list");
     expect(rail?.getAttribute("aria-orientation")).toBe("horizontal");
     dock.toggle();
     expect(rail?.getAttribute("aria-orientation")).toBe("vertical");
@@ -435,7 +472,9 @@ describe("Dock accessibility", () => {
     expect(dockEl.querySelector(".dock-collapse")?.getAttribute("aria-label")).toBe(
       "Collapse left panel",
     );
-    expect(dockEl.querySelector(".dock-rail")?.getAttribute("aria-label")).toBe("left panel mode");
+    expect(dockEl.querySelector(".dock-mode-list")?.getAttribute("aria-label")).toBe(
+      "left panel mode",
+    );
   });
 
   it("moves focus to the active rail icon when collapsing from the in-dock control", () => {

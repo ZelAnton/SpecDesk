@@ -72,11 +72,13 @@ actions visually separate from the document itself.
 The formatting toolbar remains visible whenever a specification is open (disabled until editing starts)
 and covers headings, lists, emphasis, inline and block code, quotes, links, starter tables, image references,
 and dividers.
-The global toolbar shows repository, version, path, and search only while a document is being edited;
-Start and review surfaces retain the SpecDesk identity, signed-out **Sign in** action, and account avatar menu.
-The left, right, and bottom mode rails stay available around the document. Choose a mode icon to open its
-panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
-bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
+The global toolbar shows search only while a document is being edited; Start and review surfaces retain the
+SpecDesk identity, signed-out **Sign in** action, and account avatar menu. Repository, working-line, local-copy,
+file, and change-request context appears as compact panels above the active central view; the interactive
+panels open the matching Repositories, Disk, or Change requests mode.
+The left and right mode rails stay available around the document. Choose a mode icon to open its panel;
+choose the active icon again to collapse it. The bottom panel is fully hidden until its dedicated button at
+the foot of the right rail is pressed, so no empty bottom toolbar takes document space.
 The bottom panel stops before the right mode rail, so chat and document tools remain reachable at every
 panel height. The status bar and panel rails use related muted shades while remaining visually distinct.
 On the Start screen, `Open Repository` reveals the Repositories panel, where repositories are registered and
@@ -85,7 +87,7 @@ specs appear beside recent work for one-click return.
 Choosing **Open Repository** also places keyboard focus in repository search, ready to type.
 The left-panel Review mode shows open review requests assigned to the connected account, including requests
 for GitHub teams whose membership is visible to SpecDesk.
-Pull Requests shows the connected user's active work: open requests they authored or otherwise participated
+Change requests shows the connected user's active work: open requests they authored or otherwise participated
 in. Selecting one, choosing one from **My reviews**, or entering its GitHub URL opens the same review document
 inside SpecDesk with its description, participants, conversation,
 commits, checks, and draft/readiness state. The Comments panel brings together general conversation and
@@ -165,4 +167,5 @@ Context menus offer rename only for local non-main working lines without protect
 GitHub main lines remain aligned with the remote repository instead of exposing a local operation that cannot succeed.
 Removing a registered repository removes only its SpecDesk registration and related favorites; local folders and branches, plus every GitHub resource, remain untouched.
 The left rail stays intentionally small: **Navigator** (including Favorites and History), **Repositories**,
-**Folders**, and **PRs**. The PRs view keeps requests needing your review beside work you created or joined.
+**Change requests**, and **Disk**, followed by contextual **Outline** when a document is active. Change
+requests keeps work needing your review beside work you created or joined.

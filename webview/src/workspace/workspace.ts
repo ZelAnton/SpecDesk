@@ -18,12 +18,7 @@ import {
 } from "./active-context.js";
 import { CENTRAL_VIEW_EDITOR, CentralFrame } from "./central-frame.js";
 import { Dock } from "./dock.js";
-import {
-  collapsedForStartup,
-  DOCK_EDGES,
-  type DockEdge,
-  type WorkspaceDocksState,
-} from "./dock-state.js";
+import { collapsedForStartup, type DockEdge, type WorkspaceDocksState } from "./dock-state.js";
 import type { DockStore } from "./dock-store.js";
 import { icon } from "./icons.js";
 import { type PanelTool, placeholderTool } from "./panel-tool.js";
@@ -50,6 +45,8 @@ export interface WorkspaceElements {
   readonly editorView: HTMLElement;
   readonly homeView: HTMLElement | null;
   readonly notificationsView: HTMLElement | null;
+  /** Compact repository/path/change-request panels above the active central view. */
+  readonly contextPanels?: HTMLElement | null;
   readonly docks: Record<DockEdge, HTMLElement | null>;
 }
 
@@ -171,22 +168,76 @@ export function setupWorkspace(
   // The navigator's onNavigate and the frame's onChange reference each other, so forward-declare the frame;
   // both closures only fire on later user interaction, by which point it is assigned.
   let centralFrame: CentralFrame;
+  let activeContext = EMPTY_ACTIVE_CONTEXT;
+  let activeCentralView = elements.centralFrame.dataset.view ?? CENTRAL_VIEW_HOME;
+  const contextPanels = elements.contextPanels ?? null;
+  const contextPanel = (kind: string): HTMLElement | null =>
+    contextPanels?.querySelector<HTMLElement>(`[data-context="${kind}"]`) ?? null;
+  const contextValue = (id: string): HTMLElement | null =>
+    contextPanels?.querySelector<HTMLElement>(`#${id}`) ?? null;
+  const setPanel = (kind: string, value: string | null, title: string): void => {
+    const panel = contextPanel(kind);
+    if (panel === null) return;
+    panel.hidden = value === null;
+    if (value !== null) panel.title = title;
+  };
+  const setValue = (id: string, value: string): void => {
+    const target = contextValue(id);
+    if (target !== null) target.textContent = value;
+  };
+  const renderContextPanels = (): void => {
+    if (contextPanels === null) return;
+    const contextView =
+      activeCentralView !== CENTRAL_VIEW_HOME && activeCentralView !== CENTRAL_VIEW_NOTIFICATIONS;
+    const repository = contextView ? activeContext.repository : null;
+    const branch = contextView ? activeContext.branch : null;
+    const localRoot = repository?.root ?? null;
+    const file = activeCentralView === CENTRAL_VIEW_EDITOR ? activeContext.file : null;
+    const pullRequest = contextView ? activeContext.pullRequest : null;
+
+    setValue("current-repository", repository?.id ?? "");
+    setValue("current-branch", branch?.name ?? "");
+    setPanel(
+      "repository",
+      repository?.id ?? null,
+      repository === null ? "Show repository" : `Show ${repository.id} in Repositories`,
+    );
+    setValue("current-local-path", localRoot ?? "");
+    setPanel(
+      "local",
+      localRoot,
+      localRoot === null ? "Show files on disk" : `Show ${localRoot} on disk`,
+    );
+    setValue("current-path", file?.path ?? "");
+    setPanel("file", file?.path ?? null, file === null ? "Open file" : file.path);
+    setValue("current-pull-request", pullRequest?.branch.name ?? "");
+    setPanel(
+      "pull-request",
+      pullRequest?.branch.name ?? null,
+      "Show this change request in Change requests",
+    );
+    contextPanels.hidden = Array.from(
+      contextPanels.querySelectorAll<HTMLElement>(".context-panel"),
+    ).every((panel) => panel.hidden);
+  };
   // The Start screen is built before the docks. Its repository action closes over this function, which is
   // assigned once the docks exist later in this synchronous setup.
   let revealRepositories: () => void = () => {};
   const navigator = new Navigator(NAV_DESTINATIONS, (id) => centralFrame.show(id));
-  // The document-outline tool is the contextual Editor mode on the left rail. index.ts feeds it headings,
+  // The document-outline tool is the contextual Outline mode on the left rail. index.ts feeds it headings,
   // and a click scrolls the editor through onOutlineNavigate.
   const outline = new Outline((line) => callbacks.onOutlineNavigate(line));
   const editorOutline: PanelTool = {
     id: "editor",
-    label: "Editor",
+    label: "Outline",
     icon: icon("outline"),
     mount: (body) => outline.mount(body),
     onShow: () => centralFrame.show(CENTRAL_VIEW_EDITOR),
   };
 
   centralFrame = new CentralFrame(elements.centralFrame, (id) => {
+    activeCentralView = id;
+    renderContextPanels();
     navigator.setActive(id);
     callbacks.onCentralViewChange(id);
   });
@@ -248,13 +299,13 @@ export function setupWorkspace(
     tools.pullRequests ??
     placeholderTool(
       "pullRequests",
-      "Pull Requests",
+      "Change requests",
       icon("pullRequests"),
-      "Open pull requests involving you will appear here.",
+      "Open change requests involving you will appear here.",
     );
-  const prs = groupedTool("prs", "PRs", icon("pullRequests"), [
+  const prs = groupedTool("prs", "Change requests", icon("pullRequests"), [
     { label: "Needs your review", tool: reviews },
-    { label: "Your pull requests", tool: pullRequests },
+    { label: "Your change requests", tool: pullRequests },
   ]);
 
   const toolsByEdge: Record<DockEdge, readonly PanelTool[]> = {
@@ -267,16 +318,16 @@ export function setupWorkspace(
           icon("repositories"),
           "Register a repository to keep it handy.",
         ),
-      editorOutline,
+      prs,
       // The real workspace folder navigator when index.ts wired it; a placeholder in a reduced DOM.
       tools.files ??
         placeholderTool(
           "files",
-          "Folders",
+          "Disk",
           icon("files"),
           "The folders and specs of an opened workspace will appear here.",
         ),
-      prs,
+      editorOutline,
     ],
     right: [
       // The real AI assistant chat when index.ts wired it; the placeholder in a reduced DOM (tests/host).
@@ -332,22 +383,59 @@ export function setupWorkspace(
   });
   const persist = (): void => store.save(currentState());
 
-  for (const edge of DOCK_EDGES) {
-    const el = elements.docks[edge];
-    if (el === null) {
-      continue;
-    }
+  const leftEl = elements.docks.left;
+  if (leftEl !== null) {
     docks.set(
-      edge,
-      new Dock(el, edge, toolsByEdge[edge], persisted[edge], {
-        onChange: persist,
-      }),
+      "left",
+      new Dock(leftEl, "left", toolsByEdge.left, persisted.left, { onChange: persist }),
     );
+  }
+  let bottomToggle: HTMLButtonElement | null = null;
+  const bottomEl = elements.docks.bottom;
+  if (bottomEl !== null) {
+    docks.set(
+      "bottom",
+      new Dock(
+        bottomEl,
+        "bottom",
+        toolsByEdge.bottom,
+        persisted.bottom,
+        {
+          onChange: () => {
+            persist();
+            bottomToggle?.setAttribute("aria-pressed", String(docks.get("bottom")?.open === true));
+          },
+        },
+        {
+          showRail: false,
+          hideWhenClosed: true,
+          focusAfterClose: () => bottomToggle?.focus(),
+        },
+      ),
+    );
+  }
+  const rightEl = elements.docks.right;
+  if (rightEl !== null) {
+    const right = new Dock(rightEl, "right", toolsByEdge.right, persisted.right, {
+      onChange: persist,
+    });
+    docks.set("right", right);
+    if (docks.has("bottom")) {
+      bottomToggle = right.addRailAction(
+        "bottom-panel",
+        "Bottom panel",
+        icon("bottomPanel"),
+        () => {
+          docks.get("bottom")?.toggle();
+          bottomToggle?.setAttribute("aria-pressed", String(docks.get("bottom")?.open === true));
+        },
+      );
+    }
   }
 
   // Before the first document frame only the globally useful Assistant applies.
   docks.get("right")?.setAvailableTools(rightToolsForContext(EMPTY_ACTIVE_CONTEXT));
-  docks.get("left")?.setAvailableTools(new Set(["navigator", "repositories", "files", "prs"]));
+  docks.get("left")?.setAvailableTools(new Set(["navigator", "repositories", "prs", "files"]));
 
   // A dock open/close/resize changes the centre's box; observing it (rather than each dock) catches all
   // three uniformly and coalesces a live drag into one re-measure per frame. Guarded for jsdom, which has
@@ -367,16 +455,22 @@ export function setupWorkspace(
     }
     dock.setOpen(true);
     dock.setMode(toolId);
+    if (edge === "bottom") bottomToggle?.setAttribute("aria-pressed", "true");
   };
   revealRepositories = () => {
     revealTool("left", "repositories");
     tools.repositories?.focusPrimary?.();
   };
+  contextPanel("repository")?.addEventListener("click", revealRepositories);
+  contextPanel("local")?.addEventListener("click", () => revealTool("left", "files"));
+  contextPanel("pull-request")?.addEventListener("click", () => revealTool("left", "prs"));
   const setActiveContext = (context: ActiveContext): void => {
     docks.get("right")?.setAvailableTools(rightToolsForContext(context));
-    const left = new Set(["navigator", "repositories", "files", "prs"]);
+    const left = new Set(["navigator", "repositories", "prs", "files"]);
     if (context.file !== null) left.add("editor");
     docks.get("left")?.setAvailableTools(left);
+    activeContext = context;
+    renderContextPanels();
   };
 
   // exactOptionalPropertyTypes: only include `home` when the Start view was actually built (never assign it

@@ -26,7 +26,7 @@ const visibleRightTools = (page: Page): Promise<string[]> =>
     .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? ""));
 
 async function openFile(page: Page, name: string): Promise<void> {
-  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]');
+  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Disk"]');
   if ((await filesMode.getAttribute("aria-expanded")) !== "true") {
     await filesMode.click();
   }

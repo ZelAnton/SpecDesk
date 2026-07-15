@@ -7,13 +7,13 @@ import {
 
 const PULL_REQUESTS_CONFIG: RemoteReviewListConfig = {
   id: "pullRequests",
-  label: "Pull Requests",
+  label: "Change requests",
   icon: icon("pullRequests"),
-  ariaLabel: "Open pull requests involving you",
-  authMessage: "Connect a GitHub account to see pull requests.",
-  loadingMessage: "Loading pull requests…",
-  emptyMessage: "You have no open pull requests.",
-  errorMessage: "Couldn't load pull requests. Try again.",
+  ariaLabel: "Open change requests involving you",
+  authMessage: "Connect a GitHub account to see change requests.",
+  loadingMessage: "Loading change requests…",
+  emptyMessage: "You have no open change requests.",
+  errorMessage: "Couldn't load change requests. Try again.",
   accepts: () => true,
 };
 

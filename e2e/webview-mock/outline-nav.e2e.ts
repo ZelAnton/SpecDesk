@@ -24,7 +24,7 @@ function editorScrollTop(page: import("@playwright/test").Page): Promise<number>
 }
 
 async function openOutline(page: import("@playwright/test").Page): Promise<void> {
-  await openDockTool(page, "left", "Editor");
+  await openDockTool(page, "left", "Outline");
 }
 
 test("the outline lists the document headings and jumps the editor to a clicked heading", async ({
@@ -42,7 +42,7 @@ test("the outline lists the document headings and jumps the editor to a clicked 
   await expect.poll(() => editorScrollTop(page)).toBeGreaterThan(100);
 });
 
-test("the contextual Editor mode returns from Start and its outline scrolls to a heading", async ({
+test("the contextual Outline mode returns from Start and scrolls to a heading", async ({
   page,
 }) => {
   await page.goto(BASE_URL);
@@ -50,7 +50,7 @@ test("the contextual Editor mode returns from Start and its outline scrolls to a
   await loadDoc(page, { path: "doc.md", text: DOC });
   await openOutline(page);
 
-  // Leave the editor for Start, then choose its contextual Editor mode again.
+  // Leave the editor for Start, then choose its contextual Outline mode again.
   await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
   await page.locator('#left-dock .nav-item[data-view="home"]').click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");

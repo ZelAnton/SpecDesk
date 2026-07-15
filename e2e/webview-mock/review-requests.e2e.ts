@@ -17,7 +17,7 @@ test("Review mode loads assigned work and opens it in the pull-request view", as
     payload: { available: true, signedIn: true, login: "alice" },
   });
 
-  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   const reviewPanel = page.locator('#left-dock [data-tool="reviews"]');
   await expect(reviewPanel).toBeVisible();
   await expect(reviewPanel.locator(".remote-review-list")).toHaveAttribute("data-state", "loading");

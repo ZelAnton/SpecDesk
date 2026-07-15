@@ -32,20 +32,20 @@ describe("PullRequestsPanel", () => {
     const panel = new PullRequestsPanel({ request, openReview: vi.fn() });
     panel.mount(host);
     expect(panel.id).toBe("pullRequests");
-    expect(panel.label).toBe("Pull Requests");
+    expect(panel.label).toBe("Change requests");
     expect(host.textContent).toContain("Connect a GitHub account");
 
     panel.setSignedIn(true);
     panel.onShow();
     await vi.waitFor(() => expect(host.querySelectorAll(".remote-review-row")).toHaveLength(2));
     expect(host.querySelector(".remote-review-items")?.getAttribute("aria-label")).toBe(
-      "Open pull requests involving you",
+      "Open change requests involving you",
     );
     expect(host.textContent).toContain("Mine");
     expect(host.textContent).toContain("Joined");
   });
 
-  it("states that the active queue has no open pull requests when empty", async () => {
+  it("states that the active queue has no open change requests when empty", async () => {
     const host = document.createElement("div");
     const panel = new PullRequestsPanel({
       request: vi.fn().mockResolvedValue({ items: [] }),
@@ -54,7 +54,7 @@ describe("PullRequestsPanel", () => {
     panel.mount(host);
     panel.setSignedIn(true);
     panel.onShow();
-    await vi.waitFor(() => expect(host.textContent).toContain("no open pull requests"));
+    await vi.waitFor(() => expect(host.textContent).toContain("no open change requests"));
     expect(host.querySelector(".remote-review-list")?.getAttribute("data-state")).toBe("empty");
   });
 });

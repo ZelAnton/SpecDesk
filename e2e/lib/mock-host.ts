@@ -87,7 +87,7 @@ export async function loadDoc(page: Page, doc: LoadDocOptions): Promise<void> {
   );
   if (doc.reveal !== false) {
     await page
-      .locator('#left-dock .dock-rail-btn[aria-label="Editor"]')
+      .locator('#left-dock .dock-rail-btn[aria-label="Outline"]')
       .evaluate((element: HTMLElement) => element.click());
   }
 }

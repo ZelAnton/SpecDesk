@@ -488,12 +488,12 @@ public sealed partial class HostController
 
 	private void OnListPullRequests(IpcMessage message)
 	{
-		const string connectFirst = "Connect a GitHub account to see pull requests.";
+		const string connectFirst = "Connect a GitHub account to see change requests.";
 		RunReviewList(
 			message.Id,
 			connectFirst,
 			"Could not list pull requests",
-			"Couldn't load pull requests. Check your connection and try again.",
+			"Couldn't load change requests. Check your connection and try again.",
 			(token, ct) => _review!.ListPullRequestsAsync(token, ct));
 	}
 

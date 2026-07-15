@@ -376,7 +376,7 @@ describe("FileTree", () => {
     expect(local.body.textContent).toContain("README.md");
   });
 
-  it("opens the editor whenever the Folders mode is shown", () => {
+  it("opens the editor whenever the Disk mode is shown", () => {
     const { tree, onShowEditor } = ready();
     tree.onShow();
     expect(onShowEditor).toHaveBeenCalledOnce();

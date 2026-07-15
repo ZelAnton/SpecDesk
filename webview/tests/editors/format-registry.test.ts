@@ -128,18 +128,24 @@ describe("the shipped workspace chrome", () => {
   const primary = html.querySelector("#toolbar");
   const editor = html.querySelector("#editor-toolbar");
 
-  it("keeps workspace context in the primary toolbar and Markdown actions in the editor toolbar", () => {
+  it("keeps context above the central view and Markdown actions in the editor toolbar", () => {
     expect(primary).not.toBeNull();
     expect(editor).not.toBeNull();
 
+    const contextPanels = html.querySelector("#central-frame > #context-panels");
+    expect(contextPanels).not.toBeNull();
     for (const id of [
       "current-repository",
       "current-branch",
+      "current-local-path",
       "current-path",
-      "toolbar-search",
-      "account-notifications",
-      "github-btn",
     ]) {
+      expect(contextPanels?.querySelector(`#${id}`), id).not.toBeNull();
+      expect(primary?.querySelector(`#${id}`), id).toBeNull();
+      expect(editor?.querySelector(`#${id}`), id).toBeNull();
+    }
+
+    for (const id of ["toolbar-search", "account-notifications", "github-btn"]) {
       expect(primary?.querySelector(`#${id}`), id).not.toBeNull();
       expect(editor?.querySelector(`#${id}`), id).toBeNull();
     }

@@ -26,7 +26,7 @@ test.beforeEach(async ({ context }) => {
 });
 
 async function openFilesTool(page: import("@playwright/test").Page): Promise<void> {
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Disk"]').click();
 }
 
 test("the file navigator renders identity, filter, and the host root level", async ({ page }, testInfo) => {

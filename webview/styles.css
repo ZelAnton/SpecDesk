@@ -549,34 +549,6 @@ body:not([data-central-view="editor"]) #app-title {
   background: var(--surface-sunken);
 }
 
-#repository-context {
-  flex: 1 1 18rem;
-  min-width: 8rem;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  overflow: hidden;
-  font: 500 13px var(--font-ui);
-  color: var(--text-muted);
-}
-
-#repository-context > span:not(.context-separator) {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-#current-repository {
-  color: var(--text-strong);
-  font-weight: 600;
-}
-
-.context-separator {
-  flex: none;
-  color: var(--text-faint);
-}
-
 #toolbar-search {
   flex: 1 1 12rem;
   min-width: 9rem;
@@ -592,7 +564,6 @@ body:not([data-central-view="editor"]) #app-title {
 
 /* Document location and in-document search are useful only while the editor is the central view. Keeping
    them out of Start and Notifications makes those screens read as focused tasks, not an inactive editor. */
-body:not([data-central-view="editor"]) #repository-context,
 body:not([data-central-view="editor"]) #toolbar-search {
   display: none;
 }
@@ -1305,12 +1276,81 @@ body:not([data-central-view="editor"]) #toolbar-search {
   flex: 1;
   min-width: 0;
   display: flex;
+  flex-direction: column;
   /* Own stacking context so the editor's internal z-indexes (CodeMirror's gutter is z-index:200) stay
      scoped inside the centre and don't paint over a dock splitter sitting just outside it — the splitter
      lifts itself above the centre with its own low z-index (see .dock-splitter). Caveat for a later stage:
      because this caps in-centre z-indexes AND #workspace-main clips overflow, any overlay that must escape
      the centre (a CM/PM popover or a dropdown at the pane edge) has to portal out to a top-level layer. */
   isolation: isolate;
+}
+
+/* Context is shown inside the central workspace, above whichever document view owns the remaining room.
+   Each available layer is its own compact panel, so a long path can truncate without hiding the repository
+   or working-line identity. Interactive panels use real buttons and retain a visible keyboard focus ring. */
+#context-panels {
+  flex: none;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  scrollbar-width: thin;
+}
+
+#context-panels[hidden] {
+  display: none;
+}
+
+.context-panel {
+  min-width: 0;
+  max-width: min(28rem, 42vw);
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.65rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: 12px var(--font-ui);
+  white-space: nowrap;
+}
+
+.context-panel[hidden] {
+  display: none;
+}
+
+button.context-panel {
+  cursor: pointer;
+}
+
+button.context-panel:hover {
+  border-color: var(--accent-soft-border);
+  background: var(--accent-soft);
+}
+
+.context-panel-kind {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.context-panel-value {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+#current-branch:not(:empty)::before {
+  content: "· ";
+  color: var(--text-muted);
 }
 
 /* Only the active central view is shown; the others stay in the DOM (each keeps its own scroll/state), the
@@ -1327,6 +1367,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 #editor-view {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1427,6 +1468,13 @@ body:not([data-central-view="editor"]) #toolbar-search {
   background: var(--mode-rail);
 }
 
+.dock-mode-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
 .dock-left .dock-rail,
 .dock-bottom .dock-rail {
   border-right: 1px solid var(--mode-rail-border);
@@ -1446,7 +1494,8 @@ body:not([data-central-view="editor"]) #toolbar-search {
   border-right: 0;
 }
 
-.dock-rail-btn {
+.dock-rail-btn,
+.dock-rail-action {
   flex: none;
   width: 34px;
   height: 34px;
@@ -1459,11 +1508,13 @@ body:not([data-central-view="editor"]) #toolbar-search {
   cursor: pointer;
 }
 
-.dock-rail-btn:not([hidden]) {
+.dock-rail-btn:not([hidden]),
+.dock-rail-action:not([hidden]) {
   display: inline-flex;
 }
 
-.dock-rail-btn:hover {
+.dock-rail-btn:hover,
+.dock-rail-action:hover {
   color: var(--mode-rail-text-strong);
   background: var(--mode-rail-hover);
 }
@@ -1478,18 +1529,30 @@ body:not([data-central-view="editor"]) #toolbar-search {
   box-shadow: inset -3px 0 0 var(--accent);
 }
 
+.dock-rail-action {
+  margin-top: auto;
+}
+
+.dock-rail-action[aria-pressed="true"] {
+  color: var(--mode-rail-text-strong);
+  background: var(--mode-rail-active);
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
 .dock-bottom.dock--collapsed .dock-rail-btn[aria-checked="true"] {
   box-shadow: inset 0 -3px 0 var(--accent);
 }
 
-.dock-rail-btn svg {
+.dock-rail-btn svg,
+.dock-rail-action svg {
   width: 20px;
   height: 20px;
 }
 
 /* Forced-colors drops the accent-soft wash; keep the active mode's icon distinguishable with an outline. */
 @media (forced-colors: active) {
-  .dock-rail-btn[aria-checked="true"] {
+  .dock-rail-btn[aria-checked="true"],
+  .dock-rail-action[aria-pressed="true"] {
     outline: 2px solid;
     outline-offset: -2px;
   }

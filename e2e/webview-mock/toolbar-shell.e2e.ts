@@ -31,7 +31,8 @@ test("global context and Markdown controls live in the correct toolbars and rema
   });
   await expect(page.locator("body")).toHaveAttribute("data-central-view", "editor");
   await expect(page.locator("#app-title")).toBeHidden();
-  await expect(page.locator("#repository-context")).toBeVisible();
+  await expect(page.locator("#context-panels")).toBeVisible();
+  await expect(page.locator('[data-context="pull-request"]')).toBeHidden();
   await expect(page.locator("#toolbar-search")).toBeVisible();
   await emit(page, {
     kind: "status",
@@ -51,18 +52,20 @@ test("global context and Markdown controls live in the correct toolbars and rema
 
   // An inactive mode selects and opens instead of collapsing; only a second click on that active icon
   // collapses the panel.
-  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Folders"]');
+  const filesMode = page.locator('#left-dock .dock-rail-btn[aria-label="Disk"]');
   await filesMode.click();
   await expect(filesMode).toHaveAttribute("aria-expanded", "true");
   await filesMode.click();
   await expect(filesMode).toHaveAttribute("aria-expanded", "false");
 
-  const bottomActive = page.locator('#bottom-dock .dock-rail-btn[aria-checked="true"]');
-  await expect(bottomActive).toBeVisible();
-  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCSS("flex-direction", "row");
-  await bottomActive.click();
-  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCSS("flex-direction", "column");
-  await expect(bottomActive).toHaveAttribute("aria-expanded", "true");
+  const bottomToggle = page.locator('#right-dock [data-action="bottom-panel"]');
+  await expect(bottomToggle).toBeVisible();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#bottom-dock")).toBeHidden();
+  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCount(0);
+  await bottomToggle.click();
+  await expect(page.locator("#bottom-dock")).toBeVisible();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "true");
   await filesMode.click();
   await expect(filesMode).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator("#editor-toolbar")).toHaveCSS(
@@ -99,12 +102,16 @@ test("global context and Markdown controls live in the correct toolbars and rema
   expect(bottomBox.x).toBeLessThanOrEqual(rightBox.x);
   expect(bottomBox.x + bottomBox.width).toBeGreaterThanOrEqual(rightBox.x + rightBox.width);
   await page.screenshot({ path: testInfo.outputPath("panels-expanded.png"), fullPage: true });
-  await bottomActive.click();
-  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCSS("flex-direction", "row");
+  await bottomToggle.click();
+  await expect(page.locator("#bottom-dock")).toBeHidden();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "false");
 
   await expect(page.locator("#current-repository")).toHaveText("acme/specs");
   await expect(page.locator("#current-branch")).toHaveText("spec/navigation");
-  await expect(page.locator("#current-path")).toHaveText("guides/intro.md");
+  await expect(page.locator("#current-local-path")).toHaveText("C:\\work\\specs");
+  await expect(page.locator("#current-path")).toHaveText(
+    "C:\\work\\specs\\guides\\intro.md",
+  );
   await expect(page.locator("#workspace-context-status")).toHaveText(
     /specs-manager\s*·\s*spec\/navigation\s*·\s*intro\.md/,
   );
@@ -158,7 +165,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
   await page.locator("#github-btn").click();
   await page.locator("#account-notifications").click();
   await expect(page.locator("#app-title")).toBeVisible();
-  await expect(page.locator("#repository-context")).toBeHidden();
+  await expect(page.locator("#context-panels")).toBeHidden();
   await expect(page.locator("#toolbar-search")).toBeHidden();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "notifications");
   await expect(page.locator("#notifications-view")).toBeVisible();

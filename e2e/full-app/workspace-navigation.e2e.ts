@@ -20,8 +20,8 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   const { page } = ctx;
   await expect(page).toHaveTitle("SpecDesk");
 
-  // Task 10: panel controls live only on their mode rails. The active icon is the collapse/expand
-  // affordance, and the collapsed bottom rail becomes a horizontal toolbar at the window edge.
+  // Panel controls live on the side rails. The bottom panel is fully absent until its dedicated toggle at
+  // the foot of the right rail opens it; there is no collapsed bottom toolbar.
   for (const id of ["toggle-left-dock", "toggle-bottom-dock", "toggle-right-dock"]) {
     await expect(page.locator(`#toolbar #${id}`)).toHaveCount(0);
   }
@@ -38,20 +38,18 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
     await expect(active).toHaveAttribute("aria-expanded", "true");
   }
 
-  const bottomActive = page.locator('#bottom-dock .dock-rail-btn[aria-checked="true"]');
-  const bottomRail = page.locator("#bottom-dock .dock-rail");
-  await expect(bottomActive).toBeVisible();
-  await expect(bottomActive).toHaveAttribute("aria-expanded", "false");
-  await expect(bottomRail).toHaveAttribute("aria-orientation", "horizontal");
-  await expect(bottomRail).toHaveCSS("flex-direction", "row");
-  await bottomActive.click();
-  await expect(bottomActive).toHaveAttribute("aria-expanded", "true");
-  await expect(bottomRail).toHaveAttribute("aria-orientation", "vertical");
-  await expect(bottomRail).toHaveCSS("flex-direction", "column");
+  const bottomToggle = page.locator('#right-dock [data-action="bottom-panel"]');
+  await expect(bottomToggle).toBeVisible();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#bottom-dock")).toBeHidden();
+  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCount(0);
+  await bottomToggle.click();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#bottom-dock")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("workspace-panels.png"), fullPage: true });
-  await bottomActive.click();
-  await expect(bottomActive).toHaveAttribute("aria-expanded", "false");
-  await expect(bottomRail).toHaveCSS("flex-direction", "row");
+  await bottomToggle.click();
+  await expect(bottomToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("#bottom-dock")).toBeHidden();
   const collapsedPixels = await page.screenshot({
     path: testInfo.outputPath("bottom-collapsed.png"),
     fullPage: true,
@@ -93,7 +91,7 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   await page.screenshot({ path: testInfo.outputPath("start-repositories.png"), fullPage: true });
 
   // Tasks 13-14: both GitHub work modes exist in the real shell and explain their signed-out state.
-  await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   const review = page.locator('#left-dock [data-tool="reviews"]');
   await expect(review).toBeVisible();
   await expect(review.locator('.remote-review-list[data-state="auth"] .remote-review-status')).toHaveText(

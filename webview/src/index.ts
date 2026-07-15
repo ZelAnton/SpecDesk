@@ -277,7 +277,8 @@ function wire(): void {
   const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
   const reviewsBtn = document.querySelector<HTMLButtonElement>("#reviews-btn");
   const panesEl = document.querySelector<HTMLElement>("#panes");
-  // The collapsible-panel workspace (design §9): the central-frame host and the three persistent mode rails.
+  // The collapsible-panel workspace (design §9): the central-frame host, two persistent side rails, and the
+  // rail-less bottom panel controlled from the right rail.
   // All optional — the jsdom index.ts tests mount only the editor panes.
   const centralFrameEl = document.querySelector<HTMLElement>("#central-frame");
   const editorViewEl = document.querySelector<HTMLElement>("#editor-view");
@@ -286,6 +287,7 @@ function wire(): void {
   const leftDockEl = document.querySelector<HTMLElement>("#left-dock");
   const rightDockEl = document.querySelector<HTMLElement>("#right-dock");
   const bottomDockEl = document.querySelector<HTMLElement>("#bottom-dock");
+  const contextPanelsEl = document.querySelector<HTMLElement>("#context-panels");
   const skipLink = document.querySelector<HTMLAnchorElement>(".skip-link");
   const modeCodeBtn = document.querySelector<HTMLButtonElement>("#mode-code");
   const modeSplitBtn = document.querySelector<HTMLButtonElement>("#mode-split");
@@ -1371,8 +1373,7 @@ function wire(): void {
       target instanceof Element &&
       target.closest("button, input, textarea, select, a, [contenteditable='true']") !== null;
     const isDragSurface = (target: EventTarget | null): boolean =>
-      target === toolbarEl ||
-      (target instanceof Element && target.closest("#app-title, #repository-context") !== null);
+      target === toolbarEl || (target instanceof Element && target.closest("#app-title") !== null);
 
     toolbarEl?.addEventListener("mousedown", (event) => {
       if (event.button !== 0 || isInteractive(event.target) || !isDragSurface(event.target)) {
@@ -1884,7 +1885,7 @@ function wire(): void {
         activityStream.add("GitHub", message, "failed");
         throw new Error(message);
       }
-      activityStream.add("GitHub", "Saved pull request change", "succeeded");
+      activityStream.add("GitHub", "Saved change request update", "succeeded");
     };
     const prMutations: PullRequestMutations = {
       create: (repo, number, body) =>
@@ -1943,7 +1944,7 @@ function wire(): void {
           parsePrList,
           {
             items: [],
-            error: "Couldn't load pull requests. Check your connection and try again.",
+            error: "Couldn't load change requests. Check your connection and try again.",
           },
           { scope: "pullRequests" },
         ),
@@ -1994,6 +1995,7 @@ function wire(): void {
         editorView: editorViewEl,
         homeView: homeViewEl,
         notificationsView: notificationsViewEl,
+        contextPanels: contextPanelsEl,
         docks: { left: leftDockEl, right: rightDockEl, bottom: bottomDockEl },
       },
       browserDockStore(),

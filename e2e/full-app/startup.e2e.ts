@@ -110,7 +110,7 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
 
   const navigator = page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]');
   await navigator.click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Editor"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Outline"]').click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "editor");
 
   // The lifecycle status surfaced a plain (non-empty, non-git) word — the git→lifecycle resolution ran.

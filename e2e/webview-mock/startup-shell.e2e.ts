@@ -29,10 +29,10 @@ test("startup stays on Start with every optional panel collapsed", async ({ page
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");
   await expect(page.locator("body")).toHaveAttribute("data-central-view", "home");
   await expect(page.locator("#app-title")).toBeVisible();
-  await expect(page.locator("#repository-context")).toBeHidden();
+  await expect(page.locator("#context-panels")).toBeHidden();
   await expect(page.locator("#toolbar-search")).toBeHidden();
   await expect(page.getByRole("heading", { name: "SpecDesk" })).toBeVisible();
-  for (const edge of ["left", "right", "bottom"] as const) {
+  for (const edge of ["left", "right"] as const) {
     const dock = page.locator("#" + edge + "-dock");
     await expect(dock).toHaveClass(/dock--collapsed/);
     await expect(dock.locator('.dock-rail-btn[aria-checked="true"]')).toHaveAttribute(
@@ -40,6 +40,12 @@ test("startup stays on Start with every optional panel collapsed", async ({ page
       "false",
     );
   }
+  await expect(page.locator("#bottom-dock")).toBeHidden();
+  await expect(page.locator("#bottom-dock .dock-rail")).toHaveCount(0);
+  await expect(page.locator('#right-dock [data-action="bottom-panel"]')).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 
   await page.screenshot({ path: testInfo.outputPath("startup-start-collapsed.png"), fullPage: true });
 });

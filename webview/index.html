@@ -13,13 +13,6 @@
     <a class="skip-link" href="#editor">Skip to editor</a>
     <div id="toolbar">
       <span id="app-title">SpecDesk</span>
-      <nav id="repository-context" aria-label="Current document location">
-        <span id="current-repository" title="No repository">No repository</span>
-        <span class="context-separator" aria-hidden="true">/</span>
-        <span id="current-branch" title="Main version">Main version</span>
-        <span class="context-separator" aria-hidden="true">/</span>
-        <span id="current-path" title="No document">No document</span>
-      </nav>
       <label class="sr-only" for="toolbar-search">Search</label>
       <input id="toolbar-search" type="search" autocomplete="off" placeholder="Search" />
 		<button id="github-auth-btn" type="button" hidden>Sign in</button>
@@ -130,6 +123,25 @@
         <!-- The central frame is the app's main content region; data-view names the active central view,
              which central-frame.ts seeds from and keeps in sync (it starts on Start). -->
         <main id="central-frame" data-view="home">
+          <nav id="context-panels" aria-label="Current context" hidden>
+            <button class="context-panel" data-context="repository" type="button" title="Show repository">
+              <span class="context-panel-kind">Repository</span>
+              <span id="current-repository" class="context-panel-value"></span>
+              <span id="current-branch" class="context-panel-value"></span>
+            </button>
+            <button class="context-panel" data-context="local" type="button" title="Show files on disk">
+              <span class="context-panel-kind">On disk</span>
+              <span id="current-local-path" class="context-panel-value"></span>
+            </button>
+            <div class="context-panel" data-context="file" title="Open file">
+              <span class="context-panel-kind">File</span>
+              <span id="current-path" class="context-panel-value"></span>
+            </div>
+            <button class="context-panel" data-context="pull-request" type="button" title="Show change requests">
+              <span class="context-panel-kind">Change request</span>
+              <span id="current-pull-request" class="context-panel-value"></span>
+            </button>
+          </nav>
           <!-- The editor central view: the formatting toolbar (now part of the editor's working area, not a
                full-width row above the panels) over the panes. central-view(-active) mark it as the active
                editor central view (see workspace/central-frame.ts); index.ts registers it under "editor". -->

@@ -157,6 +157,13 @@ test("My reviews opens the native pull-request document without navigating to Gi
   await expect(review).toContainText("Clarify refunds");
   await expect(review).toContainText("Comments");
   await expect(review).toContainText("Please make the date explicit.");
+  await expect(page.locator("#context-panels")).toBeVisible();
+  await expect(page.locator('[data-context="repository"]')).toContainText("octo/spec");
+  await expect(page.locator('[data-context="pull-request"]')).toContainText("spec/refunds");
+  await page.locator('[data-context="pull-request"]').click();
+  await expect(
+    page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]'),
+  ).toHaveAttribute("aria-expanded", "true");
   await page.screenshot({
     path: testInfo.outputPath("my-reviews-native-document.png"),
     fullPage: true,
@@ -221,7 +228,7 @@ test("opens a pull request, comments, and the selected-comment reader inside Spe
     error: null,
   };
   if (!(await page.locator("#left-dock .dock-main").isVisible())) {
-    await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+    await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   }
   await waitForSent(page, "pr.list.request");
   const listRequest = (await sentFrames(page)).find(
@@ -282,8 +289,7 @@ test("opens a pull request, comments, and the selected-comment reader inside Spe
   await expect(page.locator("#bottom-dock .selected-pr-comment")).not.toContainText(
     "Please make the date explicit.",
   );
-  await page.locator('#bottom-dock .dock-rail-btn[aria-label="Log"]').click();
-  await expect(page.getByRole("list", { name: "Application activity" })).not.toContainText(
+  await expect(page.locator('#bottom-dock [aria-label="Application activity"]')).not.toContainText(
     "octo/spec",
   );
 
@@ -292,7 +298,7 @@ test("opens a pull request, comments, and the selected-comment reader inside Spe
     payload: { available: true, signedIn: true, login: "alice" },
   });
   if (!(await page.locator("#left-dock .dock-main").isVisible())) {
-    await page.locator('#left-dock .dock-rail-btn[aria-label="PRs"]').click();
+    await page.locator('#left-dock .dock-rail-btn[aria-label="Change requests"]').click();
   }
   await waitForSent(page, "pr.list.request");
   const reopenedListRequest = (await sentFrames(page))

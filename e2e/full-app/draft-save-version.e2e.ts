@@ -51,7 +51,7 @@ test("Edit -> type -> autosave-to-disk -> Save version commits to the fixture re
   await expect(page.locator("#formatted .ProseMirror")).toHaveCount(1);
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "home");
   await page.locator('#left-dock .dock-rail-btn[aria-label="Navigator"]').click();
-  await page.locator('#left-dock .dock-rail-btn[aria-label="Editor"]').click();
+  await page.locator('#left-dock .dock-rail-btn[aria-label="Outline"]').click();
   await expect(page.locator("#central-frame")).toHaveAttribute("data-view", "editor");
   await waitForGeometrySettle(page);
 
