@@ -269,8 +269,13 @@ describe("RepositoriesPanel", () => {
   });
 
   it("ignores a blank register submit", () => {
-    const { input, add, onCloneManaged, onCloneToFolder } = ready();
+    const { body, input, add, onCloneManaged, onCloneToFolder } = ready();
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.disabled).toBe(true);
     input.value = "   ";
+    input.dispatchEvent(new Event("input"));
+    expect(add.disabled).toBe(true);
+    expect(body.querySelector<HTMLButtonElement>(".repo-clone-toggle")?.disabled).toBe(true);
     add.click();
     expect(onCloneManaged).not.toHaveBeenCalled();
     expect(onCloneToFolder).not.toHaveBeenCalled();

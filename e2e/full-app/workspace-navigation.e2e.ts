@@ -84,6 +84,12 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   const repositories = page.locator('#left-dock .dock-rail-btn[aria-label="Repositories"]');
   await expect(repositories).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator('#left-dock .dock-tool[data-tool="repositories"]')).toBeVisible();
+  const emptyClone = page.locator(".repo-clone-primary");
+  await expect(page.locator(".repo-register-input")).toHaveValue("");
+  await expect(emptyClone).toBeDisabled();
+  await expect(page.locator(".repo-clone-toggle")).toBeDisabled();
+  await expect(emptyClone).toHaveCSS("cursor", "not-allowed");
+  await expect(emptyClone).toHaveCSS("background-color", "rgb(236, 238, 241)");
   await page.screenshot({ path: testInfo.outputPath("start-repositories.png"), fullPage: true });
 
   // Tasks 13-14: both GitHub work modes exist in the real shell and explain their signed-out state.

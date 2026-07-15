@@ -13,8 +13,18 @@ test("repository description is visible before Clone is enabled", async ({ page 
   await waitForSent(page, "ready");
   await openDockTool(page, "left", "Repositories");
 
-  await page.locator(".repo-register-input").fill("acme/specs");
   const clone = page.locator(".repo-clone-primary");
+  const cloneToggle = page.locator(".repo-clone-toggle");
+  await expect(clone).toBeDisabled();
+  await expect(cloneToggle).toBeDisabled();
+  await expect(clone).toHaveCSS("cursor", "not-allowed");
+  await expect(clone).toHaveCSS("background-color", "rgb(236, 238, 241)");
+  await page.screenshot({
+    path: testInfo.outputPath("repository-clone-empty-disabled.png"),
+    fullPage: true,
+  });
+
+  await page.locator(".repo-register-input").fill("acme/specs");
   await expect(page.locator(".repo-description")).toHaveText("Repository description: loading…");
   await expect(clone).toBeDisabled();
 
@@ -52,6 +62,7 @@ test("repository description is visible before Clone is enabled", async ({ page 
     "Description: Product specifications for the Acme team",
   );
   await expect(clone).toBeEnabled();
+  await expect(clone).toHaveCSS("cursor", "pointer");
   const layout = await page.locator(".repo-register").evaluate((form) => {
     const input = form.querySelector<HTMLElement>(".repo-register-input")?.getBoundingClientRect();
     const description = form.querySelector<HTMLElement>(".repo-description")?.getBoundingClientRect();

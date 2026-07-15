@@ -2777,8 +2777,15 @@ body:not([data-central-view="editor"]) #toolbar-search {
   border-radius: 0 var(--r-sm) var(--r-sm) 0;
 }
 
-.repo-register-add:hover {
+.repo-register-add:hover:not(:disabled) {
   background: var(--accent-hover);
+}
+
+.repo-register-add:disabled {
+  color: var(--text-faint);
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+  cursor: not-allowed;
 }
 
 .repo-clone-menu {
@@ -2809,9 +2816,14 @@ body:not([data-central-view="editor"]) #toolbar-search {
   cursor: pointer;
 }
 
-#left-dock .repo-clone-menu-action:hover,
-#left-dock .repo-clone-menu-action:focus-visible {
+#left-dock .repo-clone-menu-action:hover:not(:disabled),
+#left-dock .repo-clone-menu-action:focus-visible:not(:disabled) {
   background: var(--accent-soft);
+}
+
+.repo-clone-menu-action:disabled {
+  color: var(--text-faint);
+  cursor: not-allowed;
 }
 
 .repo-list {
