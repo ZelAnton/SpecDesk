@@ -670,6 +670,7 @@ export interface RegisteredBranch {
   name: string;
   status: RepositoryStatusPayload;
   canDelete: boolean;
+  canRename: boolean;
 }
 
 export interface RepositoryStatusPayload {

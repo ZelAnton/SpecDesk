@@ -163,14 +163,32 @@ public sealed class ContractFixtureTests
 					"C:\\specs\\octo-specs",
 					"review-copy",
 					[
-						new RegisteredBranch("main", RepositoryStatusPayload.Empty, CanDelete: false),
+						new RegisteredBranch(
+							"main", RepositoryStatusPayload.Empty, CanDelete: false, CanRename: false),
 						new RegisteredBranch(
 							"review-copy",
-							new RepositoryStatusPayload(2, 1, true, 1, false), CanDelete: true),
+							new RepositoryStatusPayload(2, 1, true, 1, false),
+							CanDelete: true,
+							CanRename: true),
 					],
 					new RepositoryStatusPayload(2, 1, true, 3, false))]),
 		])),
 	];
+
+	[TestCase(0, true)]
+	[TestCase(1, false)]
+	public void RegisteredBranch_LegacyPayloadInfersRenameOnlyWhenTheLocalLineIsUnprotected(
+		int stashCount,
+		bool expectedCanRename)
+	{
+		string json = $$"""
+			{"name":"draft","status":{"ahead":0,"behind":0,"hasUncommitted":false,"stashCount":{{stashCount}},"hasConflicts":false},"canDelete":true}
+			""";
+
+		RegisteredBranch? branch = JsonSerializer.Deserialize<RegisteredBranch>(json, IpcSerializer.Options);
+
+		Assert.That(branch?.CanRename, Is.EqualTo(expectedCanRename));
+	}
 
 	private static string FixturePath(string fileName)
 	{

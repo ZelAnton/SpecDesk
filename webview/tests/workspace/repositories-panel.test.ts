@@ -22,8 +22,8 @@ const REPO: RegisteredRepo = {
       currentBranch: "main",
       status: CLEAN_STATUS,
       branches: [
-        { name: "main", status: CLEAN_STATUS, canDelete: false },
-        { name: "draft", status: CLEAN_STATUS, canDelete: true },
+        { name: "main", status: CLEAN_STATUS, canDelete: false, canRename: false },
+        { name: "draft", status: CLEAN_STATUS, canDelete: true, canRename: true },
       ],
     },
   ],
@@ -797,10 +797,10 @@ describe("RepositoriesPanel", () => {
             {
               ...firstClone,
               branches: [
-                { name: "zebra", status: CLEAN_STATUS, canDelete: true },
-                { name: "main", status: CLEAN_STATUS, canDelete: true },
-                { name: "trunk", status: CLEAN_STATUS, canDelete: false },
-                { name: "alpha", status: CLEAN_STATUS, canDelete: true },
+                { name: "zebra", status: CLEAN_STATUS, canDelete: true, canRename: true },
+                { name: "main", status: CLEAN_STATUS, canDelete: true, canRename: true },
+                { name: "trunk", status: CLEAN_STATUS, canDelete: false, canRename: false },
+                { name: "alpha", status: CLEAN_STATUS, canDelete: true, canRename: true },
               ],
             },
           ],
@@ -896,6 +896,64 @@ describe("RepositoriesPanel", () => {
       .find((item) => item.textContent === "Remove from SpecDesk")
       ?.click();
     expect(onUnregister).toHaveBeenCalledWith(REPO.id);
+  });
+
+  it("does not offer rename for remote-only or protected working lines", () => {
+    const { panel, body, onRenameBranch } = ready();
+    const clone = REPO.clones[0];
+    if (clone === undefined) throw new Error("clone fixture missing");
+    panel.setState({
+      ...STATE,
+      repositories: [
+        {
+          ...REPO,
+          clones: [
+            {
+              ...clone,
+              branches: [
+                ...clone.branches,
+                {
+                  name: "remote-only",
+                  status: CLEAN_STATUS,
+                  canDelete: false,
+                  canRename: false,
+                },
+                {
+                  name: "protected",
+                  status: { ...CLEAN_STATUS, stashCount: 1 },
+                  canDelete: true,
+                  canRename: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const remoteOnly = [...body.querySelectorAll<HTMLButtonElement>(".repo-branch-open")].find(
+      (item) => item.textContent === "remote-only",
+    );
+    remoteOnly?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+
+    expect(
+      [...body.querySelectorAll<HTMLElement>('.repo-context-menu [role="menuitem"]')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["Switch and open", "Add to favorites"]);
+
+    const protectedBranch = [...body.querySelectorAll<HTMLButtonElement>(".repo-branch-open")].find(
+      (item) => item.textContent === "protected",
+    );
+    protectedBranch?.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+    expect(
+      [...body.querySelectorAll<HTMLElement>('.repo-context-menu [role="menuitem"]')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["Switch and open", "Add to favorites", "Delete local working line…"]);
+    expect(onRenameBranch).not.toHaveBeenCalled();
   });
 
   it("toggles the repository star and preserves its keyboard focus after state refresh", () => {

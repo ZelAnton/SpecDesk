@@ -1481,7 +1481,7 @@ export class RepositoriesPanel implements PanelTool {
         run: () => this.callbacks.onSwitchBranch(repo, clone.path, branch.name),
       },
     ];
-    if (branch.name.toLowerCase() !== repo.defaultBranch.toLowerCase()) {
+    if (branch.canRename) {
       items.push({
         label: "Rename working line…",
         run: () =>

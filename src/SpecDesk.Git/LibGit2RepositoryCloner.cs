@@ -823,15 +823,19 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		}
 		(int ahead, int behind) = TrackingStatus(local);
 		bool current = string.Equals(name, currentBranch, StringComparison.OrdinalIgnoreCase);
+		int stashCount = CountBranchStashes(repository, name);
+		bool mutableLocal = local is not null
+			&& !string.Equals(name, defaultBranch, StringComparison.OrdinalIgnoreCase);
 		return new LocalBranchInfo(
 			name,
 			new LocalRepositoryStatus(
 				ahead,
 				behind,
 				current && hasUncommitted,
-				CountBranchStashes(repository, name),
+				stashCount,
 				current && hasConflicts),
-			local is not null && !string.Equals(name, defaultBranch, StringComparison.OrdinalIgnoreCase));
+			mutableLocal,
+			mutableLocal && stashCount == 0);
 	}
 
 	private static (int Ahead, int Behind) TrackingStatus(Branch? local)

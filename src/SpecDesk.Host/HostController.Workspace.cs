@@ -1482,7 +1482,8 @@ public sealed partial class HostController
 			info.Branches.Select(branch => new RegisteredBranch(
 				branch.Name,
 				ToRepositoryStatusPayload(branch.Status),
-				branch.CanDelete)).ToArray(),
+				branch.CanDelete,
+				branch.CanRename)).ToArray(),
 			ToRepositoryStatusPayload(info.Status));
 		return new PreparedOpenedRepository(descriptor, clone, info.DefaultBranch, Path.GetFullPath(clonePath));
 	}
@@ -2310,7 +2311,7 @@ public sealed partial class HostController
 			path,
 			info.CurrentBranch,
 			info.Branches.Select(branch => new RegisteredBranch(
-				branch.Name, ToRepositoryStatusPayload(branch.Status), branch.CanDelete)).ToArray(),
+				branch.Name, ToRepositoryStatusPayload(branch.Status), branch.CanDelete, branch.CanRename)).ToArray(),
 			ToRepositoryStatusPayload(info.Status));
 
 	private static bool IsValidLocalBranchName(string value) =>
@@ -2472,7 +2473,8 @@ public sealed partial class HostController
 					info.Branches.Select(branch => new RegisteredBranch(
 						branch.Name,
 						ToRepositoryStatusPayload(branch.Status),
-						branch.CanDelete)).ToArray(),
+						branch.CanDelete,
+						branch.CanRename)).ToArray(),
 					ToRepositoryStatusPayload(info.Status));
 				bool updated = publish
 					&& usable
@@ -2814,7 +2816,8 @@ public sealed partial class HostController
 						info.Branches.Select(branch => new RegisteredBranch(
 							branch.Name,
 							ToRepositoryStatusPayload(branch.Status),
-							branch.CanDelete)).ToArray(),
+							branch.CanDelete,
+							branch.CanRename)).ToArray(),
 						ToRepositoryStatusPayload(info.Status)),
 					info.DefaultBranch) == true;
 		}
@@ -3200,7 +3203,8 @@ public sealed partial class HostController
 					updatedInfo.Branches.Select(branch => new RegisteredBranch(
 						branch.Name,
 						ToRepositoryStatusPayload(branch.Status),
-						branch.CanDelete)).ToArray(),
+						branch.CanDelete,
+						branch.CanRename)).ToArray(),
 					ToRepositoryStatusPayload(updatedInfo.Status));
 				bool updated = _workspace?.TryUpdateRepoClone(
 					payload.Id,

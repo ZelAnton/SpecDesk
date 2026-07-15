@@ -341,7 +341,8 @@
                   "stashCount": 0,
                   "hasConflicts": false
                 },
-                "canDelete": false
+                "canDelete": false,
+                "canRename": false
               },
               {
                 "name": "review-copy",
@@ -352,7 +353,8 @@
                   "stashCount": 1,
                   "hasConflicts": false
                 },
-                "canDelete": true
+                "canDelete": true,
+                "canRename": true
               }
             ],
             "status": {

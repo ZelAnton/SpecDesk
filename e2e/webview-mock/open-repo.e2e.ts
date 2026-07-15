@@ -232,11 +232,19 @@ test("local copies and branches open their files directly", async ({ page }, tes
                 {
                   name: "draft",
                   canDelete: true,
+                  canRename: draftStatus.stashCount === 0,
                   status: draftStatus,
                 },
                 {
                   name: "main",
                   canDelete: false,
+                  canRename: false,
+                  status: cleanStatus,
+                },
+                {
+                  name: "remote-only",
+                  canDelete: false,
+                  canRename: false,
                   status: cleanStatus,
                 },
               ],
@@ -299,7 +307,7 @@ test("local copies and branches open their files directly", async ({ page }, tes
     payload: { requestId: refreshRequestId },
   });
   await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
-  await expect(page.locator(".repo-branch-open")).toHaveText(["main", "draft"]);
+  await expect(page.locator(".repo-branch-open")).toHaveText(["main", "draft", "remote-only"]);
 
   const createBranchCount = (await sentFrames(page)).filter(
     (frame) => frame.kind === "repo.createBranch",
@@ -357,9 +365,14 @@ test("local copies and branches open their files directly", async ({ page }, tes
     requestId: renameClonePayload?.requestId,
   } });
 
-  await page.getByRole("button", {
+  const draftBranch = page.getByRole("button", {
     name: "Switch quarterly-specs to draft and open its files",
-  }).click({ button: "right" });
+  });
+  await draftBranch.click({ button: "right" });
+  await expect(entityMenu.getByRole("menuitem", { name: "Rename working line…" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await emit(page, cleanState);
+  await draftBranch.click({ button: "right" });
   await entityMenu.getByRole("menuitem", { name: "Rename working line…" }).click();
   await page.locator(".repo-name-dialog-input").fill("approved-draft");
   await page.getByRole("button", { name: "Continue" }).click();
@@ -378,6 +391,20 @@ test("local copies and branches open their files directly", async ({ page }, tes
   await emit(page, { kind: "repo.operationCompleted", payload: {
     requestId: renameBranchPayload?.requestId,
   } });
+  await emit(page, divergentState);
+
+  await page.getByRole("button", {
+    name: "Switch quarterly-specs to remote-only and open its files",
+  }).click({ button: "right" });
+  await expect(entityMenu.getByRole("menuitem")).toHaveText([
+    "Switch and open",
+    "Add to favorites",
+  ]);
+  await page.screenshot({
+    path: testInfo.outputPath("remote-only-context-menu.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
 
   await page.locator(".repo-open").click({ button: "right" });
   await expect(entityMenu.getByRole("menuitem", { name: "Remove from SpecDesk" })).toBeVisible();
@@ -597,6 +624,7 @@ test("local copies and branches open their files directly", async ({ page }, tes
                 {
                   name: "main",
                   canDelete: false,
+                  canRename: false,
                   status: {
                     ahead: 0,
                     behind: 0,

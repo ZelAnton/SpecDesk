@@ -232,6 +232,7 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
                 {
                   name: "draft",
                   canDelete: true,
+                  canRename: true,
                   status: {
                     ahead: 2,
                     behind: 1,

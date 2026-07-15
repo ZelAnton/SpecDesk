@@ -1047,13 +1047,23 @@ function parseRegisteredRepo(value: unknown): RegisteredRepo | null {
     }
     const status = parseRepositoryStatus(clone.status);
     const branches = parseArray(clone.branches, (branch) => {
-      if (!isRecord(branch) || !isRemoteBranch(branch.name) || !isBoolean(branch.canDelete)) {
+      if (
+        !isRecord(branch) ||
+        !isRemoteBranch(branch.name) ||
+        !isBoolean(branch.canDelete) ||
+        !isBoolean(branch.canRename)
+      ) {
         return null;
       }
       const branchStatus = parseRepositoryStatus(branch.status);
       return branchStatus === null
         ? null
-        : { name: branch.name, status: branchStatus, canDelete: branch.canDelete };
+        : {
+            name: branch.name,
+            status: branchStatus,
+            canDelete: branch.canDelete,
+            canRename: branch.canRename,
+          };
     });
     return branches === null || status === null
       ? null

@@ -571,7 +571,11 @@ public sealed record RepositoryStatusPayload(
 }
 
 [JsonConverter(typeof(RegisteredBranchJsonConverter))]
-public sealed record RegisteredBranch(string Name, RepositoryStatusPayload Status, bool CanDelete = false);
+public sealed record RegisteredBranch(
+	string Name,
+	RepositoryStatusPayload Status,
+	bool CanDelete = false,
+	bool CanRename = false);
 
 public sealed class RegisteredBranchJsonConverter : JsonConverter<RegisteredBranch>
 {
@@ -600,7 +604,11 @@ public sealed class RegisteredBranchJsonConverter : JsonConverter<RegisteredBran
 		bool canDelete = root.TryGetProperty("canDelete", out JsonElement canDeleteElement)
 			&& canDeleteElement.ValueKind is JsonValueKind.True or JsonValueKind.False
 			&& canDeleteElement.GetBoolean();
-		return new RegisteredBranch(name, status, canDelete);
+		bool canRename = root.TryGetProperty("canRename", out JsonElement canRenameElement)
+			&& canRenameElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+			? canRenameElement.GetBoolean()
+			: canDelete && status.StashCount == 0;
+		return new RegisteredBranch(name, status, canDelete, canRename);
 	}
 
 	public override void Write(
@@ -613,6 +621,7 @@ public sealed class RegisteredBranchJsonConverter : JsonConverter<RegisteredBran
 		writer.WritePropertyName("status");
 		JsonSerializer.Serialize(writer, value.Status, options);
 		writer.WriteBoolean("canDelete", value.CanDelete);
+		writer.WriteBoolean("canRename", value.CanRename);
 		writer.WriteEndObject();
 	}
 }

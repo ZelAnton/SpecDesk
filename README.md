@@ -73,7 +73,7 @@ The formatting toolbar remains visible whenever a specification is open (disable
 and covers headings, lists, emphasis, inline and block code, quotes, links, starter tables, image references,
 and dividers.
 The global toolbar shows repository, version, path, and search only while a document is being edited;
-Start and Notifications retain the SpecDesk identity, signed-out **Sign in** action, and account avatar menu.
+Start and review surfaces retain the SpecDesk identity, signed-out **Sign in** action, and account avatar menu.
 The left, right, and bottom mode rails stay available around the document. Choose a mode icon to open its
 panel; choose the active icon again to collapse it. Collapsed side rails remain vertical, and the collapsed
 bottom rail becomes a horizontal toolbar. Panel size, active mode, and expanded state are saved locally.
@@ -95,8 +95,8 @@ The bottom Log is a bounded session activity feed for GitHub requests, context a
 operations. It records action names and outcomes only; document contents, comment bodies, and credentials are
 never copied into the feed.
 
-The notification icon switches the main workspace to a Notifications list. The current list is a
-placeholder for future review-request and mention events.
+Notifications are reached from the account-avatar menu. The avatar reserves a count badge, hidden while
+the current placeholder list has no items; live review-request and mention events will populate it later.
 
 ## GitHub access
 
@@ -159,6 +159,8 @@ protects unfinished files before changing its contents.
 Repository cards keep the online source as the top-level choice and named local copies beneath it. Stars can
 keep a GitHub repository, exact local copy, branch, folder, or file in **Favorites**. Reopening a favorite
 retains its exact identity; choosing a repository favorite opens Repositories and highlights that source.
+Context menus offer rename only for local non-main working lines without protected work; online-only and
+GitHub main lines remain aligned with the remote repository instead of exposing a local operation that cannot succeed.
 Removing a registered repository removes only its SpecDesk registration and related favorites; local folders and branches, plus every GitHub resource, remain untouched.
 The left rail stays intentionally small: **Navigator** (including Favorites and History), **Repositories**,
 **Folders**, and **PRs**. The PRs view keeps requests needing your review beside work you created or joined.

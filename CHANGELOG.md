@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remote-only working lines and lines with protected work no longer offer local rename actions that cannot succeed.
 - Interrupted or failed local-copy and working-line renames now recover the matching Git state, saved registration, favorites, and recent paths instead of leaving an unusable partial rename.
 - The borderless Windows shell now exposes native edge and corner resizing and maximizes within the monitor work area without covering the taskbar.
 - The right panel now ends at the bottom panel instead of overlapping its workspace.

@@ -87,7 +87,11 @@ public sealed record LocalRepositoryStatus(
 	int StashCount,
 	bool HasConflicts);
 
-public sealed record LocalBranchInfo(string Name, LocalRepositoryStatus Status, bool CanDelete = false);
+public sealed record LocalBranchInfo(
+	string Name,
+	LocalRepositoryStatus Status,
+	bool CanDelete = false,
+	bool CanRename = false);
 
 public sealed record LocalRepositoryInfo(
 	string DefaultBranch,

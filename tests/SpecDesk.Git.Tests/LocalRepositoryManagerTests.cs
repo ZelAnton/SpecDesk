@@ -855,7 +855,7 @@ public sealed class LocalRepositoryManagerTests
 	}
 
 	[Test]
-	public void Inspect_AllowsDeletingOnlyLocalNonDefaultBranches()
+	public void Inspect_AllowsMutatingOnlyLocalNonDefaultBranches()
 	{
 		using (Repository repository = new(_root))
 		{
@@ -869,8 +869,11 @@ public sealed class LocalRepositoryManagerTests
 		Assert.Multiple(() =>
 		{
 			Assert.That(info.Branches.Single(branch => branch.Name == _baseBranch).CanDelete, Is.False);
+			Assert.That(info.Branches.Single(branch => branch.Name == _baseBranch).CanRename, Is.False);
 			Assert.That(info.Branches.Single(branch => branch.Name == "feature").CanDelete, Is.True);
+			Assert.That(info.Branches.Single(branch => branch.Name == "feature").CanRename, Is.True);
 			Assert.That(info.Branches.Single(branch => branch.Name == "remote-only").CanDelete, Is.False);
+			Assert.That(info.Branches.Single(branch => branch.Name == "remote-only").CanRename, Is.False);
 		});
 	}
 
@@ -926,6 +929,7 @@ public sealed class LocalRepositoryManagerTests
 			Assert.That(feature.Status.Behind, Is.EqualTo(1));
 			Assert.That(feature.Status.HasUncommitted, Is.False);
 			Assert.That(feature.Status.StashCount, Is.EqualTo(1));
+			Assert.That(feature.CanRename, Is.False);
 		});
 	}
 
