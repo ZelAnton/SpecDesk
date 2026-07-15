@@ -141,6 +141,41 @@ public sealed class GitHubReviewTests
 	}
 
 	[Test]
+	public async Task GetPullRequestDetailsAsync_SendsABalancedGraphQlDocument()
+	{
+		const string metadata = """
+			{"data":{"viewer":{"login":"octo"},"repository":{"pullRequest":{"number":42,
+			"title":"Review","body":"","url":"https://github.com/octo/spec/pull/42","state":"OPEN",
+			"isDraft":false,"baseRefName":"main","headRefName":"spec/review","author":{"login":"octo"},
+			"reviewRequests":{"nodes":[]},"latestReviews":{"nodes":[]},"commits":{"nodes":[]}}}}}
+			""";
+		using ScriptedHttpMessageHandler handler = new(
+			(HttpStatusCode.OK, metadata),
+			(HttpStatusCode.Forbidden, "{}"));
+		using HttpClient http = new(handler);
+		GitHubReviewClient client = new(http);
+
+		await client.GetPullRequestDetailsAsync("token", "octo", "spec", 42);
+
+		using JsonDocument request = JsonDocument.Parse(handler.RequestBodies[0]!);
+		string query = request.RootElement.GetProperty("query").GetString()!;
+		int depth = 0;
+		foreach (char character in query)
+		{
+			if (character == '{')
+			{
+				depth++;
+			}
+			else if (character == '}')
+			{
+				depth--;
+				Assert.That(depth, Is.GreaterThanOrEqualTo(0), "GraphQL closes a selection before it opens one.");
+			}
+		}
+		Assert.That(depth, Is.Zero, "GraphQL selections must be balanced.");
+	}
+
+	[Test]
 	public async Task GetPullRequestDetailsAsync_KeepsCoreDocumentWhenCommentsFail()
 	{
 		const string metadata = """

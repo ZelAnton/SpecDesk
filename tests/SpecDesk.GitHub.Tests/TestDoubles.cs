@@ -32,20 +32,25 @@ internal sealed class ScriptedHttpMessageHandler(
 
     public List<Uri> Requests { get; } = [];
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    public List<string?> RequestBodies { get; } = [];
+
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Requests.Add(request.RequestUri ?? throw new InvalidOperationException("request URI missing"));
+        RequestBodies.Add(request.Content is null
+            ? null
+            : await request.Content.ReadAsStringAsync(cancellationToken));
         if (!_responses.TryDequeue(out (HttpStatusCode Status, string Body) response))
         {
             throw new InvalidOperationException("No scripted response remains.");
         }
 
-        return Task.FromResult(new HttpResponseMessage(response.Status)
+        return new HttpResponseMessage(response.Status)
         {
             Content = new StringContent(response.Body),
-        });
+        };
     }
 }
 

@@ -365,7 +365,7 @@ public sealed class GitHubReviewClient : IGitHubReview
         + "... on User{login avatarUrl} ... on Team{name slug organization{login}}}}}"
         + "latestReviews(first:100){nodes{author{login avatarUrl}}}"
         + "commits(last:50){totalCount nodes{commit{oid abbreviatedOid messageHeadline committedDate "
-        + "statusCheckRollup{state}}}}}}}}";
+        + "statusCheckRollup{state}}}}}}}";
 
     public async Task<PullRequestDetails> GetPullRequestDetailsAsync(
         string accessToken,
