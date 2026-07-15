@@ -2055,7 +2055,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 
 #workspace > .dock-splitter-right {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1;
 }
 
 #workspace > .dock-splitter-bottom {

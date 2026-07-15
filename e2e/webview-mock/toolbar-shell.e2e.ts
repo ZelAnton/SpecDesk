@@ -81,13 +81,21 @@ test("global context and Markdown controls live in the correct toolbars and rema
     await filesMode.evaluate((element) => getComputedStyle(element).color),
   );
 
+  const rightActive = page.locator('#right-dock .dock-rail-btn[aria-checked="true"]');
+  if ((await rightActive.getAttribute("aria-expanded")) !== "true") {
+    await rightActive.click();
+  }
+  await expect(rightActive).toHaveAttribute("aria-expanded", "true");
+
   // The bottom panel owns the full shell width. The right panel ends exactly where the bottom begins.
   const bottomBox = await page.locator("#bottom-dock").boundingBox();
   const rightBox = await page.locator("#right-dock").boundingBox();
-  if (bottomBox === null || rightBox === null) {
+  const rightSplitterBox = await page.locator("#workspace > .dock-splitter-right").boundingBox();
+  if (bottomBox === null || rightBox === null || rightSplitterBox === null) {
     throw new Error("The bottom and right docks must both participate in layout");
   }
   expect(rightBox.y + rightBox.height).toBeLessThanOrEqual(bottomBox.y);
+  expect(rightSplitterBox.y + rightSplitterBox.height).toBeLessThanOrEqual(bottomBox.y);
   expect(bottomBox.x).toBeLessThanOrEqual(rightBox.x);
   expect(bottomBox.x + bottomBox.width).toBeGreaterThanOrEqual(rightBox.x + rightBox.width);
   await page.screenshot({ path: testInfo.outputPath("panels-expanded.png"), fullPage: true });
