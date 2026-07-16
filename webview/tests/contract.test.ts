@@ -19,6 +19,7 @@ import {
   parseDocOpenCompleted,
   parseDocumentActivity,
   parseError,
+  parseFileDeleteCompleted,
   parseGitHubAccount,
   parseGitHubCode,
   parseGitHubRepositories,
@@ -322,6 +323,15 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(payload?.nodes[1]?.isDirectory).toBe(false);
     expect(payload?.nodes[1]?.children).toEqual([]);
     expect(payload?.requestId).toBe(31);
+  });
+
+  it("file.deleteCompleted", () => {
+    expect(parseFileDeleteCompleted(fixture["file.deleteCompleted"])).toEqual({
+      path: "C:\\specs\\billing-repo\\README.md",
+      root: "C:\\specs\\billing-repo",
+      requestId: 32,
+      succeeded: true,
+    });
   });
 
   it("workspace.state (recent file + favorite folder + registered repo)", () => {

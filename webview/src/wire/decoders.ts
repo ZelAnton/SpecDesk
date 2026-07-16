@@ -23,6 +23,7 @@ import {
   type DocumentComment,
   type DocumentVersion,
   type ErrorPayload,
+  type FileDeleteCompletedPayload,
   type GitHubAccountPayload,
   type GitHubCodePayload,
   type GitHubRepositoriesPayload,
@@ -463,6 +464,34 @@ export function parseRepoOperationCompleted(value: unknown): RepoOperationComple
     return null;
   }
   return { requestId: value.requestId };
+}
+
+export function parseFileDeleteCompleted(value: unknown): FileDeleteCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.path) ||
+    value.path === "" ||
+    !isString(value.root) ||
+    value.root === "" ||
+    !isNumber(value.requestId) ||
+    !Number.isSafeInteger(value.requestId) ||
+    value.requestId <= 0 ||
+    !isBoolean(value.succeeded) ||
+    (value.error !== undefined && !isString(value.error)) ||
+    (value.succeeded && value.error !== undefined) ||
+    (!value.succeeded && value.error === undefined)
+  ) {
+    return null;
+  }
+  return value.error === undefined
+    ? { path: value.path, root: value.root, requestId: value.requestId, succeeded: value.succeeded }
+    : {
+        path: value.path,
+        root: value.root,
+        requestId: value.requestId,
+        succeeded: value.succeeded,
+        error: value.error,
+      };
 }
 
 export function parseRepoDescription(value: unknown): RepoDescriptionPayload | null {

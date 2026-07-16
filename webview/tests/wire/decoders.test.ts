@@ -6,6 +6,7 @@ import {
   parseDocLoaded,
   parseDocOpenCompleted,
   parseError,
+  parseFileDeleteCompleted,
   parseImageInserted,
   parsePreview,
   parseRepoConfirmation,
@@ -59,6 +60,20 @@ describe("IPC payload decoders (the native→webview JSON boundary)", () => {
     expect(parseRepoOperationCompleted({ requestId: 7 })).toEqual({ requestId: 7 });
     expect(parseRepoOperationCompleted({ requestId: 0 })).toBeNull();
     expect(parseRepoOperationCompleted({ requestId: Number.MAX_SAFE_INTEGER + 1 })).toBeNull();
+  });
+
+  it("parseFileDeleteCompleted rejects uncorrelated and contradictory results", () => {
+    const success = { path: "C:\\repo\\a.md", root: "C:\\repo", requestId: 7, succeeded: true };
+    expect(parseFileDeleteCompleted(success)).toEqual(success);
+    expect(parseFileDeleteCompleted({ ...success, requestId: 0 })).toBeNull();
+    expect(parseFileDeleteCompleted({ ...success, path: "" })).toBeNull();
+    expect(parseFileDeleteCompleted({ ...success, error: "contradiction" })).toBeNull();
+    expect(parseFileDeleteCompleted({ ...success, succeeded: false })).toBeNull();
+    expect(parseFileDeleteCompleted({ ...success, succeeded: false, error: "Locked" })).toEqual({
+      ...success,
+      succeeded: false,
+      error: "Locked",
+    });
   });
 
   it("parseDocDiscardCompleted accepts only correlated terminal results", () => {

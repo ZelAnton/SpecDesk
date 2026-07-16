@@ -585,6 +585,177 @@ public sealed partial class HostController
 		EmitTree(root, payload?.RequestId ?? 0, publication);
 	}
 
+	private void OnDeleteFile(IpcMessage message)
+	{
+		FileDeletePayload? payload = SafeGetPayload<FileDeletePayload>(message);
+		if (payload is null
+			|| string.IsNullOrWhiteSpace(payload.Path)
+			|| string.IsNullOrWhiteSpace(payload.Root)
+			|| payload.RequestId <= 0)
+		{
+			return;
+		}
+
+		string root;
+		string target;
+		try
+		{
+			root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(payload.Root));
+			target = Path.GetFullPath(payload.Path);
+		}
+		catch (Exception ex) when (
+			ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			CompleteFileDeletion(payload, false, "That file path is invalid.");
+			return;
+		}
+
+		bool claimedDocument = false;
+		bool activeDocument = false;
+		bool clearedDocument = false;
+		bool rescheduleAutosave = false;
+		try
+		{
+			string? currentPath;
+			lock (_sync)
+			{
+				currentPath = _currentPath;
+				activeDocument = currentPath is not null && SameFullPath(currentPath, target);
+			}
+			if (activeDocument)
+			{
+				claimedDocument = TryClaimDocumentMutation(
+					currentPath!,
+					requireRepository: false,
+					requireEditing: false,
+					assignPathWhenMissing: false,
+					out _);
+				if (!claimedDocument)
+				{
+					CompleteFileDeletion(
+						payload, false, "That document is still being saved or changed. Try again in a moment.");
+					return;
+				}
+			}
+
+			string? error = null;
+			lock (_workspaceRootPublicationSync)
+			{
+				lock (_sync)
+				{
+					string? authoritativeRoot = _workspaceRoot
+						?? (_currentPath is not null ? Path.GetDirectoryName(_currentPath) : null);
+					string? authoritativeFull = authoritativeRoot is null
+						? null
+						: Path.TrimEndingDirectorySeparator(Path.GetFullPath(authoritativeRoot));
+					if (authoritativeFull is null || !SameFullPath(authoritativeFull, root))
+					{
+						error = "The Disk folder changed. Open the file menu again and retry.";
+					}
+					else if (!AppAssetResolver.IsInside(authoritativeFull, target))
+					{
+						error = "That file is outside the current Disk folder.";
+					}
+					else if (activeDocument
+						&& (!claimedDocument
+							|| _currentPath is null
+							|| !WindowsHandleFileDeletion.AreSameCanonicalHandlePath(
+								_currentPath, currentPath!)))
+					{
+						error = "The open document changed. Open the file menu again and retry.";
+					}
+					else
+					{
+						if (activeDocument)
+						{
+							rescheduleAutosave = _session.Dirty;
+							_autosaveTimer?.Dispose();
+							_autosaveTimer = null;
+						}
+						HandleDeleteResult result = WindowsHandleFileDeletion.Delete(
+							authoritativeFull,
+							target,
+							FileDeleteReparseCheckForTest,
+							activeDocument ? currentPath : null);
+						if (!result.Succeeded)
+						{
+							error = FileDeleteError(result.Failure);
+						}
+						else if (result.DeletedActiveDocument)
+						{
+							ClearActiveDocumentStateLocked();
+							clearedDocument = true;
+						}
+					}
+				}
+			}
+
+			if (error is not null)
+			{
+				CompleteFileDeletion(payload, false, error);
+				return;
+			}
+
+			_workspace?.RemoveLocalFile(target);
+			EmitWorkspaceState();
+			if (clearedDocument)
+			{
+				PublishActiveDocumentCleared();
+			}
+			_logger.LogInformation("Deleted file {Path} from Disk", target);
+			CompleteFileDeletion(payload, true, null);
+		}
+		catch (UnauthorizedAccessException ex)
+		{
+			_logger.LogWarning(ex, "Could not delete file {Path} because access was denied", target);
+			CompleteFileDeletion(payload, false, "SpecDesk does not have permission to delete that file.");
+		}
+		catch (IOException ex)
+		{
+			_logger.LogWarning(ex, "Could not delete file {Path} because it is unavailable", target);
+			CompleteFileDeletion(payload, false, "That file is in use or unavailable. Close it in other applications and retry.");
+		}
+		finally
+		{
+			if (claimedDocument)
+			{
+				ReleaseDocumentMutationLease();
+				if (!clearedDocument && rescheduleAutosave)
+				{
+					MarkDirtyAndScheduleDiskAutosave();
+				}
+			}
+		}
+	}
+
+	private static string FileDeleteError(HandleDeleteFailure failure) => failure switch
+	{
+		HandleDeleteFailure.RootChanged => "The Disk folder changed. Open the file menu again and retry.",
+		HandleDeleteFailure.OutsideRoot => "That file is outside the current Disk folder.",
+		HandleDeleteFailure.ReparsePoint =>
+			"Files reached through a link or junction cannot be deleted from SpecDesk.",
+		HandleDeleteFailure.Directory => "Folders cannot be deleted here.",
+		HandleDeleteFailure.Missing => "That file no longer exists.",
+		HandleDeleteFailure.ReadOnly =>
+			"That file is read-only. Clear its read-only setting before deleting it.",
+		HandleDeleteFailure.Locked =>
+			"That file is in use or unavailable. Close it in other applications and retry.",
+		HandleDeleteFailure.AccessDenied => "SpecDesk does not have permission to delete that file.",
+		_ => "That file is unavailable. Close it in other applications and retry.",
+	};
+
+	private void CompleteFileDeletion(FileDeletePayload payload, bool succeeded, string? error)
+	{
+		if (error is not null)
+		{
+			SendError(error);
+		}
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.FileDeleteCompleted,
+			new FileDeleteCompletedPayload(
+				payload.Path, payload.Root, payload.RequestId, succeeded, error)));
+	}
+
 	private void EmitTree(
 		string root,
 		long requestId = 0,

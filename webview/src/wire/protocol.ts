@@ -41,6 +41,7 @@ export const Kinds = {
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
   treeRequest: "tree.request",
+  fileDelete: "file.delete",
   workspaceRequest: "workspace.request",
   workspaceFavorite: "workspace.favorite",
   repoRegister: "repo.register",
@@ -89,6 +90,7 @@ export const Kinds = {
   documentActivity: "document.activity",
   templates: "templates",
   tree: "tree",
+  fileDeleteCompleted: "file.deleteCompleted",
   workspaceState: "workspace.state",
   repoCloneDestination: "repo.cloneDestination",
   repoCloneConflict: "repo.cloneConflict",
@@ -597,6 +599,19 @@ export interface FolderOpenPayload {
 export interface TreeRequestPayload {
   path?: string;
   requestId: number;
+}
+
+/** Delete one file from the currently visible Disk root. `root` is a stale-view guard; native state is
+ * authoritative and the host rejects paths outside it. */
+export interface FileDeletePayload {
+  path: string;
+  root: string;
+  requestId: number;
+}
+
+export interface FileDeleteCompletedPayload extends FileDeletePayload {
+  succeeded: boolean;
+  error?: string;
 }
 
 /** One node of the file tree (native→webview, inside {@link TreePayload}). A directory has

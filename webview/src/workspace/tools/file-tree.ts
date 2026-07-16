@@ -1,11 +1,13 @@
 /** Lazy, one-level-at-a-time Folder navigator for the active workspace. */
 
 import type {
+  FileDeleteCompletedPayload,
   TreeNode,
   TreePayload,
   WorkspaceContextPayload,
   WorkspaceItem,
 } from "../../wire/protocol.js";
+import { DestructiveConfirmation } from "../destructive-confirmation.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -13,6 +15,7 @@ export interface FileTreeCallbacks {
   onOpenFile(path: string): void;
   onOpenFolder(): void;
   onRequestLevel(path: string | undefined, requestId: number): void;
+  onDeleteFile(path: string, root: string, requestId: number): void;
   onToggleFavorite?(item: WorkspaceItem, favorite: boolean): void;
   onShowEditor?(): void;
 }
@@ -20,6 +23,12 @@ export interface FileTreeCallbacks {
 interface PendingLevel {
   readonly generation: number;
   readonly path?: string;
+}
+
+interface PendingDeletion {
+  readonly generation: number;
+  readonly path: string;
+  readonly root: string;
 }
 
 export class FileTree implements PanelTool {
@@ -43,6 +52,9 @@ export class FileTree implements PanelTool {
   private generation = 0;
   private branchSeq = 0;
   private filter = "";
+  private deleteRequestSequence = 0;
+  private readonly pendingDeletions = new Map<number, PendingDeletion>();
+  private readonly destructiveConfirmation = new DestructiveConfirmation();
 
   constructor(private readonly callbacks: FileTreeCallbacks) {}
 
@@ -119,6 +131,7 @@ export class FileTree implements PanelTool {
 
   /** Apply an unsolicited root publication or a correlated root/directory response. */
   setTree(tree: TreePayload): void {
+    this.destructiveConfirmation.close(false);
     if (tree.requestId === 0) {
       this.replaceRoot(tree);
       return;
@@ -146,18 +159,21 @@ export class FileTree implements PanelTool {
   }
 
   setContext(context: WorkspaceContextPayload | null): void {
+    this.destructiveConfirmation.close(false);
     this.context = context;
     this.render();
   }
 
   setActiveFile(path: string | null): void {
     if (path === this.activeFile) return;
+    this.destructiveConfirmation.close(false);
     this.activeFile = path;
     this.render();
     this.revealActiveBranch();
   }
 
   setFavorites(favorites: readonly WorkspaceItem[]): void {
+    this.destructiveConfirmation.close(false);
     this.favorites = favorites;
     this.render();
   }
@@ -173,6 +189,8 @@ export class FileTree implements PanelTool {
     const remoteFile = this.activeFile?.startsWith("github://") ?? false;
     if (!remoteContext && !remoteTree && !remoteFile) return;
     this.generation++;
+    this.destructiveConfirmation.close(false);
+    this.pendingDeletions.clear();
     this.pending.clear();
     this.expanded.clear();
     this.loaded.clear();
@@ -188,6 +206,7 @@ export class FileTree implements PanelTool {
 
   private replaceRoot(tree: TreePayload): void {
     this.generation++;
+    this.pendingDeletions.clear();
     this.pending.clear();
     this.expanded.clear();
     this.loaded.clear();
@@ -372,12 +391,69 @@ export class FileTree implements PanelTool {
     this.markCurrent(button, node.path);
     button.addEventListener("click", () => this.callbacks.onOpenFile(node.path));
     row.append(button, this.favoriteButton(node));
+    if (this.tree?.remote !== true && !node.path.startsWith("github://")) {
+      const deleteFile = document.createElement("button");
+      deleteFile.type = "button";
+      deleteFile.className = "file-tree-delete";
+      deleteFile.dataset.path = `delete:${node.path}`;
+      deleteFile.setAttribute("aria-label", `Delete file ${node.name}`);
+      deleteFile.setAttribute("aria-expanded", "false");
+      deleteFile.title = "Delete file";
+      deleteFile.innerHTML = icon("delete");
+      deleteFile.disabled = [...this.pendingDeletions.values()].some((pending) =>
+        sameLocalEntryPath(pending.path, node.path),
+      );
+      deleteFile.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const tree = this.tree;
+        if (tree === null || tree.remote === true) return;
+        this.destructiveConfirmation.open({
+          trigger: deleteFile,
+          anchor: row,
+          title: `Delete ${node.name}?`,
+          description:
+            "This permanently deletes this file from the current Disk folder. Folders are never deleted.",
+          focusAfterConfirm: () => this.filterEl,
+          onConfirm: () => {
+            const requestId = ++this.deleteRequestSequence;
+            this.pendingDeletions.set(requestId, {
+              generation: this.generation,
+              path: node.path,
+              root: tree.root,
+            });
+            this.callbacks.onDeleteFile(node.path, tree.root, requestId);
+            this.render();
+          },
+        });
+      });
+      row.append(deleteFile);
+    }
     li.append(row);
     return li;
   }
 
+  fileDeleteCompleted(payload: FileDeleteCompletedPayload): void {
+    const pending = this.pendingDeletions.get(payload.requestId);
+    if (pending === undefined) return;
+    this.pendingDeletions.delete(payload.requestId);
+    if (
+      pending.generation !== this.generation ||
+      !sameLocalEntryPath(pending.path, payload.path) ||
+      normalizePath(pending.root) !== normalizePath(payload.root)
+    ) {
+      return;
+    }
+    if (payload.succeeded && this.tree !== null) {
+      this.tree = { ...this.tree, nodes: removeFileNode(this.tree.nodes, payload.path) };
+      if (sameLocalEntryPath(this.activeFile ?? "", payload.path)) {
+        this.activeFile = null;
+      }
+    }
+    this.render();
+  }
+
   private markCurrent(button: HTMLButtonElement, path: string): void {
-    if (normalizePath(path) === normalizePath(this.activeFile ?? "")) {
+    if (sameLocalEntryPath(path, this.activeFile ?? "")) {
       button.classList.add("is-current");
       button.setAttribute("aria-current", "true");
     }
@@ -417,6 +493,14 @@ function replaceChildren(nodes: TreeNode[], path: string, children: TreeNode[]):
 
 function cloneNode(node: TreeNode): TreeNode {
   return { ...node, children: node.children.map(cloneNode) };
+}
+
+function removeFileNode(nodes: readonly TreeNode[], path: string): TreeNode[] {
+  return nodes
+    .filter((node) => node.isDirectory || !sameLocalEntryPath(node.path, path))
+    .map((node) =>
+      node.isDirectory ? { ...node, children: removeFileNode(node.children, path) } : node,
+    );
 }
 
 function nodeHasRemotePath(node: TreeNode): boolean {
@@ -473,7 +557,7 @@ function sameWorkspaceItem(left: WorkspaceItem, right: WorkspaceItem): boolean {
     return false;
   return left.kind === "remote"
     ? left.path === right.path
-    : left.path.toLowerCase() === right.path.toLowerCase();
+    : sameLocalEntryPath(left.path, right.path);
 }
 
 function isDescendantOrSame(candidate: string, parent: string): boolean {
@@ -483,6 +567,21 @@ function isDescendantOrSame(candidate: string, parent: string): boolean {
 function normalizePath(path: string): string {
   const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
   return normalized.startsWith("github://") ? normalized : normalized.toLocaleLowerCase();
+}
+
+function sameLocalEntryPath(left: string, right: string): boolean {
+  return normalizeLocalEntryPath(left) === normalizeLocalEntryPath(right);
+}
+
+function normalizeLocalEntryPath(path: string): string {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  if (/^[A-Za-z]:/.test(normalized)) {
+    return `${normalized[0]?.toLocaleLowerCase()}${normalized.slice(1)}`;
+  }
+  const unc = /^\/\/([^/]+)\/([^/]+)(.*)$/.exec(normalized);
+  return unc === null
+    ? normalized
+    : `//${unc[1]?.toLocaleLowerCase()}/${unc[2]?.toLocaleLowerCase()}${unc[3]}`;
 }
 
 function contextMatchesTree(context: WorkspaceContextPayload | null, root: string): boolean {

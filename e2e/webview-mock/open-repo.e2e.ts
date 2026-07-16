@@ -527,7 +527,25 @@ test("local copies and branches open their files directly", async ({ page }, tes
     page.locator('#left-dock [data-tool="favorites"] .workspace-item-label'),
   ).toHaveText(["acme/specs", "quarterly-specs", "quarterly-specs · draft"]);
   await page.locator(".repo-branch-header").filter({ hasText: "draft" }).hover();
+  const deleteFrameCount = (await sentFrames(page)).filter(
+    (frame) => frame.kind === "repo.deleteBranch",
+  ).length;
   await page.getByRole("button", { name: "Delete branch draft in quarterly-specs locally" }).click();
+  expect((await sentFrames(page)).filter((frame) => frame.kind === "repo.deleteBranch")).toHaveLength(
+    deleteFrameCount,
+  );
+  const destructiveConfirmation = page
+    .locator(".repo-branch")
+    .filter({ hasText: "draft" })
+    .locator(".destructive-confirmation");
+  await expect(destructiveConfirmation).toContainText("Nothing has been deleted.");
+  await destructiveConfirmation.getByRole("button", { name: "Confirm deletion" }).click();
+  await expect
+    .poll(
+      async () =>
+        (await sentFrames(page)).filter((frame) => frame.kind === "repo.deleteBranch").length,
+    )
+    .toBe(deleteFrameCount + 1);
   const initialDeletePayload = (await sentFrames(page))
     .filter((frame) => frame.kind === "repo.deleteBranch")
     .at(-1)?.payload as { requestId?: unknown } | undefined;
@@ -563,7 +581,7 @@ test("local copies and branches open their files directly", async ({ page }, tes
   await expect(operationConfirmation).toBeVisible();
   const keepAction = operationConfirmation.getByRole("button", { name: "Keep it", exact: true });
   const deleteAction = operationConfirmation.getByRole("button", {
-    name: "Delete local branch",
+    name: "Confirm deletion of local branch",
     exact: true,
   });
   const confirmationBox = await operationConfirmation.boundingBox();

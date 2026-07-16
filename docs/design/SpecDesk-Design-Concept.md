@@ -226,6 +226,10 @@ The most-reused surface (preview, formatted mode, diff, comparison). Rules:
   (a beginning); *describe-your-changes / version note* bar = `--warn` tint (a checkpoint),
   with a `⌄` expander to a multi-line note. **This is the only place a commit-like idea
   surfaces — always in plain words.**
+- **Destructive confirmation** — the first Delete/Remove action expands a danger-tinted block directly
+  beneath that exact row or menu item. It states what remains untouched and exposes a text-labelled red
+  **Confirm deletion** button; Escape, outside click, menu close, or entity change dismisses it. Focus moves
+  into the block and returns to the trigger on cancellation, so colour is never the only warning.
 - **Status / lifecycle badges** — toolbar status uses dot + label (no border); standalone
   badges use a bordered chip. One token family per state (see §8).
 - **Side panels** — dock on the quiet grey `--panel` surface with a slightly stronger

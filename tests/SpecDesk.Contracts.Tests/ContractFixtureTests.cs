@@ -140,6 +140,8 @@ public sealed class ContractFixtureTests
 				[], HasChildren: true),
 			new TreeNode("README.md", @"C:\specs\billing-repo\README.md", IsDirectory: false, []),
 		], RequestId: 31)),
+		(MessageKinds.FileDeleteCompleted, new FileDeleteCompletedPayload(
+			@"C:\specs\billing-repo\README.md", @"C:\specs\billing-repo", 32, Succeeded: true)),
 		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
 			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md",
 			"billing-repo")),

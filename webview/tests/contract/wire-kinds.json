@@ -22,6 +22,8 @@
   "document.activity.request",
   "editor.changed",
   "error",
+  "file.delete",
+  "file.deleteCompleted",
   "folder.open",
   "github.account",
   "github.accountApplied",

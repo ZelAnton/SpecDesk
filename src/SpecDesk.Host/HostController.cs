@@ -267,6 +267,7 @@ public sealed partial class HostController : IDisposable
 	internal Action<string>? WorkspaceRootRemoteInvalidationStartingForTest { get; set; }
 	internal Action? WorkspaceRootClearPublishingForTest { get; set; }
 	internal Action<string>? WorkspaceTreeRequestCapturedForTest { get; set; }
+	internal Func<string, string, bool>? FileDeleteReparseCheckForTest { get; set; }
 	internal Action? RemoteBrowseTerminalPublishingForTest { get; set; }
 	internal Action? RemoteFileTerminalPublishingForTest { get; set; }
 	// The open document's dominant line ending, detected from the RAW file content at load/discard time.
@@ -510,6 +511,9 @@ public sealed partial class HostController : IDisposable
 				break;
 			case MessageKinds.TreeRequest:
 				OnTreeRequest(message);
+				break;
+			case MessageKinds.FileDelete:
+				OnDeleteFile(message);
 				break;
 			case MessageKinds.DocSave:
 				OnSave();

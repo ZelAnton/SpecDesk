@@ -22,6 +22,7 @@ import type {
   WorkspaceItem,
   WorkspaceStatePayload,
 } from "../../wire/protocol.js";
+import { DestructiveConfirmation } from "../destructive-confirmation.js";
 import { icon } from "../icons.js";
 import type { PanelTool } from "../panel-tool.js";
 
@@ -90,6 +91,7 @@ interface PendingManagedClone {
 interface RepositoryMenuItem {
   readonly label: string;
   readonly danger?: boolean;
+  readonly destructiveDescription?: string;
   readonly run: () => void;
 }
 
@@ -150,6 +152,7 @@ export class RepositoriesPanel implements PanelTool {
   private nameDialogInputEl: HTMLInputElement | null = null;
   private nameDialogErrorEl: HTMLElement | null = null;
   private pendingNameAction: ((value: string) => void) | null = null;
+  private readonly destructiveConfirmation = new DestructiveConfirmation();
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -369,7 +372,7 @@ export class RepositoriesPanel implements PanelTool {
     const operationDelete = document.createElement("button");
     operationDelete.type = "button";
     operationDelete.className = "repo-operation-delete";
-    operationDelete.textContent = "Delete locally";
+    operationDelete.textContent = "Confirm deletion";
     operationDelete.addEventListener("click", () => this.confirmOperation());
     operationActions.append(operationCancel, operationDelete);
     operationConfirmation.append(
@@ -506,15 +509,15 @@ export class RepositoriesPanel implements PanelTool {
     }
     if (this.operationConfirmationEl !== null) {
       const localKind = payload.operation === "deleteBranch" ? "branch" : "copy";
-      const title =
-        this.operationConfirmationEl.querySelector<HTMLElement>("#repo-operation-title");
+      const title = this.operationConfirmationEl.querySelector<HTMLElement>("strong");
       if (title !== null) {
         title.textContent = `Delete local ${localKind}?`;
       }
       const action =
         this.operationConfirmationEl.querySelector<HTMLButtonElement>(".repo-operation-delete");
       if (action !== null) {
-        action.textContent = `Delete local ${localKind}`;
+        action.textContent = "Confirm deletion";
+        action.setAttribute("aria-label", `Confirm deletion of local ${localKind}`);
       }
       this.operationConfirmationEl.hidden = false;
       this.operationConfirmationEl
@@ -527,6 +530,7 @@ export class RepositoriesPanel implements PanelTool {
 
   /** Replace the repository list with the host's latest workspace state. */
   setState(state: WorkspaceStatePayload): void {
+    this.destructiveConfirmation.close(false);
     this.repos = state.repositories;
     this.favorites = state.favorites;
     const cloneCount = state.repositories.reduce((count, repo) => count + repo.clones.length, 0);
@@ -599,6 +603,8 @@ export class RepositoriesPanel implements PanelTool {
    *  and a resolved description/confirmation is authorization-specific, so none of it may survive sign-out
    *  or an account replacement. Incrementing both request ids makes already-queued host replies stale. */
   clearAccountState(): void {
+    this.destructiveConfirmation.close(false);
+    this.closeOperationConfirmation(false);
     if (this.destinationTimer !== null) {
       window.clearTimeout(this.destinationTimer);
       this.destinationTimer = null;
@@ -1179,7 +1185,13 @@ export class RepositoriesPanel implements PanelTool {
     const remove = this.iconAction(
       "delete",
       `Remove repository ${repo.name} from SpecDesk`,
-      () => this.callbacks.onUnregister(repo.id),
+      () =>
+        this.openDestructiveConfirmation(
+          remove,
+          `Remove ${repo.name} from SpecDesk?`,
+          "This removes only its registration and favorites from SpecDesk. The GitHub repository and local copies stay untouched.",
+          () => this.callbacks.onUnregister(repo.id),
+        ),
       "repo-remove",
     );
     remove.dataset.id = repo.id;
@@ -1423,6 +1435,8 @@ export class RepositoriesPanel implements PanelTool {
       {
         label: "Remove from SpecDesk",
         danger: true,
+        destructiveDescription:
+          "This removes only its registration and favorites from SpecDesk. The GitHub repository and local copies stay untouched.",
         run: () => this.callbacks.onUnregister(repo.id),
       },
     ];
@@ -1464,6 +1478,8 @@ export class RepositoriesPanel implements PanelTool {
       {
         label: "Delete local copy…",
         danger: true,
+        destructiveDescription:
+          "The local folder will be deleted from this computer. SpecDesk will inspect unfinished edits, unshared versions, and protected snapshots before proceeding.",
         run: () => this.callbacks.onDeleteClone(repo, clone.path),
       },
     ];
@@ -1502,6 +1518,8 @@ export class RepositoriesPanel implements PanelTool {
       items.push({
         label: "Delete local working line…",
         danger: true,
+        destructiveDescription:
+          "This working line will be deleted locally. SpecDesk will inspect unfinished edits, unshared versions, and protected snapshots before proceeding.",
         run: () => this.callbacks.onDeleteBranch(repo, clone.path, branch.name),
       });
     }
@@ -1533,6 +1551,7 @@ export class RepositoriesPanel implements PanelTool {
   ): void {
     const menu = this.contextMenuEl;
     if (menu === null || items.length === 0) return;
+    this.destructiveConfirmation.close(false);
     this.contextMenuReturnFocus = returnFocus;
     menu.replaceChildren(
       ...items.map((item) => {
@@ -1541,7 +1560,24 @@ export class RepositoriesPanel implements PanelTool {
         button.setAttribute("role", "menuitem");
         button.textContent = item.label;
         button.classList.toggle("is-danger", item.danger === true);
-        button.addEventListener("click", () => {
+        button.setAttribute("aria-expanded", "false");
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (item.danger) {
+            this.destructiveConfirmation.open({
+              trigger: button,
+              anchor: button,
+              title: item.label.replace(/…$/, "?"),
+              description:
+                item.destructiveDescription ?? "This action permanently deletes local data.",
+              focusAfterConfirm: () => this.input,
+              onConfirm: () => {
+                this.closeContextMenu(false);
+                item.run();
+              },
+            });
+            return;
+          }
           this.closeContextMenu(false);
           item.run();
         });
@@ -1577,6 +1613,7 @@ export class RepositoriesPanel implements PanelTool {
   }
 
   private closeContextMenu(restoreFocus = true): void {
+    this.destructiveConfirmation.close(false);
     if (this.contextMenuEl !== null) this.contextMenuEl.hidden = true;
     if (restoreFocus) this.contextMenuReturnFocus?.focus();
   }
@@ -1691,11 +1728,36 @@ export class RepositoriesPanel implements PanelTool {
     button.textContent = "×";
     button.setAttribute("aria-label", `Delete ${label} locally`);
     button.title = "Delete locally";
+    button.setAttribute("aria-expanded", "false");
     button.addEventListener("click", () => {
-      this.operationFocusTargets.set(operationKey, button);
-      onClick();
+      this.openDestructiveConfirmation(
+        button,
+        `Delete ${label}?`,
+        "SpecDesk will inspect unfinished edits, unshared versions, and protected snapshots before deleting local data.",
+        () => {
+          this.operationFocusTargets.set(operationKey, button);
+          onClick();
+        },
+      );
     });
     return button;
+  }
+
+  private openDestructiveConfirmation(
+    trigger: HTMLButtonElement,
+    title: string,
+    description: string,
+    onConfirm: () => void,
+  ): void {
+    const anchor = trigger.parentElement ?? trigger;
+    this.destructiveConfirmation.open({
+      trigger,
+      anchor,
+      title,
+      description,
+      onConfirm,
+      focusAfterConfirm: () => this.input,
+    });
   }
 
   private operationKey(

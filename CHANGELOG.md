@@ -21,11 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
 - The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
 - Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
+- Every destructive action now requires an inline **Confirm deletion** step directly beneath the chosen action before SpecDesk can remove anything.
 
 ### Fixed
 
 - The title-bar search, account control, and Windows-standard caption buttons now retain their intended slots at restored, narrow, and maximized window sizes.
 - Context panels now appear immediately from document identity, enrich safely when workspace details arrive, and never show a misleading `File No document` placeholder.
+- Disk deletion now rejects case-only directory siblings on case-sensitive Windows filesystems while accepting normal casing differences in drive letters and UNC server/share names.
+- Deleting a case-only sibling in Disk no longer closes the active document or removes its distinct recent and favorite entries.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
 - Pull requests opened from My reviews or pasted GitHub links now use SpecDesk's review document instead of opening GitHub in a browser.
@@ -58,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Individual files can now be deleted from Disk with handle-bound, root-contained native validation, exact recent/favorite cleanup, and automatic closing when the deleted file is open.
 - Selected text can carry local inline comments in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
 - Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
 - The status bar now identifies the active local copy, working line, and filename without repeating the full path.

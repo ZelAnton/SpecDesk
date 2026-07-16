@@ -47,6 +47,7 @@ public static class MessageKinds
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
+	public const string FileDelete = "file.delete";
 	public const string WorkspaceRequest = "workspace.request";
 	public const string WorkspaceFavorite = "workspace.favorite";
 	public const string RepoRegister = "repo.register";
@@ -96,6 +97,7 @@ public static class MessageKinds
 	public const string DocumentActivity = "document.activity";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
+	public const string FileDeleteCompleted = "file.deleteCompleted";
 	public const string WorkspaceState = "workspace.state";
 	public const string RepoConfirmation = "repo.confirmation";
 	public const string RepoOperationCompleted = "repo.operationCompleted";
@@ -173,6 +175,19 @@ public sealed record FolderOpenPayload(string? Path);
 /// a folder; <c>null</c> uses the current workspace folder (else the open document's folder).
 /// </summary>
 public sealed record TreeRequestPayload(string? Path, long RequestId = 0);
+
+/// <summary>Delete one file from the currently opened Disk root. The host treats <paramref name="Root"/>
+/// only as a stale-view guard; its own current root remains authoritative.</summary>
+public sealed record FileDeletePayload(string Path, string Root, long RequestId = 0);
+
+/// <summary>Terminal result of a correlated file deletion. Errors are also published through the common
+/// error channel; this result lets the Disk tree retire only its matching pending action.</summary>
+public sealed record FileDeleteCompletedPayload(
+	string Path,
+	string Root,
+	long RequestId,
+	bool Succeeded,
+	string? Error = null);
 
 /// <summary>
 /// One node of the file tree (native→webview). A directory has <c>IsDirectory=true</c>; lazy descendants

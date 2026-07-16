@@ -284,6 +284,12 @@
     ],
     "requestId": 31
   },
+  "file.deleteCompleted": {
+    "path": "C:\\specs\\billing-repo\\README.md",
+    "root": "C:\\specs\\billing-repo",
+    "requestId": 32,
+    "succeeded": true
+  },
   "workspace.context": {
     "repository": "billing-repo",
     "repositoryRoot": "C:\\specs\\billing-repo",

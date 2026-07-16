@@ -79,7 +79,7 @@ public sealed class WorkspaceStore
 
 	/// <summary>
 	/// Record a freshly opened file/folder as the most recent: remove any earlier entry with the same
-	/// <see cref="WorkspaceItem.Path"/> (case-insensitive), insert this one at the front, then cap the list at
+	/// <see cref="WorkspaceItem.Path"/>, insert this one at the front, then cap the list at
 	/// 20 (dropping the oldest tail). Persists.
 	/// </summary>
 	public void AddRecent(WorkspaceItem item)
@@ -87,7 +87,7 @@ public sealed class WorkspaceStore
 		ArgumentNullException.ThrowIfNull(item);
 		lock (_sync)
 		{
-			_recent.RemoveAll(existing => SamePath(existing.Path, item.Path));
+			_recent.RemoveAll(existing => SameRecentIdentity(existing, item));
 			_recent.Insert(0, item);
 			if (_recent.Count > MaxRecent)
 			{
@@ -131,6 +131,29 @@ public sealed class WorkspaceStore
 
 			// Only persist a real change — re-favoriting or un-favoriting a no-op shouldn't touch the disk
 			// (matching RegisterRepo/UnregisterRepo).
+			if (changed)
+			{
+				_revision++;
+				Save();
+			}
+		}
+	}
+
+	/// <summary>Remove one deleted local file from recents and favorites. Descendants are deliberately not
+	/// considered: Disk deletion never removes a directory recursively.</summary>
+	public void RemoveLocalFile(string path)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(path);
+		lock (_sync)
+		{
+			bool changed = _recent.RemoveAll(item =>
+				!item.IsFolder
+				&& string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
+				&& SameLocalEntryPath(item.Path, path)) > 0;
+			changed |= _favorites.RemoveAll(item =>
+				!item.IsFolder
+				&& string.Equals(item.Kind, "local", StringComparison.OrdinalIgnoreCase)
+				&& SameLocalEntryPath(item.Path, path)) > 0;
 			if (changed)
 			{
 				_revision++;
@@ -1064,6 +1087,24 @@ public sealed class WorkspaceStore
 	// different casing (an open-dialog result vs a tree-click path), so dedup must ignore case.
 	private static bool SamePath(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
 
+	private static bool SameLocalEntryPath(string a, string b)
+	{
+		try
+		{
+			return WindowsHandleFileDeletion.AreSameCanonicalHandlePath(
+				Path.GetFullPath(a), Path.GetFullPath(b));
+		}
+		catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			return false;
+		}
+	}
+
+	private static bool SameLocalItemIdentity(string a, string b) =>
+		WindowsHandleFileDeletion.TryAreSameCanonicalEntryPath(a, b, out bool same)
+			? same
+			: SamePath(a, b);
+
 	private static bool SameCanonicalPath(string a, string b)
 	{
 		try
@@ -1098,11 +1139,16 @@ public sealed class WorkspaceStore
 		{
 			return false;
 		}
-		return string.Equals(
-			left.Path, right.Path,
-			string.Equals(left.Kind, "remote", StringComparison.OrdinalIgnoreCase)
-				? StringComparison.Ordinal
-				: StringComparison.OrdinalIgnoreCase);
+		return string.Equals(left.Kind, "remote", StringComparison.OrdinalIgnoreCase)
+			? string.Equals(left.Path, right.Path, StringComparison.Ordinal)
+			: SameLocalItemIdentity(left.Path, right.Path);
+	}
+
+	private static bool SameRecentIdentity(WorkspaceItem left, WorkspaceItem right)
+	{
+		bool local = string.Equals(left.Kind, "local", StringComparison.OrdinalIgnoreCase)
+			&& string.Equals(right.Kind, "local", StringComparison.OrdinalIgnoreCase);
+		return local ? SameLocalItemIdentity(left.Path, right.Path) : SamePath(left.Path, right.Path);
 	}
 
 	private static WorkspaceItem? NormalizeItem(WorkspaceItem item)

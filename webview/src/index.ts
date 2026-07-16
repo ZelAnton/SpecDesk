@@ -34,6 +34,7 @@ import {
   parseDocOpenCompleted,
   parseDocumentActivity,
   parseError,
+  parseFileDeleteCompleted,
   parseGitHubAccount,
   parseGitHubCode,
   parseGitHubRepositories,
@@ -1732,6 +1733,8 @@ function wire(): void {
         path === undefined
           ? ipc.send(Kinds.treeRequest, { requestId })
           : ipc.send(Kinds.treeRequest, { path, requestId }),
+      onDeleteFile: (path, root, requestId) =>
+        ipc.send(Kinds.fileDelete, { path, root, requestId }),
       onToggleFavorite: (item, favorite) =>
         ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
       onShowEditor: () => centralFrame?.show(CENTRAL_VIEW_EDITOR),
@@ -2144,6 +2147,10 @@ function wire(): void {
       if (payload) {
         files.setTree(payload);
       }
+    });
+    ipc.on(Kinds.fileDeleteCompleted, (message) => {
+      const payload = parseFileDeleteCompleted(message.payload);
+      if (payload) files.fileDeleteCompleted(payload);
     });
 
     // The persisted workspace store: one unsolicited event feeds all three left-rail panels and the Start

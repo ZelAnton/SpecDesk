@@ -2897,6 +2897,42 @@ button.context-panel:hover {
   margin-right: 0.25rem;
 }
 
+.file-tree-delete {
+  flex: none;
+  width: 1.55rem;
+  height: 1.55rem;
+  margin-right: 0.25rem;
+  padding: 0.25rem;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.file-tree-delete svg {
+  width: 100%;
+  height: 100%;
+}
+
+.file-tree-row:hover > .file-tree-delete,
+.file-tree-row:focus-within > .file-tree-delete,
+.file-tree-delete:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-tree-delete:hover,
+.file-tree-delete:focus-visible {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+}
+
 .file-tree-item:hover {
   background: var(--surface-sunken);
 }
@@ -3300,6 +3336,52 @@ button.context-panel:hover {
   border-radius: var(--r-md);
   background: var(--surface-raised);
   box-shadow: var(--shadow-card);
+}
+
+/* Shared inline second step for every destructive action. It sits in document flow directly beneath the
+   action row/menu item, so it never covers another entity and remains usable at narrow widths. */
+.destructive-confirmation {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.25rem 0.35rem 0.45rem;
+  padding: 0.55rem;
+  color: var(--text);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--r-md);
+  background: var(--danger-bg);
+  font: 12px / 1.4 var(--font-ui);
+  white-space: normal;
+}
+
+.destructive-confirmation strong,
+.destructive-confirmation p {
+  margin: 0;
+}
+
+.destructive-confirmation-status {
+  color: var(--text-muted);
+}
+
+.destructive-confirmation-action {
+  justify-self: start;
+  padding: 0.38rem 0.6rem;
+  color: var(--danger-fg);
+  border: 1px solid var(--danger-fg);
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  font: 700 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.destructive-confirmation-action:hover,
+.destructive-confirmation-action:focus-visible {
+  color: var(--surface-raised);
+  background: var(--danger-fg);
+}
+
+.repo-context-menu .destructive-confirmation {
+  max-width: 18rem;
+  margin: 0.15rem 0;
 }
 
 .repo-clone-confirmation strong,

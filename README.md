@@ -110,6 +110,17 @@ The bottom Log is a bounded session activity feed for GitHub requests, context a
 operations. It records action names and outcomes only; document contents, comment bodies, and credentials are
 never copied into the feed.
 
+Disk offers file deletion as a hover and keyboard action for local files only. The first Delete action opens
+an inline explanation directly beneath that row; deletion starts only after the separate red **Confirm
+deletion** button. The host verifies the exact current Disk root, rejects traversal and links/junctions,
+never removes folders recursively, and reports missing, read-only, locked, or inaccessible files plainly.
+On Windows, final paths and file identities are validated from open handles and deletion is applied to that
+same target handle, so replacing a parent directory or junction during the operation fails closed. Canonical
+handle ancestry preserves directory-entry casing, so separate `Root` and `root` directories on a
+case-sensitive Windows filesystem cannot be confused. Drive letters and UNC server/share names remain
+case-insensitive because they identify the volume authority rather than directory entries inside it.
+Deleting the open file closes its editor and context, and removes that exact path from Recent and Favorites.
+
 Notifications are reached from the account-avatar menu. The avatar reserves a count badge, hidden while
 the current placeholder list has no items; live review-request and mention events will populate it later.
 
@@ -149,7 +160,9 @@ restores remembered work, reloads an open spec, and opens the copy folder.
 
 Only local, non-default working lines show Delete. Before removing a local copy or local branch, SpecDesk
 explains unfinished edits, unshared versions, protected work, ignored files, and known conflicts; the
-confirmation is bound to that exact state. A local copy that owns linked working copies cannot be removed:
+confirmation is bound to that exact state. Every repository, local-copy, working-line, and file removal first
+expands the same inline **Confirm deletion** step beneath the selected row or menu item; Escape, clicking
+elsewhere, closing the menu, or changing entity dismisses it without acting. A local copy that owns linked working copies cannot be removed:
 SpecDesk lists those copies and their unfinished edits, unshared versions, protected snapshots, or conflicts,
 and asks you to close and remove them first so their shared repository data remains intact. Removing the top-level repository only unregisters it from
 SpecDesk, removing a copy only deletes its local folder, and removing a working line only deletes a local

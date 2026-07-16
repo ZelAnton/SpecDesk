@@ -745,7 +745,7 @@ describe("RepositoriesPanel", () => {
     expect(hint?.textContent?.startsWith("Public repository")).toBe(false);
   });
 
-  it("renders repo rows: clicking opens the repo, the trailing × removes it", () => {
+  it("renders repo rows and confirms that removal affects only SpecDesk registration", () => {
     const { panel, body, onUnregister, onBrowseRepo } = ready();
     panel.setState(STATE);
 
@@ -764,7 +764,13 @@ describe("RepositoriesPanel", () => {
     const remove = body.querySelector<HTMLButtonElement>(".repo-remove");
     expect(remove?.getAttribute("aria-label")).toBe("Remove repository acme/specs from SpecDesk");
     remove?.click();
+    expect(onUnregister).not.toHaveBeenCalled();
+    expect(body.querySelector(".destructive-confirmation")?.textContent).toContain(
+      "GitHub repository and local copies stay untouched",
+    );
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
     expect(onUnregister).toHaveBeenCalledWith("acme/specs");
+    expect(document.activeElement).toBe(body.querySelector(".repo-register-input"));
   });
 
   it("opens local copies and switches both default and non-default branches from the nested tree", () => {
@@ -900,7 +906,10 @@ describe("RepositoriesPanel", () => {
     [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
       .find((item) => item.textContent === "Remove from SpecDesk")
       ?.click();
+    expect(onUnregister).not.toHaveBeenCalled();
+    menu?.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
     expect(onUnregister).toHaveBeenCalledWith(REPO.id);
+    expect(document.activeElement).toBe(body.querySelector(".repo-register-input"));
   });
 
   it("does not offer rename for remote-only or protected working lines", () => {
@@ -1094,6 +1103,9 @@ describe("RepositoriesPanel", () => {
     body
       .querySelector<HTMLButtonElement>('[aria-label="Delete local copy acme-specs locally"]')
       ?.click();
+    expect(onDeleteClone).not.toHaveBeenCalled();
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
+    expect(document.activeElement).toBe(body.querySelector(".repo-register-input"));
     expect(
       body.querySelector('button[aria-label="Delete branch main in acme-specs locally"]'),
     ).toBeNull();
@@ -1101,6 +1113,9 @@ describe("RepositoriesPanel", () => {
       '[aria-label="Delete branch draft in acme-specs locally"]',
     );
     branchDelete?.click();
+    expect(onDeleteBranch).not.toHaveBeenCalled();
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
+    expect(document.activeElement).toBe(body.querySelector(".repo-register-input"));
     expect(onDeleteClone).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs");
     expect(onDeleteBranch).toHaveBeenCalledWith(REPO, "C:\\repos\\acme-specs", "draft");
 
@@ -1128,6 +1143,7 @@ describe("RepositoriesPanel", () => {
     expect(confirmation?.hidden).toBe(true);
 
     branchDelete?.click();
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
     panel.setOperationConfirmation({
       operation: "deleteBranch",
       id: REPO.id,

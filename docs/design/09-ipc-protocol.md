@@ -55,6 +55,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `document.activity.request` | `{}` | request saved versions, comments, and change history for the selected document; host replies with `document.activity`, correlated by `id` |
 | `templates.request` | `{}` | request the prompt-template library (personal + remote); host replies with `templates`, correlated by `id` |
 | `tree.request` | `{ path? }` | request the Markdown file tree (`path` scopes it; absent → the current workspace folder, else the open document's folder). Host replies with `tree` |
+| `file.delete` | `{ path, root, requestId }` | delete exactly one local file after the webview's inline confirmation; `root` is only a stale-view guard and the host's current Disk root remains authoritative. Native code requires strict canonical containment, rejects reparse traversal and directories, and replies with `file.deleteCompleted` |
 | `folder.open` | `{ path? }` | open a folder as the file-navigator root (`path`), or `null`/absent → the native folder picker. A `tree` event follows |
 | `doc.open` | `{ path?, requestId }` | open a spec for editing (`path`), or `null`/absent → the native open dialog; both panes stay locked until the matching terminal acknowledgement |
 | `workspace.request` | `{}` | request the persisted workspace state (recent items, favorites, registered repos); host replies with `workspace.state` |
@@ -100,6 +101,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `document.activity` | `{ document?, versions, historyState, historyMessage?, comments, commentsState, commentsMessage?, history }` | selected-document activity; versions and distinct change summaries come from bounded repository history, with `notVersioned` distinguished from a load failure, while comments are the newest bounded inline GitHub review comments filtered by the exact selected repository path and distinguish verified-empty, disconnected, and unavailable states |
 | `templates` | `{ personal, remote }` (each an array of `{ id, title, body }`) | the prompt-template library — reply to `templates.request` |
 | `tree` | `{ root, nodes }` | the workspace folder's Markdown file tree (`root` is the folder's absolute path; each node `{ name, path, isDirectory, children }`) — reply to `folder.open` / `tree.request` |
+| `file.deleteCompleted` | `{ path, root, requestId, succeeded, error? }` | terminal result for one Disk file deletion; only the matching current tree may retire its row, while failures also use the common plain-language `error` channel |
 | `workspace.state` | `{ recent, favorites, repositories }` (`recent`/`favorites`: workspace items; each registered local copy carries `{ ahead, behind, hasUncommitted, stashCount, hasConflicts }`, while each branch also carries `canDelete` (true only for a removable local non-default branch)) | the persisted workspace store — reply to `workspace.request` and re-emitted after every mutation and after opening a file/folder |
 | `workspace.context` | `{ repository, repositoryRoot, branch, branchState, defaultBranch, path }` | authoritative context for the open document. Repository and relative path come from its versioning root (never the independently browsed file-tree root); `branchState` (`named` / `detached` / `unavailable`) keeps a deliberate unnamed checkout distinct from a read failure. Nullable repository fields mean the open file is not in a readable versioned repository |
 | `toast` | `{ level, message }` | plain-language notice |
@@ -135,10 +137,15 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 - **Cancellation:** a new `editor.changed` cancels the in-flight parse/preview for the prior
   version; a newer repository-description request cancels the prior lookup and stale correlated
   responses are ignored by the webview.
-- **Confirmation gate:** any agent- or button-triggered mutating action emits
-  `confirm.request`; native performs the side effect only after the webview returns the
-  matching confirmation. This is how the agent-safety rule in
-  [08-ai-agent.md](08-ai-agent.md) is enforced at the protocol level.
+- **Confirmation gate:** every user-visible Delete/Remove first expands the shared inline confirmation and
+  does not emit its destructive command until **Confirm deletion** is pressed. Local-copy and working-line
+  deletion then retain their second native state-bound warning when inspection discovers unfinished edits,
+  unshared versions, or held work. Disk deletion additionally revalidates the current native root and target
+  identity from open Windows handles, compares only the drive or UNC server/share authority
+  case-insensitively, checks every directory entry after that authority exactly, and applies deletion
+  disposition to that same validated target handle.
+  Agent-proposed mutations keep the separate `confirm.request`
+  preview/edit/confirm gate described in [08-ai-agent.md](08-ai-agent.md).
 
 ## Contracts
 

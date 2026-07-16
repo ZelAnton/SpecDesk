@@ -8,12 +8,14 @@ function ready() {
   const onOpenFile = vi.fn<(path: string) => void>();
   const onOpenFolder = vi.fn<() => void>();
   const onRequestLevel = vi.fn<(path: string | undefined, requestId: number) => void>();
+  const onDeleteFile = vi.fn<(path: string, root: string, requestId: number) => void>();
   const onToggleFavorite = vi.fn();
   const onShowEditor = vi.fn();
   const tree = new FileTree({
     onOpenFile,
     onOpenFolder,
     onRequestLevel,
+    onDeleteFile,
     onToggleFavorite,
     onShowEditor,
   });
@@ -24,6 +26,7 @@ function ready() {
     onOpenFile,
     onOpenFolder,
     onRequestLevel,
+    onDeleteFile,
     onToggleFavorite,
     onShowEditor,
     body,
@@ -400,5 +403,129 @@ describe("FileTree", () => {
     const { tree, onShowEditor } = ready();
     tree.onShow();
     expect(onShowEditor).toHaveBeenCalledOnce();
+  });
+
+  it("requires inline confirmation before deleting a local file and applies only its completion", () => {
+    const { tree, body, onDeleteFile } = ready();
+    document.body.append(body);
+    tree.setTree(ROOT);
+    const remove = body.querySelector<HTMLButtonElement>('[aria-label="Delete file README.md"]');
+    remove?.click();
+    expect(onDeleteFile).not.toHaveBeenCalled();
+    expect(remove?.getAttribute("aria-expanded")).toBe("true");
+    expect(body.querySelector(".destructive-confirmation")?.textContent).toContain(
+      "Nothing has been deleted",
+    );
+
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
+    expect(onDeleteFile).toHaveBeenCalledWith("C:\\specs\\repo\\README.md", "C:\\specs\\repo", 1);
+    expect(document.activeElement).toBe(body.querySelector(".file-tree-filter"));
+    expect(body.textContent).toContain("README.md");
+    tree.fileDeleteCompleted({
+      path: "C:\\specs\\repo\\README.md",
+      root: "C:\\specs\\repo",
+      requestId: 1,
+      succeeded: true,
+    });
+    expect(body.textContent).not.toContain("README.md");
+    expect(document.activeElement).toBe(body.querySelector(".file-tree-filter"));
+    body.remove();
+  });
+
+  it("keeps a case-distinct active file when its sibling deletion completes", () => {
+    const { tree, body, onDeleteFile } = ready();
+    document.body.append(body);
+    const root = "C:\\specs\\case-sensitive";
+    const upper = `${root}\\A.md`;
+    const lower = `${root}\\a.md`;
+    tree.setTree({
+      root,
+      requestId: 0,
+      nodes: [
+        { name: "A.md", path: upper, isDirectory: false, children: [], hasChildren: false },
+        { name: "a.md", path: lower, isDirectory: false, children: [], hasChildren: false },
+      ],
+    });
+    tree.setActiveFile(upper);
+    expect(body.querySelectorAll('[aria-current="true"]')).toHaveLength(1);
+    expect(body.querySelector('[aria-current="true"]')?.textContent).toBe("A.md");
+
+    [...body.querySelectorAll<HTMLButtonElement>(".file-tree-delete")]
+      .find((button) => button.getAttribute("aria-label") === "Delete file a.md")
+      ?.click();
+    body.querySelector<HTMLButtonElement>(".destructive-confirmation-action")?.click();
+    expect(onDeleteFile).toHaveBeenCalledWith(lower, root, 1);
+    tree.fileDeleteCompleted({ path: lower, root, requestId: 1, succeeded: true });
+
+    expect([...body.querySelectorAll(".file-tree-file")].map((node) => node.textContent)).toEqual([
+      "A.md",
+    ]);
+    expect(body.querySelector('[aria-current="true"]')?.textContent).toBe("A.md");
+    body.remove();
+  });
+
+  it("dismisses a pending delete on Escape and never offers remote-file deletion", () => {
+    const local = ready();
+    document.body.append(local.body);
+    local.tree.setTree(ROOT);
+    const remove = local.body.querySelector<HTMLButtonElement>(".file-tree-delete");
+    remove?.click();
+    local.body
+      .querySelector<HTMLElement>(".destructive-confirmation")
+      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(local.body.querySelector(".destructive-confirmation")).toBeNull();
+    expect(document.activeElement).toBe(remove);
+    expect(local.onDeleteFile).not.toHaveBeenCalled();
+    local.body.remove();
+
+    const remote = ready();
+    remote.tree.setTree({
+      root: "octo/specs",
+      requestId: 0,
+      remote: true,
+      nodes: [
+        {
+          name: "README.md",
+          path: remoteWirePath("octo/specs", "main", "README.md"),
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    });
+    expect(remote.body.querySelector(".file-tree-delete")).toBeNull();
+  });
+
+  it("dismisses on outside interaction and cannot submit a stale or detached confirmation twice", () => {
+    const local = ready();
+    document.body.append(local.body);
+    local.tree.setTree(ROOT);
+    const remove = local.body.querySelector<HTMLButtonElement>(".file-tree-delete");
+    remove?.click();
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    expect(local.body.querySelector(".destructive-confirmation")).toBeNull();
+    expect(local.onDeleteFile).not.toHaveBeenCalled();
+
+    remove?.click();
+    const staleConfirm = local.body.querySelector<HTMLButtonElement>(
+      ".destructive-confirmation-action",
+    );
+    local.tree.setContext({
+      repository: "acme/specs",
+      repositoryRoot: "C:\\specs\\repo",
+      branch: "main",
+      branchState: "named",
+      defaultBranch: "main",
+      path: "README.md",
+    });
+    staleConfirm?.click();
+    expect(local.onDeleteFile).not.toHaveBeenCalled();
+
+    local.body.querySelector<HTMLButtonElement>(".file-tree-delete")?.click();
+    const confirm = local.body.querySelector<HTMLButtonElement>(".destructive-confirmation-action");
+    confirm?.click();
+    confirm?.click();
+    expect(local.onDeleteFile).toHaveBeenCalledOnce();
+    local.body.remove();
   });
 });
