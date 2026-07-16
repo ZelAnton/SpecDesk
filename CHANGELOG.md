@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closing the app can no longer leave a file-dialog request stuck in Photino's native UI dispatch.
 - The title-bar search, account control, and Windows-standard caption buttons now retain their intended slots at restored, narrow, and maximized window sizes.
 - Context panels now appear immediately from document identity, enrich safely when workspace details arrive, and never show a misleading `File No document` placeholder.
 - Opening another document now clears the previous document's inline comments before the new comment snapshot begins loading.

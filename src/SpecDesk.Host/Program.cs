@@ -93,6 +93,8 @@ internal static class Program
 				aiHttp, aiOptions.RemoteTemplatesUrl, loggerFactory.CreateLogger<RemoteTemplateSource>()));
 
 		LibGit2RepositoryCloner repositoryCloner = new();
+		int windowUiThreadId = 0;
+
 		using HostController controller = new(
 			render: Renderer.render,
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
@@ -101,6 +103,7 @@ internal static class Program
 			dialogs: new PhotinoFileDialogs(
 				() => window!,
 				loggerFactory.CreateLogger("SpecDesk.Host.Dialogs"),
+				() => Volatile.Read(ref windowUiThreadId) == Environment.CurrentManagedThreadId,
 				dialogClosingCts.Token),
 			inserter: new ImageInsertAdapter(loggerFactory.CreateLogger("SpecDesk.Host.ImageEngine")).Insert,
 			versioning: versioning,
@@ -165,6 +168,7 @@ internal static class Program
 			// until the message loop has ended.
 			.RegisterWindowCreatedHandler((_, _) =>
 			{
+				Volatile.Write(ref windowUiThreadId, Environment.CurrentManagedThreadId);
 				try
 				{
 					nativeWindowChrome = NativeWindowChrome.Attach(
@@ -272,7 +276,11 @@ internal static class Program
 }
 
 /// <summary>Photino-backed native file pickers for <see cref="HostController"/>.</summary>
-internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger logger, CancellationToken closing)
+internal sealed class PhotinoFileDialogs(
+	Func<PhotinoWindow> window,
+	ILogger logger,
+	Func<bool> onWindowThread,
+	CancellationToken closing)
 	: IFileDialogs
 {
 	private static readonly (string Name, string[] Extensions)[] Filters =
@@ -328,36 +336,88 @@ internal sealed class PhotinoFileDialogs(Func<PhotinoWindow> window, ILogger log
 			});
 
 	// Native file dialogs require the STA UI thread, but the web-message handler that triggers
-	// them may run on a background (MTA) thread. Marshal onto the window's UI thread via Invoke
-	// (which runs inline when already there) and block for the modal result.
+	// them may run on a background (MTA) thread. Invoke runs inline on the owning thread, so retain
+	// that path; otherwise dispatch the native Invoke call away from the caller before waiting for
+	// the modal result.
 	private string? OnUiThread(string name, Func<PhotinoWindow, string?> show)
 	{
 		PhotinoWindow w = window();
-		TaskCompletionSource<string?> completion = new();
-		w.Invoke(() =>
+		if (onWindowThread())
 		{
-			try
+			return ShowDialog(w, name, show);
+		}
+
+		TaskCompletionSource<string?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		return InvokeOrAbandon(
+			() => w.Invoke(() => completion.TrySetResult(ShowDialog(w, name, show))),
+			completion,
+			name,
+			logger,
+			closing);
+	}
+
+	private string? ShowDialog(PhotinoWindow window, string name, Func<PhotinoWindow, string?> show)
+	{
+		try
+		{
+			return show(window);
+		}
+		catch (Exception ex)
+		{
+			// Log (rather than silently swallow) so a failing dialog is diagnosable, then cancel
+			// the operation rather than crashing the UI thread.
+			logger.LogError(ex, "Native dialog {Dialog} threw", name);
+			return null;
+		}
+	}
+
+	// Photino's Windows Invoke() posts work then waits on an untimed native condition variable.
+	// A DestroyWindow race can leave that Invoke call blocked forever, so the caller thread must not
+	// make the native call itself. The background task is intentionally not awaited: once `closing`
+	// is cancelled, the request returns even if the native waiter can never be released. The task is
+	// a background ThreadPool work item, so it cannot keep the process alive after window teardown.
+	// Internal so the exact blocking-dispatch race can be tested without a real native window.
+	internal static string? InvokeOrAbandon(
+		Action invoke,
+		TaskCompletionSource<string?> completion,
+		string name,
+		ILogger logger,
+		CancellationToken closing)
+	{
+		if (!closing.IsCancellationRequested)
+		{
+			// Deliberately not passing `closing` to Task.Run: the background dispatch must still be
+			// allowed to attempt (and, if the native call blocks, sit in) the invoke once started —
+			// only the caller's wait below is bounded by `closing`. Passing the token here would let
+			// the runtime cancel this work item before it starts, dropping the invoke attempt instead
+			// of leaving it to the caller's abandon logic.
+			_ = Task.Run(() =>
 			{
-				completion.SetResult(show(w));
-			}
-			catch (Exception ex)
-			{
-				// Log (rather than silently swallow) so a failing dialog is diagnosable, then cancel
-				// the operation rather than crashing the UI thread.
-				logger.LogError(ex, "Native dialog {Dialog} threw", name);
-				completion.SetResult(null);
-			}
-		});
+				if (closing.IsCancellationRequested)
+				{
+					return;
+				}
+
+				try
+				{
+					invoke();
+				}
+				catch (Exception ex)
+				{
+					// A native dispatch failure cannot produce a dialog result, but must not strand the caller.
+					logger.LogError(ex, "Native dialog {Dialog} Invoke dispatch threw", name);
+					completion.TrySetResult(null);
+				}
+			}, CancellationToken.None);
+		}
+
 		return WaitOrAbandon(completion.Task, name, logger, closing);
 	}
 
-	// Photino's native Invoke() (Photino.Windows.cpp) blocks the calling thread on an untimed
-	// condition variable and never checks whether its PostMessage actually reached a still-alive
-	// window; if the window is destroyed first, the posted callback never runs and the wait above
-	// would otherwise never return. `closing` is cancelled — after a short grace period, so an
-	// already in-flight dialog still gets to finish — once the window starts tearing down (see
-	// Program.DialogClosingGrace / RegisterWindowClosingHandler), so this abandons the wait instead
-	// of blocking forever. Internal so it can be unit-tested without a real native window.
+	// `closing` is cancelled — after a short grace period, so an already in-flight dialog still gets
+	// to finish — once the window starts tearing down (see Program.DialogClosingGrace /
+	// RegisterWindowClosingHandler). This bounds waits for both a missing callback and a blocked
+	// native Invoke dispatch.
 	internal static string? WaitOrAbandon(
 		Task<string?> completion, string name, ILogger logger, CancellationToken closing)
 	{

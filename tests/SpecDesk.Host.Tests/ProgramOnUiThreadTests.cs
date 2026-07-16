@@ -5,9 +5,9 @@ namespace SpecDesk.Host.Tests;
 // M-20: Photino's native Invoke() (Photino.Windows.cpp) blocks the calling thread on an untimed
 // condition variable and never checks whether its PostMessage actually reached a still-alive
 // window — if the window is destroyed first, the posted callback never runs and nothing ever
-// wakes the waiter. PhotinoFileDialogs.OnUiThread bounds that race by cancelling `closing` (after
-// a short grace period) once the window starts tearing down; WaitOrAbandon is the extracted,
-// Photino-free piece of that logic, so it can be pinned here without a real native window.
+// wakes the waiter. PhotinoFileDialogs.InvokeOrAbandon moves that native call to a background
+// task and returns when `closing` cancels; the seams below pin both the blocked-Invoke and
+// missing-callback cases without a real native window.
 [TestFixture]
 public sealed class ProgramOnUiThreadTests
 {
@@ -33,6 +33,40 @@ public sealed class ProgramOnUiThreadTests
             completion.Task, "ShowOpenFile", NullLogger.Instance, CancellationToken.None);
 
         Assert.That(result, Is.Null);
+    }
+
+    [Test]
+    public async Task InvokeOrAbandon_BlockedInvoke_ReturnsOnceClosingCancels()
+    {
+        // This substitutes the actual native Invoke call, which has begun but cannot return until
+        // after closing. It pins the primary race rather than only a missing callback.
+        using CancellationTokenSource closing = new();
+        using ManualResetEventSlim invokeEntered = new();
+        using ManualResetEventSlim allowInvokeReturn = new();
+        using ManualResetEventSlim invokeReturned = new();
+        TaskCompletionSource<string?> completion = new();
+        Task cancelWhenInvokeBlocks = Task.Run(() =>
+        {
+            Assert.That(invokeEntered.Wait(TimeSpan.FromSeconds(2)), Is.True, "Invoke did not begin.");
+            closing.Cancel();
+        });
+
+        string? result = PhotinoFileDialogs.InvokeOrAbandon(
+            () =>
+            {
+                invokeEntered.Set();
+                allowInvokeReturn.Wait();
+                invokeReturned.Set();
+            },
+            completion,
+            "ShowOpenFile",
+            NullLogger.Instance,
+            closing.Token);
+
+        await cancelWhenInvokeBlocks;
+        Assert.That(result, Is.Null);
+        allowInvokeReturn.Set();
+        Assert.That(invokeReturned.Wait(TimeSpan.FromSeconds(2)), Is.True, "Blocked Invoke did not return.");
     }
 
     [Test]
