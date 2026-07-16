@@ -393,6 +393,36 @@ public sealed class HostControllerAccountBoundaryTests
 		}
 	}
 
+	[Test]
+	public void SignOutStillRemovesTheSavedAuthorizationWhenAReusableCancellationWasDisposedByItsOwner()
+	{
+		Sequence ordering = new();
+		BoundaryAuth auth = new() { Ordering = ordering };
+		List<string> sent = [];
+		using HostController controller = Build(sent, auth);
+
+		// Reproduce the race the guarded cancel closes: a background sign-in flow reached its terminal
+		// finally and disposed the CancellationTokenSource it owned, while sign-out has already snapshotted
+		// that same reusable field and is about to cancel it on the message thread. An already-disposed
+		// source sitting in the field is exactly what the sign-out cancel loop observes at that instant; a
+		// bare Cancel() would throw ObjectDisposedException and abort sign-out before _auth.SignOut() runs,
+		// leaving the persisted GitHub authorization in place though the user asked to disconnect.
+		CancellationTokenSource disposedSignIn = new();
+		disposedSignIn.Dispose();
+		typeof(HostController)
+			.GetField("_signInCts", BindingFlags.Instance | BindingFlags.NonPublic)!
+			.SetValue(controller, disposedSignIn);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignOut));
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(auth.SignOutOrder, Is.GreaterThan(0),
+				"cancelling the disposed reusable source aborted sign-out before _auth.SignOut() ran");
+			Assert.That(auth.IsSignedIn(), Is.False);
+		});
+	}
+
 	private static HostController Build(
 		List<string> sent,
 		IGitHubAuth auth,

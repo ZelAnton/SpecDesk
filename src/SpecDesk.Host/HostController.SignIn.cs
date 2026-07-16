@@ -145,7 +145,7 @@ public sealed partial class HostController
 				}
 			}
 		}
-		previousCts?.Cancel();
+		GuardedCancel(previousCts);
 
 		CancellationToken token = cts.Token;
 		_ = Task.Run(async () =>
@@ -402,7 +402,7 @@ public sealed partial class HostController
 				_signInFlowGeneration++;
 			}
 		}
-		retiredSignIn?.Cancel();
+		GuardedCancel(retiredSignIn);
 		try
 		{
 			if (retiredSignIn is not null)
@@ -519,7 +519,7 @@ public sealed partial class HostController
 		}
 		foreach (CancellationTokenSource cancellation in cancellations)
 		{
-			cancellation.Cancel();
+			GuardedCancel(cancellation);
 		}
 		try
 		{
@@ -646,7 +646,7 @@ public sealed partial class HostController
 			_accountDetailsCts = cts;
 			generation = ++_accountDetailsGeneration;
 		}
-		previousCts?.Cancel();
+		GuardedCancel(previousCts);
 
 		CancellationToken cancellationToken = cts.Token;
 		_ = Task.Run(async () =>
@@ -796,7 +796,7 @@ public sealed partial class HostController
 			cancellation = _accountDetailsCts;
 			_accountDetailsCts = null;
 		}
-		cancellation?.Cancel();
+		GuardedCancel(cancellation);
 	}
 
 	private void SendAccount(

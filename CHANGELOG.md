@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removing a local copy or working line now prevents delayed inspection from restoring deleted entries.
 - A failed working-line change now closes the affected document atomically before window close can save stale text.
 - Changing or discarding a working line now preserves local-only files that would be overwritten.
+- Disconnecting from GitHub now always removes the saved authorization, and cancelling sign-in or replacing a repository lookup, browse, or file preview no longer skips its remaining work, even when a finishing background task retires the shared cancellation at the same instant.
 
 ### Added
 

@@ -319,9 +319,9 @@ public sealed partial class HostController
 			SendError("That repository is still finishing a local action. Try removing it again in a moment.");
 			return;
 		}
-		metadataCts?.Cancel();
-		cloneCts?.Cancel();
-		allRepositoriesCts?.Cancel();
+		GuardedCancel(metadataCts);
+		GuardedCancel(cloneCts);
+		GuardedCancel(allRepositoriesCts);
 		InvalidateRemoteRepository(payload.Id);
 	}
 	// Tracks an in-flight repository clone. Guarded by _sync; a non-null value single-flights cloning and acts
@@ -583,7 +583,7 @@ public sealed partial class HostController
 				generation = ++_repositoryDescriptionGeneration;
 			}
 		}
-		previousCts?.Cancel();
+		GuardedCancel(previousCts);
 
 		if (!TryParseGitHubRepo(payload.Url, out string owner, out string name))
 		{
@@ -1361,7 +1361,7 @@ public sealed partial class HostController
 			return;
 		}
 		RepoMetadataLookup activeLookup = lookup;
-		previousCts?.Cancel();
+		GuardedCancel(previousCts);
 		CancellationToken cancellationToken = cts.Token;
 		_ = Task.Run(async () =>
 		{

@@ -96,8 +96,8 @@ public sealed partial class HostController
 					new TreePayload(id, [], Remote: true)));
 			}
 		}
-		browseCts?.Cancel();
-		fileCts?.Cancel();
+		GuardedCancel(browseCts);
+		GuardedCancel(fileCts);
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 		return intentGeneration;
 	}
@@ -148,8 +148,8 @@ public sealed partial class HostController
 				_remoteBrowseRepoId = id;
 			}
 		}
-		previousBrowseCts?.Cancel();
-		previousFileCts?.Cancel();
+		GuardedCancel(previousBrowseCts);
+		GuardedCancel(previousFileCts);
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 		CancellationTokenSource requestCts = CancellationTokenSource.CreateLinkedTokenSource(
 			cts.Token, accountSession.CancellationToken);
@@ -544,7 +544,7 @@ public sealed partial class HostController
 			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
 		}
-		previousFileCts?.Cancel();
+		GuardedCancel(previousFileCts);
 		PendingRepoAction action = new(
 			PendingRepoActionKind.File,
 			owner,
@@ -615,7 +615,7 @@ public sealed partial class HostController
 			CompleteDocumentOpen(requestId, succeeded: false);
 			return;
 		}
-		previousFileCts?.Cancel();
+		GuardedCancel(previousFileCts);
 		CancellationTokenSource requestCts = CancellationTokenSource.CreateLinkedTokenSource(
 			cts.Token, accountSession.CancellationToken);
 		CancellationToken cancellationToken = requestCts.Token;
@@ -739,8 +739,8 @@ public sealed partial class HostController
 				}
 			}
 		}
-		browseCts?.Cancel();
-		fileCts?.Cancel();
+		GuardedCancel(browseCts);
+		GuardedCancel(fileCts);
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 		return true;
 	}
@@ -781,8 +781,8 @@ public sealed partial class HostController
 				}
 			}
 		}
-		browseCts?.Cancel();
-		fileCts?.Cancel();
+		GuardedCancel(browseCts);
+		GuardedCancel(fileCts);
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 	}
 	private void InvalidateRemoteRepository(string id)
@@ -826,8 +826,8 @@ public sealed partial class HostController
 				}
 			}
 		}
-		browseCts?.Cancel();
-		fileCts?.Cancel();
+		GuardedCancel(browseCts);
+		GuardedCancel(fileCts);
 		CompleteDocumentOpen(canceledRequestId, succeeded: false);
 	}
 	private void PublishRemoteBrowseErrorIfCurrent(
