@@ -458,6 +458,22 @@ function stripListMarker(line: string): string {
   return line.replace(BULLET_RE, "").replace(ORDERED_RE, "");
 }
 
+/** Split a line into its optional OUTER blockquote marker and everything after it, leaving any list
+ *  marker (if present) in `rest` — the {@link toggleLinePrefix} list case's "operate on the content
+ *  after a surrounding quote, then reattach the quote unchanged" step. Without this split, a
+ *  quote+list line (e.g. `"> - item"`, a bullet list nested inside a blockquote per CommonMark) is
+ *  invisible to the list markers' own `^`-anchored regexes — they'd see `>` first and neither detect
+ *  an existing list marker to strip nor match it for removal, so re-toggling the list on such a line
+ *  would double the marker (`"- > - item"`) instead of converting/removing the existing one in place
+ *  (mirrors {@link splitContainers}'s quote peel, but keeps the list marker in `rest` rather than
+ *  folding it into `prefix`, since the list case's own logic needs to inspect and rewrite it). */
+function splitQuotePrefix(line: string): { quotePrefix: string; rest: string } {
+  const quote = QUOTE_RE.exec(line);
+  return quote !== null
+    ? { quotePrefix: quote[0], rest: line.slice(quote[0].length) }
+    : { quotePrefix: "", rest: line };
+}
+
 /**
  * Add the kind's line prefix to every line, or strip it if every (non-blank) line already has it. The
  * `default: assertNever(kind)` keeps the switch exhaustive against {@link LinePrefixKind}.
@@ -486,13 +502,18 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
         .join("\n");
     }
     case "list": {
+      const quoteParts = lines.map((line) => (line.trim() === "" ? null : splitQuotePrefix(line)));
+      const nonBlankListRest = quoteParts.filter((part) => part !== null).map((part) => part.rest);
+      const hasListRest = (re: RegExp): boolean =>
+        nonBlankListRest.length > 0 && nonBlankListRest.every((rest) => re.test(rest));
+
       if (kind.ordered) {
-        const numbered = has(ORDERED_RE);
+        const numbered = hasListRest(ORDERED_RE);
         let orderedDecision: "add" | "remove" | "convert";
         if (numbered) {
           orderedDecision = "remove";
         } else {
-          orderedDecision = has(BULLET_RE) ? "convert" : "add";
+          orderedDecision = hasListRest(BULLET_RE) ? "convert" : "add";
         }
         trace("format", "format.linePrefix", {
           kind: "list",
@@ -501,21 +522,25 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
         });
         let n = 0;
         return lines
-          .map((line) => {
-            if (line.trim() === "") {
+          .map((line, i) => {
+            const part = quoteParts[i];
+            if (part === undefined || part === null) {
               return line;
             }
             n += 1;
-            return numbered ? line.replace(ORDERED_RE, "") : `${n}. ${stripListMarker(line)}`;
+            const body = numbered
+              ? part.rest.replace(ORDERED_RE, "")
+              : `${n}. ${stripListMarker(part.rest)}`;
+            return part.quotePrefix + body;
           })
           .join("\n");
       }
-      const allBulleted = has(BULLET_RE);
+      const allBulleted = hasListRest(BULLET_RE);
       let bulletDecision: "add" | "remove" | "convert";
       if (allBulleted) {
         bulletDecision = "remove";
       } else {
-        bulletDecision = has(ORDERED_RE) ? "convert" : "add";
+        bulletDecision = hasListRest(ORDERED_RE) ? "convert" : "add";
       }
       trace("format", "format.linePrefix", {
         kind: "list",
@@ -523,11 +548,15 @@ function toggleLinePrefix(lines: string[], kind: LinePrefixKind): string {
         lineCount: nonBlank.length,
       });
       return lines
-        .map((line) => {
-          if (line.trim() === "") {
+        .map((line, i) => {
+          const part = quoteParts[i];
+          if (part === undefined || part === null) {
             return line;
           }
-          return allBulleted ? line.replace(BULLET_RE, "") : `- ${stripListMarker(line)}`;
+          const body = allBulleted
+            ? part.rest.replace(BULLET_RE, "")
+            : `- ${stripListMarker(part.rest)}`;
+          return part.quotePrefix + body;
         })
         .join("\n");
     }
