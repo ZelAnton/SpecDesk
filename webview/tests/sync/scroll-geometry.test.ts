@@ -61,7 +61,12 @@ describe("scrollTopForLine", () => {
   });
 
   it("returns the block top when the span is zero (avoids a divide-by-zero → NaN)", () => {
-    // contentLineEnd === lineStart → span = 0; a zero-content-line block must not yield NaN.
+    // contentLineEnd === lineStart → span = 0; a zero-content-line block must not yield NaN. In
+    // practice markdown-it never emits `token.map[1] === token.map[0]` for a top-level block token
+    // (md-blocks.ts's contentEndByLine source): every block-level token — paragraph, heading, hr,
+    // table, list, html_block, etc. — spans at least one source line by construction, so `map[1]` is
+    // always `> map[0]`. This guard is therefore defensive (protects against a future markdown-it
+    // change or a hand-built BlockBox in a test/caller), not a fix for an observed real input.
     const zeroSpan: BlockBox = {
       lineStart: 10,
       contentLineStart: undefined,
