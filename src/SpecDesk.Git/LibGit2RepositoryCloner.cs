@@ -1401,47 +1401,86 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 	}
 
 	/// <summary>
-	/// Walks an existing path from its filesystem root, replacing each symlinked component with its final
-	/// target, so the whole chain (not just a trailing link) is resolved. A component whose link cannot be
-	/// read is left in its lexical form, which degrades to the pre-existing plain string comparison.
+	/// Resolves every symlinked component of an existing path to its target, restarting resolution from the
+	/// filesystem root whenever a link is followed. Restarting is essential: a symlink can point to an
+	/// absolute location whose own ancestors are still symlinks, and following the link reintroduces those
+	/// unresolved ancestors. On macOS a temp folder created under <c>/var</c> keeps the <c>/var</c> spelling
+	/// in the link target, yet <c>/var</c> is itself a symlink to <c>/private/var</c>, so a single
+	/// left-to-right pass that trusted an already-walked prefix would leave the reintroduced <c>/var</c>
+	/// unresolved and the guard would reject the same tree. Resolution is bounded to a fixed number of hops;
+	/// a component whose link cannot be read — or a hop budget exhausted by a symlink cycle — is left in its
+	/// lexical form, which degrades to the plain string comparison used before symlink resolution.
 	/// </summary>
 	private static string ResolveSymlinkChain(string existingPath)
 	{
-		string root = Path.GetPathRoot(existingPath) ?? string.Empty;
-		if (root.Length == 0)
+		// realpath(3) caps symlink traversal at this many hops before reporting a loop; matching it bounds a
+		// pathological or cyclic chain instead of spinning forever.
+		const int maxSymlinkHops = 40;
+		string current = existingPath;
+		for (int hop = 0; hop <= maxSymlinkHops; hop++)
 		{
-			return existingPath;
-		}
-		string relative = Path.GetRelativePath(root, existingPath);
-		if (string.Equals(relative, ".", StringComparison.Ordinal))
-		{
-			return Path.TrimEndingDirectorySeparator(root);
-		}
-		string current = root;
-		foreach (string segment in relative.Split(
-			[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
-			StringSplitOptions.RemoveEmptyEntries))
-		{
-			current = Path.Combine(current, segment);
-			try
+			string root = Path.GetPathRoot(current) ?? string.Empty;
+			if (root.Length == 0)
 			{
-				FileSystemInfo? target = Directory.Exists(current)
-					? new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true)
-					: File.Exists(current)
-						? new FileInfo(current).ResolveLinkTarget(returnFinalTarget: true)
-						: null;
+				return current;
+			}
+			string relative = Path.GetRelativePath(root, current);
+			if (string.Equals(relative, ".", StringComparison.Ordinal))
+			{
+				return Path.TrimEndingDirectorySeparator(root);
+			}
+			string[] segments = relative.Split(
+				[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+				StringSplitOptions.RemoveEmptyEntries);
+			string prefix = root;
+			string? redirect = null;
+			for (int index = 0; index < segments.Length; index++)
+			{
+				string candidate = Path.Combine(prefix, segments[index]);
+				FileSystemInfo? target = ReadLinkTarget(candidate);
 				if (target is not null)
 				{
-					current = Path.TrimEndingDirectorySeparator(target.FullName);
+					// Splice the link's target ahead of the not-yet-walked segments and re-resolve the whole
+					// path from the root, because the target can carry its own unresolved symlinked ancestors.
+					string remainder = string.Join(Path.DirectorySeparatorChar, segments[(index + 1)..]);
+					redirect = remainder.Length == 0
+						? target.FullName
+						: Path.Combine(target.FullName, remainder);
+					break;
 				}
+				prefix = candidate;
 			}
-			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			if (redirect is null)
 			{
-				// A transient link-resolution failure leaves this segment lexical; the guard then falls back to
-				// the plain string comparison it used before symlink resolution.
+				return Path.TrimEndingDirectorySeparator(prefix);
 			}
+			current = redirect;
 		}
+		// The hop budget is exhausted (a cycle or pathological nesting); fall back to the lexical spelling,
+		// which degrades to the plain string comparison used before symlink resolution.
 		return Path.TrimEndingDirectorySeparator(current);
+	}
+
+	/// <summary>
+	/// Returns the final link target of <paramref name="path"/> when it is a symlink, or <see langword="null"/>
+	/// when it is a regular file or directory, does not exist, or its link cannot be read.
+	/// </summary>
+	private static FileSystemInfo? ReadLinkTarget(string path)
+	{
+		try
+		{
+			return Directory.Exists(path)
+				? new DirectoryInfo(path).ResolveLinkTarget(returnFinalTarget: true)
+				: File.Exists(path)
+					? new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true)
+					: null;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			// A transient link-resolution failure leaves this segment lexical; the guard then falls back to the
+			// plain string comparison it used before symlink resolution.
+			return null;
+		}
 	}
 
 	private static void EnsureRepositoryIdentity(Repository repository, string expectedRepositoryUrl)
