@@ -166,6 +166,23 @@ describe("the shipped workspace chrome", () => {
     }
   });
 
+  it("pins accessible SVG caption controls at the end of a non-wrapping title grid", () => {
+    const controls = primary?.querySelector("#window-controls");
+    expect(primary?.lastElementChild?.id).toBe("toolbar-announcer");
+    expect(primary?.querySelector("#titlebar-account-zone + #window-controls")).toBe(controls);
+    expect(controls?.querySelectorAll("button")).toHaveLength(3);
+    expect(controls?.querySelectorAll("svg").length).toBeGreaterThanOrEqual(4);
+    expect(controls?.querySelector("#window-minimize")?.getAttribute("aria-label")).toBe(
+      "Minimize",
+    );
+    expect(controls?.querySelector("#window-maximize")?.getAttribute("data-window-state")).toBe(
+      "restored",
+    );
+    expect(controls?.querySelector("#window-close")?.getAttribute("aria-label")).toBe("Close");
+    expect(styles).toMatch(/#toolbar\s*\{[^}]*display:\s*grid;/s);
+    expect(styles).toMatch(/#editor-toolbar\s*\{[^}]*flex-wrap:\s*nowrap;/s);
+  });
+
   it("defines distinct neutral roles for rails, panels, and panel headers in every theme", () => {
     const rails = Array.from(styles.matchAll(/--mode-rail:\s*([^;]+);/g), (match) =>
       (match[1] ?? "").trim(),

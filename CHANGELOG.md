@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Markdown toolbars now stay on one row and move only commands that do not fit into an accessible measured overflow menu.
+- SpecDesk now starts with Navigator selected on the collapsed left rail, regardless of the previously used panel mode.
 - The left rail now orders Navigator, Repositories, Change requests, and Disk before the contextual Outline mode.
 - Repository, local-copy, file, and change-request context now appears in compact panels above the active central view and links to the matching left-panel mode.
 - The bottom panel is now fully hidden by default and opens from one dedicated toggle at the foot of the right rail instead of leaving a collapsed bottom toolbar.
@@ -22,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The title-bar search, account control, and Windows-standard caption buttons now retain their intended slots at restored, narrow, and maximized window sizes.
+- Context panels now appear immediately from document identity, enrich safely when workspace details arrive, and never show a misleading `File No document` placeholder.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
 - Pull requests opened from My reviews or pasted GitHub links now use SpecDesk's review document instead of opening GitHub in a browser.

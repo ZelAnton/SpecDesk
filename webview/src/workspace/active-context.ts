@@ -47,6 +47,12 @@ export const EMPTY_ACTIVE_CONTEXT: ActiveContext = {
   file: null,
 };
 
+export interface DocumentContextHint {
+  readonly repository: string | null;
+  readonly branch: string | null;
+  readonly repositoryPath: string | null;
+}
+
 const PUBLISHED: StatusPayload = { state: "published", label: "Published" };
 
 function fileType(path: string): ActiveFileType {
@@ -56,6 +62,17 @@ function fileType(path: string): ActiveFileType {
 
 function normalizePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function hintedRepositoryRoot(documentPath: string, repositoryPath: string | null): string | null {
+  if (repositoryPath === null || documentPath.startsWith("github://")) return null;
+  const relative = repositoryPath.replaceAll("\\", "/").replace(/^\/+/, "");
+  const document = documentPath.replaceAll("\\", "/");
+  if (relative.length === 0 || !document.toLowerCase().endsWith(`/${relative.toLowerCase()}`)) {
+    return null;
+  }
+  const root = document.slice(0, -(relative.length + 1));
+  return documentPath.includes("\\") ? root.replaceAll("/", "\\") : root;
 }
 
 interface RemoteDocumentIdentity {
@@ -118,25 +135,37 @@ function workspaceMatchesDocument(
 export class ActiveContextModel {
   private documentPath: string | null = null;
   private workspace: WorkspaceContextPayload | null = null;
+  private workspaceReceivedAfterDocument = false;
+  private documentHint: DocumentContextHint | null = null;
   private status: StatusPayload = PUBLISHED;
   private explicitPullRequest: ActiveContext | null = null;
 
-  documentLoaded(path: string): ActiveContext {
+  documentLoaded(path: string, hint: DocumentContextHint | null = null): ActiveContext {
     this.explicitPullRequest = null;
     if (this.documentPath !== null) this.status = PUBLISHED;
     this.documentPath = path;
+    this.documentHint = hint;
+    this.workspaceReceivedAfterDocument = false;
     return this.current();
   }
 
   documentCleared(): ActiveContext {
     this.explicitPullRequest = null;
     this.documentPath = null;
+    this.documentHint = null;
     this.workspace = null;
+    this.workspaceReceivedAfterDocument = false;
     this.status = PUBLISHED;
     return this.current();
   }
   workspaceChanged(workspace: WorkspaceContextPayload): ActiveContext {
     this.workspace = workspace;
+    this.workspaceReceivedAfterDocument =
+      this.documentPath !== null &&
+      workspaceMatchesDocument(workspace, this.documentPath) &&
+      (this.documentHint?.repository === null ||
+        this.documentHint?.repository === undefined ||
+        workspace.repository?.toLowerCase() === this.documentHint.repository.toLowerCase());
     return this.current();
   }
 
@@ -177,21 +206,38 @@ export class ActiveContextModel {
     if (this.documentPath === null) return EMPTY_ACTIVE_CONTEXT;
 
     const workspace =
-      this.workspace !== null && workspaceMatchesDocument(this.workspace, this.documentPath)
+      this.workspace !== null &&
+      workspaceMatchesDocument(this.workspace, this.documentPath) &&
+      (this.documentHint?.repository === null ||
+        this.documentHint?.repository === undefined ||
+        this.workspace.repository?.toLowerCase() === this.documentHint.repository.toLowerCase())
         ? this.workspace
         : null;
+    const repositoryId = workspace?.repository ?? this.documentHint?.repository ?? null;
     const repository: RepositoryContext | null =
-      workspace?.repository === undefined || workspace.repository === null
+      repositoryId === null
         ? null
         : {
             kind: "repository",
-            id: workspace.repository,
-            root: workspace.repositoryRoot,
-            defaultBranch: workspace.defaultBranch,
+            id: repositoryId,
+            root:
+              workspace?.repositoryRoot ??
+              hintedRepositoryRoot(this.documentPath, this.documentHint?.repositoryPath ?? null),
+            defaultBranch: workspace?.defaultBranch ?? null,
           };
+    const branchName =
+      workspace !== null && this.workspaceReceivedAfterDocument
+        ? workspace.branchState === "named"
+          ? workspace.branch
+          : null
+        : this.documentHint !== null
+          ? this.documentHint.branch
+          : workspace?.branchState === "named"
+            ? workspace.branch
+            : null;
     const branch: BranchContext | null =
-      repository !== null && workspace?.branchState === "named" && workspace.branch !== null
-        ? { kind: "branch", repository, name: workspace.branch }
+      repository !== null && branchName !== null
+        ? { kind: "branch", repository, name: branchName }
         : null;
     const file: FileContext = {
       kind: "file",

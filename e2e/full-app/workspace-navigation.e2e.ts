@@ -104,7 +104,7 @@ test("the real app exposes the workspace panel and navigation surfaces", async (
   await expect(
     pullRequests.locator('.remote-review-list[data-state="auth"] .remote-review-status'),
   ).toHaveText(
-    "Connect a GitHub account to see pull requests.",
+    "Connect a GitHub account to see change requests.",
   );
   await page.screenshot({ path: testInfo.outputPath("final.png"), fullPage: true });
 });

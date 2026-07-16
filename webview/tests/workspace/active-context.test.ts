@@ -96,6 +96,92 @@ describe("active workspace context", () => {
     expect(tools(next)).toEqual(["assistant"]);
   });
 
+  it("shows document repository hints immediately, then enriches them with matching workspace data", () => {
+    const model = new ActiveContextModel();
+    const immediate = model.documentLoaded("C:\\repo\\docs\\proposal.md", {
+      repository: "acme/specs",
+      branch: "spec/proposal",
+      repositoryPath: "docs/proposal.md",
+    });
+
+    expect(immediate.repository).toMatchObject({ id: "acme/specs", root: "C:\\repo" });
+    expect(immediate.branch?.name).toBe("spec/proposal");
+    expect(immediate.file?.path).toBe("C:\\repo\\docs\\proposal.md");
+
+    const enriched = model.workspaceChanged(named);
+    expect(enriched.repository).toMatchObject({
+      id: "acme/specs",
+      root: "C:\\repo",
+      defaultBranch: "main",
+    });
+  });
+
+  it("prefers each document branch hint over a retained matching workspace branch", () => {
+    const model = new ActiveContextModel();
+    const path = "C:\\repo\\docs\\proposal.md";
+    model.documentLoaded(path, {
+      repository: "acme/specs",
+      branch: "main",
+      repositoryPath: "docs/proposal.md",
+    });
+    model.workspaceChanged(named);
+
+    const editing = model.documentLoaded(path, {
+      repository: "acme/specs",
+      branch: "draft/proposal",
+      repositoryPath: "docs/proposal.md",
+    });
+    expect(editing.branch?.name).toBe("draft/proposal");
+    expect(editing.repository).toMatchObject({
+      id: "acme/specs",
+      root: "C:\\repo",
+      defaultBranch: "main",
+    });
+
+    const discarded = model.documentLoaded(path, {
+      repository: "acme/specs",
+      branch: "main",
+      repositoryPath: "docs/proposal.md",
+    });
+    expect(discarded.branch?.name).toBe("main");
+
+    const detached = model.workspaceChanged({ ...named, branch: null, branchState: "detached" });
+    expect(detached.branch).toBeNull();
+  });
+
+  it("accepts a matching named workspace received after a hintless document", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo\\docs\\proposal.md");
+
+    const context = model.workspaceChanged({ ...named, branch: "spec/proposal" });
+    expect(context.branch?.name).toBe("spec/proposal");
+  });
+
+  it("keeps new document hints while a late workspace frame still belongs to the old document", () => {
+    const model = new ActiveContextModel();
+    model.documentLoaded("C:\\repo-a\\docs\\proposal.md", {
+      repository: "acme/a",
+      branch: "main",
+      repositoryPath: "docs/proposal.md",
+    });
+    model.workspaceChanged({ ...named, repository: "acme/a", repositoryRoot: "C:\\repo-a" });
+
+    const next = model.documentLoaded("C:\\repo-b\\docs\\proposal.md", {
+      repository: "acme/b",
+      branch: "review/b",
+      repositoryPath: "docs/proposal.md",
+    });
+    const afterLateOldFrame = model.workspaceChanged({
+      ...named,
+      repository: "acme/a",
+      repositoryRoot: "C:\\repo-a",
+    });
+
+    expect(next.repository?.id).toBe("acme/b");
+    expect(afterLateOldFrame.repository?.id).toBe("acme/b");
+    expect(afterLateOldFrame.branch?.name).toBe("review/b");
+  });
+
   it("does not apply a stale review status to a different active branch", () => {
     const model = new ActiveContextModel();
     model.documentLoaded("C:\\repo\\docs\\next.md");

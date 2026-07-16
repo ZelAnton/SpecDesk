@@ -36,12 +36,23 @@ test("the real host boots, auto-loads welcome.md from the fixture repo, and rend
   await expect(minimize).toBeVisible();
   await expect(maximize).toBeVisible();
   await expect(close).toBeVisible();
+  const restoredCaption = await page.evaluate(() => {
+    const toolbar = document.querySelector("#toolbar")?.getBoundingClientRect();
+    const controls = document.querySelector("#window-controls")?.getBoundingClientRect();
+    return toolbar && controls
+      ? { toolbarRight: toolbar.right, controlsLeft: controls.left, controlsRight: controls.right }
+      : null;
+  });
+  expect(restoredCaption).not.toBeNull();
+  expect(Math.abs((restoredCaption?.toolbarRight ?? 0) - (restoredCaption?.controlsRight ?? 1))).toBeLessThanOrEqual(1);
 
   // Drive the real WebView2 input path. The first mousedown enters Photino's native caption loop; only a
   // genuine second mousedown can prove that the titlebar still toggles the actual native window.
   await titlebar.dblclick();
   let restore = page.getByRole("button", { name: "Restore" });
   await expect(restore).toHaveAttribute("aria-pressed", "true");
+  await expect(restore).toHaveAttribute("data-window-state", "maximized");
+  await expect(restore.locator(".window-control-glyph--restore")).toBeVisible();
   const maximizedGeometry = readNativeWindowGeometry(requireProcessId(ctx));
   expect(maximizedGeometry.window).toEqual(maximizedGeometry.workArea);
   expect(maximizedGeometry.client).toEqual(maximizedGeometry.window);

@@ -16,7 +16,16 @@ test("global context and Markdown controls live in the correct toolbars and rema
     path: "C:\\work\\specs\\guides\\intro.md",
     docDir: "guides",
     text: "# Intro\n\nFind this target in the document.\n",
+    repository: "acme/specs",
+    branch: "spec/navigation",
+    repositoryPath: "guides/intro.md",
   });
+  // doc.loaded carries enough identity to render immediately; workspace.context only enriches it. This
+  // prevents a late native context frame from leaving a misleading file-only panel in the meantime.
+  await expect(page.locator("#current-repository")).toHaveText("acme/specs");
+  await expect(page.locator("#current-branch")).toHaveText("spec/navigation");
+  await expect(page.locator("#current-local-path")).toHaveText("C:\\work\\specs");
+  await expect(page.locator("#context-panels")).not.toContainText("No document");
   await emit(page, {
     kind: "workspace.context",
     payload: {
@@ -127,7 +136,7 @@ test("global context and Markdown controls live in the correct toolbars and rema
       path: "guides/intro.md",
     },
   });
-  await expect(page.locator("#current-branch")).toHaveText("Unnamed version");
+  await expect(page.locator("#current-branch")).toBeHidden();
   await emit(page, {
     kind: "workspace.context",
     payload: {
@@ -155,7 +164,16 @@ test("global context and Markdown controls live in the correct toolbars and rema
     await expect(page.locator(`#toolbar #${id}`)).toHaveCount(0);
   }
 
-  await page.locator("#mode-formatted").click();
+  const formattedMode = page.locator("#mode-formatted");
+  if (await formattedMode.isVisible()) {
+    await formattedMode.click();
+  } else {
+    await page.locator("#editor-toolbar .toolbar-overflow-trigger").click();
+    await page
+      .locator("#editor-toolbar .toolbar-overflow-menu")
+      .getByRole("menuitemradio", { name: "Formatted" })
+      .click();
+  }
   await expect(page.locator('#panes[data-mode="formatted"]')).toHaveCount(1);
   await page.locator("#toolbar-search").fill("target");
   await page.locator("#toolbar-search").press("Enter");

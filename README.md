@@ -69,18 +69,22 @@ Requires .NET SDK 10 and Node 24.
 
 On Windows, the global toolbar is also the window title bar: drag any empty area to move the window,
 double-click it to maximize or restore, and use the accessible minimize, maximize/restore, and close
-buttons at the far right. The window remains freely resizable. The close button, Alt+F4, and taskbar/system close all settle pending input before the window closes; a failed draft write keeps SpecDesk open.
+buttons, with familiar Windows geometry, pinned at the far right at every window width. The window remains
+freely resizable. The close button, Alt+F4, and taskbar/system close all settle pending input before the
+window closes; a failed draft write keeps SpecDesk open.
 SpecDesk opens on Start with every optional panel collapsed, keeping the first screen focused on choosing
-the next specification. Reopening a panel restores its last mode and size.
+the next specification. Navigator is selected for the first left-panel click; panel sizes remain remembered.
 The Markdown controls sit on the same calm grey header surface as the side-panel headings, keeping editing
 actions visually separate from the document itself.
 The formatting toolbar remains visible whenever a specification is open (disabled until editing starts)
 and covers headings, lists, emphasis, inline and block code, quotes, links, starter tables, image references,
-and dividers.
+and dividers. Controls never wrap when the window narrows: a trailing More button opens an ordered,
+keyboard-accessible menu containing exactly the commands that no longer fit.
 The global toolbar shows search only while a document is being edited; Start and review surfaces retain the
 SpecDesk identity, signed-out **Sign in** action, and account avatar menu. Repository, working-line, local-copy,
 file, and change-request context appears as compact panels above the active central view; the interactive
-panels open the matching Repositories, Disk, or Change requests mode.
+panels open the matching Repositories, Disk, or Change requests mode. Only contexts that actually exist are
+shown, and document identity appears immediately while later workspace details enrich it without flicker.
 The left and right mode rails stay available around the document. Choose a mode icon to open its panel;
 choose the active icon again to collapse it. The bottom panel is fully hidden until its dedicated button at
 the foot of the right rail is pressed, so no empty bottom toolbar takes document space.

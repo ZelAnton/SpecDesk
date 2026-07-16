@@ -183,7 +183,10 @@ export function setupWorkspace(
   };
   const setValue = (id: string, value: string): void => {
     const target = contextValue(id);
-    if (target !== null) target.textContent = value;
+    if (target !== null) {
+      target.textContent = value;
+      target.hidden = value.length === 0;
+    }
   };
   const renderContextPanels = (): void => {
     if (contextPanels === null) return;
@@ -387,7 +390,18 @@ export function setupWorkspace(
   if (leftEl !== null) {
     docks.set(
       "left",
-      new Dock(leftEl, "left", toolsByEdge.left, persisted.left, { onChange: persist }),
+      // Cold start always points at the application's landing mode even though the rail stays collapsed.
+      // A previous session may have persisted another tool; retaining its highlight while Start is visible
+      // made the first Navigator click switch modes instead of opening Navigator.
+      new Dock(
+        leftEl,
+        "left",
+        toolsByEdge.left,
+        { ...persisted.left, mode: "navigator" },
+        {
+          onChange: persist,
+        },
+      ),
     );
   }
   let bottomToggle: HTMLButtonElement | null = null;

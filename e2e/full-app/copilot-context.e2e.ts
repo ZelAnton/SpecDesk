@@ -110,8 +110,8 @@ test("right tools keep Chat first and follow real named, detached, and file-type
   git(app.repo, "checkout", "--detach", "HEAD");
   await openFile(page, ".spectool.toml");
   await expect(page.locator("#current-repository")).toHaveText("sample-repo");
-  await expect(page.locator("#current-branch")).toHaveText("Unnamed version");
-  await expect(page.locator("#current-path")).toHaveText(".spectool.toml");
+  await expect(page.locator("#current-branch")).toBeHidden();
+  await expect(page.locator("#current-path")).toHaveText(/\\\.spectool\.toml$/);
   await expect.poll(() => visibleRightTools(page)).toEqual(["Assistant", "Versions"]);
   await page.screenshot({
     path: testInfo.outputPath("context-detached-nonmarkdown.png"),

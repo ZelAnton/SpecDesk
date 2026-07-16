@@ -9,6 +9,7 @@ import { FormatToolbar } from "./chrome/format-toolbar.js";
 import { LifecycleChrome } from "./chrome/lifecycle-chrome.js";
 import { SegmentedControl, type SegmentedOption } from "./chrome/segmented-control.js";
 import { SignInController } from "./chrome/signin.js";
+import { ToolbarOverflow } from "./chrome/toolbar-overflow.js";
 import { isSplit, isViewMode, paneVisibility, type ViewMode } from "./chrome/view-mode.js";
 import { MarkdownEditor } from "./editors/editor.js";
 import { FormattedEditor } from "./editors/formatted.js";
@@ -260,9 +261,6 @@ function wire(): void {
   const previewEl = document.querySelector<HTMLElement>("#preview");
   const formattedEl = document.querySelector<HTMLElement>("#formatted");
   const statusEl = document.querySelector<HTMLElement>("#status");
-  const currentRepositoryEl = document.querySelector<HTMLElement>("#current-repository");
-  const currentBranchEl = document.querySelector<HTMLElement>("#current-branch");
-  const currentPathEl = document.querySelector<HTMLElement>("#current-path");
   const toolbarSearch = document.querySelector<HTMLInputElement>("#toolbar-search");
   const toolbarEl = document.querySelector<HTMLElement>("#toolbar");
   const toolbarAnnouncer = document.querySelector<HTMLElement>("#toolbar-announcer");
@@ -297,6 +295,7 @@ function wire(): void {
   const reviewEmptyEl = document.querySelector<HTMLElement>("#review-empty-bar");
   const reviewOverflowEl = document.querySelector<HTMLElement>("#review-overflow-bar");
   const formatBar = document.querySelector<HTMLFieldSetElement>("#format-bar");
+  const editorToolbarEl = document.querySelector<HTMLElement>("#editor-toolbar");
   const formatButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#format-bar button[data-format]"),
   );
@@ -364,6 +363,17 @@ function wire(): void {
   const editorRoot = editorEl;
   const previewRoot = previewEl;
   const formattedRoot = formattedEl;
+  const editorToolbarOverflow =
+    editorToolbarEl === null
+      ? null
+      : new ToolbarOverflow(editorToolbarEl, {
+          controls: Array.from(
+            editorToolbarEl.querySelectorAll<HTMLButtonElement>(
+              "#editor-actions > button, #view-modes > button, #format-bar > button",
+            ),
+          ),
+          label: "More Markdown editor commands",
+        });
 
   // Whether the document is currently editable (a draft is in progress). Drives the read-only
   // "start typing → offer to begin a draft" behaviour in both editors.
@@ -1013,7 +1023,18 @@ function wire(): void {
         applyActiveContext(
           documentCleared
             ? activeContextModel.documentCleared()
-            : activeContextModel.documentLoaded(payload.path),
+            : activeContextModel.documentLoaded(
+                payload.path,
+                payload.repository === undefined &&
+                  payload.branch === undefined &&
+                  payload.repositoryPath === undefined
+                  ? null
+                  : {
+                      repository: payload.repository ?? null,
+                      branch: payload.branch ?? null,
+                      repositoryPath: payload.repositoryPath ?? null,
+                    },
+              ),
         );
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
@@ -1231,23 +1252,6 @@ function wire(): void {
         return;
       }
       applyActiveContext(activeContextModel.workspaceChanged(payload));
-      setContext(currentRepositoryEl, payload.repository ?? "No repository");
-      if (currentRepositoryEl && payload.repositoryRoot) {
-        currentRepositoryEl.title = payload.repositoryRoot;
-      }
-      const branch =
-        payload.repository === null
-          ? "No version"
-          : payload.branchState === "detached"
-            ? "Unnamed version"
-            : payload.branchState === "unavailable"
-              ? "Version unavailable"
-              : (payload.branch ?? "Version unavailable");
-      setContext(currentBranchEl, branch);
-      if (currentBranchEl && payload.defaultBranch) {
-        currentBranchEl.title = `${branch} (default: ${payload.defaultBranch})`;
-      }
-      setContext(currentPathEl, payload.path.length > 0 ? payload.path : "No document");
       const fileName = payload.path.replaceAll("\\", "/").split("/").at(-1) ?? "";
       setContext(statusLocalCopy, payload.localCopy ?? "");
       setContext(statusBranch, payload.branchState === "named" ? (payload.branch ?? "") : "");
@@ -1468,7 +1472,7 @@ function wire(): void {
       windowMaximizeBtn.setAttribute("aria-label", label);
       windowMaximizeBtn.title = label;
       windowMaximizeBtn.setAttribute("aria-pressed", String(payload.maximized));
-      windowMaximizeBtn.textContent = payload.maximized ? "❐" : "□";
+      windowMaximizeBtn.dataset.windowState = payload.maximized ? "maximized" : "restored";
     });
   }
 
@@ -2057,6 +2061,7 @@ function wire(): void {
           viewModeControl.setDisabled(!editorActive);
           if (editorActive) {
             requestEditorRelayout();
+            editorToolbarOverflow?.refresh();
           }
         },
         onOpenFile: () => openDocument(),

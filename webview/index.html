@@ -15,32 +15,41 @@
       <span id="app-title">SpecDesk</span>
       <label class="sr-only" for="toolbar-search">Search</label>
       <input id="toolbar-search" type="search" autocomplete="off" placeholder="Search" />
+      <div id="titlebar-account-zone">
 		<button id="github-auth-btn" type="button" hidden>Sign in</button>
-      <div id="account-control">
-        <button id="github-btn" class="toolbar-icon" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" aria-label="Account">
-          <img id="account-avatar" alt="" hidden />
+        <div id="account-control">
+          <button id="github-btn" class="toolbar-icon" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu" aria-label="Account">
+            <img id="account-avatar" alt="" hidden />
 			<span id="account-avatar-fallback" class="account-avatar-fallback" aria-hidden="true">
-            <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0H5Z" /></svg>
-          </span>
-          <span id="account-notification-count" aria-hidden="true" hidden>0</span>
-        </button>
-        <div id="account-menu" role="menu" aria-label="Account" hidden>
-          <button id="account-notifications" type="button" role="menuitem">Notifications</button>
-          <button id="account-settings" type="button" role="menuitem" disabled>Settings (coming soon)</button>
-          <button id="reviews-btn" type="button" role="menuitem" hidden>My reviews</button>
-          <button id="theme-btn" type="button" role="menuitemcheckbox" aria-checked="false">Dark theme</button>
-          <button id="export-log-btn" type="button" role="menuitem">Export diagnostic log…</button>
-          <button id="account-help" type="button" role="menuitem">Help</button>
-          <button id="account-updates" type="button" role="menuitem" disabled>Check for updates (coming soon)</button>
-          <hr class="account-menu-separator" />
-          <button id="account-signout" type="button" role="menuitem" hidden>Sign out</button>
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0H5Z" /></svg>
+            </span>
+            <span id="account-notification-count" aria-hidden="true" hidden>0</span>
+          </button>
+          <div id="account-menu" role="menu" aria-label="Account" hidden>
+            <button id="account-notifications" type="button" role="menuitem">Notifications</button>
+            <button id="account-settings" type="button" role="menuitem" disabled>Settings (coming soon)</button>
+            <button id="reviews-btn" type="button" role="menuitem" hidden>My reviews</button>
+            <button id="theme-btn" type="button" role="menuitemcheckbox" aria-checked="false">Dark theme</button>
+            <button id="export-log-btn" type="button" role="menuitem">Export diagnostic log…</button>
+            <button id="account-help" type="button" role="menuitem">Help</button>
+            <button id="account-updates" type="button" role="menuitem" disabled>Check for updates (coming soon)</button>
+            <hr class="account-menu-separator" />
+            <button id="account-signout" type="button" role="menuitem" hidden>Sign out</button>
+          </div>
         </div>
       </div>
       <fieldset id="window-controls">
         <legend class="sr-only">Window controls</legend>
-        <button id="window-minimize" class="window-control" type="button" aria-label="Minimize" title="Minimize">—</button>
-        <button id="window-maximize" class="window-control" type="button" aria-label="Maximize" title="Maximize" aria-pressed="false">□</button>
-        <button id="window-close" class="window-control window-control--close" type="button" aria-label="Close" title="Close">×</button>
+        <button id="window-minimize" class="window-control" type="button" aria-label="Minimize" title="Minimize">
+          <svg class="window-control-glyph" viewBox="0 0 12 12" focusable="false" aria-hidden="true"><path d="M1.5 6.5h9" /></svg>
+        </button>
+        <button id="window-maximize" class="window-control" type="button" aria-label="Maximize" title="Maximize" aria-pressed="false" data-window-state="restored">
+          <svg class="window-control-glyph window-control-glyph--maximize" viewBox="0 0 12 12" focusable="false" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" /></svg>
+          <svg class="window-control-glyph window-control-glyph--restore" viewBox="0 0 12 12" focusable="false" aria-hidden="true"><path d="M3.5 3.5V1.5h7v7h-2M1.5 3.5h7v7h-7z" /></svg>
+        </button>
+        <button id="window-close" class="window-control window-control--close" type="button" aria-label="Close" title="Close">
+          <svg class="window-control-glyph" viewBox="0 0 12 12" focusable="false" aria-hidden="true"><path d="m2 2 8 8M10 2l-8 8" /></svg>
+        </button>
       </fieldset>
       <span id="toolbar-announcer" class="sr-only" aria-live="polite"></span>
     </div>

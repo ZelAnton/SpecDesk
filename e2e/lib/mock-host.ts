@@ -65,6 +65,9 @@ export interface LoadDocOptions {
   path: string;
   text: string;
   docDir?: string;
+  repository?: string;
+  branch?: string;
+  repositoryPath?: string;
   /** Most scenarios exercise the loaded document. Set false only when proving the startup Start screen. */
   reveal?: boolean;
 }
@@ -78,7 +81,15 @@ export interface LoadDocOptions {
 export async function loadDoc(page: Page, doc: LoadDocOptions): Promise<void> {
   await emit(page, {
     kind: "doc.loaded",
-    payload: { path: doc.path, text: doc.text, docDir: doc.docDir ?? "", readOnly: false },
+    payload: {
+      path: doc.path,
+      text: doc.text,
+      docDir: doc.docDir ?? "",
+      readOnly: false,
+      ...(doc.repository === undefined ? {} : { repository: doc.repository }),
+      ...(doc.branch === undefined ? {} : { branch: doc.branch }),
+      ...(doc.repositoryPath === undefined ? {} : { repositoryPath: doc.repositoryPath }),
+    },
   });
   await page.waitForFunction(
     () =>
