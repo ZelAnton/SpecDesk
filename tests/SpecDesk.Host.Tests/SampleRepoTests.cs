@@ -104,6 +104,7 @@ public sealed class SampleRepoTests
             // incomplete, so the copy — and Initialize — run to completion on this call instead.
             Assert.That(File.Exists(Path.Combine(repoRoot, ".spectool.toml")), Is.True);
             Assert.That(File.ReadAllText(welcome), Is.EqualTo("ORIGINAL"));
+            Assert.That(File.Exists(Path.Combine(repoRoot, ".specdesk-seed-complete")), Is.True);
             Assert.That(versioning.InitializeCalls, Is.EqualTo(1));
         });
     }

@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pull requests opened from My reviews or pasted GitHub links now use SpecDesk's review document instead of opening GitHub in a browser.
 - A comments-service failure no longer hides an otherwise available pull-request description and history.
 - Switching GitHub accounts while My reviews is loading now starts a fresh lookup and ignores the retired account's result.
+- Cancelling a GitHub sign-in that cannot update its saved authorization no longer closes the sign-in code of a newer sign-in started in its place.
 - Remote-only working lines and lines with protected work no longer offer local rename actions that cannot succeed.
 - Interrupted or failed local-copy and working-line renames now recover the matching Git state, saved registration, favorites, and recent paths instead of leaving an unusable partial rename.
 - The borderless Windows shell now restores native edge and corner resizing around the WebView while restored, keeps maximized edges border-free and non-resizable, and maximizes within the monitor work area without covering the taskbar.
