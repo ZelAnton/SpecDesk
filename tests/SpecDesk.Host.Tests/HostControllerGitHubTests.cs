@@ -11,6 +11,7 @@ public sealed class HostControllerGitHubTests
 {
 	private static readonly string[] AuthorizedOrganizations = ["acme", "octo-labs"];
 	private static readonly string[] AccessibleRepositoryNames = ["acme/specs", "octocat/notes"];
+	private static readonly string[] SurvivingDeviceCodes = ["CODE-1", "CODE-2"];
 
     private sealed class NoDialogs(string? openFolder = null) : IFileDialogs
     {
@@ -1101,7 +1102,7 @@ public sealed class HostControllerGitHubTests
                     .Where(message => message?.Kind == MessageKinds.GitHubCode)
                     .Select(message => message!.GetPayload<GitHubCodePayload>()!.UserCode)
                     .ToArray();
-                Assert.That(codes, Is.EqualTo(new[] { "CODE-1", "CODE-2" }));
+                Assert.That(codes, Is.EqualTo(SurvivingDeviceCodes));
             }
         }
     }
