@@ -1,6 +1,8 @@
 import { setHidden, setText } from "../util/dom.js";
 import type { GitHubAccountPayload, GitHubCodePayload } from "../wire/protocol.js";
 
+const AUTO_ACCOUNT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 /** The host actions the account affordance triggers (each maps to one IPC message), plus the
  *  affordance's own DOM elements (each may be absent from the markup). */
 export interface SignInDeps {
@@ -15,6 +17,7 @@ export interface SignInDeps {
   accountStatus: HTMLElement | null;
   menu: HTMLElement | null;
   connectBtn: HTMLButtonElement | null;
+  refreshBtn: HTMLButtonElement | null;
   signOutBtn: HTMLButtonElement | null;
   /** The sign-in code bar and its contents. */
   bar: HTMLElement | null;
@@ -29,6 +32,8 @@ export interface SignInDeps {
   cancelSignIn: () => void;
   /** Disconnect the GitHub account. */
   signOut: () => void;
+  /** Re-read organizations and repositories available to the current authorization. */
+  refreshAccount: () => void;
   /** Open the GitHub authorization page in the OS browser. */
   openUrl: (url: string) => void;
   /** Copy the one-time code before focus moves to the OS browser. */
@@ -55,6 +60,7 @@ export class SignInController {
   private readonly accountStatus: HTMLElement | null;
   private readonly menu: HTMLElement | null;
   private readonly connectBtn: HTMLButtonElement | null;
+  private readonly refreshBtn: HTMLButtonElement | null;
   private readonly signOutBtn: HTMLButtonElement | null;
   private readonly bar: HTMLElement | null;
   private readonly text: HTMLElement | null;
@@ -68,6 +74,8 @@ export class SignInController {
   private codeGeneration = 0;
   private available = false;
   private signedIn = false;
+  private refreshingAccount = false;
+  private lastAccountDetailsAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly deps: SignInDeps) {
     this.accountBtn = deps.accountBtn;
@@ -78,6 +86,7 @@ export class SignInController {
     this.accountStatus = deps.accountStatus;
     this.menu = deps.menu;
     this.connectBtn = deps.connectBtn;
+    this.refreshBtn = deps.refreshBtn;
     this.signOutBtn = deps.signOutBtn;
     this.bar = deps.bar;
     this.text = deps.text;
@@ -109,6 +118,10 @@ export class SignInController {
     this.connectBtn?.addEventListener("click", () => {
       this.setMenuOpen(false);
       this.deps.signIn();
+    });
+    this.refreshBtn?.addEventListener("click", () => {
+      if (!this.signedIn || this.refreshingAccount) return;
+      this.startAccountRefresh();
     });
     this.signOutBtn?.addEventListener("click", () => {
       this.setMenuOpen(false);
@@ -232,6 +245,16 @@ export class SignInController {
     this.updateAccountLabel();
     this.applyAvatar(payload, handle);
     setHidden(this.connectBtn, !payload.available || payload.signedIn);
+    if (!this.signedIn) {
+      this.refreshingAccount = false;
+      this.lastAccountDetailsAt = Number.NEGATIVE_INFINITY;
+    } else if (payload.organizations === undefined) {
+      this.refreshingAccount = true;
+    } else {
+      this.refreshingAccount = false;
+      this.lastAccountDetailsAt = Date.now();
+    }
+    this.updateRefreshButton();
     setHidden(this.signOutBtn, !payload.available || !payload.signedIn);
     setText(this.signOutBtn, handle ? `Sign out ${handle}` : "Sign out");
 
@@ -268,6 +291,19 @@ export class SignInController {
     } else {
       setHidden(this.bar, true);
     }
+  }
+
+  /** Refresh after returning to a stale signed-in window without issuing focus-request storms. */
+  refreshIfStale(now = Date.now()): boolean {
+    if (
+      !this.signedIn ||
+      this.refreshingAccount ||
+      now - this.lastAccountDetailsAt < AUTO_ACCOUNT_REFRESH_INTERVAL_MS
+    ) {
+      return false;
+    }
+    this.startAccountRefresh();
+    return true;
   }
 
   /** Notification transport lands separately; zero keeps the badge out of the way. */
@@ -307,6 +343,25 @@ export class SignInController {
       setHidden(this.avatar, true);
     }
     setHidden(this.avatarFallback, false);
+  }
+
+  private startAccountRefresh(): void {
+    this.refreshingAccount = true;
+    this.updateRefreshButton();
+    this.setMenuOpen(false);
+    this.deps.refreshAccount();
+  }
+
+  private updateRefreshButton(): void {
+    setHidden(this.refreshBtn, !this.available || !this.signedIn);
+    if (this.refreshBtn === null) return;
+    this.refreshBtn.disabled = this.refreshingAccount;
+    this.refreshBtn.setAttribute("aria-busy", String(this.refreshingAccount));
+    setText(
+      this.refreshBtn,
+      this.refreshingAccount ? "Refreshing GitHub access…" : "Refresh GitHub access",
+    );
+    this.refreshBtn.title = "Check for newly approved organizations and repositories";
   }
 
   private setMenuOpen(open: boolean, focusFirst = false): void {

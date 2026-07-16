@@ -590,6 +590,9 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.GitHubSignOut:
 				OnGitHubSignOut();
 				break;
+			case MessageKinds.GitHubAccountRefresh:
+				OnGitHubAccountRefresh();
+				break;
 			case MessageKinds.GitHubAccountApplied:
 				OnGitHubAccountApplied(message);
 				break;

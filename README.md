@@ -145,7 +145,9 @@ callback into the desktop app.
 The title bar keeps **Sign in** visible while disconnected. Once connected, the avatar shows the GitHub
 profile image and opens the account menu for notifications, settings, help, updates, and disconnecting.
 The bottom status bar shows the GitHub username and organizations visible to the authorization; new
-authorizations request `read:org` in addition to repository and profile access.
+authorizations request `read:org` in addition to repository and profile access. If an organization approves
+access later, **Refresh GitHub access** in the avatar menu re-reads organizations and repository suggestions.
+SpecDesk also performs the same check when a signed-in window regains focus after five minutes.
 
 Registered repositories are persisted with the default branch reported by GitHub. The Repositories panel
 groups any number of named local copies beneath each repository and shows every known working line. Search

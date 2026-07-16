@@ -34,6 +34,7 @@ export const Kinds = {
   githubSignIn: "github.signIn",
   githubSignInCancel: "github.signInCancel",
   githubSignOut: "github.signOut",
+  githubAccountRefresh: "github.account.refresh",
   githubAccountApplied: "github.accountApplied",
   chatSend: "chat.send",
   chatAttachmentPick: "chat.attachment.pick",

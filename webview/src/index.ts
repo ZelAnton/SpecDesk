@@ -345,6 +345,7 @@ function wire(): void {
   const githubAccountStatus = document.querySelector<HTMLElement>("#github-account-status");
   const accountMenu = document.querySelector<HTMLElement>("#account-menu");
   const accountConnectBtn = document.querySelector<HTMLButtonElement>("#account-connect");
+  const accountRefreshBtn = document.querySelector<HTMLButtonElement>("#account-refresh");
   const accountSignOutBtn = document.querySelector<HTMLButtonElement>("#account-signout");
   const accountNotificationsBtn =
     document.querySelector<HTMLButtonElement>("#account-notifications");
@@ -1353,6 +1354,7 @@ function wire(): void {
       accountStatus: githubAccountStatus,
       menu: accountMenu,
       connectBtn: accountConnectBtn,
+      refreshBtn: accountRefreshBtn,
       signOutBtn: accountSignOutBtn,
       bar: githubSigninBar,
       text: githubSigninText,
@@ -1363,6 +1365,7 @@ function wire(): void {
       signIn: () => ipc.send(Kinds.githubSignIn),
       cancelSignIn: () => ipc.send(Kinds.githubSignInCancel),
       signOut: () => ipc.send(Kinds.githubSignOut),
+      refreshAccount: () => ipc.send(Kinds.githubAccountRefresh),
       openUrl: (url) => ipc.send(Kinds.linkOpen, { url }),
       copyText: async (text) => {
         if (navigator.clipboard?.writeText === undefined) {
@@ -1372,6 +1375,7 @@ function wire(): void {
       },
     });
     signInController.setNotificationCount(0);
+    window.addEventListener("focus", () => signInController.refreshIfStale());
 
     accountSettingsBtn?.addEventListener("click", () => {
       if (accountMenu) {

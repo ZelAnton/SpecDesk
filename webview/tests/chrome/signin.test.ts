@@ -11,6 +11,7 @@ function setupDom(): void {
     <div id="account-menu" role="menu" hidden>
 			<button id="account-notifications" role="menuitem">Notifications</button>
 			<button id="account-settings" role="menuitem" disabled>Settings (coming soon)</button>
+      <button id="account-refresh" role="menuitem" hidden>Refresh GitHub access</button>
       <button id="account-signout" role="menuitem" hidden>Sign out</button>
     </div>
     <div id="github-signin-bar" hidden>
@@ -36,6 +37,7 @@ function mount(copyText = vi.fn<(text: string) => Promise<void>>().mockResolvedV
   const signIn = vi.fn();
   const cancelSignIn = vi.fn();
   const signOut = vi.fn();
+  const refreshAccount = vi.fn();
   const openUrl = vi.fn();
   const controller = new SignInController({
     accountBtn: document.querySelector<HTMLButtonElement>("#github-btn"),
@@ -46,6 +48,7 @@ function mount(copyText = vi.fn<(text: string) => Promise<void>>().mockResolvedV
     accountStatus: document.querySelector<HTMLElement>("#github-account-status"),
     menu: document.querySelector<HTMLElement>("#account-menu"),
     connectBtn: null,
+    refreshBtn: document.querySelector<HTMLButtonElement>("#account-refresh"),
     signOutBtn: document.querySelector<HTMLButtonElement>("#account-signout"),
     bar: document.querySelector<HTMLElement>("#github-signin-bar"),
     text: document.querySelector<HTMLElement>("#github-signin-text"),
@@ -56,10 +59,11 @@ function mount(copyText = vi.fn<(text: string) => Promise<void>>().mockResolvedV
     signIn,
     cancelSignIn,
     signOut,
+    refreshAccount,
     openUrl,
     copyText,
   });
-  return { controller, signIn, cancelSignIn, signOut, openUrl, copyText };
+  return { controller, signIn, cancelSignIn, signOut, refreshAccount, openUrl, copyText };
 }
 
 describe("SignInController — account button", () => {
@@ -148,6 +152,50 @@ describe("SignInController — account button", () => {
     expect(el("github-account-status").hidden).toBe(true);
   });
 
+  it("refreshes newly approved GitHub access explicitly and shows progress", () => {
+    const { controller, refreshAccount } = mount();
+    controller.applyAccount({
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: [],
+    });
+
+    el("github-btn").click();
+    expect(el("account-refresh").hidden).toBe(false);
+    el("account-refresh").click();
+
+    expect(refreshAccount).toHaveBeenCalledOnce();
+    expect(el("account-menu").hidden).toBe(true);
+    expect(el("account-refresh").textContent).toContain("Refreshing");
+    expect((el("account-refresh") as HTMLButtonElement).disabled).toBe(true);
+
+    controller.applyAccount({
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: ["newly-approved"],
+    });
+    expect(el("account-refresh").textContent).toBe("Refresh GitHub access");
+    expect((el("account-refresh") as HTMLButtonElement).disabled).toBe(false);
+    expect(el("github-account-status").textContent).toContain("newly-approved");
+  });
+
+  it("refreshes a stale focused account once and throttles subsequent focus events", () => {
+    const { controller, refreshAccount } = mount();
+    controller.applyAccount({
+      available: true,
+      signedIn: true,
+      login: "octocat",
+      organizations: ["acme"],
+    });
+
+    expect(controller.refreshIfStale(Date.now() + 4 * 60 * 1000)).toBe(false);
+    expect(controller.refreshIfStale(Date.now() + 6 * 60 * 1000)).toBe(true);
+    expect(controller.refreshIfStale(Date.now() + 12 * 60 * 1000)).toBe(false);
+    expect(refreshAccount).toHaveBeenCalledOnce();
+  });
+
   it("replaces the organization loading state with actionable failure text", () => {
     const { controller } = mount();
     controller.applyAccount({ available: true, signedIn: true, login: "octocat" });
@@ -158,9 +206,9 @@ describe("SignInController — account button", () => {
       signedIn: true,
       login: "octocat",
       organizations: [],
-      message: "Organizations unavailable — reconnect GitHub to refresh access.",
+      message: "Organizations unavailable — refresh GitHub access.",
     });
-    expect(el("github-account-status").textContent).toContain("reconnect GitHub");
+    expect(el("github-account-status").textContent).toContain("refresh GitHub access");
   });
 
   it("falls back to a plain Sign out when the handle is unknown", () => {

@@ -40,6 +40,7 @@ public static class MessageKinds
 	public const string GitHubSignIn = "github.signIn";
 	public const string GitHubSignInCancel = "github.signInCancel";
 	public const string GitHubSignOut = "github.signOut";
+	public const string GitHubAccountRefresh = "github.account.refresh";
 	public const string GitHubAccountApplied = "github.accountApplied";
 	public const string ChatSend = "chat.send";
 	public const string ChatAttachmentPick = "chat.attachment.pick";

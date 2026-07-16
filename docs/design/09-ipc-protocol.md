@@ -39,6 +39,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled (focus-gated) and on window focus |
 | `action.publish` | `{}` | merge the PR (if permitted) — *not yet built (PoC-10)* |
 | `github.signIn` / `github.signInCancel` / `github.signOut` | `{}` | connect / cancel-connecting / disconnect a GitHub account (device flow) |
+| `github.account.refresh` | `{}` | re-read the connected account's organizations, avatar, and accessible repositories; sent explicitly from the account menu and automatically after returning focus to a stale session |
 | `github.accountApplied` | `{ publicationId }` | acknowledge that the correlated account boundary has been applied before the host resumes a queued authenticated repository action |
 | `doc.discard` | `{ requestId }` | abandon the draft after both editor debounces are flushed; both panes stay locked until the matching terminal result |
 | `comment.add` | `{ lineStart, lineEnd, body }` | new inline comment |

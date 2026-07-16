@@ -26,6 +26,7 @@
   "file.deleteCompleted",
   "folder.open",
   "github.account",
+  "github.account.refresh",
   "github.accountApplied",
   "github.code",
   "github.repositories",

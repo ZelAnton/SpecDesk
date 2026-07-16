@@ -69,6 +69,43 @@ public sealed class HostControllerGitHubTests
 			CancellationToken cancellationToken = default) => throw new NotSupportedException();
 	}
 
+	private sealed class ApprovingAccountCatalog : IGitHubRepositoryCatalog
+	{
+		private int _organizationRequests;
+		private int _repositoryRequests;
+
+		public int OrganizationRequests => Volatile.Read(ref _organizationRequests);
+		public int RepositoryRequests => Volatile.Read(ref _repositoryRequests);
+
+		public Task<string?> GetAvatarUrlAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<string?>(null);
+
+		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<string>>(
+				Interlocked.Increment(ref _organizationRequests) == 1 ? [] : ["approved-org"]);
+
+		public Task<IReadOnlyList<GitHubRepositoryOption>> GetRepositoriesAsync(
+			string accessToken, CancellationToken cancellationToken = default) =>
+			Task.FromResult<IReadOnlyList<GitHubRepositoryOption>>(
+				Interlocked.Increment(ref _repositoryRequests) == 1
+					? [new("octocat/notes", null)]
+					: [new("approved-org/specs", "Newly approved organization repository")]);
+
+		public Task<GitHubRepositoryMetadata> GetMetadataAsync(
+			string owner, string name, string accessToken, CancellationToken cancellationToken = default) =>
+			throw new NotSupportedException();
+
+		public Task<IReadOnlyList<GitHubRepositoryEntry>> GetTreeAsync(
+			string owner, string name, string branch, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+		public Task<string> GetFileAsync(
+			string owner, string name, string branch, string path, string accessToken,
+			CancellationToken cancellationToken = default) => throw new NotSupportedException();
+	}
+
 	private sealed class FailingAccountCatalog : IGitHubRepositoryCatalog
 	{
 		public Task<IReadOnlyList<string>> GetOrganizationsAsync(
@@ -638,6 +675,59 @@ public sealed class HostControllerGitHubTests
 	}
 
 	[Test]
+	public void Account_refresh_discovers_organizations_approved_after_sign_in()
+	{
+		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
+		{
+			SignedIn = true,
+			Login = "octocat",
+		};
+		ApprovingAccountCatalog catalog = new();
+		(HostController controller, List<string> sent, object gate) =
+			Build(auth, repositoryCatalog: catalog);
+		using (controller)
+		{
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+			Assert.That(
+				SpinWait.SpinUntil(
+					() => catalog.OrganizationRequests == 1 && catalog.RepositoryRequests == 1,
+					TimeSpan.FromSeconds(2)),
+				Is.True);
+			lock (gate)
+			{
+				sent.Clear();
+			}
+
+			controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubAccountRefresh));
+
+			Assert.That(
+				SpinWait.SpinUntil(() =>
+				{
+					lock (gate)
+					{
+						bool organizationPublished = sent.Select(IpcSerializer.TryDeserialize)
+							.Where(message => message?.Kind == MessageKinds.GitHubAccount)
+							.Select(message => message!.GetPayload<GitHubAccountPayload>())
+							.Any(payload => payload?.Organizations?.SequenceEqual(["approved-org"]) == true);
+						bool repositoryPublished = sent.Select(IpcSerializer.TryDeserialize)
+							.Where(message => message?.Kind == MessageKinds.GitHubRepositories)
+							.Select(message => message!.GetPayload<GitHubRepositoriesPayload>())
+							.Any(payload => payload?.Repositories
+								.Any(repository => repository.FullName == "approved-org/specs") == true);
+						return organizationPublished && repositoryPublished;
+					}
+				}, TimeSpan.FromSeconds(2)),
+				Is.True);
+
+			Assert.Multiple(() =>
+			{
+				Assert.That(catalog.OrganizationRequests, Is.EqualTo(2));
+				Assert.That(catalog.RepositoryRequests, Is.EqualTo(2));
+			});
+		}
+	}
+
+	[Test]
 	public void SignOut_storage_failure_still_publishes_the_disconnected_account()
 	{
 		FakeGitHubAuth auth = new(SignInResult.Authorized("octocat"))
@@ -747,7 +837,7 @@ public sealed class HostControllerGitHubTests
 			Assert.Multiple(() =>
 			{
 				Assert.That(account?.SignedIn, Is.True);
-				Assert.That(account?.Message, Does.Contain("reconnect GitHub"));
+				Assert.That(account?.Message, Does.Contain("refresh GitHub access"));
 				Assert.That(account?.Organizations, Is.Empty);
 			});
 		}

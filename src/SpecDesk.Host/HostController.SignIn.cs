@@ -557,6 +557,21 @@ public sealed partial class HostController
 		}
 	}
 
+	private void OnGitHubAccountRefresh()
+	{
+		// Serialize the token check with sign-out, then reuse the normal generation/cancellation pipeline.
+		// Unlike startup, keep the last account details visible while the replacement is loading.
+		lock (_signInPublishSync)
+		{
+			if (_auth?.IsSignedIn() != true)
+			{
+				SendCurrentAccountPublished();
+				return;
+			}
+			RefreshAccountOrganizations(_auth.SignedInLogin());
+		}
+	}
+
 	private void SendCurrentAccountPublished()
 	{
 		lock (_sync)
@@ -677,7 +692,7 @@ public sealed partial class HostController
 				login,
 				[],
 				null,
-				"Organizations unavailable — check your connection or reconnect GitHub to refresh access.");
+				"Organizations unavailable — check your connection, then refresh GitHub access.");
 		}
 	}
 

@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Connected accounts can refresh newly approved GitHub organizations and repositories from the avatar menu, with an automatic throttled check when the window regains focus.
 - Individual files can now be deleted from Disk with handle-bound, root-contained native validation, exact recent/favorite cleanup, and automatic closing when the deleted file is open.
 - Selected text can carry persistent local comment threads with replies, editing, and confirmed deletion in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
 - Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
