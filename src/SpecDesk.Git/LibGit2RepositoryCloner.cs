@@ -1356,13 +1356,92 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 
 	internal static void EnsureExactWorkingTree(Repository repository, string requestedPath)
 	{
-		string requested = Path.TrimEndingDirectorySeparator(Path.GetFullPath(requestedPath));
-		string actual = Path.TrimEndingDirectorySeparator(
-			Path.GetFullPath(repository.Info.WorkingDirectory));
+		string requested = CanonicalizeTreePath(requestedPath);
+		string actual = CanonicalizeTreePath(repository.Info.WorkingDirectory);
 		if (!string.Equals(requested, actual, StringComparison.OrdinalIgnoreCase))
 		{
 			throw new InvalidOperationException("The registered local-copy path is not the repository root.");
 		}
+	}
+
+	/// <summary>
+	/// Resolves a path to the canonical, symlink-free spelling that libgit2 reports through
+	/// <see cref="RepositoryInformation.WorkingDirectory"/>. <see cref="Path.GetFullPath(string)"/> collapses
+	/// "." and ".." but never resolves symlinks, so a caller-supplied path can differ from libgit2's
+	/// realpath-canonical working directory purely by an ancestor symlink — for example macOS temp folders
+	/// live under <c>/var</c>, a symlink to <c>/private/var</c>. Canonicalizing both operands the same way
+	/// keeps the identity guard exact (a genuinely different directory still resolves to a different path and
+	/// is still rejected) while accepting the same tree reached through a symlinked ancestor. A leaf that no
+	/// longer exists on disk (a pending move target) keeps its lexical spelling appended to the resolved
+	/// prefix, matching realpath(3) semantics.
+	/// </summary>
+	private static string CanonicalizeTreePath(string path)
+	{
+		string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+		string deepestExisting = full;
+		Stack<string> missingSegments = new();
+		while (!Directory.Exists(deepestExisting) && !File.Exists(deepestExisting))
+		{
+			string? parent = Path.GetDirectoryName(deepestExisting);
+			if (string.IsNullOrEmpty(parent)
+				|| string.Equals(parent, deepestExisting, StringComparison.Ordinal))
+			{
+				// Nothing along the path exists on disk, so there is no symlink to resolve.
+				return full;
+			}
+			missingSegments.Push(Path.GetFileName(deepestExisting));
+			deepestExisting = parent;
+		}
+		string resolved = ResolveSymlinkChain(deepestExisting);
+		while (missingSegments.Count > 0)
+		{
+			resolved = Path.Combine(resolved, missingSegments.Pop());
+		}
+		return Path.TrimEndingDirectorySeparator(resolved);
+	}
+
+	/// <summary>
+	/// Walks an existing path from its filesystem root, replacing each symlinked component with its final
+	/// target, so the whole chain (not just a trailing link) is resolved. A component whose link cannot be
+	/// read is left in its lexical form, which degrades to the pre-existing plain string comparison.
+	/// </summary>
+	private static string ResolveSymlinkChain(string existingPath)
+	{
+		string root = Path.GetPathRoot(existingPath) ?? string.Empty;
+		if (root.Length == 0)
+		{
+			return existingPath;
+		}
+		string relative = Path.GetRelativePath(root, existingPath);
+		if (string.Equals(relative, ".", StringComparison.Ordinal))
+		{
+			return Path.TrimEndingDirectorySeparator(root);
+		}
+		string current = root;
+		foreach (string segment in relative.Split(
+			[Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+			StringSplitOptions.RemoveEmptyEntries))
+		{
+			current = Path.Combine(current, segment);
+			try
+			{
+				FileSystemInfo? target = Directory.Exists(current)
+					? new DirectoryInfo(current).ResolveLinkTarget(returnFinalTarget: true)
+					: File.Exists(current)
+						? new FileInfo(current).ResolveLinkTarget(returnFinalTarget: true)
+						: null;
+				if (target is not null)
+				{
+					current = Path.TrimEndingDirectorySeparator(target.FullName);
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				// A transient link-resolution failure leaves this segment lexical; the guard then falls back to
+				// the plain string comparison it used before symlink resolution.
+			}
+		}
+		return Path.TrimEndingDirectorySeparator(current);
 	}
 
 	private static void EnsureRepositoryIdentity(Repository repository, string expectedRepositoryUrl)
@@ -1391,8 +1470,10 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		string? logicalPath = null)
 	{
 		StringBuilder state = new();
-		string tokenPath = Path.TrimEndingDirectorySeparator(
-			Path.GetFullPath(logicalPath ?? repository.Info.WorkingDirectory));
+		// Canonicalize the same way the working-tree guard does so a confirmation token built from libgit2's
+		// realpath-canonical working directory still matches when the deletion re-derives it from the caller's
+		// (symlinked) logical path after the tree has been moved aside.
+		string tokenPath = CanonicalizeTreePath(logicalPath ?? repository.Info.WorkingDirectory);
 		state.Append(tokenPath).Append('\n')
 			.Append(branch ?? "*").Append('\n')
 			.Append(repository.Head.FriendlyName).Append('\n')

@@ -1631,6 +1631,60 @@ public sealed class LocalRepositoryManagerTests
 		});
 	}
 
+	[Test]
+	public void WorkingTreeOperationsAcceptATreeReachedThroughASymlinkedAncestor()
+	{
+		// Regression: where an ancestor directory is a symlink (for example macOS temp folders live under
+		// /var, a symlink to /private/var), libgit2 reports Repository.Info.WorkingDirectory as the resolved
+		// realpath while the caller-supplied path keeps the symlink spelling. The working-tree identity guard
+		// — and the deletion token that is re-derived from the logical path after the tree is moved aside —
+		// must canonicalize both sides so the same tree reached through a symlink is accepted, not rejected as
+		// a path-identity mismatch.
+		string real = Path.Combine(Path.GetTempPath(), "specdesk-symlink-real-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(real);
+		string link = Path.Combine(Path.GetTempPath(), "specdesk-symlink-link-" + Guid.NewGuid().ToString("N"));
+		try
+		{
+			Directory.CreateSymbolicLink(link, real);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+		{
+			DeleteTestTree(real);
+			Assert.Ignore("Symbolic links cannot be created in this environment.");
+			return;
+		}
+		try
+		{
+			string realClone = Path.Combine(real, "clone");
+			string branch;
+			Repository.Init(realClone);
+			using (Repository repository = new(realClone))
+			{
+				File.WriteAllText(Path.Combine(realClone, "spec.md"), "base");
+				Commands.Stage(repository, "spec.md");
+				Signature author = new("SpecDesk tests", "tests@example.invalid", DateTimeOffset.Now);
+				repository.Commit("base", author, author);
+				branch = repository.Head.FriendlyName;
+				repository.Network.Remotes.Add("origin", realClone);
+			}
+
+			string linkedClone = Path.Combine(link, "clone");
+			Assert.DoesNotThrow(
+				() => _manager.Inspect(linkedClone, branch),
+				"Inspect must accept the working tree reached through a symlinked ancestor.");
+
+			RepositoryDeletionRisks risks = _manager.InspectDeletionRisks(linkedClone, realClone, branch);
+			_manager.DeleteClone(linkedClone, realClone, risks.ConfirmationToken);
+
+			Assert.That(Directory.Exists(realClone), Is.False, "the confirmed tree must be removed through the symlink");
+		}
+		finally
+		{
+			Directory.Delete(link, recursive: false);
+			DeleteTestTree(real);
+		}
+	}
+
 	private static void ReplaceOriginUrl(string repositoryPath, string replacementUrl)
 	{
 		using Repository repository = new(repositoryPath);
