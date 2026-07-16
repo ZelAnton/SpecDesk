@@ -202,3 +202,10 @@ let ``an array left open at end of input keeps its partial value`` () =
     // mid-file unclosed case.
     let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\"\n"
     Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
+
+// T-065 regression guard: a naive "([^"]*)" element regex knows nothing about `\"`, so an entry like
+// `"Say \"hi\""` is cut into pieces at the escaped quote instead of parsed (and unescaped) as one item.
+[<Test>]
+let ``getList treats an escaped quote inside an entry as part of that entry, not a boundary`` () =
+    let t = Toml.readTable "review" "[review]\nreviewers = [\"Say \\\"hi\\\"\", \"@bob\"]\n"
+    Assert.That(Toml.getList t "reviewers" [] = [ "Say \"hi\""; "@bob" ], Is.True)

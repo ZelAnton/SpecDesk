@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Case-distinct local folders in Disk now keep independent expansion state and show only their own loaded children.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
+- `.spectool.toml`'s hand-rolled reader (`Toml.fs`) split a string-array entry containing an escaped
+  quote (e.g. `reviewers = ["Say \"hi\""]`) into multiple wrong elements at the `\"`, and never
+  un-escaped it, unlike the single-string reading path. Array-element parsing is now escape-aware, and
+  each element is un-escaped the same way `getString` already did.
 - Pull requests opened from My reviews or pasted GitHub links now use SpecDesk's review document instead of opening GitHub in a browser.
 - A comments-service failure no longer hides an otherwise available pull-request description and history.
 - Switching GitHub accounts while My reviews is loading now starts a fresh lookup and ignores the retired account's result.

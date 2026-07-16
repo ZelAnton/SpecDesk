@@ -7,7 +7,6 @@ module SpecDesk.Core.Toml
 
 open System
 open System.Collections.Generic
-open System.Text.RegularExpressions
 
 /// Drop a `#` comment that is not inside a quoted string. Quote tracking is escape-aware: a `\"` inside
 /// a quoted value (e.g. `template = "Say \"hi\" #1"`) does not toggle the tracker, so the `#` right
@@ -200,9 +199,40 @@ let getInt (table: Dictionary<string, string>) (key: string) (fallback: int) : i
         | _ -> fallback
     | _ -> fallback
 
+/// Split a `[ "a", "\"b\"" ]` array's raw text into its quoted elements' raw (still-escaped) contents,
+/// using the same escape-aware `inQuote`/`escaped` tracking as {@link stripInlineComment} /
+/// {@link containsUnquoted}: a `\"` inside an entry does not end it, so `["Say \"hi\""]` yields the
+/// single raw element `Say \"hi\"` rather than being cut into pieces at the escaped quote (the naive
+/// `"([^"]*)"` regex this replaces knew nothing about `\"`). Callers still owe each element a pass
+/// through `unescape` — the same one `getString`/`unquote` use — to get the literal value.
+let private splitQuotedElements (value: string) : string list =
+    let items = ResizeArray<string>()
+    let current = Text.StringBuilder()
+    let mutable inQuote = false
+    let mutable escaped = false
+
+    for c in value do
+        if inQuote then
+            if escaped then
+                current.Append(c) |> ignore
+                escaped <- false
+            elif c = '\\' then
+                current.Append(c) |> ignore
+                escaped <- true
+            elif c = '"' then
+                items.Add(current.ToString())
+                current.Clear() |> ignore
+                inQuote <- false
+            else
+                current.Append(c) |> ignore
+        elif c = '"' then
+            inQuote <- true
+
+    List.ofSeq items
+
 let getList (table: Dictionary<string, string>) (key: string) (fallback: string list) : string list =
     match table.TryGetValue key with
     | true, value ->
-        let items = [ for m in Regex.Matches(value, "\"([^\"]*)\"") -> m.Groups.[1].Value ]
+        let items = splitQuotedElements value |> List.map unescape
         if List.isEmpty items then fallback else items
     | _ -> fallback
