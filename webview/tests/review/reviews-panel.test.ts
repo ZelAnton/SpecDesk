@@ -207,6 +207,27 @@ describe("ReviewsPanel", () => {
     expect(document.querySelectorAll("#reviews-list .review-open")).toHaveLength(0);
   });
 
+  it("does not render an error state into the panel after it's closed and requestReviews rejects", async () => {
+    let rejectLoad: (reason: unknown) => void = () => {};
+    const panel = new ReviewsPanel({
+      ...elements(),
+      requestReviews: () => new Promise<PrListPayload>((_resolve, reject) => (rejectLoad = reject)),
+      openReview: vi.fn(),
+    });
+
+    // Open (load in flight), then close before it rejects.
+    void panel.open();
+    expect(el("reviews-panel").hidden).toBe(false);
+    el("reviews-close").click();
+    expect(el("reviews-panel").hidden).toBe(true);
+
+    // The late rejection must NOT overwrite the status of the now-hidden panel — it's left exactly as
+    // close() left it (untouched since the "Loading…" set at the start of the fetch), not the error text.
+    rejectLoad(new Error("transport failure"));
+    await flush();
+    expect(el("reviews-status").textContent).toBe("Loading your reviews…");
+  });
+
   it("starts a fresh load after an account change and ignores the retired account reply", async () => {
     const resolves: Array<(payload: PrListPayload) => void> = [];
     const requestReviews = vi.fn(

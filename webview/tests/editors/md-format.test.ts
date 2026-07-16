@@ -257,6 +257,24 @@ describe("formatMarkdown — block prefixes", () => {
     });
   });
 
+  // M-33 follow-up: the mixed-selection normalization above didn't cover a line whose list marker
+  // sits inside a blockquote container (`"> - item"`) — the list command's `^`-anchored regexes
+  // never saw past the `>` , so toggling the SAME list kind again added a second marker in front of
+  // the quote instead of removing/converting the existing one.
+  describe("quote+list combo normalizes instead of doubling (M-33 follow-up)", () => {
+    it("bullet: removes the existing bullet inside a blockquote instead of prepending another", () => {
+      expect(apply("> - a\n> - b", "bullet", 0, 9).text).toBe("> a\n> b");
+    });
+
+    it("ordered: re-numbers the existing ordered item inside a blockquote instead of doubling", () => {
+      expect(apply("> 1. a\n> b", "ordered", 0, 10).text).toBe("> 1. a\n> 2. b");
+    });
+
+    it("bullet->ordered: converts the bulleted item inside a blockquote in place", () => {
+      expect(apply("> - a\n> - b", "ordered", 0, 9).text).toBe("> 1. a\n> 2. b");
+    });
+  });
+
   it("wraps a selection in a fenced code block", () => {
     expect(apply("x = 1", "code", 0, 5).text).toBe("```\nx = 1\n```");
   });
