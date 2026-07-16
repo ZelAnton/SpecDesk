@@ -8,7 +8,7 @@ interface SelectionToolbarOptions {
   readonly selection: () => SourceSelection | null;
   readonly anchor: () => DOMRect | null;
   readonly format: (command: FormatCommand) => void;
-  readonly addComment: (selection: SourceSelection, body: string) => void;
+  readonly addComment: (selection: SourceSelection) => void;
   readonly active?: () => ReadonlySet<FormatCommand>;
   readonly disabled?: () => ReadonlySet<FormatCommand>;
 }
@@ -33,9 +33,7 @@ export class SelectionToolbar {
   private readonly options: SelectionToolbarOptions;
   private readonly root: HTMLDivElement;
   private readonly commands: HTMLDivElement;
-  private readonly compose: HTMLDivElement;
-  private readonly textarea: HTMLTextAreaElement;
-  private selectionValue: SourceSelection | null = null;
+  private readonly comment: HTMLButtonElement;
 
   constructor(options: SelectionToolbarOptions) {
     this.options = options;
@@ -63,37 +61,19 @@ export class SelectionToolbar {
       });
       this.commands.appendChild(button);
     }
-    const comment = document.createElement("button");
-    comment.type = "button";
-    comment.className = "selection-comment-open";
-    comment.textContent = "Comment";
-    comment.title = "Add comment to selection";
-    comment.setAttribute("aria-label", "Add comment to selection");
-    comment.addEventListener("pointerdown", (event) => event.preventDefault());
-    comment.addEventListener("click", () => this.openComposer());
-    this.commands.appendChild(comment);
-
-    this.compose = document.createElement("div");
-    this.compose.className = "selection-comment-compose";
-    this.compose.hidden = true;
-    this.textarea = document.createElement("textarea");
-    this.textarea.rows = 3;
-    this.textarea.placeholder = "Write a comment…";
-    this.textarea.setAttribute("aria-label", "Comment text");
-    const note = document.createElement("small");
-    note.textContent = "Saved locally in this SpecDesk session; not posted to GitHub.";
-    const actions = document.createElement("div");
-    const submit = document.createElement("button");
-    submit.type = "button";
-    submit.textContent = "Add comment";
-    submit.addEventListener("click", () => this.submitComment());
-    const cancel = document.createElement("button");
-    cancel.type = "button";
-    cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => this.closeComposer());
-    actions.append(submit, cancel);
-    this.compose.append(this.textarea, note, actions);
-    this.root.append(this.commands, this.compose);
+    this.comment = document.createElement("button");
+    this.comment.type = "button";
+    this.comment.className = "selection-comment-open";
+    this.comment.textContent = "Comment";
+    this.setCommentAvailable(true);
+    this.comment.addEventListener("pointerdown", (event) => event.preventDefault());
+    this.comment.addEventListener("click", () => {
+      const selection = this.options.selection();
+      if (selection !== null) this.options.addComment(selection);
+      this.hide();
+    });
+    this.commands.appendChild(this.comment);
+    this.root.append(this.commands);
     options.parent.appendChild(this.root);
   }
 
@@ -138,8 +118,15 @@ export class SelectionToolbar {
 
   hide(): void {
     this.root.hidden = true;
-    this.selectionValue = null;
-    this.closeComposer();
+  }
+
+  setCommentAvailable(available: boolean): void {
+    this.comment.disabled = !available;
+    const label = available
+      ? "Add comment to selection"
+      : "Comments unavailable until saved comments are loaded";
+    this.comment.title = label;
+    this.comment.setAttribute("aria-label", label);
   }
 
   private refreshState(): void {
@@ -150,28 +137,5 @@ export class SelectionToolbar {
       button.disabled = disabled.has(command);
       button.setAttribute("aria-pressed", String(active.has(command)));
     }
-  }
-
-  private openComposer(): void {
-    this.selectionValue = this.options.selection();
-    if (this.selectionValue === null) {
-      this.hide();
-      return;
-    }
-    this.commands.hidden = true;
-    this.compose.hidden = false;
-    this.textarea.focus();
-  }
-
-  private closeComposer(): void {
-    this.commands.hidden = false;
-    this.compose.hidden = true;
-    this.textarea.value = "";
-  }
-
-  private submitComment(): void {
-    if (this.selectionValue === null || this.textarea.value.trim().length === 0) return;
-    this.options.addComment(this.selectionValue, this.textarea.value);
-    this.hide();
   }
 }

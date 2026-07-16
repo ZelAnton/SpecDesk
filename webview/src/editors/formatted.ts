@@ -31,6 +31,11 @@ import { rafThrottle } from "../util/raf.js";
 import { trace } from "../util/trace.js";
 import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
+import {
+  type CommentThreadActions,
+  commentThreadDOM,
+  NO_COMMENT_ACTIONS,
+} from "./comment-thread.js";
 import { FORMAT_REGISTRY } from "./format-registry.js";
 import { joinBlocks, type MdBlock, splitTopLevelBlocks } from "./md-blocks.js";
 import type { FormatCommand } from "./md-format.js";
@@ -42,7 +47,12 @@ import {
   disabledFormats as computeDisabledFormats,
 } from "./pm-commands.js";
 import { parser, resolveImageSrc, schema } from "./pm-markdown.js";
-import type { SelectionComment, SourceSelection } from "./selection-comments.js";
+import type {
+  SelectionComment,
+  SelectionCommentDraft,
+  SelectionCommentView,
+  SourceSelection,
+} from "./selection-comments.js";
 import { SelectionToolbar } from "./selection-toolbar.js";
 import { buildLeafAnchors } from "./sync-anchors.js";
 
@@ -130,16 +140,26 @@ const commentPlugin = new Plugin<DecorationSet>({
   props: { decorations: (state) => commentKey.getState(state) ?? DecorationSet.empty },
 });
 
-function commentDOM(comment: SelectionComment): HTMLElement {
-  const element = document.createElement("aside");
-  element.className = "selection-comment-block selection-comment-block--formatted";
-  element.dataset.commentId = comment.id;
-  element.setAttribute("aria-label", "Comment on selected text");
-  const label = document.createElement("strong");
-  label.textContent = "Comment";
-  const body = document.createElement("p");
-  body.textContent = comment.body;
-  element.append(label, body);
+function commentDOM(
+  comment: SelectionComment | undefined,
+  draft: SelectionCommentDraft | undefined,
+  actions: CommentThreadActions,
+  view: SelectionCommentView,
+  showPersistence: boolean,
+): HTMLElement {
+  const element = commentThreadDOM({
+    ...(comment === undefined ? {} : { comment }),
+    ...(draft === undefined ? {} : { draft }),
+    actions,
+    focusDraft: draft?.surface === "formatted",
+    principalId: view.principalId,
+    commentsAvailable: view.commentsAvailable,
+    persistence: showPersistence ? view.persistence : "saved",
+    ...(view.persistenceMessage === undefined
+      ? {}
+      : { persistenceMessage: view.persistenceMessage }),
+  });
+  element.classList.add("selection-comment-block--formatted");
   return element;
 }
 
@@ -266,7 +286,7 @@ export interface FormattedEditorCallbacks {
    *  so a plain click can still place the caret. */
   onOpenLink: (url: string) => void;
   /** Add a session annotation against the shared Markdown source-line selection. */
-  onAddComment?: (selection: SourceSelection, body: string) => void;
+  onAddComment?: (selection: SourceSelection) => void;
 }
 
 export class FormattedEditor {
@@ -347,7 +367,14 @@ export class FormattedEditor {
   // rAF-throttled caret reporter; assigned in the constructor (needs `this.view`).
   private readonly reportCaret: () => void;
   private readonly selectionToolbar: SelectionToolbar;
-  private comments: readonly SelectionComment[] = [];
+  private commentView: SelectionCommentView = {
+    comments: [],
+    draft: null,
+    principalId: "signed-out",
+    commentsAvailable: true,
+    persistence: "saved",
+  };
+  private commentActions: CommentThreadActions | null = null;
 
   constructor(parent: HTMLElement, callbacks: FormattedEditorCallbacks) {
     this.scrollEl = parent;
@@ -502,7 +529,7 @@ export class FormattedEditor {
         );
       },
       format: (command) => this.format(command),
-      addComment: (selection, body) => callbacks.onAddComment?.(selection, body),
+      addComment: (selection) => callbacks.onAddComment?.(selection),
       active: () => this.activeFormats(),
       disabled: () => this.disabledFormats(),
     });
@@ -1145,27 +1172,102 @@ export class FormattedEditor {
 
   /** Render session comments without modifying Markdown. List anchors resolve inside the selected item;
    * tables deliberately remain whole-block anchors so a card can never enter a row or cell. */
-  setComments(comments: readonly SelectionComment[]): void {
-    this.comments = comments;
+  setComments(
+    comments: SelectionCommentView | readonly SelectionComment[],
+    actions: CommentThreadActions = NO_COMMENT_ACTIONS,
+  ): void {
+    this.commentView = Array.isArray(comments)
+      ? {
+          comments: comments as readonly SelectionComment[],
+          draft: null,
+          principalId: "signed-out",
+          commentsAvailable: true,
+          persistence: "saved" as const,
+        }
+      : (comments as SelectionCommentView);
+    this.commentActions = actions;
+    this.selectionToolbar.setCommentAvailable(this.commentView.commentsAvailable);
     this.pushComments();
+  }
+
+  updateCommentDraft(body: string): void {
+    for (const textarea of this.view.dom.querySelectorAll<HTMLTextAreaElement>(
+      ".selection-comment-compose--inline textarea",
+    )) {
+      if (textarea.value === body) continue;
+      textarea.value = body;
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    }
   }
 
   private pushComments(): void {
     const map = this.blockMap();
     const decorations: Decoration[] = [];
-    for (const [index, comment] of this.comments.entries()) {
-      const entry = map.entryForScroll(comment.anchorLine);
-      if (entry !== null) {
-        const narrowed =
-          entry.block.containerKind === "list" ? map.nodeRange(comment.anchorLine, true) : null;
-        const position = narrowed === null ? entry.to : Math.max(narrowed[0], narrowed[1] - 1);
+    const actions = this.commentActions;
+    if (actions === null) return;
+    for (const [index, comment] of this.commentView.comments.entries()) {
+      let position: number | null =
+        comment.anchorState === "detached" ? this.view.state.doc.content.size : null;
+      if (comment.anchorState !== "detached") {
+        const entry = map.entryForScroll(comment.anchorLine);
+        if (entry !== null) {
+          const narrowed =
+            entry.block.containerKind === "list" ? map.nodeRange(comment.anchorLine, true) : null;
+          position = narrowed === null ? entry.to : Math.max(narrowed[0], narrowed[1] - 1);
+        }
+      }
+      if (position !== null) {
         decorations.push(
-          Decoration.widget(position, () => commentDOM(comment), {
-            side: index + 1,
-            key: comment.id,
-          }),
+          Decoration.widget(
+            position,
+            () =>
+              commentDOM(
+                comment,
+                this.commentView.draft?.commentId === comment.id
+                  ? this.commentView.draft
+                  : undefined,
+                actions,
+                this.commentView,
+                false,
+              ),
+            {
+              side: index + 1,
+              key: `${JSON.stringify(comment)}-${this.commentView.draft?.commentId === comment.id ? JSON.stringify(this.commentView.draft) : ""}-${this.commentView.principalId}-${this.commentView.commentsAvailable}-${index === 0 ? `${this.commentView.persistence}:${this.commentView.persistenceMessage ?? ""}` : ""}`,
+            },
+          ),
         );
       }
+    }
+    if (this.commentView.draft?.mode === "create") {
+      const draft = this.commentView.draft;
+      const entry = map.entryForScroll(draft.anchorLine);
+      if (entry !== null) {
+        const narrowed =
+          entry.block.containerKind === "list" ? map.nodeRange(draft.anchorLine, true) : null;
+        const position = narrowed === null ? entry.to : Math.max(narrowed[0], narrowed[1] - 1);
+        decorations.push(
+          Decoration.widget(
+            position,
+            () => commentDOM(undefined, draft, actions, this.commentView, false),
+            {
+              side: this.commentView.comments.length + 1,
+              key: `draft-${draft.documentKey}-${draft.anchorOffset}-${this.commentView.principalId}-${this.commentView.commentsAvailable}-${this.commentView.persistence}:${this.commentView.persistenceMessage ?? ""}`,
+            },
+          ),
+        );
+      }
+    }
+    if (this.commentView.persistence === "error") {
+      decorations.push(
+        Decoration.widget(
+          this.view.state.doc.content.size,
+          () => commentDOM(undefined, undefined, actions, this.commentView, true),
+          {
+            side: this.commentView.comments.length + 100,
+            key: `comment-storage-${this.commentView.persistenceMessage ?? "error"}`,
+          },
+        ),
+      );
     }
     const set = DecorationSet.create(this.view.state.doc, decorations);
     this.view.dispatch(this.view.state.tr.setMeta(commentKey, set));

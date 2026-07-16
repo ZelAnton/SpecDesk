@@ -38,11 +38,21 @@ import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
 import { clip, trace } from "../util/trace.js";
 import { isRecord } from "../wire/decoders.js";
+import {
+  type CommentThreadActions,
+  commentThreadDOM,
+  NO_COMMENT_ACTIONS,
+} from "./comment-thread.js";
 import { FORMAT_REGISTRY, type FormatKind } from "./format-registry.js";
 import { splitTopLevelBlocks } from "./md-blocks.js";
 import { type FormatCommand, formatMarkdown } from "./md-format.js";
 import { computeTextPatch } from "./mirror-patch.js";
-import type { SelectionComment, SourceSelection } from "./selection-comments.js";
+import type {
+  SelectionComment,
+  SelectionCommentDraft,
+  SelectionCommentView,
+  SourceSelection,
+} from "./selection-comments.js";
 import { SelectionToolbar } from "./selection-toolbar.js";
 
 const DEBOUNCE_MS = 120;
@@ -139,25 +149,47 @@ const spacerField = StateField.define<DecorationSet>({
 });
 
 class CommentWidget extends WidgetType {
-  constructor(readonly comment: SelectionComment) {
+  constructor(
+    readonly comment: SelectionComment | undefined,
+    readonly draft: SelectionCommentDraft | undefined,
+    readonly actions: CommentThreadActions,
+    readonly view: SelectionCommentView,
+    readonly showPersistence: boolean,
+  ) {
     super();
   }
 
   override eq(other: CommentWidget): boolean {
-    return other.comment.id === this.comment.id && other.comment.body === this.comment.body;
+    return (
+      JSON.stringify(other.comment) === JSON.stringify(this.comment) &&
+      JSON.stringify(other.draft) === JSON.stringify(this.draft) &&
+      other.view.persistence === this.view.persistence &&
+      other.view.persistenceMessage === this.view.persistenceMessage &&
+      other.view.principalId === this.view.principalId &&
+      other.view.commentsAvailable === this.view.commentsAvailable &&
+      other.showPersistence === this.showPersistence
+    );
   }
 
   toDOM(): HTMLElement {
-    const element = document.createElement("aside");
-    element.className = "selection-comment-block selection-comment-block--code";
-    element.dataset.commentId = this.comment.id;
-    element.setAttribute("aria-label", "Comment on selected text");
-    const label = document.createElement("strong");
-    label.textContent = "Comment";
-    const body = document.createElement("p");
-    body.textContent = this.comment.body;
-    element.append(label, body);
+    const element = commentThreadDOM({
+      ...(this.comment === undefined ? {} : { comment: this.comment }),
+      ...(this.draft === undefined ? {} : { draft: this.draft }),
+      actions: this.actions,
+      focusDraft: this.draft?.surface === "code",
+      principalId: this.view.principalId,
+      commentsAvailable: this.view.commentsAvailable,
+      persistence: this.showPersistence ? this.view.persistence : "saved",
+      ...(this.view.persistenceMessage === undefined
+        ? {}
+        : { persistenceMessage: this.view.persistenceMessage }),
+    });
+    element.classList.add("selection-comment-block--code");
     return element;
+  }
+
+  override ignoreEvent(): boolean {
+    return true;
   }
 }
 
@@ -543,7 +575,7 @@ export interface EditorCallbacks {
   /** Fired with an http/https URL the author Ctrl/Cmd-clicked in the source, to open in the OS browser. */
   onOpenLink: (url: string) => void;
   /** Add a session annotation against the shared Markdown source-line selection. */
-  onAddComment?: (selection: SourceSelection, body: string) => void;
+  onAddComment?: (selection: SourceSelection) => void;
   /** Diagnostics for the height-sync reconcile path (T-084) — mirrors {@link HeightSync}'s own optional
    *  `onDebug`. Fired when {@link naturalLineTops}/{@link setSpacers} refuse a stale anchor instead of
    *  silently clamping it to the last line (see those methods). `summary` is a **thunk** so the
@@ -590,7 +622,14 @@ export class MarkdownEditor {
   // does not report line 0 and yank the passive Split pane back to the top of the document.
   private lastTopVisibleLineExact = 0;
   private readonly selectionToolbar: SelectionToolbar;
-  private comments: readonly SelectionComment[] = [];
+  private commentView: SelectionCommentView = {
+    comments: [],
+    draft: null,
+    principalId: "signed-out",
+    commentsAvailable: true,
+    persistence: "saved",
+  };
+  private commentActions: CommentThreadActions | null = null;
 
   constructor(parent: HTMLElement, callbacks: EditorCallbacks) {
     this.onChange = callbacks.onChange;
@@ -758,7 +797,7 @@ export class MarkdownEditor {
         );
       },
       format: (command) => this.applyFormat(command),
-      addComment: (selection, body) => callbacks.onAddComment?.(selection, body),
+      addComment: (selection) => callbacks.onAddComment?.(selection),
       active: () => this.activeFormats(),
     });
 
@@ -930,7 +969,7 @@ export class MarkdownEditor {
     });
     // A whole-document mode-switch hydration cannot meaningfully map block widgets through one giant
     // replacement. Re-resolve them from their source anchors against the new CodeMirror document.
-    this.setComments(this.comments);
+    if (this.commentActions !== null) this.setComments(this.commentView, this.commentActions);
     // Clear in case the text was identical and no docChanged fired to consume the flag.
     this.suppressChange = false;
   }
@@ -1304,18 +1343,69 @@ export class MarkdownEditor {
 
   /** Render session comments as block widgets after their source anchor line. Widgets are visual-only:
    * the Markdown document is never changed. */
-  setComments(comments: readonly SelectionComment[]): void {
-    this.comments = comments;
+  setComments(
+    comments: SelectionCommentView | readonly SelectionComment[],
+    actions: CommentThreadActions = NO_COMMENT_ACTIONS,
+  ): void {
+    const view = Array.isArray(comments)
+      ? {
+          comments: comments as readonly SelectionComment[],
+          draft: null,
+          principalId: "signed-out",
+          commentsAvailable: true,
+          persistence: "saved" as const,
+        }
+      : (comments as SelectionCommentView);
+    this.commentView = view;
+    this.commentActions = actions;
+    this.selectionToolbar.setCommentAvailable(view.commentsAvailable);
     const ranges: Range<Decoration>[] = [];
-    for (const comment of comments) {
-      const line = Math.min(Math.max(comment.anchorLine + 1, 1), this.view.state.doc.lines);
+    for (const [index, comment] of view.comments.entries()) {
+      const position =
+        comment.anchorState === "detached"
+          ? this.view.state.doc.length
+          : this.view.state.doc.line(
+              Math.min(Math.max(comment.anchorLine + 1, 1), this.view.state.doc.lines),
+            ).to;
+      const draft = view.draft?.commentId === comment.id ? view.draft : undefined;
       ranges.push(
-        Decoration.widget({ widget: new CommentWidget(comment), block: true, side: 1 }).range(
-          this.view.state.doc.line(line).to,
-        ),
+        Decoration.widget({
+          widget: new CommentWidget(comment, draft, actions, view, false),
+          block: true,
+          side: index + 1,
+        }).range(position),
+      );
+    }
+    if (view.draft?.mode === "create") {
+      const line = Math.min(Math.max(view.draft.anchorLine + 1, 1), this.view.state.doc.lines);
+      ranges.push(
+        Decoration.widget({
+          widget: new CommentWidget(undefined, view.draft, actions, view, false),
+          block: true,
+          side: view.comments.length + 1,
+        }).range(this.view.state.doc.line(line).to),
+      );
+    }
+    if (view.persistence === "error") {
+      ranges.push(
+        Decoration.widget({
+          widget: new CommentWidget(undefined, undefined, actions, view, true),
+          block: true,
+          side: view.comments.length + 100,
+        }).range(this.view.state.doc.length),
       );
     }
     this.view.dispatch({ effects: setCommentsEffect.of(Decoration.set(ranges, true)) });
+  }
+
+  updateCommentDraft(body: string): void {
+    for (const textarea of this.view.dom.parentElement?.querySelectorAll<HTMLTextAreaElement>(
+      ".selection-comment-compose--inline textarea",
+    ) ?? []) {
+      if (textarea.value === body) continue;
+      textarea.value = body;
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    }
   }
 
   /** Faintly highlight the source line under the mouse (null clears it). */

@@ -114,7 +114,8 @@ public static class MessageKinds
 public sealed record WindowStatePayload(bool Maximized);
 
 /// <summary>Payload of <c>window.close</c>: zero starts a close handshake; a positive id acknowledges the
-/// matching native request after both editor panes have flushed.</summary>
+/// matching native request after all webview persistence has flushed; the corresponding negative id cancels
+/// a request that could not be flushed without data loss.</summary>
 public sealed record WindowClosePayload(long RequestId = 0);
 
 /// <summary>Native request for the webview to flush both editors before acknowledging a close.</summary>

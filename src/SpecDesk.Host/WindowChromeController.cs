@@ -94,10 +94,29 @@ internal sealed class WindowCloseCoordinator(
 	}
 
 	/// <summary>A zero id is an in-content close intent; a positive id is the webview acknowledgement after
-	/// both editor debounces have flushed.</summary>
+	/// all persistence has flushed; the corresponding negative id cancels a request that could not be flushed.</summary>
 	public void HandleWebClose(long requestId)
 	{
-		if (requestId <= 0)
+		if (requestId < 0)
+		{
+			long cancelledRequestId = -requestId;
+			bool cancelled = false;
+			lock (_sync)
+			{
+				if (_pendingRequestId == cancelledRequestId && !_programmaticClose && !_persisting)
+				{
+					_pendingRequestId = null;
+					cancelled = true;
+				}
+			}
+			if (cancelled)
+			{
+				completeHandshake(cancelledRequestId, false);
+			}
+			return;
+		}
+
+		if (requestId == 0)
 		{
 			long? started;
 			lock (_sync)

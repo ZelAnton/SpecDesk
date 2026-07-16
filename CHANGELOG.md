@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empty favorite stars now appear only while their entity is hovered or keyboard-focused in every list, while existing favorites remain visible.
 - Split temporarily keeps Code at its natural height without inserting alignment spacers.
 - Selected-text formatting now uses a stationary, descriptive toolbar in both Code and Formatted views.
+- Inline comment creation, editing, and replies now stay at the selected document anchor, grow downward with their Markdown content, and remain isolated to the connected account.
+- Local comment persistence now writes bounded per-document anchor fingerprints outside the typing path, waits for pending saves before reloading the same document, labels ambiguous or deleted anchors as detached, keeps every failed snapshot visible across navigation, prevents stale retries from replacing newer work, and locks mutations after a failed load until recovery.
+- Window close now waits for pending comment creation, edits, replies, and deletion across signed-in sessions, and keeps SpecDesk open with Retry if any comment snapshot cannot be saved safely.
 - Repository, local-copy, and working-line rows now keep compact actions inline, reveal secondary actions on hover or keyboard focus, and offer the same valid operations from an accessible context menu.
 - The repository copy form is always visible, fills the local name from the repository name, and enables Clone only after the exact current repository is resolved successfully.
 - Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
@@ -27,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The title-bar search, account control, and Windows-standard caption buttons now retain their intended slots at restored, narrow, and maximized window sizes.
 - Context panels now appear immediately from document identity, enrich safely when workspace details arrive, and never show a misleading `File No document` placeholder.
+- Opening another document now clears the previous document's inline comments before the new comment snapshot begins loading.
 - Disk deletion now rejects case-only directory siblings on case-sensitive Windows filesystems while accepting normal casing differences in drive letters and UNC server/share names.
 - Deleting a case-only sibling in Disk no longer closes the active document or removes its distinct recent and favorite entries.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
@@ -62,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Individual files can now be deleted from Disk with handle-bound, root-contained native validation, exact recent/favorite cleanup, and automatic closing when the deleted file is open.
-- Selected text can carry local inline comments in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
+- Selected text can carry persistent local comment threads with replies, editing, and confirmed deletion in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
 - Local copies can create a new working line, and local copies and non-main working lines can be renamed while favorites and the active context follow the new identity.
 - The status bar now identifies the active local copy, working line, and filename without repeating the full path.
 - The account avatar now shows the connected GitHub profile image with a neutral signed-out fallback and carries the notification-count badge.

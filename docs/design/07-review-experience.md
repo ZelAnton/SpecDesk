@@ -52,14 +52,23 @@ A comment's `[LineStart, LineEnd]` resolves through `lineMap` to a rendered node
 marker sits beside that node in the preview (and a gutter marker in the source pane). Clicking
 opens the thread.
 
-The current editor increment implements this as a clone-, branch-, and document-keyed in-session local
-store shared by Code and Formatted views. Exact source offsets are mapped through an ordered line/intraline
-multi-range diff after an edit; the
-selected quote remains presentation metadata rather than an ambiguous text-search anchor. Comment cards
-are block widgets after the last selected line or list item, so they push following content down; a
-selection inside a table anchors after the whole table rather than inside a row or cell. The cards
-are labelled **local, not on GitHub** and do not change the Markdown. Durable host storage, identities,
-threads, and the GitHub projection below remain the next persistence stage.
+The current editor increment implements this as an account-, clone-, branch-, and document-keyed
+browser-local store shared by Code and Formatted views. Storage keys are opaque hashes; each document is
+written independently outside the typing path, and only bounded quote/context fingerprints accompany the
+thread — never the full specification or its absolute identity. A reload resolves those fingerprints
+deterministically, while live edits still use the ordered line/intraline multi-range mapper. Failed snapshots
+remain queued per account and document, stay visible across document navigation, and can be retried together
+without exposing another account's pending work. Per-document revisions are checked again immediately before
+storage writes so a delayed retry cannot replace a newer snapshot. A failed load locks comment mutations and
+keeps the unknown stored snapshot untouched until Retry succeeds. The native close handshake waits for the
+comment persistence tail across accounts; a failed or stale flush cancels that correlated close request and
+keeps the window open with Retry. Creation, edit, and reply forms occupy the same block-widget anchor as the
+resulting thread, grow with their Markdown content, and carry drafts between modes. A card after the last
+selected line or list item pushes following content down; a selection inside a table anchors after the
+whole table rather than inside a row or cell. Roots and replies retain their author principal, only their
+owner receives edit/delete actions, and account transitions retire stale loads before projecting another
+account's threads. None of these operations changes the Markdown. Native multi-device storage and the
+GitHub projection below remain the next persistence stage.
 
 ### GitHub sync
 
@@ -79,7 +88,9 @@ GitHub PR review comments anchor to `(path, commit_id, line, side)` within the *
 
 When the head commit changes (author pushed an update), re-anchor comments: GitHub moves
 comments it can and marks others outdated; the app mirrors that, re-resolving local anchors
-through the new `lineMap` and flagging any it cannot place.
+through one shared document index. Exact bounded fingerprints are preferred; a uniquely matched pair of
+before/after contexts may recover an edited selection. Deleted or ambiguous ranges are never placed at their
+old absolute offset: the thread remains available in an explicit detached state until a later edit resolves it.
 
 ---
 

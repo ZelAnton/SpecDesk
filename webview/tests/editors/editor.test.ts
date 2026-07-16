@@ -16,7 +16,7 @@ function mount(
   onDebug?: (summary: () => string, perFrame?: boolean) => void,
   onEditAttempt?: () => void,
   onChange: (text: string, version: number) => void = () => {},
-  onAddComment?: (selection: SourceSelection, body: string) => void,
+  onAddComment?: (selection: SourceSelection) => void,
 ): { ed: MarkdownEditor; host: HTMLDivElement } {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -703,6 +703,24 @@ describe("MarkdownEditor selected-text formatting palette", () => {
     );
   });
 
+  it("disables Code comment creation and explains a failed comment load", () => {
+    const { ed, host } = mount();
+    ed.setText("selected");
+    ed.setComments({
+      comments: [],
+      draft: null,
+      principalId: "signed-out",
+      commentsAvailable: false,
+      persistence: "error",
+      persistenceMessage: "Comments are unavailable until their saved snapshot loads.",
+    });
+
+    const comment = host.querySelector<HTMLButtonElement>(".selection-comment-open");
+    expect(comment?.disabled).toBe(true);
+    expect(comment?.getAttribute("aria-label")).toContain("unavailable until");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("unavailable until");
+  });
+
   it("opens for a keyboard selection and Escape returns focus to Code", () => {
     const { ed, host } = mount();
     ed.setText("keyboard selection");
@@ -737,14 +755,12 @@ describe("MarkdownEditor selected-text formatting palette", () => {
   });
 
   it("anchors a first-list-item comment on that item rather than after the whole list", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const drafts: SourceSelection[] = [];
     const { ed, host } = mount(
       undefined,
       undefined,
       () => {},
-      (selection, body) => {
-        drafts.push({ selection, body });
-      },
+      (selection) => drafts.push(selection),
     );
     const markdown = "- first selected item\n- second item\n- third item\n";
     ed.setText(markdown);
@@ -754,22 +770,17 @@ describe("MarkdownEditor selected-text formatting palette", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "First item only";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
 
-    expect(drafts[0]?.selection).toMatchObject({ anchorLine: 0, quote: "first selected item" });
+    expect(drafts[0]).toMatchObject({ anchorLine: 0, quote: "first selected item" });
   });
 
-  it("cancels an open comment composer when another document is loaded", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+  it("removes the detached toolbar after handing an anchored draft to the document", () => {
+    const drafts: SourceSelection[] = [];
     const { ed, host } = mount(
       undefined,
       undefined,
       () => {},
-      (selection, body) => {
-        drafts.push({ selection, body });
-      },
+      (selection) => drafts.push(selection),
     );
     ed.setText("old document");
     const view = viewOf(ed);
@@ -778,24 +789,18 @@ describe("MarkdownEditor selected-text formatting palette", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "belongs to old document";
-
-    ed.setText("new document", true, false);
     expect(host.querySelector<HTMLElement>(".selection-format-popover--code")?.hidden).toBe(true);
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
-    expect(drafts).toHaveLength(0);
+    expect(host.querySelector(".selection-format-popover .selection-comment-compose")).toBeNull();
+    expect(drafts).toHaveLength(1);
   });
 
   it("adds a table-safe visual comment without mutating Markdown", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
+    const drafts: SourceSelection[] = [];
     const { ed, host } = mount(
       undefined,
       undefined,
       () => {},
-      (selection, body) => {
-        drafts.push({ selection, body });
-      },
+      (selection) => drafts.push(selection),
     );
     const markdown = "| A | B |\n| - | - |\n| one | two |\n\nAfter\n";
     ed.setText(markdown);
@@ -805,21 +810,19 @@ describe("MarkdownEditor selected-text formatting palette", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.scrollDOM.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "Clarify this table";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
 
     const draft = drafts[0];
     expect(draft).toBeDefined();
     if (draft === undefined) throw new Error("Expected a comment draft");
-    expect(draft.selection.anchorLine).toBe(2);
-    expect(draft.body).toBe("Clarify this table");
+    expect(draft.anchorLine).toBe(2);
     ed.setComments([
       {
-        ...draft.selection,
+        ...draft,
         id: "c1",
         body: "Clarify this table",
         createdAt: "2026-07-16T00:00:00.000Z",
+        author: { principalId: "signed-out", displayName: "Local author" },
+        replies: [],
       },
     ]);
     expect(host.querySelector(".selection-comment-block--code")?.textContent).toContain(

@@ -14,11 +14,17 @@ In Split view, the line or formatted block under the pointer is mirrored into bo
 highlight; the caret remains a separate blue highlight.
 The right panel also exposes the selected document's saved versions, comments, and history.
 Selecting text in either Code or Formatted view offers the same stationary formatting toolbar and a local
-comment action. Local comments render after the last selected line or list item (after the complete table
-for table text),
-remain attached while navigating between documents in the current session, and are clearly identified as
-not yet posted to GitHub; they never alter the Markdown file.
-Pending input is saved before switching specifications or closing the window; if a close-time write fails, SpecDesk stays open and explains the problem. Discard temporarily locks both editing views while returning to the published version. A safely restored draft becomes editable again with autosave resumed; if its working line cannot be verified after a failure, SpecDesk closes the document instead of risking a write to the published version.
+comment action. The comment form opens at the exact inline anchor, grows with its Markdown text, and keeps
+tables intact by sitting after the complete table. Local threads persist per repository copy, working line,
+and document without storing the specification in browser storage. Threads retain their GitHub author;
+replies and owned comments can be edited or deleted with explicit confirmation, and switching
+between Code and Formatted keeps the same draft and thread without altering the Markdown file. If edited
+text can no longer be resolved uniquely from its bounded surrounding context, the thread is shown explicitly
+as detached instead of being attached to an unrelated line. Failed local comment snapshots remain visible
+while moving between documents, and Retry drains every pending snapshot for the connected account without
+letting an older retry overwrite newer work. If saved comments cannot be loaded, comment changes remain
+locked until Retry restores the known snapshot.
+Pending document input and local comment mutations are saved before switching specifications or closing the window. If any account's comment snapshot or the document write cannot be made durable, SpecDesk stays open with Retry instead of acknowledging the native close. Discard temporarily locks both editing views while returning to the published version. A safely restored draft becomes editable again with autosave resumed; if its working line cannot be verified after a failure, SpecDesk closes the document instead of risking a write to the published version.
 Starting Edit keeps the exact specification locked until its editable working line is ready and reloaded. Concurrent navigation, repository updates, or window close wait or are rejected; if the working line changes but the reload fails, SpecDesk closes the document instead of exposing stale text. Reopening the current working line preserves its unfinished files, and any working-line change or discard stops before overwriting an untracked or ignored local file.
 Assistant is the first mode on that panel's toolbar so chat stays in a consistent position.
 Its mode icons follow what is active: review comments require a review, history a repository branch,

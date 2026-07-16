@@ -323,6 +323,15 @@ button {
   background: var(--surface-hover);
 }
 
+.selection-format-popover--code button:disabled,
+.selection-format-popover--formatted button:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .selection-format-commands {
   display: flex;
   gap: 2px;
@@ -363,7 +372,9 @@ button {
 .selection-comment-compose textarea {
   box-sizing: border-box;
   width: 100%;
-  resize: vertical;
+  min-height: 40px;
+  resize: none;
+  overflow-y: hidden;
   padding: 7px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
@@ -396,20 +407,112 @@ button {
   white-space: normal;
 }
 
-.selection-comment-block strong::after {
-  content: " · local, not on GitHub";
-  color: var(--text-muted);
-  font-weight: 400;
-}
-
 .selection-comment-block p {
   margin: 4px 0 0;
   white-space: pre-wrap;
 }
 
+.selection-comment-block .selection-comment-detached {
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--accent-soft-border);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  color: var(--text-muted);
+}
+
 .selection-comment-block--formatted {
   width: 100%;
   margin: 10px 0;
+}
+
+.selection-comment-message,
+.selection-comment-reply {
+  display: grid;
+  gap: 4px;
+}
+
+.selection-comment-meta,
+.selection-comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.selection-comment-meta time {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.selection-comment-actions-wrap {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+
+.selection-comment-actions button {
+  min-height: 1.65rem;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.selection-comment-actions button:hover,
+.selection-comment-actions button:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.selection-comment-replies {
+  display: grid;
+  gap: 8px;
+  margin: 9px 0 0 18px;
+  padding: 9px 0 0 12px;
+  border-top: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  list-style: none;
+}
+
+.selection-comment-compose--inline {
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+
+.selection-comment-compose--inline label {
+  font-weight: 600;
+}
+
+.selection-comment-persistence-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--r-sm);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+}
+
+.selection-comment-persistence-error p {
+  margin: 0;
+}
+
+.selection-comment-persistence-error button {
+  min-height: 1.75rem;
+  border: 1px solid var(--danger-fg);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
 }
 
 .markdown-compose {

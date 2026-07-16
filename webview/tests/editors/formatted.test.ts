@@ -43,7 +43,7 @@ const x = 1;
 Trailing paragraph.
 `;
 
-function mountWithHost(onAddComment?: (selection: SourceSelection, body: string) => void): {
+function mountWithHost(onAddComment?: (selection: SourceSelection) => void): {
   ed: FormattedEditor;
   host: HTMLDivElement;
 } {
@@ -86,10 +86,8 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
   });
 
   it("creates a local selection comment and places a table comment after the table", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
-    const { ed, host } = mountWithHost((selection, body) => {
-      drafts.push({ selection, body });
-    });
+    const drafts: SourceSelection[] = [];
+    const { ed, host } = mountWithHost((selection) => drafts.push(selection));
     const markdown = "| A | B |\n| - | - |\n| one | two |\n\nAfter\n";
     ed.setText(markdown);
     const view = viewOf(ed);
@@ -101,19 +99,16 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "Check these values";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
     const draft = drafts[0];
     expect(draft).toBeDefined();
     if (draft === undefined) throw new Error("Expected a comment draft");
-    expect(draft.selection.anchorLine).toBe(2);
-    expect(draft.selection.quote).toContain("A | B |");
-    expect(draft.selection.quote).toContain("| one | two");
+    expect(draft.anchorLine).toBe(2);
+    expect(draft.quote).toContain("A | B |");
+    expect(draft.quote).toContain("| one | two");
 
     const session = new SelectionCommentSession();
     session.setDocument("table.md", markdown);
-    session.add(draft.selection, "Check these values");
+    session.add(draft, "Check these values");
     session.reanchor(`Intro\n\n${markdown}`);
     const mapped = session.all()[0];
     expect(mapped).toMatchObject({ fromLine: 2, anchorLine: 4 });
@@ -126,6 +121,7 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
         id: "f1",
         body: "Check these values",
         createdAt: "2026-07-16T00:00:00.000Z",
+        replies: [],
       },
     ]);
     const tableElement = host.querySelector("table");
@@ -138,9 +134,67 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
     expect(ed.getText()).toBe(`Intro\n\n${markdown}`);
   });
 
+  it("rebuilds a WYSIWYG thread when ownership or persistence state changes", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("selected\n");
+    const comment = {
+      fromLine: 0,
+      toLine: 0,
+      anchorLine: 0,
+      anchorKind: "line" as const,
+      fromOffset: 0,
+      toOffset: 8,
+      anchorOffset: 8,
+      quote: "selected",
+      id: "comment-owner",
+      body: "Owned note",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      author: { principalId: "github:alice", displayName: "alice" },
+      replies: [],
+    };
+    ed.setComments({
+      comments: [comment],
+      draft: null,
+      principalId: "github:alice",
+      commentsAvailable: true,
+      persistence: "saved",
+    });
+    expect(host.querySelector(".selection-comment-message")?.textContent).toContain("Edit");
+
+    ed.setComments({
+      comments: [comment],
+      draft: null,
+      principalId: "github:bob",
+      commentsAvailable: true,
+      persistence: "error",
+      persistenceMessage: "Storage is unavailable.",
+    });
+
+    expect(host.querySelector(".selection-comment-message")?.textContent).not.toContain("Edit");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Storage is unavailable.");
+  });
+
+  it("disables Formatted comment creation and explains a failed comment load", () => {
+    const { ed, host } = mountWithHost();
+    ed.setText("selected\n");
+    ed.setComments({
+      comments: [],
+      draft: null,
+      principalId: "signed-out",
+      commentsAvailable: false,
+      persistence: "error",
+      persistenceMessage: "Comments are unavailable until their saved snapshot loads.",
+    });
+
+    const comment = host.querySelector<HTMLButtonElement>(".selection-comment-open");
+    expect(comment?.disabled).toBe(true);
+    expect(comment?.getAttribute("aria-label")).toContain("unavailable until");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("unavailable until");
+  });
+
   it("keeps a partial paragraph selection exact in the local comment metadata", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
-    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    const drafts: SourceSelection[] = [];
+    const { ed, host } = mountWithHost((selection) => drafts.push(selection));
     ed.setText("hello world\n");
     const view = viewOf(ed);
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 6)));
@@ -148,11 +202,8 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "Only hello";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
 
-    expect(drafts[0]?.selection).toMatchObject({
+    expect(drafts[0]).toMatchObject({
       fromOffset: 0,
       toOffset: 5,
       anchorLine: 0,
@@ -161,8 +212,8 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
   });
 
   it("keeps an endpoint at a paragraph boundary associated with the paragraph on its left", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
-    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    const drafts: SourceSelection[] = [];
+    const { ed, host } = mountWithHost((selection) => drafts.push(selection));
     ed.setText("first paragraph\n\nsecond paragraph\n");
     const view = viewOf(ed);
     const secondBlockStart = view.state.doc.child(0).nodeSize;
@@ -173,11 +224,8 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "First paragraph only";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
 
-    expect(drafts[0]?.selection).toMatchObject({
+    expect(drafts[0]).toMatchObject({
       toLine: 0,
       anchorLine: 0,
       quote: "first paragraph",
@@ -185,8 +233,8 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
   });
 
   it("places a first-list-item comment inside that item without widening to the whole list", () => {
-    const drafts: Array<{ selection: SourceSelection; body: string }> = [];
-    const { ed, host } = mountWithHost((selection, body) => drafts.push({ selection, body }));
+    const drafts: SourceSelection[] = [];
+    const { ed, host } = mountWithHost((selection) => drafts.push(selection));
     const markdown = "- first selected item\n- second item\n- third item\n";
     ed.setText(markdown);
     const view = viewOf(ed);
@@ -204,19 +252,18 @@ describe("FormattedEditor selected-text toolbar and comments", () => {
     vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 40, right: 41, top: 50, bottom: 66 });
     view.dom.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
     host.querySelector<HTMLButtonElement>(".selection-comment-open")?.click();
-    const textarea = host.querySelector<HTMLTextAreaElement>(".selection-comment-compose textarea");
-    if (textarea) textarea.value = "First item only";
-    host.querySelector<HTMLButtonElement>(".selection-comment-compose button")?.click();
     const draft = drafts[0];
     if (draft === undefined) throw new Error("Expected list comment draft");
-    expect(draft.selection).toMatchObject({ anchorLine: 0, quote: "first selected item" });
+    expect(draft).toMatchObject({ anchorLine: 0, quote: "first selected item" });
 
     ed.setComments([
       {
-        ...draft.selection,
+        ...draft,
         id: "list-1",
-        body: draft.body,
+        body: "First item only",
         createdAt: "2026-07-16T00:00:00.000Z",
+        author: { principalId: "signed-out", displayName: "Local author" },
+        replies: [],
       },
     ]);
     const items = host.querySelectorAll("li");

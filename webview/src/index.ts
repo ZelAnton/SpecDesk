@@ -205,10 +205,26 @@ export function runDiscardTransition(
  * their original edit order before asking the host to synchronously save the resulting local draft. */
 export function runWindowClose(
   targets: readonly PendingChangeTarget[],
+  flushComments: () => Promise<boolean>,
   sendClose: () => void,
-): void {
-  flushPendingChangesInOrder(targets);
-  sendClose();
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  return (async () => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      flushPendingChangesInOrder(targets);
+      const timedOut = new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      });
+      const succeeded = await Promise.race([flushComments(), timedOut]);
+      if (succeeded) sendClose();
+      return succeeded;
+    } catch {
+      return false;
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+  })();
 }
 
 /** A native `doc.loaded` starts a new document identity. Cancel, rather than flush, any timer that survived
@@ -516,6 +532,8 @@ function wire(): void {
   let activityPanels: DocumentActivityPanel[] = [];
   let invalidateActivityRequests = (): void => {};
   let githubAccountIdentity: string | null = null;
+  let applySelectionCommentPrincipal = (_login: string | null, _boundaryId?: string): void => {};
+  let selectionComments: SelectionCommentSession;
   // The Start screen handle, assigned in wireWorkspace; index.ts feeds its recent-item shortcuts.
   // Undefined before the workspace wires (or in reduced-DOM tests).
   let home: HomeView | undefined;
@@ -669,18 +687,53 @@ function wire(): void {
       docVersion += 1;
       ipc.send(Kinds.editorChanged, { text }, { version: docVersion });
     };
-    const selectionComments = new SelectionCommentSession();
+    selectionComments = new SelectionCommentSession();
+    type CommentSurface = "code" | "formatted";
+    const commentActionsFor = (surface: CommentSurface) => ({
+      submit: (body: string): void => {
+        if (selectionComments.submitDraft(body)) renderSelectionComments();
+      },
+      changeDraft: (body: string): void => {
+        if (!selectionComments.updateDraft(body)) return;
+        editor.updateCommentDraft(body);
+        formatted.updateCommentDraft(body);
+      },
+      cancel: (): void => {
+        selectionComments.cancelDraft();
+        renderSelectionComments();
+      },
+      edit: (commentId: string, replyId?: string): void => {
+        if (selectionComments.beginEdit(commentId, replyId, surface)) renderSelectionComments();
+      },
+      reply: (commentId: string): void => {
+        if (selectionComments.beginReply(commentId, surface)) renderSelectionComments();
+      },
+      delete: (commentId: string, replyId?: string): void => {
+        if (selectionComments.delete(commentId, replyId)) renderSelectionComments();
+      },
+      retry: (): void => {
+        void selectionComments.retryPersistence();
+      },
+    });
+    const codeCommentActions = commentActionsFor("code");
+    const formattedCommentActions = commentActionsFor("formatted");
     const renderSelectionComments = (): void => {
-      const comments = selectionComments.all();
-      editor.setComments(comments);
-      formatted.setComments(comments);
+      const view = selectionComments.view();
+      editor.setComments(view, codeCommentActions);
+      formatted.setComments(view, formattedCommentActions);
       reconcileHeights();
     };
-    const addSelectionComment = (
-      selection: Parameters<SelectionCommentSession["add"]>[0],
-      body: string,
+    selectionComments.setNotifier(renderSelectionComments);
+    applySelectionCommentPrincipal = (login, boundaryId) => {
+      void selectionComments.setPrincipal(login, boundaryId);
+      renderSelectionComments();
+    };
+    const beginSelectionComment = (
+      surface: CommentSurface,
+      selection: Parameters<SelectionCommentSession["begin"]>[0],
     ): void => {
-      if (selectionComments.add(selection, body) !== null) renderSelectionComments();
+      selectionComments.begin(selection, surface);
+      renderSelectionComments();
     };
 
     // Cross-pane highlight sync: a single active source line (the caret line) and a single hovered
@@ -830,7 +883,7 @@ function wire(): void {
       },
       // A web link Ctrl/Cmd-clicked in the source opens in the OS browser (the host re-validates it).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
-      onAddComment: addSelectionComment,
+      onAddComment: (selection) => beginSelectionComment("code", selection),
     });
 
     // The formatted (WYSIWYG) editor — a sibling view of the same Markdown. Edits serialize back via
@@ -862,7 +915,7 @@ function wire(): void {
       onActiveChange: () => formatToolbar.refresh(),
       // A web link clicked in the WYSIWYG view opens in the OS browser (the host re-validates the scheme).
       onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
-      onAddComment: addSelectionComment,
+      onAddComment: (selection) => beginSelectionComment("formatted", selection),
     });
 
     // The source editor is padded to match the formatted view's block heights (formatted is the fixed
@@ -1059,7 +1112,7 @@ function wire(): void {
         // on docs/spec.md in one working line from being projected into another working line's content.
         // Remote paths already encode repository/branch, but keeping the explicit fields makes the key
         // robust if that wire representation changes later.
-        selectionComments.setDocument(
+        void selectionComments.setDocument(
           selectionDocumentKey(payload.path, payload.repository, payload.branch),
           text,
         );
@@ -1366,8 +1419,13 @@ function wire(): void {
       const payload = parseGitHubAccount(message.payload);
       if (payload) {
         const nextIdentity = payload.available && payload.signedIn ? (payload.login ?? "") : null;
-        if (nextIdentity !== githubAccountIdentity) {
-          githubAccountIdentity = nextIdentity;
+        const nextBoundary =
+          nextIdentity === ""
+            ? `pending:${payload.publicationId ?? "current-session"}`
+            : nextIdentity;
+        if (nextBoundary !== githubAccountIdentity) {
+          githubAccountIdentity = nextBoundary;
+          applySelectionCommentPrincipal(nextIdentity, payload.publicationId);
           reviewsPanel.clearAccountState();
           activityStream.clear();
           fileTree?.clearAccountState();
@@ -1442,10 +1500,16 @@ function wire(): void {
       if (payload === null || windowCloseRequestId !== null) {
         return;
       }
-      runWindowClose([editor, formatted], () => {
-        windowCloseRequestId = payload.requestId;
-        applyPaneEditable();
-        ipc.send(Kinds.windowClose, { requestId: payload.requestId });
+      windowCloseRequestId = payload.requestId;
+      applyPaneEditable();
+      void runWindowClose(
+        [editor, formatted],
+        () => selectionComments.flushForClose(),
+        () => ipc.send(Kinds.windowClose, { requestId: payload.requestId }),
+      ).then((succeeded) => {
+        if (!succeeded && windowCloseRequestId === payload.requestId) {
+          ipc.send(Kinds.windowClose, { requestId: -payload.requestId });
+        }
       });
     });
 
@@ -1454,6 +1518,7 @@ function wire(): void {
       if (payload === null || payload.requestId !== windowCloseRequestId) {
         return;
       }
+      if (!payload.succeeded) selectionComments.releaseClosePersistence();
       windowCloseRequestId = null;
       applyPaneEditable();
       if (formatBar) {
@@ -1522,7 +1587,6 @@ function wire(): void {
       if (nextVis.preview && !prevVis.preview) {
         formatted.setText(text);
       }
-
       mode = next;
       if (panesEl) {
         panesEl.dataset.mode = next;

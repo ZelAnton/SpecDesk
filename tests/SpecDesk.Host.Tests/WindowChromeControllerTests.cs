@@ -136,6 +136,65 @@ public sealed class WindowChromeControllerTests
 	}
 
 	[Test]
+	public void WebviewFlushCancellationKeepsWindowOpenAndAllowsAFreshCorrelatedAttempt()
+	{
+		List<long> requestedFlushes = [];
+		List<(long RequestId, bool Succeeded)> completions = [];
+		int persistCalls = 0;
+		int closeCalls = 0;
+		WindowCloseCoordinator coordinator = new(
+			requestId => requestedFlushes.Add(requestId),
+			() =>
+			{
+				persistCalls++;
+				return true;
+			},
+			(requestId, succeeded) => completions.Add((requestId, succeeded)),
+			() => closeCalls++);
+		coordinator.MarkWebviewReady();
+
+		Assert.That(coordinator.HandleNativeClosing(), Is.True);
+		long cancelledRequestId = requestedFlushes.Single();
+		coordinator.HandleWebClose(-cancelledRequestId);
+		Assert.That(coordinator.HandleNativeClosing(), Is.True);
+		long retryRequestId = requestedFlushes.Last();
+		coordinator.HandleWebClose(retryRequestId);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(completions, Is.EqualTo(new[] { (cancelledRequestId, false) }));
+			Assert.That(persistCalls, Is.EqualTo(1));
+			Assert.That(closeCalls, Is.EqualTo(1));
+			Assert.That(retryRequestId, Is.GreaterThan(cancelledRequestId));
+		});
+	}
+
+	[Test]
+	public void StaleWebviewFlushCancellationCannotReleaseAnotherCloseRequest()
+	{
+		List<long> requestedFlushes = [];
+		int closeCalls = 0;
+		WindowCloseCoordinator coordinator = new(
+			requestId => requestedFlushes.Add(requestId),
+			() => true,
+			(_, _) => { },
+			() => closeCalls++);
+		coordinator.MarkWebviewReady();
+		Assert.That(coordinator.HandleNativeClosing(), Is.True);
+		long requestId = requestedFlushes.Single();
+
+		coordinator.HandleWebClose(-(requestId + 1));
+		Assert.That(coordinator.HandleNativeClosing(), Is.True);
+		coordinator.HandleWebClose(requestId);
+
+		Assert.Multiple(() =>
+		{
+			Assert.That(requestedFlushes, Has.Count.EqualTo(1));
+			Assert.That(closeCalls, Is.EqualTo(1));
+		});
+	}
+
+	[Test]
 	public void StaleFlushAcknowledgementCannotCloseWindow()
 	{
 		List<long> requestedFlushes = [];

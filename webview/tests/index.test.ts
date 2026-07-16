@@ -479,11 +479,69 @@ describe("index.ts: Split cross-pane mirror debounce race (jsdom)", () => {
     vi.advanceTimersByTime(10);
     source.setText("newest\n");
 
-    runWindowClose([source, formatted], () => reports.push("window.close"));
+    await runWindowClose(
+      [source, formatted],
+      async () => true,
+      () => reports.push("window.close"),
+    );
 
     expect(reports).toEqual(["formatted:older shared\n", "code:newest\n", "window.close"]);
     vi.advanceTimersByTime(200);
     expect(reports.at(-1)).toBe("window.close");
+  });
+
+  it("waits for comment durability and refuses the close ACK when that boundary fails", async () => {
+    const { runWindowClose } = await import("../src/index.js");
+    const reports: string[] = [];
+    let release: ((succeeded: boolean) => void) | undefined;
+    const comments = new Promise<boolean>((resolve) => {
+      release = resolve;
+    });
+    const target = {
+      pendingChangeOrder: () => 1,
+      flushPendingChange: () => {
+        reports.push("editor.flush");
+        return true;
+      },
+    };
+
+    const closing = runWindowClose(
+      [target],
+      () => comments,
+      () => reports.push("window.close"),
+    );
+    expect(reports).toEqual(["editor.flush"]);
+    release?.(false);
+    expect(await closing).toBe(false);
+    expect(reports).toEqual(["editor.flush"]);
+
+    expect(
+      await runWindowClose(
+        [target],
+        async () => true,
+        () => reports.push("window.close"),
+      ),
+    ).toBe(true);
+    expect(reports.at(-1)).toBe("window.close");
+  });
+
+  it("times out an unresponsive comment flush without sending the close ACK", async () => {
+    const { runWindowClose } = await import("../src/index.js");
+    const reports: string[] = [];
+    const target = {
+      pendingChangeOrder: () => null,
+      flushPendingChange: () => false,
+    };
+
+    const closing = runWindowClose(
+      [target],
+      () => new Promise<boolean>(() => undefined),
+      () => reports.push("window.close"),
+      5,
+    );
+    await vi.advanceTimersByTimeAsync(5);
+    expect(await closing).toBe(false);
+    expect(reports).toHaveLength(0);
   });
 
   const modeSwitches = [
