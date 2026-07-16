@@ -420,9 +420,22 @@ public sealed partial class HostController
 		if (persistenceMessage is null)
 		{
 			SendCurrentAccount();
+			return;
 		}
-		else
+		// Gate the "cancelled, but couldn't persist" fallback behind the same flow-replacement check
+		// SendCurrentAccount applies: once a newer sign-in flow has become current (it set _signInCts after
+		// this cancel retired it), this stale signed-out frame must not reach the webview and close the
+		// newer flow's device-code prompt. Holding _signInPublishSync across the check and the emit keeps a
+		// newer OnGitHubSignIn/PublishPromptIfCurrent from slipping in between them.
+		lock (_signInPublishSync)
 		{
+			lock (_sync)
+			{
+				if (_signInCts is not null)
+				{
+					return;
+				}
+			}
 			InvalidateAccountDetails();
 			SendAccount(signedIn: false, login: null, persistenceMessage);
 		}

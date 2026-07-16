@@ -11,6 +11,7 @@ public sealed class HostControllerGitHubTests
 {
 	private static readonly string[] AuthorizedOrganizations = ["acme", "octo-labs"];
 	private static readonly string[] AccessibleRepositoryNames = ["acme/specs", "octocat/notes"];
+	private static readonly string[] SurvivingDeviceCodes = ["CODE-1", "CODE-2"];
 
     private sealed class NoDialogs(string? openFolder = null) : IFileDialogs
     {
@@ -313,6 +314,58 @@ public sealed class HostControllerGitHubTests
 
         public void SignOut()
         {
+        }
+    }
+
+    // A fake whose SignOut() parks (so a test can freeze OnGitHubSignInCancel inside its persistence step),
+    // then throws to drive the "cancelled, but couldn't persist" fallback. Every flow's authorization blocks
+    // until cancelled, so each flow's device-code prompt stays the live UI and no terminal frame races in on
+    // its own. This lets a test start flow 1, park its cancel mid-persistence, let flow 2 become current, and
+    // only then fail the persistence — proving the stale fallback cannot close flow 2's code prompt.
+    private sealed class CancelPersistenceRaceGitHubAuth : IGitHubAuth
+    {
+        private int _startCount;
+
+        public TaskCompletionSource SignOutEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseSignOut { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<DeviceCodePrompt> StartSignInAsync(CancellationToken cancellationToken = default)
+        {
+            int index = Interlocked.Increment(ref _startCount);
+            return Task.FromResult(new DeviceCodePrompt(
+                $"CODE-{index}", new Uri("https://github.com/login/device"),
+                TimeSpan.FromMinutes(15), TimeSpan.FromSeconds(5), $"device-code-{index}"));
+        }
+
+        public async Task<SignInResult> AwaitAuthorizationAsync(
+            DeviceCodePrompt prompt, CancellationToken cancellationToken = default)
+        {
+            // Every flow waits for its own cancellation; folding it into TimedOut mirrors the real library.
+            try
+            {
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return SignInResult.TimedOut();
+            }
+            return SignInResult.TimedOut();
+        }
+
+        public bool IsSignedIn() => false;
+        public string? SignedInLogin() => null;
+
+        public Task<T> WithAccessTokenAsync<T>(
+            Func<string, CancellationToken, Task<T>> use, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Not exercised by this test.");
+
+        public void SignOut()
+        {
+            SignOutEntered.SetResult();
+            ReleaseSignOut.Task.GetAwaiter().GetResult();
+            throw new IOException("token marker is locked");
         }
     }
 
@@ -998,6 +1051,59 @@ public sealed class HostControllerGitHubTests
             }
 
 			Assert.That(accountFrames, Is.EqualTo(2));
+        }
+    }
+
+    [Test]
+    public void A_cancels_persistence_failure_fallback_does_not_close_a_newer_signIns_code_prompt()
+    {
+        // Regression for M-14 (persistence-failure branch): the normal cancel path already gates its
+        // signed-out publish, but the "cancelled, but couldn't persist" fallback used to emit unconditionally.
+        // Genuinely race the two flows: park the cancel inside its (about-to-fail) sign-out, let a newer flow
+        // become current and show its own code, then let the sign-out fail. The stale fallback must stay quiet
+        // so the newer flow's device-code prompt survives.
+        CancelPersistenceRaceGitHubAuth auth = new();
+        (HostController controller, List<string> sent, object gate) = Build(auth);
+        using (controller)
+        {
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            Assert.That(WaitForKind(sent, gate, MessageKinds.GitHubCode), Is.Not.Null);
+
+            // Cancel runs on its own thread; it retires the first flow's CTS, then parks inside SignOut with
+            // _signInPublishSync released, so a newer flow can concurrently become current.
+            Task cancel = Task.Run(() =>
+                controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignInCancel)));
+            Assert.That(auth.SignOutEntered.Task.Wait(TimeSpan.FromSeconds(2)), Is.True);
+
+            controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.GitHubSignIn));
+            IpcMessage? newerCode = WaitForNthKind(sent, gate, MessageKinds.GitHubCode, count: 2);
+            Assert.That(newerCode, Is.Not.Null);
+            Assert.That(newerCode!.GetPayload<GitHubCodePayload>()!.UserCode, Is.EqualTo("CODE-2"));
+
+            // Now fail the cancel's sign-out persistence: its fallback must recognise the newer current flow
+            // and publish nothing.
+            auth.ReleaseSignOut.SetResult();
+            Assert.That(cancel.Wait(TimeSpan.FromSeconds(2)), Is.True);
+            Thread.Sleep(100);
+
+            lock (gate)
+            {
+                // No signed-out account frame may reach the webview while the newer flow is the live UI.
+                bool staleSignOut = sent
+                    .Select(IpcSerializer.TryDeserialize)
+                    .Where(message => message?.Kind == MessageKinds.GitHubAccount)
+                    .Select(message => message!.GetPayload<GitHubAccountPayload>()!)
+                    .Any(payload => !payload.SignedIn);
+                Assert.That(staleSignOut, Is.False);
+
+                // The newer flow's device-code prompt is still the last (and only surviving newer) code.
+                string[] codes = sent
+                    .Select(IpcSerializer.TryDeserialize)
+                    .Where(message => message?.Kind == MessageKinds.GitHubCode)
+                    .Select(message => message!.GetPayload<GitHubCodePayload>()!.UserCode)
+                    .ToArray();
+                Assert.That(codes, Is.EqualTo(SurvivingDeviceCodes));
+            }
         }
     }
 
