@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opening another document now clears the previous document's inline comments before the new comment snapshot begins loading.
 - Disk deletion now rejects case-only directory siblings on case-sensitive Windows filesystems while accepting normal casing differences in drive letters and UNC server/share names.
 - Deleting a case-only sibling in Disk no longer closes the active document or removes its distinct recent and favorite entries.
+- Case-distinct local folders in Disk now keep independent expansion state and show only their own loaded children.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
 - Pull requests opened from My reviews or pasted GitHub links now use SpecDesk's review document instead of opening GitHub in a browser.

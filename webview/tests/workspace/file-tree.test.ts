@@ -359,6 +359,68 @@ describe("FileTree", () => {
     expect(onRequestLevel).toHaveBeenCalledWith(lower, 1);
   });
 
+  it("keeps case-distinct local folders and their loaded children independent", () => {
+    const { tree, body, onRequestLevel } = ready();
+    const root = "C:\\specs\\case-sensitive";
+    const upper = `${root}\\A`;
+    const lower = `${root}\\a`;
+    tree.setTree({
+      root,
+      requestId: 0,
+      nodes: [
+        { name: "A", path: upper, isDirectory: true, children: [], hasChildren: true },
+        { name: "a", path: lower, isDirectory: true, children: [], hasChildren: true },
+      ],
+    });
+
+    const folder = (path: string) =>
+      [...body.querySelectorAll<HTMLButtonElement>(".file-tree-folder")].find(
+        (candidate) => candidate.dataset.path === path,
+      );
+
+    folder(lower)?.click();
+    expect(folder(upper)?.getAttribute("aria-expanded")).toBe("false");
+    expect(folder(lower)?.getAttribute("aria-expanded")).toBe("true");
+    expect(onRequestLevel).toHaveBeenLastCalledWith(lower, 1);
+
+    tree.setTree({
+      root: lower,
+      requestId: 1,
+      nodes: [
+        {
+          name: "lower.md",
+          path: `${lower}\\lower.md`,
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    });
+    expect(folder(upper)?.closest("li")?.textContent).not.toContain("lower.md");
+    expect(folder(lower)?.closest("li")?.textContent).toContain("lower.md");
+
+    folder(upper)?.click();
+    expect(onRequestLevel).toHaveBeenLastCalledWith(upper, 2);
+    tree.setTree({
+      root: upper,
+      requestId: 2,
+      nodes: [
+        {
+          name: "upper.md",
+          path: `${upper}\\upper.md`,
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    });
+
+    expect(folder(upper)?.closest("li")?.textContent).toContain("upper.md");
+    expect(folder(upper)?.closest("li")?.textContent).not.toContain("lower.md");
+    expect(folder(lower)?.closest("li")?.textContent).toContain("lower.md");
+    expect(folder(lower)?.closest("li")?.textContent).not.toContain("upper.md");
+  });
+
   it("clears published GitHub Folder data at an account boundary but preserves local folders", () => {
     const remote = ready();
     const privateFolder = remoteWirePath("octo/specs", "main", "private");

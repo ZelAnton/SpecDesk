@@ -120,6 +120,92 @@ test("a folder row requests and expands one correlated level", async ({ page }) 
   await expect(page.locator("#left-dock .file-tree-file", { hasText: "intro.md" })).toBeVisible();
 });
 
+test("case-distinct local folders keep independent expansion and children", async ({ page }, testInfo) => {
+  const root = "C:\\specs\\case-sensitive";
+  const upperPath = `${root}\\A`;
+  const lowerPath = `${root}\\a`;
+  await page.goto(BASE_URL);
+  await waitForSent(page, "ready");
+  await loadDoc(page, { path: `${root}\\README.md`, text: "# Doc" });
+  await emit(page, {
+    kind: "tree",
+    payload: {
+      root,
+      requestId: 0,
+      nodes: [
+        { name: "A", path: upperPath, isDirectory: true, children: [], hasChildren: true },
+        { name: "a", path: lowerPath, isDirectory: true, children: [], hasChildren: true },
+      ],
+    },
+  });
+  await openFilesTool(page);
+
+  const upper = page.locator("#left-dock .file-tree-folder").filter({ hasText: /^A$/ });
+  const lower = page.locator("#left-dock .file-tree-folder").filter({ hasText: /^a$/ });
+  await lower.click();
+  const lowerRequest = (await sentFrames(page)).findLast(
+    (frame) =>
+      frame.kind === "tree.request" &&
+      (frame.payload as { path?: string } | undefined)?.path === lowerPath,
+  );
+  const lowerRequestId = Number(
+    (lowerRequest?.payload as { requestId?: number } | undefined)?.requestId,
+  );
+  await emit(page, {
+    kind: "tree",
+    payload: {
+      root: lowerPath,
+      requestId: lowerRequestId,
+      nodes: [
+        {
+          name: "lower.md",
+          path: `${lowerPath}\\lower.md`,
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    },
+  });
+
+  await expect(upper).toHaveAttribute("aria-expanded", "false");
+  await expect(lower).toHaveAttribute("aria-expanded", "true");
+  await expect(lower.locator("xpath=ancestor::li[1]")).toContainText("lower.md");
+  await expect(upper.locator("xpath=ancestor::li[1]")).not.toContainText("lower.md");
+
+  await upper.click();
+  const upperRequest = (await sentFrames(page)).findLast(
+    (frame) =>
+      frame.kind === "tree.request" &&
+      (frame.payload as { path?: string } | undefined)?.path === upperPath,
+  );
+  const upperRequestId = Number(
+    (upperRequest?.payload as { requestId?: number } | undefined)?.requestId,
+  );
+  await emit(page, {
+    kind: "tree",
+    payload: {
+      root: upperPath,
+      requestId: upperRequestId,
+      nodes: [
+        {
+          name: "upper.md",
+          path: `${upperPath}\\upper.md`,
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    },
+  });
+
+  await expect(upper.locator("xpath=ancestor::li[1]")).toContainText("upper.md");
+  await expect(upper.locator("xpath=ancestor::li[1]")).not.toContainText("lower.md");
+  await expect(lower.locator("xpath=ancestor::li[1]")).toContainText("lower.md");
+  await expect(lower.locator("xpath=ancestor::li[1]")).not.toContainText("upper.md");
+  await page.screenshot({ path: testInfo.outputPath("case-distinct-local-folders.png") });
+});
+
 test("the Start screen opens a file or a folder via the host pickers", async ({ page }) => {
   await page.goto(BASE_URL);
   await waitForSent(page, "ready");

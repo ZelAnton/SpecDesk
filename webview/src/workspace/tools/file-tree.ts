@@ -566,7 +566,11 @@ function isDescendantOrSame(candidate: string, parent: string): boolean {
 
 function normalizePath(path: string): string {
   const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
-  return normalized.startsWith("github://") ? normalized : normalized.toLocaleLowerCase();
+  if (normalized.startsWith("github://")) return normalized;
+  if (/^[A-Za-z]:/.test(normalized) || normalized.startsWith("//")) {
+    return normalizeLocalEntryPath(normalized);
+  }
+  return normalized.toLocaleLowerCase();
 }
 
 function sameLocalEntryPath(left: string, right: string): boolean {
