@@ -71,16 +71,24 @@ export function buildHost(): void {
   execFileSync("dotnet", ["build", hostProject, "-c", "Debug"], { cwd: repoRoot, stdio: "inherit" });
 }
 
+export interface LaunchAppOptions {
+  /** Called with the freshly-created `<runDir>/data-root` AFTER the fixture repo is seeded but BEFORE the
+   *  host process is spawned — lets a spec pre-populate a host-owned JSON sidecar (e.g. `preferences.json`)
+   *  so the real host reads it on this very launch, rather than only ever starting from a clean data root. */
+  seedDataRoot?: (dataRoot: string) => void;
+}
+
 /**
  * Launch the real SpecDesk.Host.exe against a fresh disposable fixture repo, with CDP on a per-run port
  * and an ISOLATED WebView2 user-data folder — without which a concurrent SpecDesk (or a leaked prior run)
  * owns the browser process and the `--remote-debugging-port` argument is silently ignored. The guards
  * (MainWorktreeGuard / WebviewBundleGuard) stay ARMED: a stale build must fail loudly, not be tested.
  */
-export function launchApp(): RunningApp {
+export function launchApp(options: LaunchAppOptions = {}): RunningApp {
   sweepStaleRunDirs();
   const runDir = mkdtempSync(resolve(tmpdir(), RUN_DIR_PREFIX));
   const { dataRoot, repo, welcome } = createFixtureRepo(runDir);
+  options.seedDataRoot?.(dataRoot);
   const udf = resolve(runDir, "wv2-udf");
   mkdirSync(udf, { recursive: true });
   const port = 9400 + (process.pid % 500);

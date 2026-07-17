@@ -177,6 +177,9 @@ internal static class Program
 			window!.SendWebMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.WindowState,
 				new WindowStatePayload(maximized)));
+		// R-01: guards the one-time initial-maximized-state replay on the webview's first "ready" (see the
+		// RegisterWebMessageReceivedHandler branch below) against a later duplicate ready.
+		bool initialWindowStateSent = false;
 
 		// T-077: capture the native window's current geometry into the preferences sidecar. Best-effort —
 		// a late callback racing window teardown must not throw out of a native event/timer callback.
@@ -216,7 +219,15 @@ internal static class Program
 		window = restoreWindowGeometry
 			? window.SetLocation(new Point(savedWindowGeometry!.X, savedWindowGeometry.Y))
 			: window.Center();
-		if (restoreWindowGeometry && savedWindowGeometry!.Maximized)
+		// T-077 / R-01: whether this run's native window is being created already maximized from a
+		// restored geometry. Calling SetMaximized(true) this early — before the native window/webview
+		// exist — synchronously fires RegisterMaximizedHandler as a side effect (see the try/catch there),
+		// too early for the webview to be listening or for SendWebMessage to even succeed; nothing tells
+		// it the true initial state. Captured once and replayed reliably on the webview's first "ready"
+		// below (see the RegisterWebMessageReceivedHandler branch), which only runs once the webview is
+		// actually listening.
+		bool startedMaximized = restoreWindowGeometry && savedWindowGeometry!.Maximized;
+		if (startedMaximized)
 		{
 			window = window.SetMaximized(true);
 		}
@@ -261,8 +272,20 @@ internal static class Program
 			})
 			.RegisterMaximizedHandler((_, _) =>
 			{
-				SendWindowState(maximized: true);
-				PersistWindowGeometry();
+				try
+				{
+					SendWindowState(maximized: true);
+					PersistWindowGeometry();
+				}
+				catch (ApplicationException)
+				{
+					// R-01: a restored `Maximized: true` startup geometry applies SetMaximized(true) to the
+					// window BEFORE it is created (see startedMaximized above); Photino fires this Maximized
+					// event synchronously as a side effect of that call, before the native window/webview has
+					// finished initializing, so SendWebMessage (and the geometry reads below it) both throw
+					// here. Harmless to skip — the webview's true initial state is told reliably, once, from
+					// the "ready" handler below, which only runs after initialization has actually completed.
+				}
 			})
 			.RegisterRestoredHandler((_, _) =>
 			{
@@ -283,6 +306,18 @@ internal static class Program
 				if (string.Equals(envelope?.Kind, MessageKinds.Ready, StringComparison.Ordinal))
 				{
 					closeCoordinator.MarkWebviewReady();
+					// R-01: replay the window's true initial maximize state on the FIRST ready. The only other
+					// place that would tell the webview (RegisterMaximizedHandler, fired as a side effect of
+					// SetMaximized(true) at creation time above) runs too early to reach the webview — see its
+					// try/catch — so without this the custom titlebar control would start on its default
+					// unpressed/"Maximize" state even though the native window is already maximized. Sent at
+					// most once so a later duplicate ready (see OnReady's own guard) can never re-assert a
+					// stale startup state over a real user toggle that happened in between.
+					if (startedMaximized && !initialWindowStateSent)
+					{
+						initialWindowStateSent = true;
+						SendWindowState(maximized: true);
+					}
 				}
 				if (!windowCommands.TryHandle(message))
 				{

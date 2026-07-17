@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Browser, Page, TestInfo } from "@playwright/test";
-import { buildHost, launchApp, type RunningApp, stopApp } from "./app-process";
+import { buildHost, type LaunchAppOptions, launchApp, type RunningApp, stopApp } from "./app-process";
 import { dumpArtifacts } from "./artifacts";
 import { attachToApp } from "./cdp";
 
@@ -18,9 +18,9 @@ export interface FullApp {
  * repo, attach Playwright over CDP, and start capturing the page's console + uncaught errors — the shared
  * `beforeAll` for the full-app (Layer 2) specs.
  */
-export async function launchAndAttach(): Promise<FullApp> {
+export async function launchAndAttach(options: LaunchAppOptions = {}): Promise<FullApp> {
   buildHost();
-  const app = launchApp();
+  const app = launchApp(options);
   try {
     const { browser, page } = await attachToApp(app.port);
     const consoleLog: string[] = [];
