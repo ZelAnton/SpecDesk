@@ -3897,13 +3897,13 @@ public sealed partial class HostController
 		}
 	}
 
-	private static bool SameFullPath(string left, string right)
-	{
-		string? leftFull = TryFullPath(left);
-		string? rightFull = TryFullPath(right);
-		return leftFull is not null && rightFull is not null
-			&& string.Equals(leftFull, rightFull, StringComparison.OrdinalIgnoreCase);
-	}
+	// Filesystem-location identity: does this path name the same on-disk location as the other, under
+	// the platform's default case-insensitive filesystem? The single case-insensitive path policy —
+	// see PathIdentity for how it differs from the case-sensitive session-document and directory-entry
+	// policies. Kept as a wrapper so its many call sites (workspace roots, registered clones, recents,
+	// the delete request's active-document / in-root gating) read unchanged.
+	private static bool SameFullPath(string left, string right) =>
+		PathIdentity.SameFilesystemPath(left, right);
 
 	private static string? TryFullPath(string path)
 	{

@@ -293,11 +293,13 @@ internal static class WindowsHandleFileDeletion
 	}
 
 	/// <summary>
+	/// Directory-entry identity for destructive operations (policy 3 in <see cref="PathIdentity"/>).
 	/// Final paths returned by Windows name the actual directory entries. Their ancestry must therefore
 	/// remain case-sensitive even on the usual case-insensitive NTFS configuration: a parent directory may
 	/// opt into case sensitivity and contain separate <c>Root</c> and <c>root</c> siblings. Only the volume
 	/// authority (a drive designator, or an UNC server/share pair) is compared case-insensitively because those
-	/// names are not directory entries within that volume.
+	/// names are not directory entries within that volume. This is the strictest of the host's path policies
+	/// and, like the session-document policy, is case-sensitive and fails closed on purpose.
 	/// </summary>
 	internal static bool IsCanonicalHandleDescendant(string root, string candidate)
 	{

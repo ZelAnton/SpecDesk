@@ -868,6 +868,58 @@ public sealed class HostControllerFilesystemTests
 	}
 
 	[Test]
+	public void FileDelete_ViaACaseVariantOfTheOpenDocumentClearsItOnACaseInsensitiveFilesystem()
+	{
+		if (!OperatingSystem.IsWindows())
+		{
+			// A case-only path variant names the same file only on a case-insensitive filesystem, which is
+			// the default NTFS configuration this covers (the case-SENSITIVE sibling is exercised separately).
+			Assert.Ignore("Case-insensitive path identity is a Windows default-filesystem behaviour.");
+		}
+
+		using HostController controller = NewController();
+		string opened = Path.Combine(_root, "README.md");
+		// Re-opening the same file through a different source (OS dialog, tree click, recents) can surface it
+		// with different casing; on the default case-insensitive filesystem it is still the same document.
+		string caseVariant = Path.Combine(_root, "readme.md");
+		const string editedText = "# Readme (edited draft)";
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.FolderOpen, new FolderOpenPayload(_root)));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocOpen, new DocOpenPayload(opened)));
+		// Claim a mutation on the opened casing and persist it: drives TryClaimDocumentMutation and the
+		// IsDocumentMutationCurrent* currency checks end to end through the shared session-identity policy.
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocEdit));
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.EditorChanged, new EditorChangedPayload(editedText)));
+		controller.RunDiskAutosave();
+		Assert.That(File.ReadAllText(opened), Is.EqualTo(editedText),
+			"a mutation claim on the opened document must persist the edited draft");
+		ClearSent();
+
+		// Delete the very same file through the differently-cased path: SameFullPath must still see it as the
+		// active document, the claim must succeed, and the handle-bound deletion must clear the open editor.
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.FileDelete, new FileDeletePayload(caseVariant, _root, RequestId: 642)));
+
+		Assert.That(WaitFor(MessageKinds.FileDeleteCompleted)
+			?.GetPayload<FileDeleteCompletedPayload>()?.Succeeded, Is.True);
+		DocLoadedPayload? cleared = Find(MessageKinds.DocLoaded)?.GetPayload<DocLoadedPayload>();
+		WorkspaceContextPayload? context = Find(MessageKinds.WorkspaceContext)
+			?.GetPayload<WorkspaceContextPayload>();
+		Assert.Multiple(() =>
+		{
+			Assert.That(cleared?.Path, Is.Empty,
+				"deleting the open document via a case variant must clear its editor");
+			Assert.That(context?.Repository, Is.Null);
+			Assert.That(context?.Path, Is.Empty);
+			Assert.That(File.Exists(opened), Is.False, "the underlying file must be gone");
+			Assert.That(File.Exists(caseVariant), Is.False);
+		});
+	}
+
+	[Test]
 	public void FileDelete_CaseOnlySiblingKeepsTheDirtyActiveDocumentOpen()
 	{
 		if (!OperatingSystem.IsWindows())

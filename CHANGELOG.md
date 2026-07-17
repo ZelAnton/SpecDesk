@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Disk deletion now rejects case-only directory siblings on case-sensitive Windows filesystems while accepting normal casing differences in drive letters and UNC server/share names.
 - Deleting a case-only sibling in Disk no longer closes the active document or removes its distinct recent and favorite entries.
 - Case-distinct local folders in Disk now keep independent expansion state and show only their own loaded children.
+- SpecDesk now applies one documented rule for deciding whether two paths mean the same document, so the folder tree, the open-document editing and save checks, and Disk deletion no longer disagree when the same file is reached through a path that differs only in letter case.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
 - Requesting your reviews list with a malformed request no longer leaves the request stuck until it times out.

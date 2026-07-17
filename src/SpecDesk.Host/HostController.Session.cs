@@ -348,8 +348,8 @@ public sealed partial class HostController
 			&& !Volatile.Read(ref _documentRepositoryTransition)
 			&& !Volatile.Read(ref _documentDiscardTransition)
 			&& Volatile.Read(ref _remoteDocument) is null
-			&& string.Equals(Volatile.Read(ref _currentPath), snapshot.Path, StringComparison.Ordinal)
-			&& string.Equals(Volatile.Read(ref _repoRoot), snapshot.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _currentPath), snapshot.Path)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _repoRoot), snapshot.RepoRoot)
 			&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
 			&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
 			&& string.Equals(session.Branch, snapshot.Branch, StringComparison.Ordinal)
@@ -367,8 +367,8 @@ public sealed partial class HostController
 				&& !_documentRepositoryTransition
 				&& !_documentDiscardTransition
 				&& _remoteDocument is null
-				&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
-				&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+				&& PathIdentity.SameSessionPath(_currentPath, snapshot.Path)
+				&& PathIdentity.SameSessionPath(_repoRoot, snapshot.RepoRoot)
 				&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
 				&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
 				&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
@@ -656,6 +656,12 @@ public sealed partial class HostController
 					{
 						error = "That file is outside the current Disk folder.";
 					}
+					// "Is this still the active document?" was decided with filesystem-location identity
+					// (SameFullPath) above, so a case variant of the open path still counts as the active
+					// document on the usual case-insensitive filesystem. Before this destructive step, though,
+					// confirm the open path was not swapped for a different directory entry since the claim,
+					// using the directory-entry policy (AreSameCanonicalHandlePath) rather than the looser
+					// filesystem-location one — see PathIdentity for why destructive checks stay strict.
 					else if (activeDocument
 						&& (!claimedDocument
 							|| _currentPath is null
@@ -826,8 +832,14 @@ public sealed partial class HostController
 			|| (publication.Root is not null
 				&& _workspaceRoot is not null
 				&& SameFullPath(publication.Root, _workspaceRoot)))
+		// The workspace-root arm above compares roots with filesystem-location identity (SameFullPath),
+		// matching IsWorkspaceRootPublicationCurrentLocked. When there is no workspace root, the tree was
+		// rooted at the open document's folder, so this arm asks the session-document-identity question —
+		// "is the open document still exactly the one we captured?" — through the same case-sensitive,
+		// fail-closed policy as the mutation currency checks (see PathIdentity). It previously used
+		// OrdinalIgnoreCase, the lone case-insensitive outlier among those Ordinal neighbours.
 		&& (publication.Root is not null
-			|| string.Equals(publication.DocumentPath, _currentPath, StringComparison.OrdinalIgnoreCase));
+			|| PathIdentity.SameSessionPath(publication.DocumentPath, _currentPath));
 
 	/// <summary>Claim the close boundary only when no local repository mutation is active, then synchronously
 	/// persist the current local draft before the native window is allowed to close. A failed or stale write
@@ -1001,7 +1013,7 @@ public sealed partial class HostController
 			}
 			DraftSession session = _session;
 			if (_currentPath is null
-				|| !string.Equals(_currentPath, path, StringComparison.Ordinal)
+				|| !PathIdentity.SameSessionPath(_currentPath, path)
 				|| (requireRepository && _repoRoot is null)
 				|| (requireEditing && !IsEditingState(session.State)))
 			{
@@ -1035,8 +1047,8 @@ public sealed partial class HostController
 			&& !Volatile.Read(ref _documentDiscardTransition)
 			&& !Volatile.Read(ref _documentOpenTransition)
 			&& Volatile.Read(ref _remoteDocument) is null
-			&& string.Equals(Volatile.Read(ref _currentPath), snapshot.Path, StringComparison.Ordinal)
-			&& string.Equals(Volatile.Read(ref _repoRoot), snapshot.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _currentPath), snapshot.Path)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _repoRoot), snapshot.RepoRoot)
 			&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
 			&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
 			&& string.Equals(session.Branch, snapshot.Branch, StringComparison.Ordinal)
@@ -1053,8 +1065,8 @@ public sealed partial class HostController
 				&& !_documentDiscardTransition
 				&& !_documentOpenTransition
 				&& _remoteDocument is null
-				&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
-				&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+				&& PathIdentity.SameSessionPath(_currentPath, snapshot.Path)
+				&& PathIdentity.SameSessionPath(_repoRoot, snapshot.RepoRoot)
 				&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
 				&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
 				&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
@@ -1370,8 +1382,8 @@ public sealed partial class HostController
 			&& !Volatile.Read(ref _documentDiscardTransition)
 			&& Volatile.Read(ref _localRepositoryActionCts) is null
 			&& Volatile.Read(ref _remoteDocument) is null
-			&& string.Equals(Volatile.Read(ref _currentPath), transition.Path, StringComparison.Ordinal)
-			&& string.Equals(Volatile.Read(ref _repoRoot), transition.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _currentPath), transition.Path)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _repoRoot), transition.RepoRoot)
 			&& ReferenceEquals(Volatile.Read(ref _session), transition.Session)
 			&& Interlocked.Read(ref _draftGeneration) == transition.DraftGeneration
 			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
@@ -1388,8 +1400,8 @@ public sealed partial class HostController
 			&& !_documentDiscardTransition
 			&& _localRepositoryActionCts is null
 			&& _remoteDocument is null
-			&& string.Equals(_currentPath, transition.Path, StringComparison.Ordinal)
-			&& string.Equals(_repoRoot, transition.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(_currentPath, transition.Path)
+			&& PathIdentity.SameSessionPath(_repoRoot, transition.RepoRoot)
 			&& ReferenceEquals(_session, transition.Session)
 			&& Interlocked.Read(ref _draftGeneration) == mutationGeneration
 			&& Interlocked.Read(ref _contentGeneration) == transition.ContentGeneration;
@@ -1676,8 +1688,8 @@ public sealed partial class HostController
 			&& !Volatile.Read(ref _documentOpenTransition)
 			&& !Volatile.Read(ref _documentRepositoryTransition)
 			&& Volatile.Read(ref _remoteDocument) is null
-			&& string.Equals(Volatile.Read(ref _currentPath), transition.Path, StringComparison.Ordinal)
-			&& string.Equals(Volatile.Read(ref _repoRoot), transition.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _currentPath), transition.Path)
+			&& PathIdentity.SameSessionPath(Volatile.Read(ref _repoRoot), transition.RepoRoot)
 			&& ReferenceEquals(Volatile.Read(ref _session), transition.Session)
 			&& string.Equals(Volatile.Read(ref _text), transition.Text, StringComparison.Ordinal)
 			&& string.Equals(Volatile.Read(ref _lineEnding), transition.LineEnding, StringComparison.Ordinal)
@@ -1695,8 +1707,8 @@ public sealed partial class HostController
 			&& !_documentOpenTransition
 			&& !_documentRepositoryTransition
 			&& _remoteDocument is null
-			&& string.Equals(_currentPath, transition.Path, StringComparison.Ordinal)
-			&& string.Equals(_repoRoot, transition.RepoRoot, StringComparison.Ordinal)
+			&& PathIdentity.SameSessionPath(_currentPath, transition.Path)
+			&& PathIdentity.SameSessionPath(_repoRoot, transition.RepoRoot)
 			&& ReferenceEquals(_session, transition.Session)
 			&& string.Equals(_text, transition.Text, StringComparison.Ordinal)
 			&& string.Equals(_lineEnding, transition.LineEnding, StringComparison.Ordinal)
@@ -1937,8 +1949,8 @@ public sealed partial class HostController
 					&& !_documentDiscardTransition
 					&& !_documentOpenTransition
 					&& _remoteDocument is null
-					&& string.Equals(_currentPath, snapshot.Path, StringComparison.Ordinal)
-					&& string.Equals(_repoRoot, snapshot.RepoRoot, StringComparison.Ordinal)
+					&& PathIdentity.SameSessionPath(_currentPath, snapshot.Path)
+					&& PathIdentity.SameSessionPath(_repoRoot, snapshot.RepoRoot)
 					&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
 					&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
 					&& string.Equals(_session.Branch, snapshot.Branch, StringComparison.Ordinal)
