@@ -2029,6 +2029,7 @@ function wire(): void {
         });
       },
       onRefresh: (requestId) => ipc.send(Kinds.repoRefreshAll, { requestId }),
+      onAutoSync: () => ipc.send(Kinds.repoAutoSync),
       onPull: (repo, clonePath, branch) => {
         const requestId = beginRepositoryTransition();
         if (requestId === null) {

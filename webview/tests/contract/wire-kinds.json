@@ -51,6 +51,7 @@
   "pr.suggested.request",
   "preview.html",
   "ready",
+  "repo.autoSync",
   "repo.browse",
   "repo.clone",
   "repo.cloneConflict",

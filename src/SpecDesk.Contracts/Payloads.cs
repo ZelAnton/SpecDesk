@@ -69,6 +69,7 @@ public static class MessageKinds
 	public const string RepoDeleteClone = "repo.deleteClone";
 	public const string RepoDeleteBranch = "repo.deleteBranch";
 	public const string RepoRefreshAll = "repo.refreshAll";
+	public const string RepoAutoSync = "repo.autoSync";
 	public const string RepoPull = "repo.pull";
 	public const string RepoPush = "repo.push";
 	public const string WindowMinimize = "window.minimize";

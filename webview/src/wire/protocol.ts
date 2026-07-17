@@ -63,6 +63,7 @@ export const Kinds = {
   repoDeleteClone: "repo.deleteClone",
   repoDeleteBranch: "repo.deleteBranch",
   repoRefreshAll: "repo.refreshAll",
+  repoAutoSync: "repo.autoSync",
   repoPull: "repo.pull",
   repoPush: "repo.push",
   windowMinimize: "window.minimize",

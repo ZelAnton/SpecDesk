@@ -60,6 +60,7 @@ function ready() {
       (repo: RegisteredRepo, path: string, branch: string, confirmationToken?: string) => void
     >();
   const onRefresh = vi.fn<(requestId: number) => void>();
+  const onAutoSync = vi.fn<() => void>();
   const onPull = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
   const onPush = vi.fn<(repo: RegisteredRepo, path: string, branch: string) => void>();
   const panel = new RepositoriesPanel({
@@ -81,6 +82,7 @@ function ready() {
     onDeleteClone,
     onDeleteBranch,
     onRefresh,
+    onAutoSync,
     onPull,
     onPush,
   });
@@ -115,6 +117,7 @@ function ready() {
     onDeleteClone,
     onDeleteBranch,
     onRefresh,
+    onAutoSync,
     onPull,
     onPush,
   };
@@ -198,6 +201,68 @@ describe("RepositoriesPanel", () => {
     });
     expect(body.querySelector(".repo-pull")).toBeNull();
     expect(body.querySelector(".repo-push")).toBeNull();
+  });
+
+  it("refreshes the local-copy update indicators from a pushed state with no user action", () => {
+    const { panel, body } = ready();
+    const cloneStatus = () => body.querySelector('[aria-label="Local copy acme-specs status"]');
+
+    panel.setState(STATE);
+    expect(cloneStatus()?.querySelector(".is-incoming")).toBeNull();
+
+    // A background auto-sync arrives as a fresh workspace.state — the panel re-renders the "updates available"
+    // badge without any click or manual Refresh.
+    panel.setState({
+      ...STATE,
+      repositories: [
+        {
+          ...REPO,
+          clones: REPO.clones.map((clone) => ({
+            ...clone,
+            status: { ...CLEAN_STATUS, behind: 2 },
+          })),
+        },
+      ],
+    });
+    expect(cloneStatus()?.querySelector(".is-incoming")?.textContent).toBe("2 updates available");
+  });
+
+  it("asks the host to auto-sync on a focus-gated poll only while a local copy exists", () => {
+    vi.useFakeTimers();
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    try {
+      const { panel, onAutoSync } = ready();
+
+      // Focused but nothing registered yet → nothing to sync.
+      vi.advanceTimersByTime(180_000);
+      expect(onAutoSync).not.toHaveBeenCalled();
+
+      // A local copy exists and the window is focused → the poll asks the host to check for updates.
+      panel.setState(STATE);
+      vi.advanceTimersByTime(180_000);
+      expect(onAutoSync).toHaveBeenCalledTimes(1);
+
+      // Unfocused → the poll is paused; no background work while the author is not looking.
+      focus.mockReturnValue(false);
+      vi.advanceTimersByTime(180_000);
+      expect(onAutoSync).toHaveBeenCalledTimes(1);
+    } finally {
+      focus.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("auto-syncs when the window regains focus, but not before a copy is registered", () => {
+    const { panel, onAutoSync } = ready();
+
+    // Regaining focus with nothing registered has nothing to sync.
+    window.dispatchEvent(new Event("focus"));
+    expect(onAutoSync).not.toHaveBeenCalled();
+
+    // Once a local copy is registered, returning to the window checks it ("check GitHub, come back").
+    panel.setState(STATE);
+    window.dispatchEvent(new Event("focus"));
+    expect(onAutoSync).toHaveBeenCalledTimes(1);
   });
 
   it("retains and refreshes the managed clone entry until a matching success state arrives", () => {

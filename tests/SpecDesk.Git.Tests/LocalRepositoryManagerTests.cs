@@ -1236,6 +1236,164 @@ public sealed class LocalRepositoryManagerTests
 	}
 
 	[Test]
+	public void FetchAndFastForwardCleanLine_AdvancesACleanDefaultLine()
+	{
+		(string remotePath, string consumerPath) = CreateRemoteFixture();
+		try
+		{
+			ObjectId remoteTip = CommitAndPushProducer("new remote content");
+
+			LocalRepositoryInfo info = _manager.FetchAndFastForwardCleanLine(
+				consumerPath, remotePath, _baseBranch, _baseBranch, accessToken: null, CancellationToken.None);
+
+			using Repository consumer = new(consumerPath);
+			Assert.Multiple(() =>
+			{
+				Assert.That(consumer.Head.Tip.Id, Is.EqualTo(remoteTip));
+				Assert.That(File.ReadAllText(Path.Combine(consumerPath, "spec.md")), Is.EqualTo("new remote content"));
+				Assert.That(info.Status.Behind, Is.Zero);
+				Assert.That(consumer.RetrieveStatus().IsDirty, Is.False);
+			});
+		}
+		finally
+		{
+			DeleteTestTree(consumerPath);
+			DeleteTestTree(remotePath);
+		}
+	}
+
+	[Test]
+	public void FetchAndFastForwardCleanLine_DirtyDefaultLineFetchesWithoutFastForwarding()
+	{
+		(string remotePath, string consumerPath) = CreateRemoteFixture();
+		try
+		{
+			CommitAndPushProducer("new remote content");
+			ObjectId localTip;
+			using (Repository before = new(consumerPath))
+			{
+				localTip = before.Head.Tip.Id;
+			}
+			// An unfinished local edit on the main line: the fetch must still refresh the indicators, but the
+			// working tree must never be fast-forwarded over the edit.
+			File.WriteAllText(Path.Combine(consumerPath, "spec.md"), "unfinished local edit");
+
+			LocalRepositoryInfo info = _manager.FetchAndFastForwardCleanLine(
+				consumerPath, remotePath, _baseBranch, _baseBranch, accessToken: null, CancellationToken.None);
+
+			using Repository consumer = new(consumerPath);
+			Assert.Multiple(() =>
+			{
+				Assert.That(consumer.Head.Tip.Id, Is.EqualTo(localTip));
+				Assert.That(File.ReadAllText(Path.Combine(consumerPath, "spec.md")), Is.EqualTo("unfinished local edit"));
+				// The indicators still refreshed: the fetched upstream is now ahead, and the local edit is flagged.
+				Assert.That(info.Status.Behind, Is.GreaterThan(0));
+				Assert.That(info.Status.HasUncommitted, Is.True);
+			});
+		}
+		finally
+		{
+			DeleteTestTree(consumerPath);
+			DeleteTestTree(remotePath);
+		}
+	}
+
+	[Test]
+	public void FetchAndFastForwardCleanLine_NonDefaultLineIsFetchedButNeverFastForwarded()
+	{
+		(string remotePath, string consumerPath) = CreateRemoteFixture();
+		try
+		{
+			CommitAndPushProducer("new remote content");
+			// The author is on a clean draft line; auto-sync must leave it exactly where it is.
+			ObjectId draftTip;
+			using (Repository consumer = new(consumerPath))
+			{
+				Branch draft = consumer.CreateBranch("draft");
+				Commands.Checkout(consumer, draft);
+				draftTip = consumer.Head.Tip.Id;
+			}
+
+			_manager.FetchAndFastForwardCleanLine(
+				consumerPath, remotePath, _baseBranch, _baseBranch, accessToken: null, CancellationToken.None);
+
+			using Repository after = new(consumerPath);
+			Assert.Multiple(() =>
+			{
+				Assert.That(after.Head.FriendlyName, Is.EqualTo("draft"));
+				Assert.That(after.Head.Tip.Id, Is.EqualTo(draftTip));
+				// The local main branch ref did not move either — only the remote-tracking ref advanced, so the
+				// "updates available" indicator can light up without any working line being touched.
+				Assert.That(after.Branches[_baseBranch]!.Tip.Id, Is.EqualTo(draftTip));
+				Assert.That(after.Branches[$"origin/{_baseBranch}"]!.Tip.Id, Is.Not.EqualTo(draftTip));
+			});
+		}
+		finally
+		{
+			DeleteTestTree(consumerPath);
+			DeleteTestTree(remotePath);
+		}
+	}
+
+	[Test]
+	public void FetchAndFastForwardCleanLine_DivergedDefaultLineIsLeftUntouched()
+	{
+		(string remotePath, string consumerPath) = CreateRemoteFixture();
+		try
+		{
+			CommitAndPushProducer("new remote content");
+			// A local committed version GitHub does not have: fetching makes the main line diverge, which auto-sync
+			// must never force.
+			ObjectId localTip;
+			using (Repository consumer = new(consumerPath))
+			{
+				File.WriteAllText(Path.Combine(consumerPath, "spec.md"), "local saved version");
+				Commands.Stage(consumer, "spec.md");
+				Signature author = new("SpecDesk tests", "tests@example.invalid", DateTimeOffset.Now);
+				localTip = consumer.Commit("local saved version", author, author).Id;
+			}
+
+			LocalRepositoryInfo info = _manager.FetchAndFastForwardCleanLine(
+				consumerPath, remotePath, _baseBranch, _baseBranch, accessToken: null, CancellationToken.None);
+
+			using Repository after = new(consumerPath);
+			Assert.Multiple(() =>
+			{
+				Assert.That(after.Head.Tip.Id, Is.EqualTo(localTip));
+				Assert.That(info.Status.Ahead, Is.GreaterThan(0));
+				Assert.That(info.Status.Behind, Is.GreaterThan(0));
+			});
+		}
+		finally
+		{
+			DeleteTestTree(consumerPath);
+			DeleteTestTree(remotePath);
+		}
+	}
+
+	[Test]
+	public void FetchAndFastForwardCleanLine_DifferentOriginFailsBeforeContactingTheRemote()
+	{
+		string differentRepository = Path.Combine(Path.GetDirectoryName(_root)!, "different-repository.git");
+		ObjectId before;
+		using (Repository repository = new(_root))
+		{
+			before = repository.Head.Tip.Id;
+		}
+
+		Assert.Throws<RepositoryIdentityMismatchException>(() =>
+			_manager.FetchAndFastForwardCleanLine(
+				_root, differentRepository, _baseBranch, _baseBranch, accessToken: null, CancellationToken.None));
+
+		using Repository inspected = new(_root);
+		Assert.Multiple(() =>
+		{
+			Assert.That(inspected.Head.Tip.Id, Is.EqualTo(before));
+			Assert.That(inspected.RetrieveStatus().IsDirty, Is.False);
+		});
+	}
+
+	[Test]
 	public void PushBranchSafely_SharesTheCurrentWorkingLineAndUpdatesTracking()
 	{
 		(string remotePath, string consumerPath) = CreateRemoteFixture();

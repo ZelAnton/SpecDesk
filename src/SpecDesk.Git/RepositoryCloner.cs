@@ -213,6 +213,23 @@ public interface ILocalRepositoryManager : ILocalRepositoryInspector
 		Action? beforeMutation = null,
 		Action? onMutationStarting = null);
 
+	/// <summary>Background auto-sync of one registered local copy: validate its identity, capture the expected
+	/// fetch endpoint, fetch upstream references (so the "updates available"/"conflict" indicators refresh even
+	/// on a line that is never advanced), and fast-forward the working tree ONLY when the current line is the
+	/// clean default line named by <paramref name="defaultBranch"/> that is strictly behind its upstream. A
+	/// draft/feature line, a detached HEAD, unfinished or overlapping local edits, unshared local versions, or a
+	/// divergence leaves the working tree exactly as it was. Best-effort and non-interactive: unlike
+	/// <see cref="PullFastForward"/> it never throws to refuse an unsafe fast-forward — it simply skips it and
+	/// returns the freshly inspected state (it still throws on an identity mismatch, a broken working tree, or a
+	/// network/cancellation fault, which the caller treats as a silent skip).</summary>
+	LocalRepositoryInfo FetchAndFastForwardCleanLine(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string defaultBranch,
+		string? accessToken,
+		CancellationToken ct);
+
 	/// <summary>Validate and capture the expected repository's fetch and effective push endpoints, share the
 	/// expected current working line without reading mutable remote configuration again, then inspect it on the
 	/// same open repository handle. Refuses when GitHub has versions not present locally or when the current line
