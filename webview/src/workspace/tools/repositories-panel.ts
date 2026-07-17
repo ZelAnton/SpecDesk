@@ -61,6 +61,10 @@ export interface RepositoriesCallbacks {
     confirmationToken?: string,
   ): void;
   onRefresh(requestId: number): void;
+  /** Ask the host to check every registered local copy for upstream updates in the background. Sent on a
+   *  focus-gated cadence (no request id, no user action); the host throttles, applies any safe fast-forward,
+   *  and pushes back a fresh workspace state the panel reacts to. */
+  onAutoSync?(): void;
   onPull(repo: RegisteredRepo, clonePath: string, branch: string): void;
   onPush(repo: RegisteredRepo, clonePath: string, branch: string): void;
 }
@@ -68,6 +72,11 @@ export interface RepositoriesCallbacks {
 let suggestionListSequence = 0;
 let repositoryOperationRequestSequence = 0;
 const SKIP_CLONE_CONFIRMATION_KEY = "specdesk.clone.skip-confirmation.v1";
+// Background auto-sync cadence: while the window has focus, ask the host to check every registered local copy
+// for upstream updates on this interval (a change can land while the window stays focused, so a focus event
+// alone would miss it). The host throttles far more aggressively, so this only needs to be loose enough to feel
+// live without being chatty.
+const AUTO_SYNC_POLL_INTERVAL_MS = 180_000;
 
 /** One process-wide request-id namespace prevents concurrent Refresh and editor transitions from
  * accepting each other's completion event. */
@@ -153,6 +162,7 @@ export class RepositoriesPanel implements PanelTool {
   private nameDialogErrorEl: HTMLElement | null = null;
   private pendingNameAction: ((value: string) => void) | null = null;
   private readonly destructiveConfirmation = new DestructiveConfirmation();
+  private readonly requestAutoSyncOnFocus = (): void => this.requestAutoSync();
 
   constructor(private readonly callbacks: RepositoriesCallbacks) {}
 
@@ -486,7 +496,30 @@ export class RepositoriesPanel implements PanelTool {
       if (contextMenu.hidden || contextMenu.contains(event.target as Node)) return;
       this.closeContextMenu();
     });
+    // Background auto-sync (T-076): while the window is in use, keep every registered local copy's
+    // "updates available"/"conflict" indicators current — and let the host safely fast-forward a clean main line
+    // — without a manual Refresh. Mirrors the review-status poll: a focus-gated interval (a change can land while
+    // the window stays focused) plus a refresh whenever the window regains focus ("check GitHub, come back").
+    // The host throttles, single-flights, and only touches upstream when there is a local copy to sync; the panel
+    // just reacts to the workspace state it pushes back.
+    // A singleton panel that lives for the app's lifetime (like the review-status poll in index.ts), so the
+    // interval and focus listener are never torn down.
+    window.setInterval(() => {
+      if (document.hasFocus()) {
+        this.requestAutoSync();
+      }
+    }, AUTO_SYNC_POLL_INTERVAL_MS);
+    window.addEventListener("focus", this.requestAutoSyncOnFocus);
     this.render();
+  }
+
+  /** Trigger a background auto-sync, but only when there is at least one local copy to check — an empty list has
+   *  nothing to fetch, and the callback stays optional so the panel is testable without a host bridge. */
+  private requestAutoSync(): void {
+    if (!this.repos.some((repo) => repo.clones.length > 0)) {
+      return;
+    }
+    this.callbacks.onAutoSync?.();
   }
 
   setOperationConfirmation(payload: RepoConfirmationPayload): void {

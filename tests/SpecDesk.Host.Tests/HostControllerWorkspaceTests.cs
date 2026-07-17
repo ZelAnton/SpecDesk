@@ -123,6 +123,14 @@ public sealed class HostControllerWorkspaceTests
 			Action? beforeMutation = null,
 			Action? onMutationStarting = null) => Unexpected<LocalRepositoryInfo>();
 
+		public LocalRepositoryInfo FetchAndFastForwardCleanLine(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string defaultBranch,
+			string? accessToken,
+			CancellationToken ct) => Unexpected<LocalRepositoryInfo>();
+
 		public LocalRepositoryInfo PushBranchSafely(
 			string repositoryPath,
 			string expectedRepositoryUrl,
@@ -185,6 +193,124 @@ public sealed class HostControllerWorkspaceTests
 			string expectedRepositoryUrl,
 			string confirmationToken,
 			Action? onMutationStarting = null) => Unexpected<bool>();
+	}
+
+	// Records only the background auto-sync entry point; every other member is unreachable on that path.
+	private sealed class RecordingAutoSyncManager : ILocalRepositoryManager
+	{
+		private readonly object _gate = new();
+		private readonly List<(string Path, string Url, string DefaultBranch, string? AccessToken)> _calls = [];
+
+		public int CallCount
+		{
+			get
+			{
+				lock (_gate)
+				{
+					return _calls.Count;
+				}
+			}
+		}
+
+		public (string Path, string Url, string DefaultBranch, string? AccessToken)[] Calls()
+		{
+			lock (_gate)
+			{
+				return _calls.ToArray();
+			}
+		}
+
+		public LocalRepositoryInfo FetchAndFastForwardCleanLine(
+			string repositoryPath,
+			string expectedRepositoryUrl,
+			string knownDefaultBranch,
+			string defaultBranch,
+			string? accessToken,
+			CancellationToken ct)
+		{
+			ct.ThrowIfCancellationRequested();
+			lock (_gate)
+			{
+				_calls.Add((repositoryPath, expectedRepositoryUrl, defaultBranch, accessToken));
+			}
+			LocalRepositoryStatus clean = new(0, 0, false, 0, false);
+			return new LocalRepositoryInfo(
+				knownDefaultBranch,
+				knownDefaultBranch,
+				[new LocalBranchInfo(knownDefaultBranch, clean)],
+				clean);
+		}
+
+		private static T Unreachable<T>() =>
+			throw new AssertionException("Background auto-sync must only call FetchAndFastForwardCleanLine.");
+
+		public LocalRepositoryInfo Inspect(string repositoryPath, string knownDefaultBranch) =>
+			Unreachable<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo InspectExpected(
+			string repositoryPath, string expectedRepositoryUrl, string knownDefaultBranch) =>
+			Unreachable<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo Fetch(
+			string repositoryPath, string expectedRepositoryUrl, string knownDefaultBranch,
+			string? accessToken, CancellationToken ct) => Unreachable<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo PullFastForward(
+			string repositoryPath, string expectedRepositoryUrl, string knownDefaultBranch, string expectedBranch,
+			string? accessToken, CancellationToken ct, Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unreachable<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo PushBranchSafely(
+			string repositoryPath, string expectedRepositoryUrl, string knownDefaultBranch, string expectedBranch,
+			string accessToken, CancellationToken ct) => Unreachable<LocalRepositoryInfo>();
+
+		public BranchSwitchResult SwitchBranchSafely(
+			string repositoryPath, string expectedRepositoryUrl, string expectedCurrentBranch, string branch,
+			Action? beforeMutation = null, Action? onMutationStarting = null) => Unreachable<BranchSwitchResult>();
+
+		public LocalRepositoryInfo CreateBranch(
+			string repositoryPath, string expectedRepositoryUrl, string expectedCurrentBranch, string branch,
+			Action? beforeMutation = null, Action? onMutationStarting = null) => Unreachable<LocalRepositoryInfo>();
+
+		public LocalRepositoryInfo RenameBranch(
+			string repositoryPath, string expectedRepositoryUrl, string expectedCurrentBranch, string branch,
+			string newBranch, string defaultBranch, Action? beforeMutation = null,
+			Action? onMutationStarting = null) => Unreachable<LocalRepositoryInfo>();
+
+		public CloneRenameResult RenameClone(
+			string repositoryPath, string expectedRepositoryUrl, string knownDefaultBranch, string localName,
+			Action? beforeMutation = null, Action? onMutationStarting = null) => Unreachable<CloneRenameResult>();
+
+		public RepositoryDeletionRisks InspectDeletionRisks(
+			string repositoryPath, string expectedRepositoryUrl, string? expectedCurrentBranch,
+			string? branch = null, Action? beforeInspect = null) => Unreachable<RepositoryDeletionRisks>();
+
+		public BranchDeletionResult DeleteBranch(
+			string repositoryPath, string expectedRepositoryUrl, string branch, string defaultBranch,
+			string confirmationToken, Action? onCurrentBranchChangeStarting = null) =>
+			Unreachable<BranchDeletionResult>();
+
+		public bool DeleteClone(
+			string repositoryPath, string expectedRepositoryUrl, string confirmationToken,
+			Action? onMutationStarting = null) => Unreachable<bool>();
+	}
+
+	// A registered repository with one local copy on its default line, so an auto-sync has a target to iterate.
+	private static void RegisterCopyForAutoSync(WorkspaceStore store, string clonePath)
+	{
+		store.RegisterRepo(new RegisteredRepo(
+			"octo/specs",
+			"octo/specs",
+			"https://github.com/octo/specs",
+			"main",
+			[
+				new RegisteredClone(
+					"spec-copy",
+					clonePath,
+					"main",
+					[new RegisteredBranch("main", RepositoryStatusPayload.Empty)],
+					RepositoryStatusPayload.Empty),
+			]));
 	}
 
 	private static Renderer.RenderResult StubRender(string docDir, string text) => new(string.Empty, []);
@@ -857,6 +983,102 @@ public sealed class HostControllerWorkspaceTests
 		{
 			Assert.That(_sent, Is.Empty);
 		}
+	}
+
+	[Test]
+	public void AutoSync_FetchesAndFastForwardsEveryRegisteredLocalCopy()
+	{
+		RecordingAutoSyncManager manager = new();
+		WorkspaceStore store = new(_wsPath);
+		string clonePath = Path.Combine(_root, "spec-copy");
+		RegisterCopyForAutoSync(store, clonePath);
+		using HostController controller = NewController(repositoryInspector: manager, workspace: store);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 1, TimeSpan.FromSeconds(5)), Is.True);
+		(string Path, string Url, string DefaultBranch, string? AccessToken) call = manager.Calls()[0];
+		Assert.Multiple(() =>
+		{
+			Assert.That(call.Path, Is.EqualTo(clonePath));
+			Assert.That(call.Url, Is.EqualTo("https://github.com/octo/specs"));
+			// Auto-sync only ever asks to fast-forward the repository's own default (main) line.
+			Assert.That(call.DefaultBranch, Is.EqualTo("main"));
+			Assert.That(call.AccessToken, Is.EqualTo("gho_test"));
+		});
+	}
+
+	[Test]
+	public void AutoSync_ThrottlesRapidTriggersToASingleUpstreamSync()
+	{
+		RecordingAutoSyncManager manager = new();
+		WorkspaceStore store = new(_wsPath);
+		RegisterCopyForAutoSync(store, Path.Combine(_root, "spec-copy"));
+		using HostController controller = NewController(repositoryInspector: manager, workspace: store);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 1, TimeSpan.FromSeconds(5)), Is.True);
+
+		// A second trigger inside the throttle window is coalesced away — a focus/poll burst cannot hammer upstream.
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 2, TimeSpan.FromMilliseconds(400)), Is.False);
+		Assert.That(manager.CallCount, Is.EqualTo(1));
+	}
+
+	[Test]
+	public void AutoSync_RunsAgainAfterTheThrottleWindowElapses()
+	{
+		RecordingAutoSyncManager manager = new();
+		WorkspaceStore store = new(_wsPath);
+		RegisterCopyForAutoSync(store, Path.Combine(_root, "spec-copy"));
+		using HostController controller = NewController(repositoryInspector: manager, workspace: store);
+		controller.AutoSyncMinInterval = TimeSpan.FromMilliseconds(50);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 1, TimeSpan.FromSeconds(5)), Is.True);
+
+		// Once the window has elapsed a later trigger is allowed through again.
+		Thread.Sleep(200);
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 2, TimeSpan.FromSeconds(5)), Is.True);
+	}
+
+	[Test]
+	public void AutoSync_WithoutAConnectedAccountDoesNothing()
+	{
+		RecordingAutoSyncManager manager = new();
+		WorkspaceStore store = new(_wsPath);
+		RegisterCopyForAutoSync(store, Path.Combine(_root, "spec-copy"));
+		using HostController controller = NewController(
+			auth: new FakeGitHubAuth(false), repositoryInspector: manager, workspace: store);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 1, TimeSpan.FromMilliseconds(400)), Is.False);
+		Assert.That(manager.CallCount, Is.Zero);
+	}
+
+	[Test]
+	public void AutoSync_StopsAfterTheGitHubAccountIsDisconnected()
+	{
+		RecordingAutoSyncManager manager = new();
+		FakeGitHubAuth auth = new(true);
+		WorkspaceStore store = new(_wsPath);
+		RegisterCopyForAutoSync(store, Path.Combine(_root, "spec-copy"));
+		using HostController controller = NewController(
+			auth: auth, repositoryInspector: manager, workspace: store);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 1, TimeSpan.FromSeconds(5)), Is.True);
+
+		// The account disconnects; clearing the throttle proves it is the missing account, not the window, that
+		// stops the next trigger from doing any background work for a context that no longer exists.
+		auth.SignOut();
+		controller.AutoSyncMinInterval = TimeSpan.Zero;
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.RepoAutoSync));
+
+		Assert.That(SpinWait.SpinUntil(() => manager.CallCount >= 2, TimeSpan.FromMilliseconds(400)), Is.False);
+		Assert.That(manager.CallCount, Is.EqualTo(1));
 	}
 
 	[TestCase("https://github.com/octo/spec-repo", "octo", "spec-repo")]

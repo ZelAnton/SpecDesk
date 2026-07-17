@@ -10,6 +10,7 @@ function harness() {
     <button id="save-version"></button>
     <button id="send-for-review"></button>
     <button id="update-review"></button>
+    <button id="publish"></button>
     <button id="discard"></button>
     <button id="save"></button>
     <fieldset id="format-bar"></fieldset>
@@ -22,6 +23,7 @@ function harness() {
     onSaveVersion: vi.fn(),
     onSendForReview: vi.fn(),
     onUpdateReview: vi.fn(),
+    onPublish: vi.fn(),
     onDiscard: vi.fn(),
     onSave: vi.fn(),
   };
@@ -31,6 +33,7 @@ function harness() {
     saveVersionBtn: byId("save-version"),
     sendForReviewBtn: byId("send-for-review"),
     updateReviewBtn: byId("update-review"),
+    publishBtn: byId("publish"),
     discardBtn: byId("discard"),
     saveBtn: byId("save"),
     formatBar: document.querySelector<HTMLFieldSetElement>("#format-bar"),
@@ -68,6 +71,7 @@ describe("LifecycleChrome.setLifecycle", () => {
     expect(hidden("discard")).toBe(true);
     expect(hidden("send-for-review")).toBe(true);
     expect(hidden("update-review")).toBe(true);
+    expect(hidden("publish")).toBe(true);
   });
 
   it("remote preview: keeps every editing and save action unavailable", () => {
@@ -101,6 +105,65 @@ describe("LifecycleChrome.setLifecycle", () => {
     expect(hidden("discard")).toBe(true);
     expect(hidden("send-for-review")).toBe(true);
     expect(hidden("update-review")).toBe(false);
+    // Publish stays hidden until the repo explicitly permits author publishing (default fail-closed).
+    expect(hidden("publish")).toBe(true);
+  });
+});
+
+describe("LifecycleChrome Publish availability", () => {
+  it("appears only once approved with GitHub configured AND the repo permits author publishing", () => {
+    const { chrome } = harness();
+    chrome.setGitHubAvailable(true);
+    chrome.setPublishAllowed(true);
+    chrome.setLifecycle("approved");
+    expect(hidden("publish")).toBe(false);
+  });
+
+  it("stays hidden while approved when the repo does not permit author publishing", () => {
+    const { chrome } = harness();
+    chrome.setGitHubAvailable(true);
+    chrome.setPublishAllowed(false);
+    chrome.setLifecycle("approved");
+    expect(hidden("publish")).toBe(true);
+  });
+
+  it("stays hidden while approved when GitHub is unavailable", () => {
+    const { chrome } = harness();
+    chrome.setGitHubAvailable(false);
+    chrome.setPublishAllowed(true);
+    chrome.setLifecycle("approved");
+    expect(hidden("publish")).toBe(true);
+  });
+
+  it("appears/disappears when the author-publish permission toggles while approved", () => {
+    const { chrome } = harness();
+    chrome.setGitHubAvailable(true);
+    chrome.setLifecycle("approved");
+    expect(hidden("publish")).toBe(true); // default: not permitted
+    chrome.setPublishAllowed(true);
+    expect(hidden("publish")).toBe(false);
+    chrome.setPublishAllowed(false);
+    expect(hidden("publish")).toBe(true);
+  });
+
+  it("is hidden in every non-approved review state even when publishing is permitted", () => {
+    const states: StatusState[] = ["draft", "inReview", "changesRequested", "published"];
+    for (const state of states) {
+      const { chrome } = harness();
+      chrome.setGitHubAvailable(true);
+      chrome.setPublishAllowed(true);
+      chrome.setLifecycle(state);
+      expect(hidden("publish")).toBe(true);
+    }
+  });
+
+  it("stays hidden on a read-only document even when approved and permitted", () => {
+    const { chrome } = harness();
+    chrome.setGitHubAvailable(true);
+    chrome.setPublishAllowed(true);
+    chrome.setDocumentReadOnly(true);
+    chrome.setLifecycle("approved");
+    expect(hidden("publish")).toBe(true);
   });
 });
 
@@ -150,6 +213,7 @@ describe("LifecycleChrome button wiring", () => {
     document.querySelector<HTMLButtonElement>("#save-version")?.click();
     document.querySelector<HTMLButtonElement>("#send-for-review")?.click();
     document.querySelector<HTMLButtonElement>("#update-review")?.click();
+    document.querySelector<HTMLButtonElement>("#publish")?.click();
     document.querySelector<HTMLButtonElement>("#discard")?.click();
     document.querySelector<HTMLButtonElement>("#save")?.click();
     expect(callbacks.onOpen).toHaveBeenCalledTimes(1);
@@ -157,6 +221,7 @@ describe("LifecycleChrome button wiring", () => {
     expect(callbacks.onSaveVersion).toHaveBeenCalledTimes(1);
     expect(callbacks.onSendForReview).toHaveBeenCalledTimes(1);
     expect(callbacks.onUpdateReview).toHaveBeenCalledTimes(1);
+    expect(callbacks.onPublish).toHaveBeenCalledTimes(1);
     expect(callbacks.onDiscard).toHaveBeenCalledTimes(1);
     expect(callbacks.onSave).toHaveBeenCalledTimes(1);
   });
@@ -171,6 +236,7 @@ describe("LifecycleChrome with absent elements", () => {
       saveVersionBtn: null,
       sendForReviewBtn: null,
       updateReviewBtn: null,
+      publishBtn: null,
       discardBtn: null,
       saveBtn: null,
       formatBar: null,
@@ -180,11 +246,13 @@ describe("LifecycleChrome with absent elements", () => {
       onSaveVersion: vi.fn(),
       onSendForReview: vi.fn(),
       onUpdateReview: vi.fn(),
+      onPublish: vi.fn(),
       onDiscard: vi.fn(),
       onSave: vi.fn(),
     });
     expect(() => chrome.setLifecycle("draft")).not.toThrow();
     expect(() => chrome.setGitHubAvailable(true)).not.toThrow();
+    expect(() => chrome.setPublishAllowed(true)).not.toThrow();
     expect(setPaneEditable).toHaveBeenCalledWith(true);
   });
 });

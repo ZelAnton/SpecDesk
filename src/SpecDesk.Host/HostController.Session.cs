@@ -2616,9 +2616,13 @@ public sealed partial class HostController
 		string branchState = "unavailable";
 		string? defaultBranch = null;
 		string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+		// Read the repo's workflow config once for both the default-base resolve and the author-publish
+		// gate the webview uses to reveal (or hide) the "Publish" action for this document's repository.
+		string? repoToml = WorkflowSeeds.TryReadRepoToml(repoRoot);
+		bool canPublish = WorkflowConfig.allowAuthorPublishForHost(repoToml);
 		try
 		{
-			string? configured = WorkflowConfig.defaultBaseForHost(WorkflowSeeds.TryReadRepoToml(repoRoot));
+			string? configured = WorkflowConfig.defaultBaseForHost(repoToml);
 			lock (_repoGate)
 			{
 				CurrentBranchInfo current = _versioning.DescribeCurrentBranch(repoRoot);
@@ -2653,7 +2657,8 @@ public sealed partial class HostController
 				defaultBranch,
 				relative,
 				_workspace?.FindCloneName(repoRoot)
-					?? Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot))));
+					?? Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot)),
+				canPublish));
 	}
 
 	/// <summary>Explicit context publication path shared by local documents and remote-only document

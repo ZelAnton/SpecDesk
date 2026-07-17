@@ -154,9 +154,10 @@ public sealed class ContractFixtureTests
 		], RequestId: 31)),
 		(MessageKinds.FileDeleteCompleted, new FileDeleteCompletedPayload(
 			@"C:\specs\billing-repo\README.md", @"C:\specs\billing-repo", 32, Succeeded: true)),
+		// CanPublish true exercises the author-publish gate through both decoders (the repo permits publishing).
 		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
 			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md",
-			"billing-repo")),
+			"billing-repo", CanPublish: true)),
 		(MessageKinds.WindowState, new WindowStatePayload(Maximized: true)),
 		(MessageKinds.WindowCloseRequested, new WindowCloseRequestedPayload(RequestId: 23)),
 		(MessageKinds.WindowCloseCompleted, new WindowCloseCompletedPayload(RequestId: 23, Succeeded: false)),

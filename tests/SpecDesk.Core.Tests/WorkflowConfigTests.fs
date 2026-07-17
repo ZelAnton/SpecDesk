@@ -65,6 +65,15 @@ let ``reviewersForHost is empty for a codeowners-only or absent config`` () =
     Assert.That(WorkflowConfig.reviewersForHost null, Is.Empty)
     Assert.That(WorkflowConfig.reviewersForHost "[review]\nreviewers = [\"codeowners\"]\n", Is.Empty)
 
+[<Test>]
+let ``allowAuthorPublishForHost is off by default and honours an explicit true`` () =
+    // Fail-closed: an absent config, an absent key, and an explicit false all deny; only an explicit
+    // true permits an author to publish their own approved document.
+    Assert.That(WorkflowConfig.allowAuthorPublishForHost null, Is.False)
+    Assert.That(WorkflowConfig.allowAuthorPublishForHost "[review]\nreviewers = [\"@alice\"]\n", Is.False)
+    Assert.That(WorkflowConfig.allowAuthorPublishForHost "[review]\nallow-author-publish = false\n", Is.False)
+    Assert.That(WorkflowConfig.allowAuthorPublishForHost "[review]\nallow-author-publish = true\n", Is.True)
+
 // S-09 regressions: a `{date:FMT}` with an unrecognized .NET format specifier used to throw
 // FormatException straight out of expandOrDefault (only TOML *parsing* was guarded), and `{date:}`
 // (empty format) used to expand via the general format ("07/04/2026 09:30:00 +00:00" — spaces and a

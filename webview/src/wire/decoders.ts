@@ -993,6 +993,7 @@ export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload |
       value.defaultBranch === null ||
       isString(value.defaultBranch)
     ) ||
+    !(value.canPublish === undefined || isBoolean(value.canPublish)) ||
     !isString(value.path)
   ) {
     return null;
@@ -1025,6 +1026,9 @@ export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload |
     defaultBranch,
     path: value.path,
     localCopy,
+    // The native side always writes canPublish (a bool is never omitted); default a missing key to false
+    // so a hand-built or legacy frame safely hides the author-publish action rather than revealing it.
+    canPublish: value.canPublish === true,
   };
 }
 
