@@ -1134,6 +1134,41 @@ public sealed class HostControllerReviewTests
     }
 
     [Test]
+    public void ListReviews_WithAMalformedScopePayload_RepliesOnTheLegacyBranchInsteadOfHanging()
+    {
+        // A malformed pr.list.request (scope sent as a number, or the whole payload as an array) must not
+        // throw an unhandled JsonException out of OnListReviews and leave the correlated request unanswered
+        // — it must fall back to the legacy combined list, exactly as an absent scope would.
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new()
+        {
+            ReviewsValue =
+            [
+                new ReviewSummary(
+                    7, "Fix typo", "https://github.com/o/r/pull/7", "o/r",
+                    ReviewRole.Author, ReviewDecision.InReview),
+            ],
+        };
+        using HostController controller =
+            Build(versioning, new FakeGitHubAuth(signedIn: true), review, startDraft: false);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.PrListRequest, new { scope = 123 }, id: "malformed-scope"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrList);
+        Assert.That(reply, Is.Not.Null);
+        PrListPayload? payload = reply!.GetPayload<PrListPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.Id, Is.EqualTo("malformed-scope"));
+            Assert.That(payload!.Error, Is.Null);
+            Assert.That(payload!.Items, Has.Count.EqualTo(1));
+            Assert.That(payload!.Items[0].Repo, Is.EqualTo("o/r"));
+            Assert.That(review.ListPullRequestsCalls, Is.Zero);
+        });
+    }
+
+    [Test]
     public void ListPullRequests_uses_the_scoped_request_and_returns_both_relationships()
     {
         FakeVersioning versioning = new();
