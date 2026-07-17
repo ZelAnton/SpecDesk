@@ -52,6 +52,7 @@ import {
   type ReviewCommentAnchorPayload,
   type ReviewCommentPublishedPayload,
   type ReviewCommentSyncPayload,
+  type ReviewConflictPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -821,6 +822,13 @@ export function parseReviewCommentPublished(value: unknown): ReviewCommentPublis
         error: value.error,
       }
     : { localId: value.localId, githubId: value.githubId, succeeded: value.succeeded };
+}
+
+export function parseReviewConflict(value: unknown): ReviewConflictPayload | null {
+  if (!isRecord(value) || !isString(value.document) || value.document === "") {
+    return null;
+  }
+  return { document: value.document };
 }
 
 export function parseChatDelta(value: unknown): ChatDeltaPayload | null {

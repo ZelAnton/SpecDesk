@@ -41,4 +41,47 @@ public interface IGitPublishing
         string accessToken,
         string remoteName = "origin",
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Check whether sharing the draft would collide with a competing change to <paramref
+    /// name="repoRelativePath"/> on the latest published version (docs/design/04-git-workflow.md, "Rebase on
+    /// send/update"). Fetches the base so the check is against the truly-current published version, then does
+    /// an IN-MEMORY three-way merge of the draft branch and that base — it never modifies the working tree,
+    /// the index, or any branch, so it is safe to run before a push and to leave un-acted-upon. The token is
+    /// the fetch credential only (handed solely to an HTTPS github.com host, never logged or stored); the
+    /// caller supplies the repository URL it resolved before starting, so a replaced remote can't redirect the
+    /// fetch. Returns the conflicting document's both-sides content — with NO git conflict markers — when the
+    /// document collides, or <c>null</c> when the share is clean (nothing new upstream, the base is already an
+    /// ancestor, the merge is conflict-free, or only a non-document path collides). Throws when the remote or
+    /// the draft branch is missing, or on a transport / auth failure.
+    /// </summary>
+    ReviewShareConflict? DetectShareConflict(
+        string repoRoot,
+        string branchName,
+        string baseBranch,
+        string repoRelativePath,
+        string expectedRepositoryUrl,
+        string accessToken,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reconcile a detected conflict by folding the latest fetched base into the draft branch, keeping the
+    /// author's (<see cref="ConflictResolution.KeepMine"/>) or the base's (<see
+    /// cref="ConflictResolution.KeepTheirs"/>) whole version of <paramref name="repoRelativePath"/>, and
+    /// updating the working copy to the reconciled content. NEVER writes git conflict markers into the working
+    /// copy or the commit. Purely local: it reconciles against the base already fetched into the remote-
+    /// tracking ref (no network, no token). Requires the draft branch to be the current checkout and the
+    /// working tree to be clean — it throws <see cref="DirtyWorkingTreeException"/> rather than force past
+    /// unsaved edits, so the author never silently loses in-progress typing. Returns the reconciled document
+    /// content the editor should now show.
+    /// </summary>
+    string ReconcileShareConflict(
+        string repoRoot,
+        string branchName,
+        string baseBranch,
+        string repoRelativePath,
+        ConflictResolution resolution,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default);
 }

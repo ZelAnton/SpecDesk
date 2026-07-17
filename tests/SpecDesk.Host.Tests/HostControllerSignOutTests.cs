@@ -300,6 +300,17 @@ public sealed class HostControllerSignOutTests
 			Started.Set();
 			Release.Wait(TimeSpan.FromSeconds(5), CancellationToken.None);
 		}
+
+		// No competing change in this cancellation test — the send proceeds straight to the (blocking) push.
+		public ReviewShareConflict? DetectShareConflict(
+			string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+			string expectedRepositoryUrl, string accessToken, string remoteName = "origin",
+			CancellationToken cancellationToken = default) => null;
+
+		public string ReconcileShareConflict(
+			string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+			ConflictResolution resolution, string remoteName = "origin",
+			CancellationToken cancellationToken = default) => "reconciled";
 	}
 
 	[Test]

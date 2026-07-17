@@ -316,6 +316,21 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		return Inspect(repository, knownDefaultBranch);
 	}
 
+	// Fetch the latest base for a share-conflict check against an ALREADY-OPEN repo, reusing the same
+	// validated-remote + token handling every other network op goes through (the token only ever reaches an
+	// HTTPS github.com host; a replaced/look-alike remote is refused). Advances the remote-tracking refs only
+	// — it never touches the working tree, index, or any local branch. Kept here so LibGit2DocumentVersioning's
+	// conflict detection doesn't re-implement the credential/remote-validation surface.
+	internal static void FetchLatestBase(
+		Repository repository,
+		string expectedRepositoryUrl,
+		string? accessToken,
+		CancellationToken ct)
+	{
+		ValidatedRemote origin = CaptureOrigin(repository, expectedRepositoryUrl, forPush: false);
+		FetchCore(repository, origin, accessToken, beforeNetwork: null, beforeCredentials: null, ct);
+	}
+
 	private static void FetchCore(
 		Repository repository,
 		ValidatedRemote origin,

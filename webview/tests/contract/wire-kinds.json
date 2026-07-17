@@ -83,6 +83,8 @@
   "review.comment.published",
   "review.commentSync",
   "review.commentSync.request",
+  "review.conflict",
+  "review.conflict.resolve",
   "review.refresh",
   "status",
   "templates",

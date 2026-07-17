@@ -52,6 +52,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseReviewConflict,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -337,6 +338,12 @@ function wire(): void {
   const prBodyTextarea = document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
   const prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
   const prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+  const conflictBar = document.querySelector<HTMLElement>("#conflict-bar");
+  const conflictMessage = document.querySelector<HTMLElement>("#conflict-message");
+  const conflictKeepMine = document.querySelector<HTMLButtonElement>("#conflict-keep-mine");
+  const conflictKeepTheirs = document.querySelector<HTMLButtonElement>("#conflict-keep-theirs");
+  const conflictCombine = document.querySelector<HTMLButtonElement>("#conflict-combine");
+  const conflictAskForHelp = document.querySelector<HTMLButtonElement>("#conflict-ask-for-help");
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
@@ -646,6 +653,12 @@ function wire(): void {
     prBodyTextarea,
     prTextConfirm,
     prTextCancel,
+    conflictBar,
+    conflictMessage,
+    conflictKeepMine,
+    conflictKeepTheirs,
+    conflictCombine,
+    conflictAskForHelp,
     suggestBranchName: () =>
       requestSuggestion(
         Kinds.branchNameRequest,
@@ -676,6 +689,9 @@ function wire(): void {
     // the same way a host error is shown, and leave the prompt closed.
     onPrBlocked: (reason) => showPlainStatus(reason),
     onPrText: ({ title, body }) => ipc.send(Kinds.docSendForReview, { title, body }),
+    // The author picked how to reconcile a "Someone else changed this too" conflict — the host resolves it
+    // (Keep mine / Keep theirs / Combine reconcile locally; Ask for help cancels), then reloads the document.
+    onConflictResolve: (choice) => ipc.send(Kinds.reviewConflictResolve, { choice }),
   });
 
   // Wiring group 1 — the editing surfaces: both editors, their live cross-mirror + highlight/scroll
@@ -1335,6 +1351,16 @@ function wire(): void {
       if (payload) {
         // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
         showPlainStatus(payload.message);
+      }
+    });
+
+    // A competing published change collided with the author's edit while sending/updating a review (PoC-10).
+    // Open the plain-language "Someone else changed this too" dialog — never git conflict markers. The four
+    // choices round-trip back through review.conflict.resolve (see the Dialogs onConflictResolve dep).
+    ipc.on(Kinds.reviewConflict, (message) => {
+      const payload = parseReviewConflict(message.payload);
+      if (payload) {
+        dialogs.openConflict(payload.document);
       }
     });
 

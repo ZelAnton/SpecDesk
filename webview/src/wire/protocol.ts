@@ -28,6 +28,7 @@ export const Kinds = {
   prCommentUpdate: "pr.comment.update",
   reviewCommentSyncRequest: "review.commentSync.request",
   reviewCommentPublish: "review.comment.publish",
+  reviewConflictResolve: "review.conflict.resolve",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -87,6 +88,7 @@ export const Kinds = {
   prMutationCompleted: "pr.mutationCompleted",
   reviewCommentSync: "review.commentSync",
   reviewCommentPublished: "review.comment.published",
+  reviewConflict: "review.conflict",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -526,6 +528,21 @@ export interface ReviewCommentPublishedPayload {
   githubId: number;
   succeeded: boolean;
   error?: string;
+}
+
+/** The four author-facing choices for the "Someone else changed this too" reconciliation dialog (PoC-10).
+ *  Wire values on `review.conflict.resolve` — mirror of C# `ConflictChoices`. All plain-language. */
+export const CONFLICT_CHOICES = ["keepMine", "keepTheirs", "combine", "askForHelp"] as const;
+
+/** One reconciliation choice (mirror of C# `ConflictChoices`). */
+export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
+
+/** Payload of `review.conflict` (native→webview): a competing published change collides with the author's
+ *  edit to `document` (its display name) while sending or updating a review. The webview opens the
+ *  "Someone else changed this too" dialog — it needs only the name; the both-sides content stays host-side
+ *  (shown through the diff surface only if the author chooses Combine). No git vocabulary crosses here. */
+export interface ReviewConflictPayload {
+  document: string;
 }
 
 /** Payload of `status` (native→webview): the lifecycle state surfaced to the author. */

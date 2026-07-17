@@ -4,6 +4,7 @@ using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using SpecDesk.Ai;
 using SpecDesk.Contracts;
+using SpecDesk.Git;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
 
@@ -1695,6 +1696,228 @@ public sealed class HostControllerReviewTests
             Assert.That(reply?.GetPayload<ReviewCommentPublishedPayload>()?.Succeeded, Is.False);
             Assert.That(review.CreatedReviewComments, Is.Empty, "an invalid line is rejected before any network call");
         });
+    }
+
+    // ——— PoC-10: "Someone else changed this too" (share-conflict reconciliation) ———————————————————————
+
+    [Test]
+    public void SendForReview_with_a_competing_change_opens_the_reconciliation_dialog_and_does_not_push()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+
+        IpcMessage? dialog = WaitForKind(MessageKinds.ReviewConflict);
+        Assert.That(dialog, Is.Not.Null, "a competing change must open the reconciliation dialog");
+        Assert.Multiple(() =>
+        {
+            Assert.That(dialog!.GetPayload<ReviewConflictPayload>()?.Document, Is.EqualTo("billing.md"));
+            Assert.That(versioning.DetectShareConflictCalls, Is.EqualTo(1));
+            Assert.That(versioning.DetectedRelativePath, Is.EqualTo("billing.md"));
+            // Nothing was pushed and no pull request opened — the draft stays put until the author reconciles.
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
+            Assert.That(review.Calls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void UpdateReview_with_a_competing_change_opens_the_reconciliation_dialog_and_does_not_push()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildInReview(versioning, review);
+        Assert.That(versioning.PushBranchCalls, Is.EqualTo(1), "setup: the send pushed once");
+
+        SaveAVersion(controller);
+        // Only NOW does a competing change appear on the base.
+        versioning.ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs");
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocUpdateReview));
+
+        IpcMessage? dialog = WaitForKind(MessageKinds.ReviewConflict);
+        Assert.That(dialog, Is.Not.Null, "a competing change must open the reconciliation dialog on update too");
+        Assert.Multiple(() =>
+        {
+            // No SECOND push — the update bailed to the dialog instead of pushing (the setup send is push #1).
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(1));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+        });
+    }
+
+    [Test]
+    public void ResolveConflict_keep_mine_reconciles_and_reloads_the_document()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+            ReconcileResult = "# Reconciled kept mine",
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForKind(MessageKinds.ReviewConflict), Is.Not.Null, "setup: the dialog opened");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.KeepMine)));
+
+        IpcMessage? reloaded = WaitForDocLoadedWithText("# Reconciled kept mine");
+        Assert.That(reloaded, Is.Not.Null, "the reconciled document reloads into the editor");
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.ReconcileCalls, Is.EqualTo(1));
+            Assert.That(versioning.LastReconcileResolution, Is.EqualTo(ConflictResolution.KeepMine));
+            // Reconciling never pushes — the author sends again afterwards, and the draft stays editable.
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"));
+        });
+    }
+
+    [Test]
+    public void ResolveConflict_keep_theirs_takes_the_other_version()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+            ReconcileResult = "# Theirs",
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForKind(MessageKinds.ReviewConflict), Is.Not.Null, "setup: the dialog opened");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.KeepTheirs)));
+
+        IpcMessage? reloaded = WaitForDocLoadedWithText("# Theirs");
+        Assert.That(reloaded, Is.Not.Null, "the other person's version reloads into the editor");
+        Assert.That(versioning.LastReconcileResolution, Is.EqualTo(ConflictResolution.KeepTheirs));
+    }
+
+    [Test]
+    public void ResolveConflict_combine_reconciles_as_mine_and_shows_both_sides_through_the_diff_surface()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+            ReconcileResult = "# Mine",
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForKind(MessageKinds.ReviewConflict), Is.Not.Null, "setup: the dialog opened");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.Combine)));
+
+        IpcMessage? diff = WaitForKind(MessageKinds.DiffResult);
+        Assert.That(diff, Is.Not.Null, "Combine shows both sides through the existing diff surface");
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.ReconcileCalls, Is.EqualTo(1));
+            // Combine keeps the author's version and lets them fold in the other side by hand.
+            Assert.That(versioning.LastReconcileResolution, Is.EqualTo(ConflictResolution.KeepMine));
+            Assert.That(WaitForDocLoadedWithText("# Mine"), Is.Not.Null);
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
+        });
+    }
+
+    [Test]
+    public void ResolveConflict_ask_for_help_cancels_without_touching_the_document()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForKind(MessageKinds.ReviewConflict), Is.Not.Null, "setup: the dialog opened");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.AskForHelp)));
+
+        // A plain "asked for help" status appears, and nothing touched the working copy or the remote.
+        Assert.That(
+            WaitUntil(() => LatestStatus()?.Label.Contains("asked for help", StringComparison.OrdinalIgnoreCase) == true),
+            Is.True,
+            "Ask for help reports a plain status");
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.ReconcileCalls, Is.EqualTo(0), "Ask for help must not reconcile the document");
+            Assert.That(versioning.PushBranchCalls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("draft"), "the author returns to the pre-send draft state");
+        });
+    }
+
+    [Test]
+    public void ResolveConflict_refuses_when_the_draft_has_unsaved_edits_so_they_are_never_discarded()
+    {
+        FakeVersioning versioning = new()
+        {
+            ShareConflictToReturn = new ReviewShareConflict("billing.md", "# Mine", "# Theirs"),
+        };
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForKind(MessageKinds.ReviewConflict), Is.Not.Null, "setup: the dialog opened");
+        // The author types while the dialog is open — unsaved edits a reconcile (a hard reset) must not lose.
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.EditorChanged, new EditorChangedPayload("# Typed while deciding")));
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.KeepMine)));
+
+        IpcMessage? error = WaitForKind(MessageKinds.Error);
+        Assert.Multiple(() =>
+        {
+            Assert.That(versioning.ReconcileCalls, Is.EqualTo(0), "unsaved edits must block the reconcile");
+            Assert.That(
+                error?.GetPayload<ErrorPayload>()?.Message,
+                Does.Contain("Save your latest changes").IgnoreCase);
+        });
+    }
+
+    [Test]
+    public void ResolveConflict_is_ignored_when_no_conflict_is_pending()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+
+        // No dialog was opened, so a stray resolution must be a no-op — it must never reconcile blindly.
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewConflictResolve, new ReviewConflictResolvePayload(ConflictChoices.KeepTheirs)));
+
+        Assert.That(versioning.ReconcileCalls, Is.EqualTo(0));
+    }
+
+    // The doc.loaded frame carrying the reconciled text (distinct from the initial load's "# Billing").
+    private IpcMessage? WaitForDocLoadedWithText(string text)
+    {
+        for (int attempt = 0; attempt < 200; attempt++)
+        {
+            lock (_gate)
+            {
+                for (int i = _sent.Count - 1; i >= 0; i--)
+                {
+                    IpcMessage? message = IpcSerializer.TryDeserialize(_sent[i]);
+                    if (message is { Kind: MessageKinds.DocLoaded }
+                        && message.GetPayload<DocLoadedPayload>()?.Text == text)
+                    {
+                        return message;
+                    }
+                }
+            }
+
+            Thread.Sleep(20);
+        }
+
+        return null;
     }
 
     private bool WaitForStatusState(string state) => WaitUntil(() => LatestStatus()?.State == state);

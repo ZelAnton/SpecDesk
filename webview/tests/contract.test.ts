@@ -37,6 +37,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseReviewConflict,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -169,6 +170,15 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       githubId: 2002,
       succeeded: true,
     });
+  });
+
+  it("review.conflict (reconciliation dialog carries only the document name)", () => {
+    const payload = parseReviewConflict(fixture["review.conflict"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.document).toBe("billing.md");
+    // A blank/absent document name is a contract drift.
+    expect(parseReviewConflict({ document: "" })).toBeNull();
+    expect(parseReviewConflict({})).toBeNull();
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {
