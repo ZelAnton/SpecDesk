@@ -65,3 +65,12 @@ software, not the implementer. Pure internal refactors are exempt.
 - Ensure CI (build/test on Linux, Windows, macOS, plus the webview job) and
   CodeQL pass.
 - Fill in the pull-request checklist.
+
+## Releasing
+
+Releases are cut by bumping the version and pushing a `vX.Y.Z` tag; the
+[`release`](.github/workflows/release.yml) workflow then builds and tests the
+tagged commit, publishes the self-contained Windows exe, and creates the GitHub
+Release with notes and the exe attached. The full step-by-step procedure —
+renaming `## [Unreleased]` under the version number, bumping `<Version>`, and
+tagging — is in [`docs/release-process.md`](docs/release-process.md).

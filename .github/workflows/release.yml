@@ -1,0 +1,221 @@
+name: Release
+
+# Publishes a GitHub Release when a version tag `vX.Y.Z` is pushed: it builds and tests
+# the exact tagged commit, publishes the self-contained Windows exe, and creates the
+# Release with notes drawn from CHANGELOG.md (git-cliff fallback) and the exe attached.
+# The version-cut procedure that produces the tag is documented in docs/release-process.md.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Serialise runs for the same tag and never cancel one mid-flight: a cancelled run could
+# leave a Release half-created. Different tags still run independently.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Least privilege: the job needs write access only to create the Release and upload its
+# asset through the built-in GITHUB_TOKEN; everything else is read-only.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, test and publish release
+    # Windows runner: the win-x64 single-file self-contained publish and the packaged
+    # SpecDesk.Host.exe must be produced on Windows.
+    runs-on: windows-latest
+    steps:
+      # Actions are pinned to a full commit SHA (supply-chain hardening); the trailing
+      # comment records the human-readable version, matching .github/workflows/ci.yml.
+      # fetch-depth: 0 brings full history + tags so the git-cliff notes fallback can
+      # diff the previous tag against this one.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      # Fail closed before any work if the tag is not a clean semantic version
+      # (vX.Y.Z, optional -prerelease). The raw ref is read from the environment, never
+      # interpolated into the script, so a hostile tag name cannot inject shell. Later
+      # steps consume only the validated, sanitised outputs below.
+      - name: Validate tag and derive version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)$') {
+            Write-Error "Tag '$tag' is not a vX.Y.Z[-prerelease] version tag; refusing to release."
+            exit 1
+          }
+          $version = $Matches[1]
+          $prerelease = if ($version -match '-') { 'true' } else { 'false' }
+          "tag=$tag"               >> $env:GITHUB_OUTPUT
+          "version=$version"       >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+          Write-Host "Releasing tag=$tag version=$version prerelease=$prerelease"
+
+      # Integrity gate: the product <Version> compiled into the exe must equal the tag,
+      # so a release can never ship an artifact whose version disagrees with its tag.
+      # Cheap, so it runs before the expensive build to fail fast.
+      - name: Verify project version matches tag
+        shell: pwsh
+        run: |
+          $props = Get-Content Directory.Build.props -Raw
+          if ($props -notmatch '<Version>\s*([^<\s]+)\s*</Version>') {
+            Write-Error "Could not read <Version> from Directory.Build.props."
+            exit 1
+          }
+          $projectVersion = $Matches[1]
+          $tagVersion = '${{ steps.version.outputs.version }}'
+          if ($projectVersion -ne $tagVersion) {
+            Write-Error "Project <Version> ($projectVersion) does not match tag version ($tagVersion). Update Directory.Build.props and CHANGELOG.md before tagging."
+            exit 1
+          }
+          Write-Host "Project version $projectVersion matches tag."
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      # Node is required: the publish rebuilds and content-verifies the webview bundle
+      # from the committed lockfile (SkipWebview is forbidden on publish), so a shipped
+      # exe can never carry a stale bundle.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: webview/.nvmrc
+          cache: npm
+          cache-dependency-path: webview/package-lock.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('Directory.Packages.props', 'nuget.config', 'global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore SpecDesk.slnx
+
+      # Full solution build + test, warnings-as-errors (enforced by Directory.Build.props),
+      # on the exact tagged commit. No -p:SkipWebview here: this runner has Node, and the
+      # release must be built and tested with the real webview bundle.
+      - name: Build
+        run: dotnet build SpecDesk.slnx --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test SpecDesk.slnx --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./TestResults
+
+      # Uploaded even on failure so a red release run is diagnosable from the .trx.
+      - name: Upload test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-test-results
+          path: ./TestResults/*.trx
+          if-no-files-found: ignore
+
+      # Single-file, self-contained win-x64 publish (same profile as release.cmd).
+      # -p:DebugType=none drops referenced-project .pdbs so the publish folder holds
+      # just the one exe.
+      - name: Publish (win-x64 single-file)
+        run: dotnet publish src/SpecDesk.Host -p:PublishProfile=win-x64 -p:DebugType=none
+
+      # Verify the artifact exists and is non-trivially sized, then stage it under a
+      # version-stamped name. Fails the release before anything is published if publish
+      # produced nothing usable.
+      - name: Stage and verify release artifact
+        id: artifact
+        shell: pwsh
+        run: |
+          $publishExe = 'src/SpecDesk.Host/bin/Release/net10.0/win-x64/publish/SpecDesk.Host.exe'
+          if (-not (Test-Path $publishExe)) {
+            Write-Error "Published exe not found at $publishExe."
+            exit 1
+          }
+          $size = (Get-Item $publishExe).Length
+          # A self-contained single-file exe is tens of MB; under 10 MB means a broken publish.
+          if ($size -lt 10MB) {
+            Write-Error "Published exe is only $size bytes; expected a self-contained build (>10 MB). Refusing to release."
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $assetName = "SpecDesk-${{ steps.version.outputs.tag }}-win-x64.exe"
+          Copy-Item $publishExe (Join-Path 'dist' $assetName)
+          "asset_path=dist/$assetName" >> $env:GITHUB_OUTPUT
+          Write-Host "Staged $assetName ($([math]::Round($size / 1MB, 1)) MB)."
+
+      # Release notes come from CHANGELOG.md's section for this version (the source of
+      # truth). found=false when there is no such section or it is empty — then the
+      # git-cliff fallback below runs.
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $escaped = [regex]::Escape($version)
+          $lines = Get-Content CHANGELOG.md
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^##\s+\[$escaped\]") { $start = $i; break }
+          }
+          if ($start -lt 0) {
+            "found=false" >> $env:GITHUB_OUTPUT
+            Write-Host "No CHANGELOG section for [$version]; will fall back to git-cliff."
+            exit 0
+          }
+          $body = New-Object System.Collections.Generic.List[string]
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^##\s+\[') { break }
+            $body.Add($lines[$i])
+          }
+          $text = ($body -join "`n").Trim()
+          if ([string]::IsNullOrWhiteSpace($text)) {
+            "found=false" >> $env:GITHUB_OUTPUT
+            Write-Host "CHANGELOG section for [$version] is empty; will fall back to git-cliff."
+            exit 0
+          }
+          Set-Content -Path release-notes.md -Value $text
+          "found=true" >> $env:GITHUB_OUTPUT
+          Write-Host "Using CHANGELOG section for [$version] as release notes."
+
+      # Fallback only: generate notes for this tag's commits from git history using the
+      # committed cliff.toml. --current selects the commits belonging to the checked-out
+      # tag; --output writes the notes file the release step consumes.
+      - name: Generate release notes with git-cliff (fallback)
+        if: ${{ steps.notes.outputs.found != 'true' }}
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        with:
+          config: cliff.toml
+          args: "--current --output release-notes.md"
+
+      # Final fail-closed guard: never create a Release with empty notes.
+      - name: Verify release notes are non-empty
+        shell: pwsh
+        run: |
+          if (-not (Test-Path release-notes.md) -or [string]::IsNullOrWhiteSpace((Get-Content release-notes.md -Raw))) {
+            Write-Error "Release notes are empty; refusing to create the GitHub Release."
+            exit 1
+          }
+          Write-Host "Release notes ready:"
+          Get-Content release-notes.md
+
+      # Create the Release with the notes and the staged exe using the pre-installed gh
+      # CLI (first-party — no extra third-party action for the publish step). --verify-tag
+      # refuses to publish if the tag is somehow absent on the remote. This is the last
+      # step: any earlier failure aborts before anything is published.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $ghArgs = @(
+            '${{ steps.version.outputs.tag }}',
+            '${{ steps.artifact.outputs.asset_path }}',
+            '--title', '${{ steps.version.outputs.tag }}',
+            '--notes-file', 'release-notes.md',
+            '--verify-tag'
+          )
+          if ('${{ steps.version.outputs.prerelease }}' -eq 'true') { $ghArgs += '--prerelease' }
+          gh release create @ghArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
