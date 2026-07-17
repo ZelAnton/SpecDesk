@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every destructive action now requires an inline **Confirm deletion** step directly beneath the chosen action before SpecDesk can remove anything.
 - `GitHubRepositoryCatalog`'s organization, repository, metadata, tree, folder, and file requests (including the paginated organization/repository fetches) now share the same 30-second per-request timeout and User-Agent as SpecDesk's other GitHub transports, instead of relying on the shared `HttpClient`'s longer default timeout with no per-request bound; a stalled GitHub request during sign-in or repository browsing now fails and can be retried sooner instead of appearing to hang.
 - The "Show changes" compare overlay now explicitly requests the last-saved-version base it has always used, instead of the request path hard-coding that literal at the call site — laying the groundwork for future compare affordances against other bases without changing today's behavior.
+- Incoming webview messages are now routed through a per-domain handler registry that each feature area populates from its own file, replacing the single central switch, so a new message kind is added entirely within its domain; message routing, the `log` channel's exclusion from frame logging, and processing order are unchanged.
 
 ### Fixed
 
