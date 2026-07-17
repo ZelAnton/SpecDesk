@@ -573,10 +573,10 @@ public sealed record WorkspaceItem(
 	string? RepositoryId = null,
 	string? Branch = null);
 
-/// <summary>One registered GitHub repository the author works with (native→webview, inside
-/// <see cref="WorkspaceStatePayload"/>). A4 only stores the entry — no cloning yet. <paramref name="Id"/> is a
-/// stable key (<c>owner/name</c>); <paramref name="Name"/> is the display (<c>owner/name</c>);
-/// <paramref name="Url"/> is the normalized <c>https://github.com/owner/name</c> URL.</summary>
+/// <summary>Source-control status of one branch or clone (native→webview, inside <see cref="RegisteredBranch"/>
+/// and <see cref="RegisteredClone"/>). <paramref name="Ahead"/>/<paramref name="Behind"/> count commits relative
+/// to the upstream, <paramref name="HasUncommitted"/> flags a dirty working tree, <paramref name="StashCount"/>
+/// counts stashed changes, and <paramref name="HasConflicts"/> flags an unresolved merge.</summary>
 public sealed record RepositoryStatusPayload(
 	int Ahead,
 	int Behind,
@@ -587,6 +587,10 @@ public sealed record RepositoryStatusPayload(
 	public static RepositoryStatusPayload Empty { get; } = new(0, 0, false, 0, false);
 }
 
+/// <summary>One branch of a registered repository's clone (native→webview, inside <see cref="RegisteredClone"/>).
+/// <paramref name="Status"/> is its ahead/behind/dirty state; <paramref name="CanDelete"/> and
+/// <paramref name="CanRename"/> gate the corresponding UI actions. Deserializes from either a legacy plain string
+/// (the name alone) or the current object shape.</summary>
 [JsonConverter(typeof(RegisteredBranchJsonConverter))]
 public sealed record RegisteredBranch(
 	string Name,
@@ -643,6 +647,11 @@ public sealed class RegisteredBranchJsonConverter : JsonConverter<RegisteredBran
 	}
 }
 
+/// <summary>One managed local clone of a registered repository (native→webview, inside <see cref="RegisteredRepo"/>).
+/// <paramref name="Id"/> identifies this clone, <paramref name="Path"/> is its local folder, <paramref
+/// name="CurrentBranch"/> is the checked-out branch (<see langword="null"/> when detached or unknown), <paramref
+/// name="Branches"/> lists its known branches, and <paramref name="Status"/> is the clone's own ahead/behind/dirty
+/// state.</summary>
 [method: JsonConstructor]
 public sealed record RegisteredClone(
 	string Id,
@@ -662,6 +671,11 @@ public sealed record RegisteredClone(
 	}
 }
 
+/// <summary>One registered GitHub repository the author works with (native→webview, inside
+/// <see cref="WorkspaceStatePayload"/>). <paramref name="Id"/> is a stable key (<c>owner/name</c>); <paramref
+/// name="Name"/> is the display (<c>owner/name</c>); <paramref name="Url"/> is the normalized
+/// <c>https://github.com/owner/name</c> URL; <paramref name="DefaultBranch"/> is the repository's default branch;
+/// <paramref name="Clones"/> lists the managed local clones made of it (empty until the author clones or opens it).</summary>
 public sealed record RegisteredRepo(
 	string Id,
 	string Name,
