@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Property-based tests (fast-check) now guard the block-splice byte-for-byte round-trip and word-diff invertibility across generated Markdown documents (headings, lists, tables, code, quotes, hard line breaks), catching regressions the hand-written fixtures alone could miss.
 - CI now checks F# formatting with Fantomas (pinned as a local dotnet tool via `.config/dotnet-tools.json`) and fails on any unformatted `.fs` file under `src/` or `tests/`.
 - Versioned releases are now published automatically: pushing a `vX.Y.Z` tag builds and tests SpecDesk on the tagged commit, then creates a GitHub Release with notes drawn from the changelog (falling back to the commit history) and the self-contained Windows `.exe` attached for download.
+- A Layer 1 e2e accessibility gate now runs an axe-core (WCAG 2.0/2.1 A + AA) scan, in both the light and dark theme, over the editor's three view modes, the workspace-panel left rail, the inline prompt bars, the native pull-request document, and the GitHub account/sign-in chrome, failing on any serious or critical violation not already sanctioned as a documented, pre-existing exception.
 
 ### Changed
 
