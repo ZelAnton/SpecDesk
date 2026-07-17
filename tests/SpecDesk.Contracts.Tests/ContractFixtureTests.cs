@@ -27,6 +27,10 @@ public sealed class ContractFixtureTests
 			new DocLoadedPayload("specs/billing.md", "# Billing\n\nThe refund window is 30 days.\n", "specs")),
 		(MessageKinds.DocOpenCompleted, new DocOpenCompletedPayload(17, Succeeded: true)),
 		(MessageKinds.DocDiscardCompleted, new DocDiscardCompletedPayload(18, Succeeded: false)),
+		// A successful new-spec creation (Error absent — the optional field is exercised by the webview
+		// decoder's own null cases): the created file's absolute path is carried back for the webview to open.
+		(MessageKinds.DocCreateCompleted, new DocCreateCompletedPayload(
+			19, Succeeded: true, @"C:\specs\billing-repo\specs\refund-policy.md")),
 		(MessageKinds.PreviewHtml,
 			new PreviewPayload("<h1>Billing</h1>", [new LineSpan(0, 0), new LineSpan(2, 2)])),
 		(MessageKinds.Status,

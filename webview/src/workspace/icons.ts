@@ -17,6 +17,8 @@ const ICON_BODIES: Record<string, string> = {
   files: `<path d="M4 6a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/>`,
   // document — a file row's leading affordance (paired with `files` = folder)
   file: `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 19 8"/>`,
+  // document with a plus — create a new specification inside a folder
+  newSpec: `<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><polyline points="14 3 14 8 19 8"/><line x1="18" y1="14" x2="18" y2="20"/><line x1="15" y1="17" x2="21" y2="17"/>`,
   // clock — recently opened files and folders
   recent: `<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>`,
   // star — favorites (fillable via CSS when a row is starred)

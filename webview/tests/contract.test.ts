@@ -16,6 +16,7 @@ import {
   parseConfirmApplied,
   parseConfirmRequest,
   parseDiffResult,
+  parseDocCreateCompleted,
   parseDocDiscardCompleted,
   parseDocLoaded,
   parseDocOpenCompleted,
@@ -81,6 +82,29 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       requestId: 18,
       succeeded: false,
     });
+  });
+
+  it("doc.createCompleted (success carries the created path; failure carries a reason)", () => {
+    const payload = parseDocCreateCompleted(fixture["doc.createCompleted"]);
+    expect(payload).toEqual({
+      requestId: 19,
+      succeeded: true,
+      path: "C:\\specs\\billing-repo\\specs\\refund-policy.md",
+    });
+    // A failure carries a plain reason and no path.
+    expect(
+      parseDocCreateCompleted({
+        requestId: 19,
+        succeeded: false,
+        error: "That name is already taken.",
+      }),
+    ).toEqual({ requestId: 19, succeeded: false, error: "That name is already taken." });
+    // Contract drift: a success without a path, or a failure without a reason, is rejected.
+    expect(parseDocCreateCompleted({ requestId: 19, succeeded: true })).toBeNull();
+    expect(parseDocCreateCompleted({ requestId: 19, succeeded: false })).toBeNull();
+    expect(
+      parseDocCreateCompleted({ requestId: 19, succeeded: true, path: "a", error: "b" }),
+    ).toBeNull();
   });
 
   it("preview.html (incl. the nested lineMap)", () => {

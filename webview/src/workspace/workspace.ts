@@ -58,6 +58,9 @@ export interface WorkspaceCallbacks {
   onCentralViewChange(viewId: string): void;
   /** Open a single spec file from the Start screen (host file picker) — same action as the toolbar "Open…". */
   onOpenFile(): void;
+  /** Start a new specification from the Start screen (reveals the inline name prompt; created in the current
+   *  workspace root). */
+  onNewSpec(): void;
   /** Open a folder as the workspace from the Start screen (host folder picker); fills the file navigator. */
   onOpenFolder(): void;
   /** Open a recent item from the Start screen (a folder → `folder.open`, a file → `doc.open`). */
@@ -256,6 +259,7 @@ export function setupWorkspace(
     // not a blank editor). A recent item opens through the same path the left-rail panels use.
     home = buildHomeView(elements.homeView, {
       onOpenFile: () => callbacks.onOpenFile(),
+      onNewSpec: () => callbacks.onNewSpec(),
       onOpenFolder: () => callbacks.onOpenFolder(),
       onOpenItem: (item) => callbacks.onOpenItem(item),
       onOpenRepositories: () => revealRepositories(),

@@ -84,6 +84,15 @@
       <button id="pr-text-confirm" type="button">Send for review</button>
       <button id="pr-text-cancel" type="button">Cancel</button>
     </div>
+    <!-- Inline prompt for naming a new specification, revealed by "New specification" on the Start screen or
+         a folder in the navigator. The author types a name; the host slugs it into a file name, seeds a
+         heading, and opens the new spec. Plain words — no file-system jargon. -->
+    <div id="new-spec-bar" hidden>
+      <label for="new-spec-input">Name the new specification</label>
+      <input id="new-spec-input" type="text" autocomplete="off" placeholder="e.g. Refund policy" />
+      <button id="new-spec-confirm" type="button">Create</button>
+      <button id="new-spec-cancel" type="button">Cancel</button>
+    </div>
     <!-- "Someone else changed this too" reconciliation dialog (PoC-10). Shown when a competing published
          change collides with the author's edit while sending/updating a review. Plain words only — the
          author never sees git conflict markers or git terminology; four clear choices resolve it. -->

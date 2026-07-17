@@ -24,6 +24,7 @@ public sealed partial class HostController
 		_messageHandlers.Register(MessageKinds.Ready, OnReady);
 		_messageHandlers.Register(MessageKinds.EditorChanged, OnEditorChanged);
 		_messageHandlers.Register(MessageKinds.DocOpen, OnOpen);
+		_messageHandlers.Register(MessageKinds.DocCreate, OnCreateFile);
 		_messageHandlers.Register(MessageKinds.FolderOpen, OnOpenFolder);
 		_messageHandlers.Register(MessageKinds.TreeRequest, OnTreeRequest);
 		_messageHandlers.Register(MessageKinds.FileDelete, OnDeleteFile);
@@ -780,6 +781,153 @@ public sealed partial class HostController
 			MessageKinds.FileDeleteCompleted,
 			new FileDeleteCompletedPayload(
 				payload.Path, payload.Root, payload.RequestId, succeeded, error)));
+	}
+
+	// The longest slug we keep for a generated spec file name — a calm cap so an over-long author name cannot
+	// approach the platform path limit; uniqueness is not encoded in the slug (a collision is refused, below).
+	private const int MaxNewSpecSlugLength = 120;
+
+	// Create a new Markdown specification inside the authorized workspace-root perimeter — the SAME perimeter
+	// OnTreeRequest/OnDeleteFile use (_workspaceRoot ?? the open document's folder, read under _sync; K-005,
+	// K-021). The author's name becomes the file's `#` heading verbatim and is slugged (SpecDesk.Core.Slug,
+	// the shared image/doc naming slugger — no new algorithm) into a `.md` file name; a name/slug collision is
+	// refused rather than overwriting. The webview supplies FolderPath only for a folder it is showing inside
+	// that perimeter; any path outside is rejected. On success the created file's path rides back on the
+	// terminal doc.createCompleted and the webview opens it (reusing doc.open, so the editor identity lock
+	// resolves through the ordinary path) and inserts its tree node — the host does not open it here.
+	private void OnCreateFile(IpcMessage message)
+	{
+		DocCreatePayload? payload = SafeGetPayload<DocCreatePayload>(message);
+		if (payload is null || payload.RequestId <= 0)
+		{
+			return;
+		}
+
+		// The heading text is the author's name verbatim (line breaks flattened so a pasted multi-line value
+		// can't inject extra Markdown lines); an empty name has nothing to name the spec after.
+		string title = (payload.Name ?? string.Empty).ReplaceLineEndings(" ").Trim();
+		if (title.Length == 0)
+		{
+			CompleteFileCreation(payload.RequestId, false, null, "Enter a name for the new specification.");
+			return;
+		}
+
+		string slug = Slug.slugify(Slug.Case.Kebab, title);
+		if (slug.Length > MaxNewSpecSlugLength)
+		{
+			slug = slug[..MaxNewSpecSlugLength];
+		}
+		if (slug.Length == 0 || IsWindowsDeviceName(slug))
+		{
+			// A name with no letters/digits (or one that slugs to a reserved Windows device name) yields no
+			// usable file name — plain guidance, no path shown.
+			CompleteFileCreation(
+				payload.RequestId, false, null,
+				"Use letters or numbers in the name so it can become a file.");
+			return;
+		}
+
+		string? authorizedRoot;
+		lock (_sync)
+		{
+			authorizedRoot = _workspaceRoot
+				?? (_currentPath is not null ? Path.GetDirectoryName(_currentPath) : null);
+		}
+		if (string.IsNullOrEmpty(authorizedRoot))
+		{
+			CompleteFileCreation(
+				payload.RequestId, false, null,
+				"Open a folder first, then create a new specification inside it.");
+			return;
+		}
+
+		string targetFolder;
+		string filePath;
+		try
+		{
+			string rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(authorizedRoot));
+			targetFolder = string.IsNullOrWhiteSpace(payload.FolderPath)
+				? rootFull
+				: Path.TrimEndingDirectorySeparator(Path.GetFullPath(payload.FolderPath));
+			// The chosen folder must be the workspace root itself or strictly inside it, and must not be
+			// reached through a symlink/junction that escapes the tree — the same containment gate the
+			// folder-tree and delete paths apply (filesystem-location identity + reparse-traversal check).
+			if (!SameFullPath(rootFull, targetFolder)
+				&& (!AppAssetResolver.IsInside(rootFull, targetFolder)
+					|| AppAssetResolver.HasReparseTraversal(rootFull, targetFolder)))
+			{
+				CompleteFileCreation(
+					payload.RequestId, false, null,
+					"That folder is outside the current workspace, so nothing was created.");
+				return;
+			}
+			// The slug carries no path separators, so the file lands directly inside the validated folder;
+			// re-confirm that (defence in depth) before any write.
+			filePath = Path.GetFullPath(Path.Combine(targetFolder, slug + ".md"));
+			if (!SameFullPath(Path.GetDirectoryName(filePath) ?? string.Empty, targetFolder))
+			{
+				CompleteFileCreation(
+					payload.RequestId, false, null, "That name can't be used for a file. Choose another.");
+				return;
+			}
+		}
+		catch (Exception ex) when (
+			ex is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			_logger.LogWarning(ex, "Rejected an invalid new-specification location");
+			CompleteFileCreation(
+				payload.RequestId, false, null, "That name or folder can't be used for a file.");
+			return;
+		}
+
+		if (File.Exists(filePath) || Directory.Exists(filePath))
+		{
+			CompleteFileCreation(
+				payload.RequestId, false, null,
+				$"A specification named “{slug}.md” already exists here. Choose another name.");
+			return;
+		}
+
+		try
+		{
+			// CreateNew fails closed if the name was taken between the check above and here — it never
+			// overwrites an existing file (races collapse to the same "already exists" outcome).
+			using FileStream stream = new(filePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+			using StreamWriter writer = new(stream, new UTF8Encoding(false));
+			writer.Write($"# {title}{Environment.NewLine}");
+		}
+		catch (IOException ex)
+		{
+			// CreateNew throws IOException when the file already exists (a race with the check above), and
+			// DirectoryNotFoundException (an IOException) when the folder vanished — either way, plain reason.
+			_logger.LogWarning(ex, "Could not create the new specification at {Path}", filePath);
+			CompleteFileCreation(
+				payload.RequestId, false, null,
+				"Could not create the specification here. Choose another name or folder and try again.");
+			return;
+		}
+		catch (UnauthorizedAccessException ex)
+		{
+			_logger.LogWarning(ex, "Access denied creating the new specification at {Path}", filePath);
+			CompleteFileCreation(
+				payload.RequestId, false, null,
+				"SpecDesk does not have permission to create a file there.");
+			return;
+		}
+
+		_logger.LogInformation("Created new specification {Path}", filePath);
+		CompleteFileCreation(payload.RequestId, true, filePath, null);
+	}
+
+	private void CompleteFileCreation(long requestId, bool succeeded, string? path, string? error)
+	{
+		if (error is not null)
+		{
+			SendError(error);
+		}
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreateCompleted,
+			new DocCreateCompletedPayload(requestId, succeeded, path, error)));
 	}
 
 	private void EmitTree(

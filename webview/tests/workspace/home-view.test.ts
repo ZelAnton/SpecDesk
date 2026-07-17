@@ -7,16 +7,18 @@ function ready() {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const onOpenFile = vi.fn();
+  const onNewSpec = vi.fn();
   const onOpenFolder = vi.fn();
   const onOpenItem = vi.fn<(item: WorkspaceItem) => void>();
   const onOpenRepositories = vi.fn();
   const home = buildHomeView(host, {
     onOpenFile,
+    onNewSpec,
     onOpenFolder,
     onOpenItem,
     onOpenRepositories,
   });
-  return { host, home, onOpenFile, onOpenFolder, onOpenItem, onOpenRepositories };
+  return { host, home, onOpenFile, onNewSpec, onOpenFolder, onOpenItem, onOpenRepositories };
 }
 
 describe("buildHomeView", () => {
@@ -33,15 +35,25 @@ describe("buildHomeView", () => {
 
     const buttons = host.querySelectorAll<HTMLButtonElement>(".home-open");
     expect(Array.from(buttons).map((b) => b.textContent)).toEqual([
+      "New specification",
       "Open a file",
       "Open a folder",
       "Open Repository",
     ]);
 
-    buttons[0]?.click();
-    expect(onOpenFile).toHaveBeenCalledTimes(1);
     buttons[1]?.click();
+    expect(onOpenFile).toHaveBeenCalledTimes(1);
+    buttons[2]?.click();
     expect(onOpenFolder).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a new specification from the Start screen", () => {
+    const { host, onNewSpec } = ready();
+    const button = Array.from(host.querySelectorAll<HTMLButtonElement>(".home-open")).find(
+      (candidate) => candidate.textContent === "New specification",
+    );
+    button?.click();
+    expect(onNewSpec).toHaveBeenCalledTimes(1);
   });
 
   it("opens the Repositories panel without rendering a repository input on Start", () => {

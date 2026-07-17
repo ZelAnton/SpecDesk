@@ -10,6 +10,7 @@ function ready() {
   const onRequestLevel = vi.fn<(path: string | undefined, requestId: number) => void>();
   const onDeleteFile = vi.fn<(path: string, root: string, requestId: number) => void>();
   const onToggleFavorite = vi.fn();
+  const onNewSpec = vi.fn<(folderPath: string) => void>();
   const onShowEditor = vi.fn();
   const tree = new FileTree({
     onOpenFile,
@@ -17,6 +18,7 @@ function ready() {
     onRequestLevel,
     onDeleteFile,
     onToggleFavorite,
+    onNewSpec,
     onShowEditor,
   });
   const body = document.createElement("div");
@@ -28,6 +30,7 @@ function ready() {
     onRequestLevel,
     onDeleteFile,
     onToggleFavorite,
+    onNewSpec,
     onShowEditor,
     body,
   };
@@ -592,5 +595,84 @@ describe("FileTree", () => {
     confirm?.click();
     expect(local.onDeleteFile).toHaveBeenCalledOnce();
     local.body.remove();
+  });
+
+  it("offers a New specification action on a local folder row and reports that folder", () => {
+    const { tree, body, onNewSpec, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    const action = body.querySelector<HTMLButtonElement>(".file-tree-new-spec");
+    expect(action).not.toBeNull();
+    expect(action?.getAttribute("aria-label")).toBe("New specification in guides");
+    action?.click();
+    expect(onNewSpec).toHaveBeenCalledWith("C:\\specs\\repo\\guides");
+    // The action's click is stopped before the folder toggle, so it does not expand/load the folder.
+    expect(onRequestLevel).not.toHaveBeenCalled();
+    expect(body.querySelector(".file-tree-folder")?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("does not offer New specification on a remote (GitHub) tree", () => {
+    const { tree, body } = ready();
+    tree.setTree({
+      root: "acme/specs",
+      requestId: 0,
+      remote: true,
+      nodes: [
+        {
+          name: "guides",
+          path: "github://acme/specs/main/guides",
+          isDirectory: true,
+          children: [],
+          hasChildren: true,
+        },
+      ],
+    });
+    expect(body.querySelector(".file-tree-new-spec")).toBeNull();
+  });
+
+  it("noteCreatedFile slots a new file into the root level (sorted) without a reload", () => {
+    const { tree, body, onRequestLevel } = ready();
+    tree.setTree(ROOT);
+    tree.noteCreatedFile("C:\\specs\\repo\\refunds.md");
+    // No fresh level was requested — the node was inserted client-side.
+    expect(onRequestLevel).not.toHaveBeenCalled();
+    const files = Array.from(body.querySelectorAll<HTMLButtonElement>(".file-tree-file")).map(
+      (b) => b.textContent,
+    );
+    // Files sort after folders, by name: README.md then refunds.md.
+    expect(files).toEqual(["README.md", "refunds.md"]);
+  });
+
+  it("noteCreatedFile inserts under a loaded subfolder and expands it", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    body.querySelector<HTMLButtonElement>(".file-tree-folder")?.click();
+    tree.setTree({
+      root: "C:\\specs\\repo\\guides",
+      requestId: 1,
+      nodes: [
+        {
+          name: "intro.md",
+          path: "C:\\specs\\repo\\guides\\intro.md",
+          isDirectory: false,
+          children: [],
+          hasChildren: false,
+        },
+      ],
+    });
+    tree.noteCreatedFile("C:\\specs\\repo\\guides\\api.md");
+    const files = Array.from(body.querySelectorAll<HTMLButtonElement>(".file-tree-file")).map(
+      (b) => b.textContent,
+    );
+    expect(files).toContain("api.md");
+    // The subfolder stays expanded so the new file is visible.
+    expect(body.querySelector(".file-tree-folder")?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("noteCreatedFile is a no-op for a subfolder whose level has not loaded yet", () => {
+    const { tree, body } = ready();
+    tree.setTree(ROOT);
+    // guides is not expanded/loaded — a later lazy expand will fetch it (including the new file).
+    tree.noteCreatedFile("C:\\specs\\repo\\guides\\api.md");
+    expect(body.querySelectorAll(".file-tree-file")).toHaveLength(1); // only the root's README.md
   });
 });

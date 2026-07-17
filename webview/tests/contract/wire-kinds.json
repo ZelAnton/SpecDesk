@@ -11,6 +11,8 @@
   "confirm.result",
   "diff.request",
   "diff.result",
+  "doc.create",
+  "doc.createCompleted",
   "doc.discard",
   "doc.discardCompleted",
   "doc.edit",

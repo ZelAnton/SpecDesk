@@ -17,6 +17,9 @@ export interface FileTreeCallbacks {
   onRequestLevel(path: string | undefined, requestId: number): void;
   onDeleteFile(path: string, root: string, requestId: number): void;
   onToggleFavorite?(item: WorkspaceItem, favorite: boolean): void;
+  /** Start a new specification inside `folderPath` (a local folder): reveals the inline name prompt; the
+   *  host creates it there — confined to the workspace-root perimeter — and opens it. */
+  onNewSpec?(folderPath: string): void;
   onShowEditor?(): void;
 }
 
@@ -373,9 +376,35 @@ export class FileTree implements PanelTool {
         this.render();
       }
     });
-    row.append(toggle, this.favoriteButton(node));
+    row.append(toggle, this.favoriteButton(node), ...this.newSpecButton(node));
     li.append(row, childList);
     return li;
+  }
+
+  /** The folder-row "New specification" affordance — a create-inside-this-folder action, mirroring the
+   *  file rows' inline delete affordance. Omitted for remote (GitHub) folders, which have no local write
+   *  target, and when the owner did not wire onNewSpec. Returned as an array so it can be spread away. */
+  private newSpecButton(node: TreeNode): HTMLButtonElement[] {
+    if (
+      this.callbacks.onNewSpec === undefined ||
+      this.tree?.remote === true ||
+      node.path.startsWith("github://")
+    ) {
+      return [];
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "file-tree-new-spec";
+    button.dataset.path = `new-spec:${node.path}`;
+    button.setAttribute("aria-label", `New specification in ${node.name}`);
+    button.title = "New specification";
+    button.innerHTML = icon("newSpec");
+    button.addEventListener("click", (event) => {
+      // Don't let the click bubble to the folder toggle (which would expand/collapse it instead).
+      event.stopPropagation();
+      this.callbacks.onNewSpec?.(node.path);
+    });
+    return [button];
   }
 
   private buildFile(node: TreeNode): HTMLLIElement {
@@ -452,6 +481,43 @@ export class FileTree implements PanelTool {
     this.render();
   }
 
+  /** Slot a just-created local file into the loaded tree without a full reload. No-op when there is no local
+   *  tree, when the file's folder is outside the current tree, or when that folder's children have not been
+   *  loaded yet (a later lazy expand fetches them — including the new file — so no partial listing is shown).
+   *  A duplicate path is ignored; a matched subfolder is expanded so the new file is visible. */
+  noteCreatedFile(path: string): void {
+    if (this.tree === null || this.tree.remote === true || path.startsWith("github://")) {
+      return;
+    }
+    const parent = parentFolderPath(path);
+    if (parent === null) {
+      return;
+    }
+    const file: TreeNode = {
+      name: folderName(path),
+      path,
+      isDirectory: false,
+      children: [],
+      hasChildren: false,
+    };
+    const parentNorm = normalizePath(parent);
+    if (parentNorm === normalizePath(this.tree.root)) {
+      if (this.tree.nodes.some((node) => sameLocalEntryPath(node.path, path))) {
+        return;
+      }
+      this.tree = { ...this.tree, nodes: insertFileSorted(this.tree.nodes, file) };
+      this.render();
+      return;
+    }
+    const nodes = insertCreatedUnderFolder(this.tree.nodes, parentNorm, file, this.loaded);
+    if (nodes === null) {
+      return;
+    }
+    this.tree = { ...this.tree, nodes };
+    this.expanded.add(parentNorm);
+    this.render();
+  }
+
   private markCurrent(button: HTMLButtonElement, path: string): void {
     if (sameLocalEntryPath(path, this.activeFile ?? "")) {
       button.classList.add("is-current");
@@ -501,6 +567,65 @@ function removeFileNode(nodes: readonly TreeNode[], path: string): TreeNode[] {
     .map((node) =>
       node.isDirectory ? { ...node, children: removeFileNode(node.children, path) } : node,
     );
+}
+
+/** The parent folder of a local path (forward slashes, no trailing separator), or null when it has none
+ *  above a drive/UNC root. */
+function parentFolderPath(path: string): string | null {
+  const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const slash = normalized.lastIndexOf("/");
+  return slash <= 0 ? null : normalized.slice(0, slash);
+}
+
+/** Insert `file` among a level's file entries, after every directory and in case-insensitive name order —
+ *  matching the host's FileTreeBuilder ordering (directories first, then files). */
+function insertFileSorted(nodes: readonly TreeNode[], file: TreeNode): TreeNode[] {
+  const result = [...nodes];
+  const name = file.name.toLocaleLowerCase();
+  let index = result.length;
+  for (let i = 0; i < result.length; i++) {
+    const node = result[i];
+    if (node !== undefined && !node.isDirectory && node.name.toLocaleLowerCase() > name) {
+      index = i;
+      break;
+    }
+  }
+  result.splice(index, 0, file);
+  return result;
+}
+
+/** Return a new nodes array with `file` inserted into the matching loaded subfolder, or null when the
+ *  folder is absent or not yet loaded (in which case a later lazy expand fetches it, including the file). */
+function insertCreatedUnderFolder(
+  nodes: readonly TreeNode[],
+  parentNorm: string,
+  file: TreeNode,
+  loaded: ReadonlySet<string>,
+): TreeNode[] | null {
+  let changed = false;
+  const mapped = nodes.map((node) => {
+    if (!node.isDirectory) {
+      return node;
+    }
+    if (normalizePath(node.path) === parentNorm) {
+      // The folder must have loaded its level, else the pending lazy load will already include the file.
+      if (
+        !loaded.has(parentNorm) ||
+        node.children.some((c) => sameLocalEntryPath(c.path, file.path))
+      ) {
+        return node;
+      }
+      changed = true;
+      return { ...node, children: insertFileSorted(node.children, file), hasChildren: true };
+    }
+    const childResult = insertCreatedUnderFolder(node.children, parentNorm, file, loaded);
+    if (childResult !== null) {
+      changed = true;
+      return { ...node, children: childResult };
+    }
+    return node;
+  });
+  return changed ? mapped : null;
 }
 
 function nodeHasRemotePath(node: TreeNode): boolean {

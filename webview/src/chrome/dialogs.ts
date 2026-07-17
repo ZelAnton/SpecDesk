@@ -50,6 +50,11 @@ export interface DialogsDeps {
   prBodyTextarea: HTMLTextAreaElement | null;
   prTextConfirm: HTMLButtonElement | null;
   prTextCancel: HTMLButtonElement | null;
+  /** The "name a new specification" prompt's own elements (Start screen / navigator folder). */
+  newSpecBar: HTMLElement | null;
+  newSpecInput: HTMLInputElement | null;
+  newSpecConfirm: HTMLButtonElement | null;
+  newSpecCancel: HTMLButtonElement | null;
   /** The "Someone else changed this too" reconciliation dialog's own elements (PoC-10). */
   conflictBar: HTMLElement | null;
   conflictMessage: HTMLElement | null;
@@ -72,6 +77,10 @@ export interface DialogsDeps {
   onPrBlocked: (reason: string) => void;
   /** The author confirmed the PR title/body — push the branch and open the review with this text. */
   onPrText: (text: PrText) => void;
+  /** The author confirmed a name for a new specification. `folderPath` is the navigator folder to create it
+   *  in, or `null` for the Start screen (the host uses the current workspace root). A blank name is dropped
+   *  by the prompt (never sent). */
+  onNewSpec: (name: string, folderPath: string | null) => void;
   /** The author chose how to reconcile a "Someone else changed this too" conflict (PoC-10). */
   onConflictResolve: (choice: ConflictChoice) => void;
 }
@@ -95,6 +104,14 @@ export class Dialogs {
   private readonly prTextConfirm: HTMLButtonElement | null;
   private readonly prTextCancel: HTMLButtonElement | null;
 
+  private readonly newSpecBar: HTMLElement | null;
+  private readonly newSpecInput: HTMLInputElement | null;
+  private readonly newSpecConfirm: HTMLButtonElement | null;
+  private readonly newSpecCancel: HTMLButtonElement | null;
+  // The navigator folder the pending new spec is created in (null = Start screen / current workspace root),
+  // captured on openNewSpec and read on confirm.
+  private newSpecFolderPath: string | null = null;
+
   private readonly conflictBar: HTMLElement | null;
   private readonly conflictMessage: HTMLElement | null;
   private readonly conflictKeepMine: HTMLButtonElement | null;
@@ -107,6 +124,7 @@ export class Dialogs {
   private readonly branchBar: PromptBar;
   private readonly versionBar: PromptBar;
   private readonly prBar: PromptBar;
+  private readonly specBar: PromptBar;
 
   constructor(private readonly deps: DialogsDeps) {
     this.branchNameBar = deps.branchNameBar;
@@ -127,6 +145,11 @@ export class Dialogs {
     this.prTextConfirm = deps.prTextConfirm;
     this.prTextCancel = deps.prTextCancel;
 
+    this.newSpecBar = deps.newSpecBar;
+    this.newSpecInput = deps.newSpecInput;
+    this.newSpecConfirm = deps.newSpecConfirm;
+    this.newSpecCancel = deps.newSpecCancel;
+
     this.conflictBar = deps.conflictBar;
     this.conflictMessage = deps.conflictMessage;
     this.conflictKeepMine = deps.conflictKeepMine;
@@ -137,6 +160,7 @@ export class Dialogs {
     this.branchBar = new PromptBar(this.branchNameBar);
     this.versionBar = new PromptBar(this.versionNoteBar);
     this.prBar = new PromptBar(this.prTextBar);
+    this.specBar = new PromptBar(this.newSpecBar);
 
     // spellcheck/lang enable WebView2/Chromium's built-in spellchecker on the prose fields (the version
     // note and the PR title/body); the draft-name field is deliberately excluded — it is sanitized down
@@ -249,6 +273,26 @@ export class Dialogs {
       } else if (event.key === "Escape") {
         event.preventDefault();
         this.prBar.close();
+      }
+    });
+
+    // New-spec name prompt: Enter creates, Esc cancels; the buttons mirror it. A blank name never creates
+    // (confirmNewSpec drops it), so the prompt closes without asking the host to name a spec after nothing.
+    this.newSpecBar?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.specBar.close();
+      }
+    });
+    this.newSpecConfirm?.addEventListener("click", () => this.confirmNewSpec());
+    this.newSpecCancel?.addEventListener("click", () => this.specBar.close());
+    this.newSpecInput?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        this.confirmNewSpec();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        this.specBar.close();
       }
     });
 
@@ -395,11 +439,44 @@ export class Dialogs {
     this.deps.onPrText({ title, body });
   }
 
+  // —— New-specification name prompt ——————————————————————————————————————————————————————————————————
+
+  /** Reveal the "name a new specification" prompt for `folderPath` (a navigator folder, or `null` for the
+   *  Start screen / current workspace root). Opens empty and focused; no-op if it is already open. There is
+   *  no host suggestion to fetch, but the PromptBar latch/token still guards against stacked reveals. */
+  async openNewSpec(folderPath: string | null): Promise<void> {
+    this.newSpecFolderPath = folderPath;
+    await this.specBar.open(
+      () => Promise.resolve(),
+      () => {
+        if (this.newSpecInput) {
+          this.newSpecInput.value = "";
+        }
+        if (this.newSpecBar) {
+          this.newSpecBar.hidden = false;
+        }
+        this.newSpecInput?.focus();
+      },
+    );
+  }
+
+  private confirmNewSpec(): void {
+    const name = this.newSpecInput?.value.trim() ?? "";
+    const folderPath = this.newSpecFolderPath;
+    this.specBar.close();
+    if (name.length === 0) {
+      // Nothing to name the spec after — close quietly rather than asking the host to create "".
+      return;
+    }
+    this.deps.onNewSpec(name, folderPath);
+  }
+
   /** Close every prompt bar (e.g. when a new document loads). */
   closeAll(): void {
     this.branchBar.close();
     this.versionBar.close();
     this.prBar.close();
+    this.specBar.close();
     this.closeConflict();
   }
 

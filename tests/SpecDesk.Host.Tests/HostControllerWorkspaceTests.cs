@@ -1114,4 +1114,166 @@ public sealed class HostControllerWorkspaceTests
 	{
 		Assert.That(HostController.TryParseGitHubRepo(input, out _, out _), Is.False);
 	}
+
+	// —— doc.create (new specification) ————————————————————————————————————————————————————————————————
+
+	// The terminal doc.createCompleted for the given correlation id (the handler emits it synchronously).
+	private DocCreateCompletedPayload? CreateCompletionFor(long requestId)
+	{
+		DocCreateCompletedPayload? match = null;
+		SpinWait.SpinUntil(() =>
+		{
+			lock (_gate)
+			{
+				foreach (string json in _sent)
+				{
+					IpcMessage? message = IpcSerializer.TryDeserialize(json);
+					if (message?.Kind != MessageKinds.DocCreateCompleted)
+					{
+						continue;
+					}
+					DocCreateCompletedPayload? payload = message.GetPayload<DocCreateCompletedPayload>();
+					if (payload is not null && payload.RequestId == requestId)
+					{
+						match = payload;
+						return true;
+					}
+				}
+			}
+
+			return false;
+		}, TimeSpan.FromSeconds(2));
+		return match;
+	}
+
+	private string OpenWorkspaceFolder(HostController controller, string name)
+	{
+		string folder = Path.Combine(_root, name);
+		Directory.CreateDirectory(folder);
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.FolderOpen, new FolderOpenPayload(folder)));
+		return Path.GetFullPath(folder);
+	}
+
+	[Test]
+	public void CreatingASpec_SlugsTheNameAndSeedsAHeadingInTheWorkspaceRoot()
+	{
+		using HostController controller = NewController();
+		string folder = OpenWorkspaceFolder(controller, "specs");
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("Refund Policy", FolderPath: null, RequestId: 101)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(101);
+		Assert.That(completion, Is.Not.Null);
+		Assert.That(completion!.Succeeded, Is.True);
+		string expectedPath = Path.Combine(folder, "refund-policy.md");
+		Assert.Multiple(() =>
+		{
+			Assert.That(completion.Path, Is.EqualTo(expectedPath));
+			Assert.That(completion.Error, Is.Null);
+			Assert.That(File.Exists(expectedPath), Is.True);
+			// The author's verbatim name becomes the Markdown H1; the file name is the slug.
+			Assert.That(File.ReadAllText(expectedPath), Does.StartWith("# Refund Policy"));
+		});
+	}
+
+	[Test]
+	public void CreatingASpec_HonoursAFolderInsideTheWorkspaceRoot()
+	{
+		using HostController controller = NewController();
+		string root = OpenWorkspaceFolder(controller, "specs");
+		string sub = Path.Combine(root, "guides");
+		Directory.CreateDirectory(sub);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("Getting Started", FolderPath: sub, RequestId: 102)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(102);
+		Assert.That(completion, Is.Not.Null);
+		Assert.That(completion!.Succeeded, Is.True);
+		Assert.That(completion.Path, Is.EqualTo(Path.Combine(sub, "getting-started.md")));
+		Assert.That(File.Exists(Path.Combine(sub, "getting-started.md")), Is.True);
+	}
+
+	[Test]
+	public void CreatingASpec_RefusesANameCollisionWithoutOverwriting()
+	{
+		using HostController controller = NewController();
+		string folder = OpenWorkspaceFolder(controller, "specs");
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("Billing", FolderPath: null, RequestId: 103)));
+		Assert.That(CreateCompletionFor(103)?.Succeeded, Is.True);
+		string created = Path.Combine(folder, "billing.md");
+		File.WriteAllText(created, "# Billing\n\nkeep me");
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("billing", FolderPath: null, RequestId: 104)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(104);
+		Assert.That(completion, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(completion!.Succeeded, Is.False);
+			Assert.That(completion.Error, Is.Not.Null.And.Not.Empty);
+			Assert.That(completion.Path, Is.Null);
+			// The pre-existing file is untouched (never overwritten).
+			Assert.That(File.ReadAllText(created), Does.Contain("keep me"));
+		});
+	}
+
+	[Test]
+	public void CreatingASpec_RefusesAFolderOutsideTheWorkspaceRoot()
+	{
+		using HostController controller = NewController();
+		OpenWorkspaceFolder(controller, "specs");
+		string outside = Path.Combine(_root, "outside");
+		Directory.CreateDirectory(outside);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("Escapee", FolderPath: outside, RequestId: 105)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(105);
+		Assert.That(completion, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(completion!.Succeeded, Is.False);
+			Assert.That(completion.Error, Is.Not.Null);
+			Assert.That(File.Exists(Path.Combine(outside, "escapee.md")), Is.False);
+		});
+	}
+
+	[Test]
+	public void CreatingASpec_RejectsANameThatSlugsToNothing()
+	{
+		using HostController controller = NewController();
+		OpenWorkspaceFolder(controller, "specs");
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("!!!", FolderPath: null, RequestId: 106)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(106);
+		Assert.That(completion, Is.Not.Null);
+		Assert.That(completion!.Succeeded, Is.False);
+		Assert.That(completion.Error, Is.Not.Null);
+	}
+
+	[Test]
+	public void CreatingASpec_WithNoWorkspaceOpen_ReportsAPlainReason()
+	{
+		using HostController controller = NewController();
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.DocCreate, new DocCreatePayload("Orphan", FolderPath: null, RequestId: 107)));
+
+		DocCreateCompletedPayload? completion = CreateCompletionFor(107);
+		Assert.That(completion, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(completion!.Succeeded, Is.False);
+			Assert.That(completion.Error, Is.Not.Null);
+			Assert.That(completion.Path, Is.Null);
+		});
+	}
 }

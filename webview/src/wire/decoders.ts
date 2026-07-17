@@ -17,6 +17,7 @@ import {
   type DiffEntryPayload,
   type DiffOverflowPayload,
   type DiffResultPayload,
+  type DocCreateCompletedPayload,
   type DocDiscardCompletedPayload,
   type DocLoadedPayload,
   type DocOpenCompletedPayload,
@@ -195,6 +196,27 @@ export function parseDocOpenCompleted(value: unknown): DocOpenCompletedPayload |
     return null;
   }
   return { requestId: value.requestId, succeeded: value.succeeded };
+}
+
+export function parseDocCreateCompleted(value: unknown): DocCreateCompletedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.requestId) ||
+    !Number.isSafeInteger(value.requestId) ||
+    value.requestId <= 0 ||
+    !isBoolean(value.succeeded) ||
+    (value.path !== undefined && !isString(value.path)) ||
+    (value.error !== undefined && !isString(value.error)) ||
+    // Exactly one of path/error accompanies the outcome: a success carries the created path and no error,
+    // a failure carries the reason and no path. A shape that contradicts `succeeded` is contract drift.
+    (value.succeeded && (!isString(value.path) || value.error !== undefined)) ||
+    (!value.succeeded && (value.path !== undefined || !isString(value.error)))
+  ) {
+    return null;
+  }
+  return value.succeeded
+    ? { requestId: value.requestId, succeeded: true, path: value.path as string }
+    : { requestId: value.requestId, succeeded: false, error: value.error as string };
 }
 
 function parseLineSpan(value: unknown): LineSpan | null {

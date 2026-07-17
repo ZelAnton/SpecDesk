@@ -23,6 +23,11 @@ function setupDom(): void {
       <button id="pr-text-confirm"></button>
       <button id="pr-text-cancel"></button>
     </div>
+    <div id="new-spec-bar" hidden>
+      <input id="new-spec-input" />
+      <button id="new-spec-confirm"></button>
+      <button id="new-spec-cancel"></button>
+    </div>
     <div id="conflict-bar" hidden>
       <span id="conflict-message"></span>
       <button id="conflict-keep-mine"></button>
@@ -82,6 +87,10 @@ function elements(): Pick<
   | "prBodyTextarea"
   | "prTextConfirm"
   | "prTextCancel"
+  | "newSpecBar"
+  | "newSpecInput"
+  | "newSpecConfirm"
+  | "newSpecCancel"
   | "conflictBar"
   | "conflictMessage"
   | "conflictKeepMine"
@@ -105,6 +114,10 @@ function elements(): Pick<
     prBodyTextarea: textarea("pr-body-textarea"),
     prTextConfirm: button("pr-text-confirm"),
     prTextCancel: button("pr-text-cancel"),
+    newSpecBar: div("new-spec-bar"),
+    newSpecInput: input("new-spec-input"),
+    newSpecConfirm: button("new-spec-confirm"),
+    newSpecCancel: button("new-spec-cancel"),
     conflictBar: div("conflict-bar"),
     conflictMessage: div("conflict-message"),
     conflictKeepMine: button("conflict-keep-mine"),
@@ -125,6 +138,7 @@ function mount(
   const onVersionNote = vi.fn();
   const onPrText = vi.fn();
   const onPrBlocked = vi.fn();
+  const onNewSpec = vi.fn<(name: string, folderPath: string | null) => void>();
   const onConflictResolve = vi.fn();
   const suggestBranchName = vi.fn(async () => suggest.branch ?? "");
   const suggestVersionNote = vi.fn(async () => suggest.version ?? "");
@@ -138,6 +152,7 @@ function mount(
     suggestPrText,
     onPrBlocked,
     onPrText,
+    onNewSpec,
     onConflictResolve,
   });
   return {
@@ -146,6 +161,7 @@ function mount(
     onVersionNote,
     onPrText,
     onPrBlocked,
+    onNewSpec,
     onConflictResolve,
     suggestBranchName,
     suggestVersionNote,
@@ -281,6 +297,7 @@ describe("Dialogs — draft-name bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onNewSpec: vi.fn(),
       onConflictResolve: vi.fn(),
     });
     const first = dialogs.openBranchName();
@@ -308,6 +325,7 @@ describe("Dialogs — draft-name bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onNewSpec: vi.fn(),
       onConflictResolve: vi.fn(),
     });
     const opening = dialogs.openBranchName(); // request in flight
@@ -437,6 +455,7 @@ describe("Dialogs — version-note bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onNewSpec: vi.fn(),
       onConflictResolve: vi.fn(),
     });
     const first = dialogs.openVersionNote();
@@ -469,6 +488,7 @@ describe("Dialogs — version-note bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onNewSpec: vi.fn(),
       onConflictResolve: vi.fn(),
     });
     const opening = dialogs.openVersionNote(); // request in flight
@@ -711,5 +731,51 @@ describe('Dialogs — reconciliation dialog (PoC-10, "Someone else changed this 
     dialogs.openConflict("billing.md");
     dialogs.closeAll();
     expect(div("conflict-bar").hidden).toBe(true);
+  });
+});
+
+describe("Dialogs — new-specification bar", () => {
+  it("opens empty and focused for a navigator folder, then reports the trimmed name + folder", async () => {
+    const { dialogs, onNewSpec } = mount();
+    await dialogs.openNewSpec("C:\\specs\\repo\\guides");
+    expect(div("new-spec-bar").hidden).toBe(false);
+    expect(input("new-spec-input").value).toBe("");
+    input("new-spec-input").value = "  Refund Policy  ";
+    button("new-spec-confirm").click();
+    expect(onNewSpec).toHaveBeenCalledWith("Refund Policy", "C:\\specs\\repo\\guides");
+    expect(div("new-spec-bar").hidden).toBe(true);
+  });
+
+  it("passes a null folder (the Start screen's current-workspace-root case)", async () => {
+    const { dialogs, onNewSpec } = mount();
+    await dialogs.openNewSpec(null);
+    input("new-spec-input").value = "Getting Started";
+    input("new-spec-input").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+    expect(onNewSpec).toHaveBeenCalledWith("Getting Started", null);
+  });
+
+  it("drops a blank name without asking the host to create anything", async () => {
+    const { dialogs, onNewSpec } = mount();
+    await dialogs.openNewSpec(null);
+    input("new-spec-input").value = "   ";
+    button("new-spec-confirm").click();
+    expect(onNewSpec).not.toHaveBeenCalled();
+    expect(div("new-spec-bar").hidden).toBe(true);
+  });
+
+  it("Escape cancels without creating; closeAll also closes it", async () => {
+    const { dialogs, onNewSpec } = mount();
+    await dialogs.openNewSpec(null);
+    div("new-spec-bar").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(div("new-spec-bar").hidden).toBe(true);
+    expect(onNewSpec).not.toHaveBeenCalled();
+
+    await dialogs.openNewSpec(null);
+    dialogs.closeAll();
+    expect(div("new-spec-bar").hidden).toBe(true);
   });
 });

@@ -3087,6 +3087,44 @@ button.context-panel:hover {
   background: var(--danger-bg);
 }
 
+/* The folder-row "New specification" affordance — same reveal-on-hover row action as delete, but a
+   non-destructive accent on hover rather than the danger colours. Reuses the shared action-button tokens. */
+.file-tree-new-spec {
+  flex: none;
+  width: 1.55rem;
+  height: 1.55rem;
+  margin-right: 0.25rem;
+  padding: 0.25rem;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-fast),
+    background var(--motion-fast);
+}
+
+.file-tree-new-spec svg {
+  width: 100%;
+  height: 100%;
+}
+
+.file-tree-row:hover > .file-tree-new-spec,
+.file-tree-row:focus-within > .file-tree-new-spec,
+.file-tree-new-spec:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-tree-new-spec:hover,
+.file-tree-new-spec:focus-visible {
+  color: var(--text-strong);
+  background: var(--accent-soft);
+}
+
 .file-tree-item:hover {
   background: var(--surface-sunken);
 }

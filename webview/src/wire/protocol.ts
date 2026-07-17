@@ -9,6 +9,7 @@ export const Kinds = {
   ready: "ready",
   editorChanged: "editor.changed",
   docOpen: "doc.open",
+  docCreate: "doc.create",
   docSave: "doc.save",
   docEdit: "doc.edit",
   docSaveVersion: "doc.saveVersion",
@@ -79,6 +80,7 @@ export const Kinds = {
   // native → webview
   docLoaded: "doc.loaded",
   docOpenCompleted: "doc.openCompleted",
+  docCreateCompleted: "doc.createCompleted",
   docDiscardCompleted: "doc.discardCompleted",
   previewHtml: "preview.html",
   imageInserted: "image.inserted",
@@ -323,6 +325,16 @@ export interface DocOpenCompletedPayload {
 export interface DocDiscardCompletedPayload {
   requestId: number;
   succeeded: boolean;
+}
+
+/** Terminal result for one correlated `doc.create` (native→webview): on success `path` is the created
+ *  file's absolute path (the webview opens it, reusing `doc.open`); on failure `error` is a plain reason
+ *  (also shown through the common error channel). Exactly one of the two optional fields is present. */
+export interface DocCreateCompletedPayload {
+  requestId: number;
+  succeeded: boolean;
+  path?: string;
+  error?: string;
 }
 
 /** Payload of `link.open` (webview→native): a URL to open in the OS — an http/https page in
@@ -706,6 +718,15 @@ export interface TemplatesPayload {
  *  the native open dialog. */
 export interface DocOpenPayload {
   path?: string;
+  requestId: number;
+}
+
+/** Payload of `doc.create` (webview→native): create a new Markdown spec named `name` (used verbatim as the
+ *  `#` heading and slugged into the file name) inside `folderPath` (absent → the authorized workspace root,
+ *  i.e. the Start screen's "New specification"). `requestId` correlates the terminal `doc.createCompleted`. */
+export interface DocCreatePayload {
+  name: string;
+  folderPath?: string;
   requestId: number;
 }
 

@@ -13,6 +13,11 @@
     "requestId": 18,
     "succeeded": false
   },
+  "doc.createCompleted": {
+    "requestId": 19,
+    "succeeded": true,
+    "path": "C:\\specs\\billing-repo\\specs\\refund-policy.md"
+  },
   "preview.html": {
     "html": "<h1>Billing</h1>",
     "lineMap": [

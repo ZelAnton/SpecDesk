@@ -31,6 +31,7 @@ import {
   parseConfirmApplied,
   parseConfirmRequest,
   parseDiffResult,
+  parseDocCreateCompleted,
   parseDocDiscardCompleted,
   parseDocLoaded,
   parseDocOpenCompleted,
@@ -343,6 +344,10 @@ function wire(): void {
   const prBodyTextarea = document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
   const prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
   const prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+  const newSpecBar = document.querySelector<HTMLElement>("#new-spec-bar");
+  const newSpecInput = document.querySelector<HTMLInputElement>("#new-spec-input");
+  const newSpecConfirm = document.querySelector<HTMLButtonElement>("#new-spec-confirm");
+  const newSpecCancel = document.querySelector<HTMLButtonElement>("#new-spec-cancel");
   const conflictBar = document.querySelector<HTMLElement>("#conflict-bar");
   const conflictMessage = document.querySelector<HTMLElement>("#conflict-message");
   const conflictKeepMine = document.querySelector<HTMLButtonElement>("#conflict-keep-mine");
@@ -447,6 +452,11 @@ function wire(): void {
   let windowCloseRequestId: number | null = null;
   let documentOpenRequestSequence = 0;
   let discardRequestSequence = 0;
+  // The in-flight "create a new specification" request id (doc.create → doc.createCompleted). Creating does
+  // not lock the editor panes (it opens the new file through the ordinary doc.open path once created), so
+  // this only correlates the terminal result to the latest request and ignores a stale/duplicate reply.
+  let documentCreateRequestId: number | null = null;
+  let documentCreateRequestSequence = 0;
   let paneEditableRequested = false;
   const applyPaneEditable = (): void => {
     const editable =
@@ -512,6 +522,19 @@ function wire(): void {
       () => {
         ipc.send(Kinds.docOpen, path === undefined ? { requestId } : { path, requestId });
       },
+    );
+  };
+  // Ask the host to create a new specification named `name` inside `folderPath` (a navigator folder, or
+  // undefined/null → the current workspace root, the Start screen's case). The host slugs the name, seeds a
+  // heading, and replies with doc.createCompleted; on success the webview inserts its tree node and opens it
+  // (reusing openDocument, so the editor identity lock resolves through the ordinary path). A failure surfaces
+  // through the common error channel the host also sends — nothing extra to do here.
+  const createSpec = (name: string, folderPath: string | null): void => {
+    const requestId = ++documentCreateRequestSequence;
+    documentCreateRequestId = requestId;
+    ipc.send(
+      Kinds.docCreate,
+      folderPath === null ? { name, requestId } : { name, folderPath, requestId },
     );
   };
   // A search-result click's requested scroll target, consumed by the doc.loaded handler once the matching
@@ -669,6 +692,10 @@ function wire(): void {
     prBodyTextarea,
     prTextConfirm,
     prTextCancel,
+    newSpecBar,
+    newSpecInput,
+    newSpecConfirm,
+    newSpecCancel,
     conflictBar,
     conflictMessage,
     conflictKeepMine,
@@ -705,6 +732,9 @@ function wire(): void {
     // the same way a host error is shown, and leave the prompt closed.
     onPrBlocked: (reason) => showPlainStatus(reason),
     onPrText: ({ title, body }) => ipc.send(Kinds.docSendForReview, { title, body }),
+    // The author named a new specification — ask the host to create it (in the given navigator folder, or
+    // the current workspace root for the Start screen) and open it.
+    onNewSpec: (name, folderPath) => createSpec(name, folderPath),
     // The author picked how to reconcile a "Someone else changed this too" conflict — the host resolves it
     // (Keep mine / Keep theirs / Combine reconcile locally; Ask for help cancels), then reloads the document.
     onConflictResolve: (choice) => ipc.send(Kinds.reviewConflictResolve, { choice }),
@@ -1132,6 +1162,21 @@ function wire(): void {
       }
       if (paneEditableRequested) {
         formatToolbar.refresh();
+      }
+    });
+
+    ipc.on(Kinds.docCreateCompleted, (message) => {
+      const payload = parseDocCreateCompleted(message.payload);
+      // Ignore a stale/duplicate reply; a failure already surfaced through the common error channel.
+      if (payload === null || payload.requestId !== documentCreateRequestId) {
+        return;
+      }
+      documentCreateRequestId = null;
+      if (payload.succeeded && payload.path !== undefined) {
+        // Slot the new file into the navigator tree without a full reload, then open it in the editor
+        // through the ordinary doc.open lifecycle (identity lock and all).
+        fileTree?.noteCreatedFile(payload.path);
+        openDocument(payload.path);
       }
     });
 
@@ -2020,6 +2065,7 @@ function wire(): void {
         ipc.send(Kinds.fileDelete, { path, root, requestId }),
       onToggleFavorite: (item, favorite) =>
         ipc.send(Kinds.workspaceFavorite, { ...item, favorite }),
+      onNewSpec: (folderPath) => void dialogs.openNewSpec(folderPath),
       onShowEditor: () => centralFrame?.show(CENTRAL_VIEW_EDITOR),
     });
     fileTree = files;
@@ -2367,6 +2413,7 @@ function wire(): void {
           }
         },
         onOpenFile: () => openDocument(),
+        onNewSpec: () => void dialogs.openNewSpec(null),
         onOpenFolder: () => openFolder(),
         onOpenItem: openWorkspaceItem,
         onOutlineNavigate: (line) => navigateToLine(line),

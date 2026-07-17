@@ -12,6 +12,9 @@ import { icon } from "../icons.js";
 export interface HomeActions {
   /** Open a single spec file (the host shows a file picker). */
   onOpenFile(): void;
+  /** Start a new specification in the current workspace (reveals the inline name prompt; the host creates
+   *  it in the open workspace root and opens it). */
+  onNewSpec(): void;
   /** Open a folder as the workspace (the host shows a folder picker); its tree fills the file navigator. */
   onOpenFolder(): void;
   /** Open a recent item (a folder → `folder.open`, a file → `doc.open` — the owner resolves which, the
@@ -48,9 +51,15 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView
   const actionsRow = document.createElement("div");
   actionsRow.className = "home-actions";
 
+  const newSpec = document.createElement("button");
+  newSpec.type = "button";
+  newSpec.className = "home-open";
+  newSpec.textContent = "New specification";
+  newSpec.addEventListener("click", actions.onNewSpec);
+
   const openFile = document.createElement("button");
   openFile.type = "button";
-  openFile.className = "home-open";
+  openFile.className = "home-open home-open--secondary";
   openFile.textContent = "Open a file";
   openFile.addEventListener("click", actions.onOpenFile);
 
@@ -66,7 +75,7 @@ export function buildHomeView(host: HTMLElement, actions: HomeActions): HomeView
   openRepositories.textContent = "Open Repository";
   openRepositories.addEventListener("click", actions.onOpenRepositories);
 
-  actionsRow.append(openFile, openFolder, openRepositories);
+  actionsRow.append(newSpec, openFile, openFolder, openRepositories);
 
   const recents = document.createElement("div");
   recents.className = "home-shortcut-section home-recents";

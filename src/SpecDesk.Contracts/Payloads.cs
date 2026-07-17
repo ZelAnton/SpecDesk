@@ -15,6 +15,7 @@ public static class MessageKinds
 	public const string Ready = "ready";
 	public const string EditorChanged = "editor.changed";
 	public const string DocOpen = "doc.open";
+	public const string DocCreate = "doc.create";
 	public const string DocSave = "doc.save";
 	public const string DocEdit = "doc.edit";
 	public const string DocSaveVersion = "doc.saveVersion";
@@ -86,6 +87,7 @@ public static class MessageKinds
 	// native → webview
 	public const string DocLoaded = "doc.loaded";
 	public const string DocOpenCompleted = "doc.openCompleted";
+	public const string DocCreateCompleted = "doc.createCompleted";
 	public const string DocDiscardCompleted = "doc.discardCompleted";
 	public const string PreviewHtml = "preview.html";
 	public const string ImageInserted = "image.inserted";
@@ -174,6 +176,26 @@ public sealed record DocOpenPayload(string? Path, long RequestId = 0);
 
 /// <summary>Terminal result for one correlated <c>doc.open</c> transition.</summary>
 public sealed record DocOpenCompletedPayload(long RequestId, bool Succeeded);
+
+/// <summary>
+/// Payload of <c>doc.create</c> (webview→native): create a new Markdown specification named
+/// <paramref name="Name"/> (the author-entered display name, used verbatim as the file's <c>#</c> heading
+/// and slugged into the file name). <paramref name="FolderPath"/> is the folder to create it in — a folder
+/// picked in the navigator tree — or <c>null</c> to use the authorized workspace root (the Start screen's
+/// "New specification"); either way the host confines the write to the workspace-root perimeter.
+/// <paramref name="RequestId"/> correlates the terminal <see cref="DocCreateCompletedPayload"/>.
+/// </summary>
+public sealed record DocCreatePayload(string Name, string? FolderPath = null, long RequestId = 0);
+
+/// <summary>
+/// Terminal result for one correlated <c>doc.create</c> (native→webview). On success
+/// <paramref name="Path"/> is the created file's absolute path (the webview then opens it, reusing the
+/// <c>doc.open</c> lifecycle, and adds it to the navigator tree without a full reload); on failure
+/// <paramref name="Error"/> is a plain-language reason (e.g. a name/slug collision), also surfaced through
+/// the common <c>error</c> channel. Exactly one of the two optional fields is present.
+/// </summary>
+public sealed record DocCreateCompletedPayload(
+	long RequestId, bool Succeeded, string? Path = null, string? Error = null);
 
 /// <summary>Payload of <c>doc.discard</c>: the positive id owns the editor identity lock.</summary>
 public sealed record DocDiscardPayload(long RequestId = 0);
