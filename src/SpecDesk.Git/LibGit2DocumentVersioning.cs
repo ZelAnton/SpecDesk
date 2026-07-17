@@ -404,6 +404,175 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         ThrowIfRejected(rejectedReference, rejectionMessage);
     }
 
+    public ReviewShareConflict? DetectShareConflict(
+        string repoRoot,
+        string branchName,
+        string baseBranch,
+        string repoRelativePath,
+        string expectedRepositoryUrl,
+        string accessToken,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch);
+        ArgumentException.ThrowIfNullOrEmpty(repoRelativePath);
+        ArgumentException.ThrowIfNullOrEmpty(expectedRepositoryUrl);
+        ArgumentException.ThrowIfNullOrEmpty(accessToken);
+        ArgumentException.ThrowIfNullOrEmpty(remoteName);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using Repository repo = new(repoRoot);
+        LibGit2RepositoryCloner.EnsureExactWorkingTree(repo, repoRoot);
+        // Fetch the latest base so "the latest published version" is truly current before deciding whether a
+        // share collides. Reuses the shared validated-remote + token handling (token → HTTPS github.com only).
+        LibGit2RepositoryCloner.FetchLatestBase(repo, expectedRepositoryUrl, accessToken, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        Commit? mine = repo.Branches[branchName]?.Tip;
+        if (mine is null)
+        {
+            // No draft branch tip to compare — nothing to reconcile.
+            return null;
+        }
+
+        Commit? theirs = ResolveBaseTip(repo, baseBranch, remoteName);
+        if (theirs is null)
+        {
+            // No base to collide with yet (a brand-new line, or the base isn't on the remote).
+            return null;
+        }
+
+        // The base already an ancestor of the draft ⇒ nothing new upstream to collide with.
+        Commit? mergeBase = repo.ObjectDatabase.FindMergeBase(mine, theirs);
+        if (mergeBase is not null && mergeBase.Sha == theirs.Sha)
+        {
+            return null;
+        }
+
+        // A pure in-memory three-way merge: it reads the object database only and NEVER touches the working
+        // tree, the index, or any ref, so running it before a push is completely side-effect-free.
+        MergeTreeResult merge = repo.ObjectDatabase.MergeCommits(mine, theirs, new MergeTreeOptions());
+        if (merge.Status != MergeTreeStatus.Conflicts)
+        {
+            // A clean three-way merge — the eventual pull request merges on GitHub without a conflict.
+            return null;
+        }
+
+        // Only surface a conflict on the OPEN DOCUMENT itself (a single-document draft's collision); a rare
+        // collision confined to some other path is out of this slice's scope.
+        bool documentConflicts = merge.Conflicts.Any(conflict =>
+            PathMatches(conflict.Ours?.Path, repoRelativePath)
+            || PathMatches(conflict.Theirs?.Path, repoRelativePath)
+            || PathMatches(conflict.Ancestor?.Path, repoRelativePath));
+        if (!documentConflicts)
+        {
+            return null;
+        }
+
+        // Both sides are the WHOLE, clean content of one side each — never a marker-laden merge of the two.
+        return new ReviewShareConflict(
+            repoRelativePath,
+            ReadBlobText(mine.Tree, repoRelativePath),
+            ReadBlobText(theirs.Tree, repoRelativePath));
+    }
+
+    public string ReconcileShareConflict(
+        string repoRoot,
+        string branchName,
+        string baseBranch,
+        string repoRelativePath,
+        ConflictResolution resolution,
+        string remoteName = "origin",
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branchName);
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch);
+        ArgumentException.ThrowIfNullOrEmpty(repoRelativePath);
+        ArgumentException.ThrowIfNullOrEmpty(remoteName);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using Repository repo = new(repoRoot);
+        LibGit2RepositoryCloner.EnsureExactWorkingTree(repo, repoRoot);
+
+        // The draft must be the current checkout — the working copy we overwrite has to be this draft's, and
+        // the reconciliation commit lands on it.
+        if (repo.Info.IsHeadDetached
+            || !string.Equals(repo.Head.FriendlyName, branchName, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException($"The draft branch '{branchName}' is not checked out.");
+        }
+
+        // Never force past unsaved autosaved edits — a hard reset would silently discard them. Refuse instead
+        // (untracked/ignored local files don't block; they are preserved by the reset below).
+        if (repo.RetrieveStatus(new StatusOptions { IncludeUntracked = false }).IsDirty)
+        {
+            throw new DirtyWorkingTreeException(branchName);
+        }
+
+        Commit mine = repo.Head.Tip
+            ?? throw new InvalidOperationException("The draft branch has no version to reconcile.");
+        Commit? theirs = ResolveBaseTip(repo, baseBranch, remoteName);
+        if (theirs is null)
+        {
+            // No base to fold in — the working copy already stands alone; return it unchanged.
+            return ReadWorkingCopy(repoRoot, repoRelativePath);
+        }
+
+        // Fold the base into the draft, resolving every file-content collision in ONE direction so no conflict
+        // markers are ever produced. Ours = the author's draft; Theirs = the latest base.
+        MergeFileFavor favor =
+            resolution == ConflictResolution.KeepTheirs ? MergeFileFavor.Theirs : MergeFileFavor.Ours;
+        MergeTreeResult merge = repo.ObjectDatabase.MergeCommits(
+            mine, theirs, new MergeTreeOptions { MergeFileFavor = favor });
+        if (merge.Tree is null)
+        {
+            // A favored merge resolves file-content collisions, so a null tree means an unmergeable structural
+            // clash (a directory/file collision) we won't paper over — surface it rather than risk losing data.
+            throw new InvalidOperationException("The two versions could not be reconciled automatically.");
+        }
+
+        Signature signature =
+            repo.Config.BuildSignature(DateTimeOffset.Now)
+            ?? new Signature(FallbackIdentity, DateTimeOffset.Now);
+        // A merge commit (parents: the draft first, then the base) so the base becomes an ancestor and the
+        // eventual pull request merges cleanly. The author never sees the word "merge" — this is plumbing.
+        Commit reconciled = repo.ObjectDatabase.CreateCommit(
+            signature,
+            signature,
+            "Reconcile with the latest published version",
+            merge.Tree,
+            [mine, theirs],
+            prettifyMessage: false);
+
+        // Move the draft to the reconciliation commit and materialize its tree into the working copy. The
+        // clean-tree guard above makes the hard reset safe — there are no unsaved edits to lose.
+        repo.Reset(ResetMode.Hard, reconciled);
+        return ReadWorkingCopy(repoRoot, repoRelativePath);
+    }
+
+    // The latest base tip to reconcile against: prefer the freshly-fetched remote-tracking ref (what
+    // DetectShareConflict / background sync advances), falling back to the local base branch when absent.
+    private static Commit? ResolveBaseTip(Repository repo, string baseBranch, string remoteName)
+    {
+        Branch? remoteBase = repo.Branches[$"{remoteName}/{baseBranch}"];
+        return remoteBase?.Tip ?? repo.Branches[baseBranch]?.Tip;
+    }
+
+    private static bool PathMatches(string? treePath, string repoRelativePath) =>
+        treePath is not null && string.Equals(treePath, repoRelativePath, StringComparison.Ordinal);
+
+    private static string ReadBlobText(Tree tree, string repoRelativePath) =>
+        tree[repoRelativePath]?.Target is Blob blob ? blob.GetContentText() : string.Empty;
+
+    private static string ReadWorkingCopy(string repoRoot, string repoRelativePath)
+    {
+        string absolute = Path.Combine(repoRoot, repoRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        return File.Exists(absolute) ? File.ReadAllText(absolute) : string.Empty;
+    }
+
     // Extracted from PushBranch so the rejection → exception translation is directly unit-testable: a real
     // server-side rejection (a protected branch, a refusing pre-receive hook) can only be produced by an
     // actual GitHub remote or a hook-capable git transport, neither of which the local-bare-repo test

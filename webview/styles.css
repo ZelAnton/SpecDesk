@@ -1378,6 +1378,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 #branch-name-bar:not([hidden]),
 #version-note-bar:not([hidden]),
 #pr-text-bar:not([hidden]),
+#conflict-bar:not([hidden]),
 #github-signin-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
@@ -1386,6 +1387,18 @@ body:not([data-central-view="editor"]) #toolbar-search {
   padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--border);
   font-size: 0.85rem;
+}
+
+/* "Someone else changed this too" (PoC-10): a caution moment (the warn tint), the plain message then the
+   four reconciliation choices. Reuses the shared prompt-bar tokens — no one-off styling. */
+#conflict-bar {
+  background: var(--warn-bg);
+  border-bottom-color: var(--warn-border);
+}
+
+#conflict-message {
+  margin-right: 0.25rem;
+  color: var(--text);
 }
 
 /* The draft-name bar is a beginning (accent-soft); the version-note bar is a checkpoint (warn). */

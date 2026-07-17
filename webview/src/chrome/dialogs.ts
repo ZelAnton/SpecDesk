@@ -8,6 +8,7 @@
  */
 
 import { SPELLCHECK_ENABLED, SPELLCHECK_LANG } from "../util/spellcheck.js";
+import type { ConflictChoice } from "../wire/protocol.js";
 import { PromptBar } from "./prompt-bar.js";
 
 /** Keep a draft name a valid git ref as the author types: backslashes become '/', and spaces or any
@@ -49,6 +50,13 @@ export interface DialogsDeps {
   prBodyTextarea: HTMLTextAreaElement | null;
   prTextConfirm: HTMLButtonElement | null;
   prTextCancel: HTMLButtonElement | null;
+  /** The "Someone else changed this too" reconciliation dialog's own elements (PoC-10). */
+  conflictBar: HTMLElement | null;
+  conflictMessage: HTMLElement | null;
+  conflictKeepMine: HTMLButtonElement | null;
+  conflictKeepTheirs: HTMLButtonElement | null;
+  conflictCombine: HTMLButtonElement | null;
+  conflictAskForHelp: HTMLButtonElement | null;
   /** Fetch the host's suggested draft (branch) name to prefill the prompt; resolves "" on failure. */
   suggestBranchName: () => Promise<string>;
   /** The author confirmed a draft name (already trimmed) — fork the working branch and begin editing. */
@@ -64,6 +72,8 @@ export interface DialogsDeps {
   onPrBlocked: (reason: string) => void;
   /** The author confirmed the PR title/body — push the branch and open the review with this text. */
   onPrText: (text: PrText) => void;
+  /** The author chose how to reconcile a "Someone else changed this too" conflict (PoC-10). */
+  onConflictResolve: (choice: ConflictChoice) => void;
 }
 
 export class Dialogs {
@@ -84,6 +94,13 @@ export class Dialogs {
   private readonly prBodyTextarea: HTMLTextAreaElement | null;
   private readonly prTextConfirm: HTMLButtonElement | null;
   private readonly prTextCancel: HTMLButtonElement | null;
+
+  private readonly conflictBar: HTMLElement | null;
+  private readonly conflictMessage: HTMLElement | null;
+  private readonly conflictKeepMine: HTMLButtonElement | null;
+  private readonly conflictKeepTheirs: HTMLButtonElement | null;
+  private readonly conflictCombine: HTMLButtonElement | null;
+  private readonly conflictAskForHelp: HTMLButtonElement | null;
 
   // The open/close state machine (re-entrancy latch + supersession token) for each bar lives in
   // PromptBar, so that subtle handling is written once and the bars cannot drift apart.
@@ -109,6 +126,13 @@ export class Dialogs {
     this.prBodyTextarea = deps.prBodyTextarea;
     this.prTextConfirm = deps.prTextConfirm;
     this.prTextCancel = deps.prTextCancel;
+
+    this.conflictBar = deps.conflictBar;
+    this.conflictMessage = deps.conflictMessage;
+    this.conflictKeepMine = deps.conflictKeepMine;
+    this.conflictKeepTheirs = deps.conflictKeepTheirs;
+    this.conflictCombine = deps.conflictCombine;
+    this.conflictAskForHelp = deps.conflictAskForHelp;
 
     this.branchBar = new PromptBar(this.branchNameBar);
     this.versionBar = new PromptBar(this.versionNoteBar);
@@ -227,6 +251,44 @@ export class Dialogs {
         this.prBar.close();
       }
     });
+
+    // Reconciliation dialog: each button is one plain-language choice; Esc just dismisses it (the host keeps
+    // the pending conflict, so the author can decide later by sending/updating again). No git vocabulary.
+    this.conflictKeepMine?.addEventListener("click", () => this.resolveConflict("keepMine"));
+    this.conflictKeepTheirs?.addEventListener("click", () => this.resolveConflict("keepTheirs"));
+    this.conflictCombine?.addEventListener("click", () => this.resolveConflict("combine"));
+    this.conflictAskForHelp?.addEventListener("click", () => this.resolveConflict("askForHelp"));
+    this.conflictBar?.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.closeConflict();
+      }
+    });
+  }
+
+  // —— "Someone else changed this too" reconciliation dialog (PoC-10) ————————————————————————————————
+
+  /** Reveal the reconciliation dialog for `document`, naming it in the plain-language prompt. Opened by the
+   *  host's `review.conflict` event when a competing published change collides with the author's edit. */
+  openConflict(document: string): void {
+    if (this.conflictMessage) {
+      this.conflictMessage.textContent = `Someone else changed “${document}” too. How would you like to sort it out?`;
+    }
+    if (this.conflictBar) {
+      this.conflictBar.hidden = false;
+    }
+    this.conflictKeepMine?.focus();
+  }
+
+  closeConflict(): void {
+    if (this.conflictBar) {
+      this.conflictBar.hidden = true;
+    }
+  }
+
+  private resolveConflict(choice: ConflictChoice): void {
+    this.closeConflict();
+    this.deps.onConflictResolve(choice);
   }
 
   // —— Draft-name (branch) prompt ——————————————————————————————————————————————————————————————————
@@ -338,6 +400,7 @@ export class Dialogs {
     this.branchBar.close();
     this.versionBar.close();
     this.prBar.close();
+    this.closeConflict();
   }
 
   private versionNoteMultiline(): boolean {

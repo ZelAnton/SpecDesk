@@ -40,6 +40,7 @@ import {
   parseGitHubRepositories,
   parseImageInserted,
   parsePrDetails,
+  parsePreferencesState,
   parsePreview,
   parsePrList,
   parsePrMutationCompleted,
@@ -51,6 +52,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseReviewConflict,
   parseSearchResults,
   parseStatus,
   parseTemplates,
@@ -338,6 +340,12 @@ function wire(): void {
   const prBodyTextarea = document.querySelector<HTMLTextAreaElement>("#pr-body-textarea");
   const prTextConfirm = document.querySelector<HTMLButtonElement>("#pr-text-confirm");
   const prTextCancel = document.querySelector<HTMLButtonElement>("#pr-text-cancel");
+  const conflictBar = document.querySelector<HTMLElement>("#conflict-bar");
+  const conflictMessage = document.querySelector<HTMLElement>("#conflict-message");
+  const conflictKeepMine = document.querySelector<HTMLButtonElement>("#conflict-keep-mine");
+  const conflictKeepTheirs = document.querySelector<HTMLButtonElement>("#conflict-keep-theirs");
+  const conflictCombine = document.querySelector<HTMLButtonElement>("#conflict-combine");
+  const conflictAskForHelp = document.querySelector<HTMLButtonElement>("#conflict-ask-for-help");
 
   // The GitHub account affordance + sign-in code bar's own elements (signin.ts).
   const githubBtn = document.querySelector<HTMLButtonElement>("#github-btn");
@@ -658,6 +666,12 @@ function wire(): void {
     prBodyTextarea,
     prTextConfirm,
     prTextCancel,
+    conflictBar,
+    conflictMessage,
+    conflictKeepMine,
+    conflictKeepTheirs,
+    conflictCombine,
+    conflictAskForHelp,
     suggestBranchName: () =>
       requestSuggestion(
         Kinds.branchNameRequest,
@@ -688,6 +702,9 @@ function wire(): void {
     // the same way a host error is shown, and leave the prompt closed.
     onPrBlocked: (reason) => showPlainStatus(reason),
     onPrText: ({ title, body }) => ipc.send(Kinds.docSendForReview, { title, body }),
+    // The author picked how to reconcile a "Someone else changed this too" conflict — the host resolves it
+    // (Keep mine / Keep theirs / Combine reconcile locally; Ask for help cancels), then reloads the document.
+    onConflictResolve: (choice) => ipc.send(Kinds.reviewConflictResolve, { choice }),
   });
 
   // Wiring group 1 — the editing surfaces: both editors, their live cross-mirror + highlight/scroll
@@ -1361,6 +1378,16 @@ function wire(): void {
       }
     });
 
+    // A competing published change collided with the author's edit while sending/updating a review (PoC-10).
+    // Open the plain-language "Someone else changed this too" dialog — never git conflict markers. The four
+    // choices round-trip back through review.conflict.resolve (see the Dialogs onConflictResolve dep).
+    ipc.on(Kinds.reviewConflict, (message) => {
+      const payload = parseReviewConflict(message.payload);
+      if (payload) {
+        dialogs.openConflict(payload.document);
+      }
+    });
+
     ipc.on(Kinds.reviewCommentSync, (message) => {
       const payload = parseReviewCommentSync(message.payload);
       if (payload === null || payload.error !== undefined) {
@@ -1732,11 +1759,29 @@ function wire(): void {
     }
 
     let wrap = true;
-    wrapBtn?.addEventListener("click", () => {
-      wrap = !wrap;
+    // T-077: persists the current theme/wrap/view-mode triple to the host (PreferencesStore) so it survives
+    // a restart. Called after every local toggle below; the sync from the saved values (registered at the
+    // end of this function) applies them directly instead, so it never re-triggers this round-trip.
+    function persistPreferences(): void {
+      ipc.send(Kinds.preferencesUpdate, {
+        theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+        wrap,
+        viewMode: mode,
+      });
+    }
+    // Applies (and reflects into the toolbar) the given wrap setting — used both by the toolbar click below
+    // and by the saved-preference sync, so the two paths can't drift.
+    function applyWrap(value: boolean): void {
+      wrap = value;
       editor.setLineWrapping(wrap);
-      wrapBtn.textContent = `Wrap: ${wrap ? "on" : "off"}`;
-      wrapBtn.setAttribute("aria-pressed", String(wrap));
+      if (wrapBtn) {
+        wrapBtn.textContent = `Wrap: ${wrap ? "on" : "off"}`;
+        wrapBtn.setAttribute("aria-pressed", String(wrap));
+      }
+    }
+    wrapBtn?.addEventListener("click", () => {
+      applyWrap(!wrap);
+      persistPreferences();
     });
 
     toolbarSearch?.addEventListener("keydown", (event) => {
@@ -1766,8 +1811,9 @@ function wire(): void {
     });
 
     // Light/dark theme. The bare :root is the light (cool) theme, so "light" means no data-theme
-    // attribute and dark sets data-theme="dark" (see styles.css). Default to the OS colour scheme; the
-    // toolbar toggle flips it. Persistence across app restarts is out of scope for this pass.
+    // attribute and dark sets data-theme="dark" (see styles.css). Default to the OS colour scheme unless a
+    // saved preference overrides it (the preferences.state sync below); the toolbar toggle flips it and
+    // persists the new value for the next launch (T-077).
     function applyTheme(dark: boolean): void {
       if (dark) {
         document.documentElement.dataset.theme = "dark";
@@ -1782,6 +1828,7 @@ function wire(): void {
     applyTheme(window.matchMedia("(prefers-color-scheme: dark)").matches);
     themeBtn?.addEventListener("click", () => {
       applyTheme(document.documentElement.dataset.theme !== "dark");
+      persistPreferences();
     });
 
     // The view switch is a radiogroup (design §7/§11): clicks and arrow keys select a mode, and applyMode
@@ -1796,7 +1843,10 @@ function wire(): void {
     if (modeFormattedBtn) {
       modeOptions.push({ el: modeFormattedBtn, value: "formatted" });
     }
-    viewModeControl = new SegmentedControl(modeOptions, applyMode);
+    viewModeControl = new SegmentedControl(modeOptions, (next) => {
+      applyMode(next);
+      persistPreferences();
+    });
     // Reflect the DOM-derived starting `mode` into the radiogroup through the exact same path a
     // user-driven switch uses (setSelected) — the aria-checked/tabindex the buttons carry in the
     // markup are inert placeholders, not a second source of truth to keep in sync by hand.
@@ -1812,6 +1862,26 @@ function wire(): void {
         formatted.focus();
       }
     });
+
+    // T-077: the persisted UI preferences (PreferencesStore) — ask once for the saved theme/wrap/view-mode
+    // and apply them over the OS-derived theme / default wrap / DOM-derived mode already applied above. A
+    // fresh install has nothing saved (theme absent, wrap true, split) and those defaults are unaffected.
+    // Applied directly (not through the toolbar handlers above), so this sync never re-triggers
+    // persistPreferences and round-trips back to the host.
+    ipc.on(Kinds.preferencesState, (message) => {
+      const payload = parsePreferencesState(message.payload);
+      if (!payload) {
+        return;
+      }
+      if (payload.theme !== undefined) {
+        applyTheme(payload.theme === "dark");
+      }
+      applyWrap(payload.wrap);
+      if (payload.viewMode !== mode) {
+        applyMode(payload.viewMode);
+      }
+    });
+    ipc.send(Kinds.preferencesRequest);
   }
 
   // The collapsible-panel workspace (design concept §9): the central-frame host plus the three docks

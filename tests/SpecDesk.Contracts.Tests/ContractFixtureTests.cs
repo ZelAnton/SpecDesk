@@ -74,6 +74,8 @@ public sealed class ContractFixtureTests
 		// A successful post-to-review acknowledgement (Error absent).
 		(MessageKinds.ReviewCommentPublished,
 			new ReviewCommentPublishedPayload("selection-comment-3", 2002, Succeeded: true, null)),
+		// PoC-10 "Someone else changed this too": the reconciliation dialog needs only the document's name.
+		(MessageKinds.ReviewConflict, new ReviewConflictPayload("billing.md")),
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.
@@ -195,6 +197,9 @@ public sealed class ContractFixtureTests
 					],
 					new RepositoryStatusPayload(2, 1, true, 3, false))]),
 		])),
+		// T-077: persisted UI preferences. Theme present exercises the optional field through both decoders
+		// (a fresh install with no saved theme omits it instead).
+		(MessageKinds.PreferencesState, new PreferencesPayload("dark", true, "split")),
 	];
 
 	[TestCase(0, true)]

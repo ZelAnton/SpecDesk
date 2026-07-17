@@ -843,6 +843,100 @@ describe("index.ts: startup view mode has a single source of truth (jsdom)", () 
   });
 });
 
+describe("index.ts: persisted UI preferences (T-077, jsdom)", () => {
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, "external");
+    document.body.innerHTML = "";
+  });
+
+  const prefsMarkup = `
+    <div id="panes" data-mode="split"></div>
+    <span id="view-modes" role="radiogroup">
+      <button id="mode-code" type="button" role="radio" aria-checked="false" tabindex="-1">Code</button>
+      <button id="mode-split" type="button" role="radio" aria-checked="true" tabindex="0">Split</button>
+      <button id="mode-formatted" type="button" role="radio" aria-checked="false" tabindex="-1">Formatted</button>
+    </span>
+    <button id="wrap-btn" type="button" aria-pressed="true">Wrap: on</button>
+    <button id="theme-btn" type="button" aria-checked="false">Dark theme</button>
+  `;
+
+  it("asks the host for the saved preferences once wiring is complete", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    expect(bridge.sent.some((m) => m.kind === Kinds.preferencesRequest)).toBe(true);
+  });
+
+  it("applies a saved theme/wrap/view-mode reply over the OS-derived/DOM-derived startup defaults", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
+    const panesEl = document.querySelector<HTMLElement>("#panes");
+    const formattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
+
+    // Before the reply: the OS colour scheme (stubbed to "not dark"), wrap on, and the DOM-declared split.
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(wrapBtn?.getAttribute("aria-pressed")).toBe("true");
+    expect(panesEl?.dataset.mode).toBe("split");
+
+    bridge.emit({
+      kind: Kinds.preferencesState,
+      payload: { theme: "dark", wrap: false, viewMode: "formatted" },
+    });
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(wrapBtn?.getAttribute("aria-pressed")).toBe("false");
+    expect(wrapBtn?.textContent).toBe("Wrap: off");
+    expect(panesEl?.dataset.mode).toBe("formatted");
+    expect(formattedBtn?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a saved preference with no theme override leaves the OS-derived theme untouched", async () => {
+    const bridge = await mountApp(prefsMarkup);
+
+    bridge.emit({ kind: Kinds.preferencesState, payload: { wrap: true, viewMode: "split" } });
+
+    // theme absent (never overridden): the webview keeps following the OS colour scheme, not forced light.
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+
+  it("a malformed preferences.state reply is dropped rather than corrupting the toolbar", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
+
+    bridge.emit({ kind: Kinds.preferencesState, payload: { wrap: true, viewMode: "not-a-mode" } });
+
+    expect(wrapBtn?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("toggling wrap round-trips the full current theme/wrap/view-mode triple to the host", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
+
+    wrapBtn?.click();
+
+    const update = [...bridge.sent].reverse().find((m) => m.kind === Kinds.preferencesUpdate);
+    expect(update?.payload).toEqual({ theme: "light", wrap: false, viewMode: "split" });
+  });
+
+  it("toggling the theme round-trips the full current triple to the host", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    const themeBtn = document.querySelector<HTMLButtonElement>("#theme-btn");
+
+    themeBtn?.click();
+
+    const update = [...bridge.sent].reverse().find((m) => m.kind === Kinds.preferencesUpdate);
+    expect(update?.payload).toEqual({ theme: "dark", wrap: true, viewMode: "split" });
+  });
+
+  it("switching the view mode round-trips the full current triple to the host", async () => {
+    const bridge = await mountApp(prefsMarkup);
+    const formattedBtn = document.querySelector<HTMLButtonElement>("#mode-formatted");
+
+    formattedBtn?.click();
+
+    const update = [...bridge.sent].reverse().find((m) => m.kind === Kinds.preferencesUpdate);
+    expect(update?.payload).toEqual({ theme: "light", wrap: true, viewMode: "formatted" });
+  });
+});
+
 describe("index.ts: Split geometry changes re-align the passive pane (T-086, jsdom)", () => {
   type EditorCallbacks = {
     onChange: (text: string) => void;

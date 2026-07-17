@@ -23,6 +23,13 @@ function setupDom(): void {
       <button id="pr-text-confirm"></button>
       <button id="pr-text-cancel"></button>
     </div>
+    <div id="conflict-bar" hidden>
+      <span id="conflict-message"></span>
+      <button id="conflict-keep-mine"></button>
+      <button id="conflict-keep-theirs"></button>
+      <button id="conflict-combine"></button>
+      <button id="conflict-ask-for-help"></button>
+    </div>
   `;
 }
 
@@ -75,6 +82,12 @@ function elements(): Pick<
   | "prBodyTextarea"
   | "prTextConfirm"
   | "prTextCancel"
+  | "conflictBar"
+  | "conflictMessage"
+  | "conflictKeepMine"
+  | "conflictKeepTheirs"
+  | "conflictCombine"
+  | "conflictAskForHelp"
 > {
   return {
     branchNameBar: div("branch-name-bar"),
@@ -92,6 +105,12 @@ function elements(): Pick<
     prBodyTextarea: textarea("pr-body-textarea"),
     prTextConfirm: button("pr-text-confirm"),
     prTextCancel: button("pr-text-cancel"),
+    conflictBar: div("conflict-bar"),
+    conflictMessage: div("conflict-message"),
+    conflictKeepMine: button("conflict-keep-mine"),
+    conflictKeepTheirs: button("conflict-keep-theirs"),
+    conflictCombine: button("conflict-combine"),
+    conflictAskForHelp: button("conflict-ask-for-help"),
   };
 }
 
@@ -106,6 +125,7 @@ function mount(
   const onVersionNote = vi.fn();
   const onPrText = vi.fn();
   const onPrBlocked = vi.fn();
+  const onConflictResolve = vi.fn();
   const suggestBranchName = vi.fn(async () => suggest.branch ?? "");
   const suggestVersionNote = vi.fn(async () => suggest.version ?? "");
   const suggestPrText = vi.fn(async () => suggest.pr ?? { title: "", body: "" });
@@ -118,6 +138,7 @@ function mount(
     suggestPrText,
     onPrBlocked,
     onPrText,
+    onConflictResolve,
   });
   return {
     dialogs,
@@ -125,6 +146,7 @@ function mount(
     onVersionNote,
     onPrText,
     onPrBlocked,
+    onConflictResolve,
     suggestBranchName,
     suggestVersionNote,
     suggestPrText,
@@ -259,6 +281,7 @@ describe("Dialogs — draft-name bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onConflictResolve: vi.fn(),
     });
     const first = dialogs.openBranchName();
     const second = dialogs.openBranchName();
@@ -285,6 +308,7 @@ describe("Dialogs — draft-name bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onConflictResolve: vi.fn(),
     });
     const opening = dialogs.openBranchName(); // request in flight
     dialogs.closeAll(); // e.g. a new document loads before the suggestion resolves
@@ -413,6 +437,7 @@ describe("Dialogs — version-note bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onConflictResolve: vi.fn(),
     });
     const first = dialogs.openVersionNote();
     const second = dialogs.openVersionNote();
@@ -444,6 +469,7 @@ describe("Dialogs — version-note bar", () => {
       suggestPrText: vi.fn(async () => ({ title: "", body: "" })),
       onPrBlocked: vi.fn(),
       onPrText: vi.fn(),
+      onConflictResolve: vi.fn(),
     });
     const opening = dialogs.openVersionNote(); // request in flight
     dialogs.closeAll(); // e.g. a new document loads before the suggestion resolves
@@ -629,5 +655,61 @@ describe("Dialogs — closing", () => {
 
     expect(div("pr-text-bar").hidden).toBe(true);
     expect(div("branch-name-bar").hidden).toBe(false);
+  });
+});
+
+describe('Dialogs — reconciliation dialog (PoC-10, "Someone else changed this too")', () => {
+  it("opens revealed, names the document in plain language, and shows no git vocabulary", () => {
+    const { dialogs } = mount();
+    dialogs.openConflict("billing.md");
+    expect(div("conflict-bar").hidden).toBe(false);
+    const message = div("conflict-message").textContent ?? "";
+    expect(message).toContain("billing.md");
+    // No git terminology or conflict markers ever surface to the author.
+    for (const jargon of [
+      "rebase",
+      "merge",
+      "HEAD",
+      "conflict marker",
+      "<<<<<<<",
+      "=======",
+      ">>>>>>>",
+    ]) {
+      expect(message.toLowerCase()).not.toContain(jargon.toLowerCase());
+    }
+  });
+
+  it("each of the four choices reports its wire value and closes the dialog", () => {
+    const cases: Array<[string, string]> = [
+      ["conflict-keep-mine", "keepMine"],
+      ["conflict-keep-theirs", "keepTheirs"],
+      ["conflict-combine", "combine"],
+      ["conflict-ask-for-help", "askForHelp"],
+    ];
+    for (const [buttonId, choice] of cases) {
+      const { dialogs, onConflictResolve } = mount();
+      dialogs.openConflict("billing.md");
+      button(buttonId).click();
+      expect(onConflictResolve).toHaveBeenCalledTimes(1);
+      expect(onConflictResolve).toHaveBeenCalledWith(choice);
+      expect(div("conflict-bar").hidden).toBe(true);
+    }
+  });
+
+  it("Escape dismisses the dialog without choosing a resolution", () => {
+    const { dialogs, onConflictResolve } = mount();
+    dialogs.openConflict("billing.md");
+    div("conflict-bar").dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(div("conflict-bar").hidden).toBe(true);
+    expect(onConflictResolve).not.toHaveBeenCalled();
+  });
+
+  it("closeAll closes the reconciliation dialog too (e.g. a new document loads)", () => {
+    const { dialogs } = mount();
+    dialogs.openConflict("billing.md");
+    dialogs.closeAll();
+    expect(div("conflict-bar").hidden).toBe(true);
   });
 });

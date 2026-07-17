@@ -34,6 +34,7 @@ public static class MessageKinds
 	public const string PrCommentUpdate = "pr.comment.update";
 	public const string ReviewCommentSyncRequest = "review.commentSync.request";
 	public const string ReviewCommentPublish = "review.comment.publish";
+	public const string ReviewConflictResolve = "review.conflict.resolve";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
@@ -55,6 +56,8 @@ public static class MessageKinds
 	public const string SearchRequest = "search.request";
 	public const string WorkspaceRequest = "workspace.request";
 	public const string WorkspaceFavorite = "workspace.favorite";
+	public const string PreferencesRequest = "preferences.request";
+	public const string PreferencesUpdate = "preferences.update";
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
@@ -93,6 +96,7 @@ public static class MessageKinds
 	public const string PrMutationCompleted = "pr.mutationCompleted";
 	public const string ReviewCommentSync = "review.commentSync";
 	public const string ReviewCommentPublished = "review.comment.published";
+	public const string ReviewConflict = "review.conflict";
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
@@ -108,6 +112,7 @@ public static class MessageKinds
 	public const string FileDeleteCompleted = "file.deleteCompleted";
 	public const string SearchResults = "search.results";
 	public const string WorkspaceState = "workspace.state";
+	public const string PreferencesState = "preferences.state";
 	public const string RepoConfirmation = "repo.confirmation";
 	public const string RepoOperationCompleted = "repo.operationCompleted";
 	public const string RepoCloneDestination = "repo.cloneDestination";
@@ -422,6 +427,36 @@ public sealed record ReviewCommentPublishPayload(
 /// <paramref name="Succeeded"/>/<paramref name="Error"/> carry a plain reason when the post was rejected
 /// (e.g. the line fell outside the diff after the head moved).</summary>
 public sealed record ReviewCommentPublishedPayload(string LocalId, long GithubId, bool Succeeded, string? Error);
+
+/// <summary>The four author-facing choices offered by the "Someone else changed this too" reconciliation
+/// dialog (PoC-10, docs/design/04-git-workflow.md). Wire values on <see cref="ReviewConflictResolvePayload"/>,
+/// mirrored in the webview. All are plain-language — no git vocabulary reaches the author.</summary>
+public static class ConflictChoices
+{
+	/// <summary>Keep the author's version of the document (fold in the base's non-conflicting changes).</summary>
+	public const string KeepMine = "keepMine";
+
+	/// <summary>Take the latest published version of the document.</summary>
+	public const string KeepTheirs = "keepTheirs";
+
+	/// <summary>Keep the author's version and show both sides in the diff surface for manual combining.</summary>
+	public const string Combine = "combine";
+
+	/// <summary>Cancel safely (working tree + open document unchanged) and leave the share for a maintainer.</summary>
+	public const string AskForHelp = "askForHelp";
+}
+
+/// <summary>Payload of <c>review.conflict</c> (native→webview): a competing published change collides with the
+/// author's edit to <paramref name="Document"/> (its display name, e.g. <c>billing.md</c>) while sending or
+/// updating a review. The webview opens the plain-language "Someone else changed this too" dialog — it needs
+/// only the document's name; the both-sides content stays host-side (shown through the existing diff surface
+/// only if the author chooses Combine). No git markers or git vocabulary ever cross this boundary.</summary>
+public sealed record ReviewConflictPayload(string Document);
+
+/// <summary>Payload of <c>review.conflict.resolve</c> (webview→native): the author's chosen reconciliation for
+/// the pending conflict. <paramref name="Choice"/> is one of <see cref="ConflictChoices"/>. The host resolves
+/// the repository / branch / path from its own pending-conflict state, never from this payload.</summary>
+public sealed record ReviewConflictResolvePayload(string Choice);
 
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>
@@ -785,6 +820,17 @@ public sealed record WorkspaceFavoritePayload(
 	string? RepositoryId = null,
 	string? Branch = null,
 	bool? IsFolder = null);
+
+/// <summary>
+/// Payload of <c>preferences.state</c> (native→webview, sent on <c>preferences.request</c>) and
+/// <c>preferences.update</c> (webview→native): the persisted UI preferences (T-077). <paramref
+/// name="Theme"/> is <c>"light"</c>/<c>"dark"</c>, or <c>null</c> when the author has never overridden it —
+/// the webview then falls back to the OS colour scheme, exactly as before this store existed. <paramref
+/// name="Wrap"/> is the editor's line-wrap toggle. <paramref name="ViewMode"/> is the wire view-mode name
+/// (<c>code</c>/<c>split</c>/<c>formatted</c>). Unlike <c>workspace.state</c>, an update is write-only: the
+/// webview already holds the values it just changed, so the host does not broadcast a reply.
+/// </summary>
+public sealed record PreferencesPayload(string? Theme, bool Wrap, string ViewMode);
 
 /// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
 /// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).

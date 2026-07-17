@@ -25,6 +25,7 @@ import {
   parseGitHubRepositories,
   parseImageInserted,
   parsePrDetails,
+  parsePreferencesState,
   parsePreview,
   parsePrList,
   parsePrMutationCompleted,
@@ -36,6 +37,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseReviewConflict,
   parseSearchResults,
   parseStatus,
   parseTemplates,
@@ -169,6 +171,15 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       githubId: 2002,
       succeeded: true,
     });
+  });
+
+  it("review.conflict (reconciliation dialog carries only the document name)", () => {
+    const payload = parseReviewConflict(fixture["review.conflict"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.document).toBe("billing.md");
+    // A blank/absent document name is a contract drift.
+    expect(parseReviewConflict({ document: "" })).toBeNull();
+    expect(parseReviewConflict({})).toBeNull();
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {
@@ -413,6 +424,20 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     });
     expect(payload?.favorites.map((item) => item.kind)).toEqual(["clone", "branch"]);
     expect(payload?.favorites[1]?.branch).toBe("review-copy");
+  });
+
+  it("preferences.state (T-077: theme present, wrap on, split)", () => {
+    expect(parsePreferencesState(fixture["preferences.state"])).toEqual({
+      theme: "dark",
+      wrap: true,
+      viewMode: "split",
+    });
+    expect(parsePreferencesState({ wrap: true, viewMode: "split" })).toEqual({
+      wrap: true,
+      viewMode: "split",
+    });
+    expect(parsePreferencesState({ theme: "blue", wrap: true, viewMode: "split" })).toBeNull();
+    expect(parsePreferencesState({ theme: "dark", wrap: true, viewMode: "wide" })).toBeNull();
   });
 
   it("workspace.context (authoritative repository, branches, and relative path)", () => {

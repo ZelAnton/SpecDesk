@@ -28,6 +28,7 @@ export const Kinds = {
   prCommentUpdate: "pr.comment.update",
   reviewCommentSyncRequest: "review.commentSync.request",
   reviewCommentPublish: "review.comment.publish",
+  reviewConflictResolve: "review.conflict.resolve",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -49,6 +50,8 @@ export const Kinds = {
   searchRequest: "search.request",
   workspaceRequest: "workspace.request",
   workspaceFavorite: "workspace.favorite",
+  preferencesRequest: "preferences.request",
+  preferencesUpdate: "preferences.update",
   repoRegister: "repo.register",
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
@@ -86,6 +89,7 @@ export const Kinds = {
   prMutationCompleted: "pr.mutationCompleted",
   reviewCommentSync: "review.commentSync",
   reviewCommentPublished: "review.comment.published",
+  reviewConflict: "review.conflict",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -101,6 +105,7 @@ export const Kinds = {
   fileDeleteCompleted: "file.deleteCompleted",
   searchResults: "search.results",
   workspaceState: "workspace.state",
+  preferencesState: "preferences.state",
   repoCloneDestination: "repo.cloneDestination",
   repoCloneConflict: "repo.cloneConflict",
   repoConfirmation: "repo.confirmation",
@@ -527,6 +532,21 @@ export interface ReviewCommentPublishedPayload {
   error?: string;
 }
 
+/** The four author-facing choices for the "Someone else changed this too" reconciliation dialog (PoC-10).
+ *  Wire values on `review.conflict.resolve` — mirror of C# `ConflictChoices`. All plain-language. */
+export const CONFLICT_CHOICES = ["keepMine", "keepTheirs", "combine", "askForHelp"] as const;
+
+/** One reconciliation choice (mirror of C# `ConflictChoices`). */
+export type ConflictChoice = (typeof CONFLICT_CHOICES)[number];
+
+/** Payload of `review.conflict` (native→webview): a competing published change collides with the author's
+ *  edit to `document` (its display name) while sending or updating a review. The webview opens the
+ *  "Someone else changed this too" dialog — it needs only the name; the both-sides content stays host-side
+ *  (shown through the diff surface only if the author chooses Combine). No git vocabulary crosses here. */
+export interface ReviewConflictPayload {
+  document: string;
+}
+
 /** Payload of `status` (native→webview): the lifecycle state surfaced to the author. */
 export interface StatusPayload {
   state: StatusState;
@@ -811,6 +831,17 @@ export interface WorkspaceFavoritePayload {
   repositoryId?: string;
   branch?: string;
   isFolder?: boolean;
+}
+
+/** Payload of `preferences.state` (native→webview, sent on `preferences.request`) and
+ *  `preferences.update` (webview→native): the persisted UI preferences (T-077). `theme` is absent when
+ *  the author has never overridden it — the webview then falls back to the OS colour scheme, exactly as
+ *  before this store existed. Unlike `workspace.state`, an update is write-only: the webview already holds
+ *  the values it just changed, so the host does not broadcast a reply. */
+export interface PreferencesPayload {
+  theme?: "light" | "dark";
+  wrap: boolean;
+  viewMode: "code" | "split" | "formatted";
 }
 
 /** Payload of `repo.register` (webview→native): register a GitHub repository from a URL or spec

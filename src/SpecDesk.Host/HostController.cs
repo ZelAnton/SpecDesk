@@ -111,6 +111,11 @@ public sealed partial class HostController : IDisposable
 	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
 	// _auth / _chatAgent. See HostController.Workspace.cs.
 	private readonly WorkspaceStore? _workspace;
+	// T-077: the persisted UI-preferences store (theme/wrap/view mode/window geometry). Optional — null
+	// leaves the preferences handlers inert (preferences.request answers with the same hard-coded defaults
+	// the webview assumed before this store existed; preferences.update is a no-op), the same
+	// graceful-degradation pattern as _workspace. See HostController.Preferences.cs.
+	private readonly PreferencesStore? _preferences;
 	// A6: clones a GitHub repo into a managed local folder so it can be opened as a workspace (repo.open).
 	// Optional — null leaves OnOpenRepo inert (nothing to clone), the same graceful-degradation pattern as the
 	// other injected dependencies. See HostController.Workspace.cs.
@@ -233,6 +238,14 @@ public sealed partial class HostController : IDisposable
 	private long _publishClaimCounter;
 	private long _activePublishClaim;
 
+	// A detected but not-yet-resolved share conflict (PoC-10, "Someone else changed this too"), guarded by
+	// _sync. Set when a send/update finds a competing published change to the open document and shows the
+	// reconciliation dialog INSTEAD of pushing; consumed when the author picks a resolution. Bound to the
+	// draft that raised it (Branch + FromState + Generation) so a stale reply — the document moved on while
+	// the dialog was open — is safely ignored rather than reconciling a different draft. See
+	// HostController.Review.cs (OnResolveConflict / the send+update conflict pre-check).
+	private ShareConflictState? _pendingShareConflict;
+
 	// True while a review-status refresh (a read-only GitHub query) is in flight (guarded by _sync). It
 	// single-flights the refresh so repeated window-focus triggers don't fan out concurrent queries.
 	private bool _refreshingStatus;
@@ -310,6 +323,7 @@ public sealed partial class HostController : IDisposable
 		ISuggestionAgent? suggestionAgent = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
+		PreferencesStore? preferences = null,
 		IRepositoryCloner? cloner = null,
 		ILocalRepositoryInspector? repositoryInspector = null,
 		IGitHubRepositoryCatalog? repositoryCatalog = null)
@@ -333,6 +347,7 @@ public sealed partial class HostController : IDisposable
 		_suggestionAgent = suggestionAgent;
 		_templates = templates;
 		_workspace = workspace;
+		_preferences = preferences;
 		_cloner = cloner;
 		_repositoryInspector = repositoryInspector;
 		_repositoryCatalog = repositoryCatalog;
@@ -554,6 +569,7 @@ public sealed partial class HostController : IDisposable
 		RegisterWorkspaceHandlers();
 		RegisterRepositoryBrowseHandlers();
 		RegisterSearchHandlers();
+		RegisterPreferencesHandlers();
 	}
 
 	// The cross-cutting diagnostics / link channels whose handlers live in this file (HostController.cs):
@@ -577,7 +593,11 @@ public sealed partial class HostController : IDisposable
 		or MessageKinds.DocSendForReview
 		or MessageKinds.DocUpdateReview
 		or MessageKinds.DocDiscard
-		or MessageKinds.ImagePaste;
+		or MessageKinds.ImagePaste
+		// Reconciling a conflict rewrites the working copy, so it is a document mutation — blocked on an
+		// online-preview (read-only) document, like every other edit. It is purely local (no network), so it
+		// is deliberately NOT an account-bound mutation.
+		or MessageKinds.ReviewConflictResolve;
 
 	private void SendLifecycleStatus()
 	{
@@ -909,4 +929,24 @@ public sealed partial class HostController : IDisposable
 		long VersionsSaved,
 		long VersionsShared,
 		long Generation);
+
+	/// <summary>
+	/// A detected-but-unresolved share conflict (PoC-10). Captured when a send/update finds a competing
+	/// published change to the open document, and held (in <see cref="_pendingShareConflict"/>) until the
+	/// author picks a reconciliation. <see cref="Mode"/> is <c>send</c> or <c>update</c> (only the plain-
+	/// language "…again" wording differs). <see cref="Branch"/>/<see cref="FromState"/>/<see
+	/// cref="Generation"/> bind it to the draft that raised it, so a resolution that arrives after the
+	/// document moved on is ignored rather than reconciling the wrong draft. <see cref="Theirs"/> is the base
+	/// version, kept only to show both sides through the diff surface if the author chooses Combine.
+	/// </summary>
+	private sealed record ShareConflictState(
+		string Mode,
+		string RepoRoot,
+		string Branch,
+		string BaseBranch,
+		string Path,
+		string RelativePath,
+		string FromState,
+		long Generation,
+		string Theirs);
 }

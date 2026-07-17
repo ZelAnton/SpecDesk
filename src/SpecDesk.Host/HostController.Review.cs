@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
+using SpecDesk.Git;
 using SpecDesk.GitHub;
 
 namespace SpecDesk.Host;
@@ -20,6 +21,9 @@ public sealed partial class HostController
 		_messageHandlers.Register(MessageKinds.DocPublish, OnPublish);
 		_messageHandlers.Register(MessageKinds.ReviewRefresh, OnRefreshReviewStatus);
 		_messageHandlers.Register(MessageKinds.PrListRequest, OnListReviews);
+		// PoC-10 "Someone else changed this too": the author's reconciliation choice for a detected share
+		// conflict. Registered in the review domain (K-012), never the central HostController.cs switch.
+		_messageHandlers.Register(MessageKinds.ReviewConflictResolve, OnResolveConflict);
 	}
 
 	// "Send for review": push the draft branch to GitHub and open a pull request, then move the
@@ -142,6 +146,21 @@ public sealed partial class HostController
 				// "codeowners" is filtered out upstream and left to GitHub's own auto-request.
 				string[] reviewers = WorkflowConfig.reviewersForHost(WorkflowSeeds.TryReadRepoToml(root));
 
+				// PoC-10: before pushing, check whether a competing published change collides with this
+				// document. On a conflict, open the "Someone else changed this too" dialog INSTEAD of
+				// pushing and leave the lifecycle in Draft (return false) — the author reconciles, then
+				// sends again. A clean check proceeds exactly as before (the unchanged push + PR open below).
+				string sendRelativePath = RepoRelativePath(root, docPath);
+				ReviewShareConflict? sendConflict = await DetectShareConflictForAccount(
+					accountSession, root, branchName, baseName, sendRelativePath, expectedRepositoryUrl!, ct);
+				if (sendConflict is not null)
+				{
+					PublishForAccountSession(accountSession, () => StageShareConflict(
+						"send", root, branchName, baseName, docPath, sendRelativePath,
+						fromState, generation, sendConflict));
+					return false;
+				}
+
 				PullRequest pr = await _auth.WithAccessTokenAsync(
 					async (token, innerCt) =>
 					{
@@ -196,6 +215,8 @@ public sealed partial class HostController
 		string next;
 		string? repoRoot;
 		string? branch;
+		string? baseBranch;
+		string? path;
 		string fromState;
 		long seq;
 		long shared;
@@ -220,6 +241,8 @@ public sealed partial class HostController
 			fromState = session.State;
 			repoRoot = _repoRoot;
 			branch = session.Branch;
+			baseBranch = session.BaseBranch;
+			path = _currentPath;
 			seq = session.VersionsSaved;
 			shared = session.VersionsShared;
 			// The LIVE _draftGeneration (not the session's own Generation token): see OnSendForReview /
@@ -263,29 +286,47 @@ public sealed partial class HostController
 		RunReviewPublish(
 			accountSession, publishClaim, fromState, branchName, next, seq, generation, "Updated the review",
 			"Couldn't update the review. Check your connection and try again.",
-			ct =>
+			async ct =>
 			{
 				if (!IsAccountSessionCurrent(accountSession))
 				{
-					return Task.FromResult(false);
+					return false;
 				}
 
 				if (ResolveGitHubReviewTarget(root) is not { } target)
 				{
 					PublishForAccountSession(accountSession, () =>
 						SendError("This document isn't in a GitHub repository, so its review can't be updated."));
-					return Task.FromResult(false);
+					return false;
+				}
+
+				// PoC-10: before pushing new versions, check whether a competing published change collides with
+				// this document (same dialog as Send for review). On a conflict, open it INSTEAD of pushing and
+				// leave the review state untouched (return false) — the author reconciles, then updates again. A
+				// clean check (or a draft with no known base) proceeds exactly as before.
+				if (baseBranch is not null && path is not null)
+				{
+					string updateRelativePath = RepoRelativePath(root, path);
+					ReviewShareConflict? updateConflict = await DetectShareConflictForAccount(
+						accountSession, root, branchName, baseBranch, updateRelativePath, target.RemoteUrl, ct);
+					if (updateConflict is not null)
+					{
+						PublishForAccountSession(accountSession, () => StageShareConflict(
+							"update", root, branchName, baseBranch, path, updateRelativePath,
+							fromState, generation, updateConflict));
+						return false;
+					}
 				}
 
 				if (!PublishForAccountSession(
 					accountSession, () => SendTransientStatus("Updating the review…")))
 				{
-					return Task.FromResult(false);
+					return false;
 				}
 
 				// Push only — the PR already exists and tracks the branch, so there is no network step to
 				// await once the repo-gated push returns.
-				return _auth.WithAccessTokenAsync(
+				return await _auth.WithAccessTokenAsync(
 					(token, innerCt) =>
 					{
 						if (!StartForAccountSession(accountSession, () =>
@@ -948,6 +989,230 @@ public sealed partial class HostController
 	{
 		_publishInFlight = false;
 		_activePublishClaim = 0;
+	}
+
+	// --- PoC-10: "Someone else changed this too" (share-conflict reconciliation) ---
+
+	// The repository-relative document path (forward slashes), matching OnCompare's convention -- the form
+	// the git layer and the diff engine expect.
+	private static string RepoRelativePath(string repoRoot, string path) =>
+		Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+
+	// Fetch-based conflict detection inside the caller's account session + token scope (the send/update
+	// pre-checks). Repo-gated like the push and cancelled with the account session; returns the conflict
+	// (both clean sides, no git markers) or null when the share is clean. _auth/_publishing are non-null
+	// here (the send/update flow established that before starting).
+	private Task<ReviewShareConflict?> DetectShareConflictForAccount(
+		AccountSession accountSession, string root, string branchName, string baseBranch,
+		string relativePath, string expectedRepositoryUrl, CancellationToken ct) =>
+		_auth!.WithAccessTokenAsync(
+			(token, innerCt) =>
+			{
+				ReviewShareConflict? conflict = null;
+				if (!StartForAccountSession(accountSession, () =>
+				{
+					lock (_repoGate)
+					{
+						conflict = _publishing!.DetectShareConflict(
+							root, branchName, baseBranch, relativePath, expectedRepositoryUrl, token,
+							cancellationToken: innerCt);
+					}
+				}))
+				{
+					throw new OperationCanceledException(innerCt);
+				}
+				return Task.FromResult<ReviewShareConflict?>(conflict);
+			},
+			ct);
+
+	// Store a detected share conflict and open the "Someone else changed this too" dialog -- but only if
+	// the document is STILL the same draft that raised it (the send/update ran off-thread; the author may
+	// have moved on). Otherwise a no-op, so a moved-on document never shows a dangling reconciliation dialog.
+	private void StageShareConflict(
+		string mode, string root, string branch, string baseBranch, string path, string relativePath,
+		string fromState, long generation, ReviewShareConflict conflict)
+	{
+		lock (_sync)
+		{
+			if (_session.Branch != branch || _session.State != fromState
+				|| Interlocked.Read(ref _draftGeneration) != generation)
+			{
+				return;
+			}
+			_pendingShareConflict = new ShareConflictState(
+				mode, root, branch, baseBranch, path, relativePath, fromState, generation, conflict.Theirs);
+		}
+
+		_logger.LogInformation(
+			"A competing published change conflicts with {Path}; opening the reconciliation dialog", path);
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.ReviewConflict, new ReviewConflictPayload(Path.GetFileName(path))));
+	}
+
+	// The author's reconciliation choice for a detected share conflict. All four paths keep the author safe
+	// -- none can silently lose their own or the other person's work. Keep mine / Keep theirs / Combine
+	// reconcile the working copy locally (folding the latest base in, NEVER writing git markers) and reload
+	// the editor with the result; Ask for help cancels with the working tree and open document untouched. The
+	// repository / branch / path come from the host's own pending-conflict state, never the payload (K-010).
+	// The author sends/updates again afterwards -- the reconciled branch then shares cleanly (base is an
+	// ancestor now).
+	private void OnResolveConflict(IpcMessage message)
+	{
+		string? choice = SafeGetPayload<ReviewConflictResolvePayload>(message)?.Choice;
+		if (choice is not (ConflictChoices.KeepMine or ConflictChoices.KeepTheirs
+			or ConflictChoices.Combine or ConflictChoices.AskForHelp))
+		{
+			// An absent / unknown choice -- ignore rather than guess a destructive resolution.
+			return;
+		}
+
+		bool localMutation = choice != ConflictChoices.AskForHelp;
+		ShareConflictState pending;
+		long publishClaim = 0;
+		bool keepPendingForUnsavedEdits = false;
+		lock (_sync)
+		{
+			if (_pendingShareConflict is not { } state)
+			{
+				// No conflict awaiting a decision (a stale / duplicate reply) -- nothing to do.
+				return;
+			}
+
+			// Bind the resolution to the draft that raised the conflict: if the document moved on while the
+			// dialog was open (a different draft, a discard, a reload), drop the stale conflict rather than
+			// reconcile the wrong document.
+			if (_session.Branch != state.Branch || _session.State != state.FromState
+				|| Interlocked.Read(ref _draftGeneration) != state.Generation)
+			{
+				_pendingShareConflict = null;
+				return;
+			}
+
+			if (localMutation && _publishInFlight)
+			{
+				// A publish / reconcile is already running -- ignore this click; the author can retry.
+				return;
+			}
+
+			pending = state;
+			// Never reconcile over unsaved edits the author made while the dialog was open: a reconcile hard-
+			// resets the working copy, so those edits (in memory, maybe not yet autosaved to disk) would be
+			// lost. Refuse and KEEP the pending conflict, so once they save a version the same dialog choice
+			// works. (The git layer's DirtyWorkingTreeException is the disk-level backstop for the same case.)
+			if (localMutation && _session.Dirty)
+			{
+				keepPendingForUnsavedEdits = true;
+			}
+			else
+			{
+				_pendingShareConflict = null;
+				if (localMutation)
+				{
+					_publishInFlight = true;
+					publishClaim = ++_publishClaimCounter;
+					_activePublishClaim = publishClaim;
+				}
+			}
+		}
+
+		if (keepPendingForUnsavedEdits)
+		{
+			SendError("Save your latest changes as a version first, then bring the two versions together.");
+			return;
+		}
+
+		if (choice == ConflictChoices.AskForHelp)
+		{
+			// Safe cancel: the working tree and the open document are untouched (nothing was pushed or
+			// written), so the author is exactly where they were before sending / updating. A maintainer
+			// hand-off beyond this note is out of this slice's scope.
+			_logger.LogInformation(
+				"Author asked for help reconciling {Path}; leaving the document unchanged", pending.Path);
+			// The document/lifecycle state is unchanged (nothing was pushed or written), so just show the plain
+			// message over the current state — a following SendLifecycleStatus would overwrite it immediately.
+			SendTransientStatus("We've asked for help with this -- your document is unchanged.");
+			return;
+		}
+
+		ConflictResolution resolution = choice == ConflictChoices.KeepTheirs
+			? ConflictResolution.KeepTheirs
+			: ConflictResolution.KeepMine;
+		RunConflictReconcile(pending, resolution, combine: choice == ConflictChoices.Combine, publishClaim);
+	}
+
+	// Reconcile a conflict locally, off the message thread: fold the latest base into the draft (keeping the
+	// author's or the other person's whole document, never markers), reload the editor with the result, and
+	// -- for Combine -- show both sides through the existing diff surface. Purely local (no network), so it
+	// needs no token; always releases the single-flight claim.
+	private void RunConflictReconcile(
+		ShareConflictState pending, ConflictResolution resolution, bool combine, long publishClaim)
+	{
+		_ = Task.Run(() =>
+		{
+			try
+			{
+				string resolvedText;
+				lock (_repoGate)
+				{
+					resolvedText = _publishing!.ReconcileShareConflict(
+						pending.RepoRoot, pending.Branch, pending.BaseBranch, pending.RelativePath,
+						resolution, cancellationToken: _lifetimeCts.Token);
+					// The reconciliation created a commit and hard-reset the checkout -- bump the checkout token
+					// so any autosave snapshot taken before it is invalidated (mirrors OnDiscard).
+					Interlocked.Increment(ref _draftGeneration);
+				}
+
+				lock (_sync)
+				{
+					_text = resolvedText;
+					Interlocked.Increment(ref _contentGeneration);
+					_lineEnding = DetectLineEnding(resolvedText);
+					_session = _session with { Dirty = false, Generation = Interlocked.Read(ref _draftGeneration) };
+				}
+
+				// Reload the editor with the reconciled content (same mechanism as Discard), keeping the draft
+				// / review state and branch so the author can send / update again.
+				Emit(IpcSerializer.SerializeEvent(
+					MessageKinds.DocLoaded,
+					new DocLoadedPayload(pending.Path, resolvedText, DocRelativeDir(), Branch: pending.Branch)));
+				SendWorkspaceContext();
+				SendLifecycleStatus();
+
+				string share = pending.Mode == "update" ? "update the review" : "send for review";
+				if (combine)
+				{
+					// Show both sides through the EXISTING diff surface: the other person's published version as
+					// the base and the author's kept version as the head, so they can combine by hand in the normal
+					// editor. No git markers are ever inserted into the document text.
+					Emit(IpcSerializer.SerializeEvent(
+						MessageKinds.DiffResult, DiffProjection.Build(pending.Theirs, resolvedText)));
+					SendTransientStatus($"Combine the two versions, then {share} again to share it.");
+				}
+				else if (resolution == ConflictResolution.KeepTheirs)
+				{
+					SendTransientStatus($"Using the other person's version -- {share} again to share it.");
+				}
+				else
+				{
+					SendTransientStatus($"Kept your version -- {share} again to share it.");
+				}
+			}
+			catch (DirtyWorkingTreeException)
+			{
+				// Unsaved typing beyond the last saved version would be lost by the reconcile -- never do that;
+				// ask the author to save a version first (their edits stay exactly as they are).
+				SendError("Save your latest changes as a version first, then bring the two versions together.");
+			}
+			catch (Exception ex)
+			{
+				_logger.LogError(ex, "Could not reconcile the conflicting document {Path}", pending.Path);
+				SendError("Couldn't bring the two versions together. Try again.");
+			}
+			finally
+			{
+				ClearPublishInFlight(publishClaim);
+			}
+		});
 	}
 
 	// Compose the pull-request title and body for a review request: the title is the author's last

@@ -84,6 +84,16 @@
       <button id="pr-text-confirm" type="button">Send for review</button>
       <button id="pr-text-cancel" type="button">Cancel</button>
     </div>
+    <!-- "Someone else changed this too" reconciliation dialog (PoC-10). Shown when a competing published
+         change collides with the author's edit while sending/updating a review. Plain words only — the
+         author never sees git conflict markers or git terminology; four clear choices resolve it. -->
+    <div id="conflict-bar" hidden>
+      <span id="conflict-message"></span>
+      <button id="conflict-keep-mine" type="button">Keep mine</button>
+      <button id="conflict-keep-theirs" type="button">Keep theirs</button>
+      <button id="conflict-combine" type="button">Combine</button>
+      <button id="conflict-ask-for-help" type="button">Ask for help</button>
+    </div>
     <!-- Sign-in code bar (PoC-5), revealed while connecting a GitHub account: shows the one-time code to
          enter at GitHub, a button to open the page, and a waiting/result line. Plain words only. -->
     <div id="github-signin-bar" hidden>
