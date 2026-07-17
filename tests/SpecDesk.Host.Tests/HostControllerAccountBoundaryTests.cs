@@ -181,6 +181,15 @@ public sealed class HostControllerAccountBoundaryTests
 			string repoRoot, string branchName, string expectedRepositoryUrl, string accessToken,
 			string remoteName = "origin",
 			CancellationToken cancellationToken = default) => PushOrder = ordering.Next();
+		// No competing change in these ordering tests, so a send/update proceeds to push exactly as before.
+		public ReviewShareConflict? DetectShareConflict(
+			string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+			string expectedRepositoryUrl, string accessToken, string remoteName = "origin",
+			CancellationToken cancellationToken = default) => null;
+		public string ReconcileShareConflict(
+			string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+			ConflictResolution resolution, string remoteName = "origin",
+			CancellationToken cancellationToken = default) => "reconciled";
 	}
 
 	[Test]

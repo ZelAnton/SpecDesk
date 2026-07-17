@@ -258,6 +258,54 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
 
     public bool HasCommitsToReview(string repoRoot, string branchName, string baseBranch) => HasCommitsValue;
 
+    /// <summary>The conflict <see cref="DetectShareConflict"/> returns; null (no conflict) by default, so an
+    /// ordinary send/update proceeds to push exactly as before. Set to simulate a competing published change
+    /// colliding with the open document (PoC-10).</summary>
+    public ReviewShareConflict? ShareConflictToReturn { get; set; }
+
+    public int DetectShareConflictCalls { get; private set; }
+
+    public string? DetectedRelativePath { get; private set; }
+
+    public string? DetectedBaseBranch { get; private set; }
+
+    public int ReconcileCalls { get; private set; }
+
+    public ConflictResolution? LastReconcileResolution { get; private set; }
+
+    /// <summary>The reconciled text <see cref="ReconcileShareConflict"/> returns (what the editor reloads).</summary>
+    public string ReconcileResult { get; set; } = "reconciled document";
+
+    /// <summary>When set, <see cref="ReconcileShareConflict"/> throws <see cref="DirtyWorkingTreeException"/> —
+    /// to exercise the "unsaved edits block the reconcile" guard.</summary>
+    public bool ThrowDirtyOnReconcile { get; set; }
+
+    public ReviewShareConflict? DetectShareConflict(
+        string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+        string expectedRepositoryUrl, string accessToken, string remoteName = "origin",
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        DetectShareConflictCalls++;
+        DetectedRelativePath = repoRelativePath;
+        DetectedBaseBranch = baseBranch;
+        return ShareConflictToReturn;
+    }
+
+    public string ReconcileShareConflict(
+        string repoRoot, string branchName, string baseBranch, string repoRelativePath,
+        ConflictResolution resolution, string remoteName = "origin",
+        CancellationToken cancellationToken = default)
+    {
+        ReconcileCalls++;
+        LastReconcileResolution = resolution;
+        if (ThrowDirtyOnReconcile)
+        {
+            throw new DirtyWorkingTreeException(branchName);
+        }
+        return ReconcileResult;
+    }
+
     public void PushBranch(
         string repoRoot, string branchName, string expectedRepositoryUrl, string accessToken,
         string remoteName = "origin",

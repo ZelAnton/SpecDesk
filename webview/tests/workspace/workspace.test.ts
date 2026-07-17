@@ -183,7 +183,7 @@ describe("workspace left toolbar", () => {
     const labels = Array.from(
       leftDock.querySelectorAll<HTMLElement>(".dock-rail-btn:not([hidden])"),
     ).map((button) => button.getAttribute("aria-label"));
-    expect(labels).toEqual(["Navigator", "Repositories", "Change requests", "Disk"]);
+    expect(labels).toEqual(["Navigator", "Repositories", "Change requests", "Disk", "Search"]);
     const navigatorPanel = leftDock.querySelector('.dock-tool[data-tool="navigator"]');
     const prsPanel = leftDock.querySelector('.dock-tool[data-tool="prs"]');
     expect(navigatorPanel?.textContent).toContain("Favorites");
@@ -233,7 +233,14 @@ describe("workspace left toolbar", () => {
     const labels = Array.from(
       leftDock.querySelectorAll<HTMLElement>(".dock-rail-btn:not([hidden])"),
     ).map((button) => button.getAttribute("aria-label"));
-    expect(labels).toEqual(["Navigator", "Repositories", "Change requests", "Disk", "Outline"]);
+    expect(labels).toEqual([
+      "Navigator",
+      "Repositories",
+      "Change requests",
+      "Disk",
+      "Search",
+      "Outline",
+    ]);
     leftDock.querySelector<HTMLButtonElement>('.dock-rail-btn[aria-label="Outline"]')?.click();
     expect(centralFrame.dataset.activeView).toBeUndefined();
     expect(leftDock.querySelector('.dock-tool[data-tool="editor"] .outline-empty')).not.toBeNull();

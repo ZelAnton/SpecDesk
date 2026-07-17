@@ -1378,6 +1378,7 @@ body:not([data-central-view="editor"]) #toolbar-search {
 #branch-name-bar:not([hidden]),
 #version-note-bar:not([hidden]),
 #pr-text-bar:not([hidden]),
+#conflict-bar:not([hidden]),
 #github-signin-bar:not([hidden]) {
   display: flex;
   flex-wrap: wrap;
@@ -1386,6 +1387,18 @@ body:not([data-central-view="editor"]) #toolbar-search {
   padding: 0.4rem 0.75rem;
   border-bottom: 1px solid var(--border);
   font-size: 0.85rem;
+}
+
+/* "Someone else changed this too" (PoC-10): a caution moment (the warn tint), the plain message then the
+   four reconciliation choices. Reuses the shared prompt-bar tokens — no one-off styling. */
+#conflict-bar {
+  background: var(--warn-bg);
+  border-bottom-color: var(--warn-border);
+}
+
+#conflict-message {
+  margin-right: 0.25rem;
+  color: var(--text);
 }
 
 /* The draft-name bar is a beginning (accent-soft); the version-note bar is a checkpoint (warn). */
@@ -4153,6 +4166,86 @@ button.context-panel:hover {
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   font: 600 11px var(--font-ui);
+}
+
+/* ---- Left-rail workspace search (T-078; workspace/tools/search-panel.ts) ----
+   A bounded host-side search across the workspace's Markdown files: an input row, a status line, and a
+   flat list of file:line snippet results. Mirrors the Folder navigator's input/list chrome. */
+.search-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.search-panel-form {
+  flex: none;
+  padding: 0.35rem;
+}
+
+.search-panel-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  font: 13px var(--font-ui);
+}
+
+.search-panel-status {
+  margin: 0;
+  padding: 0 0.75rem 0.5rem;
+  color: var(--text-muted);
+  font: 13px / 1.5 var(--font-ui);
+}
+
+.search-panel-status[hidden] {
+  display: none;
+}
+
+.search-panel-results {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.search-panel-result {
+  width: 100%;
+  display: block;
+  padding: 0.5rem 0.75rem;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  cursor: pointer;
+}
+
+.search-panel-result:hover {
+  background: var(--surface-sunken);
+}
+
+.search-panel-result-file {
+  display: block;
+  overflow: hidden;
+  color: var(--text-strong);
+  font: 600 12px var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-panel-result-snippet {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-muted);
+  font: 12px / 1.4 var(--font-ui);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Start central view (design concept §10.7; workspace/tools/home-view.ts) ----

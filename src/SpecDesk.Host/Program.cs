@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Net.Http;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,11 @@ internal static class Program
 	// closing has actually begun: any dialog already in flight gets a fair chance to finish, and
 	// anything that never completes is abandoned instead of hanging forever.
 	private static readonly TimeSpan DialogClosingGrace = TimeSpan.FromSeconds(2);
+
+	// T-077: how long to wait after the last LocationChanged/SizeChanged event before persisting the window's
+	// geometry — an interactive drag/resize fires many of these in quick succession, and this debounces them
+	// into a single disk write shortly after the author stops moving/resizing.
+	private static readonly TimeSpan GeometryPersistDebounce = TimeSpan.FromMilliseconds(400);
 
 	[STAThread]
 	private static void Main()
@@ -101,6 +107,16 @@ internal static class Program
 		LibGit2RepositoryCloner repositoryCloner = new();
 		int windowUiThreadId = 0;
 
+		// T-077: the persisted UI-preferences sidecar (theme/wrap/view mode/window geometry) — a host-owned
+		// JSON file under AppPaths.Preferences (see PreferencesStore). Read once here so the window can
+		// restore its saved geometry before it is created; the controller gets the same instance for the
+		// theme/wrap/view-mode IPC (preferences.request/preferences.update).
+		PreferencesStore preferences = new(AppPaths.Preferences);
+		WindowGeometry? savedWindowGeometry = preferences.Window;
+		bool restoreWindowGeometry = savedWindowGeometry is { } savedGeometry
+			&& WindowGeometryValidator.IsValidForCurrentMonitors(
+				savedGeometry.X, savedGeometry.Y, savedGeometry.Width, savedGeometry.Height);
+
 		using HostController controller = new(
 			render: Renderer.render,
 			// SendWebMessage already marshals onto the UI thread internally, so this is safe to
@@ -126,6 +142,9 @@ internal static class Program
 			// A4: the persisted workspace store (recents / favorites / registered repos), a host-owned JSON
 			// sidecar under the app data root.
 			workspace: new WorkspaceStore(AppPaths.Workspace),
+			// T-077: the persisted UI-preferences store (theme/wrap/view mode/window geometry), constructed
+			// above so its saved window geometry could be read before the window itself was created.
+			preferences: preferences,
 			// A6: clones a GitHub repo (repo.open) into AppPaths.Repos and opens it as the workspace.
 			cloner: repositoryCloner,
 			repositoryInspector: repositoryCloner,
@@ -158,6 +177,31 @@ internal static class Program
 			window!.SendWebMessage(IpcSerializer.SerializeEvent(
 				MessageKinds.WindowState,
 				new WindowStatePayload(maximized)));
+		// R-01: guards the one-time initial-maximized-state replay on the webview's first "ready" (see the
+		// RegisterWebMessageReceivedHandler branch below) against a later duplicate ready.
+		bool initialWindowStateSent = false;
+
+		// T-077: capture the native window's current geometry into the preferences sidecar. Best-effort —
+		// a late callback racing window teardown must not throw out of a native event/timer callback.
+		void PersistWindowGeometry()
+		{
+			try
+			{
+				preferences.SetWindowGeometry(
+					window!.Left, window.Top, window.Width, window.Height, window.Maximized);
+			}
+			catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+			{
+				// The native window is already torn down (a late timer callback racing close); nothing
+				// left to persist.
+			}
+		}
+		// Debounces the frequent LocationChanged/SizeChanged events an interactive drag/resize fires in
+		// quick succession into a single disk write shortly after the author stops moving/resizing.
+		using Timer geometryPersistTimer = new(
+			_ => PersistWindowGeometry(), null, Timeout.Infinite, Timeout.Infinite);
+		void ScheduleWindowGeometryPersist() =>
+			geometryPersistTimer.Change(GeometryPersistDebounce, Timeout.InfiniteTimeSpan);
 
 		window = new PhotinoWindow()
 			.SetTitle(ProductInfo.Name)
@@ -165,10 +209,29 @@ internal static class Program
 			.SetResizable(true)
 			.SetUseOsDefaultLocation(false)
 			.SetUseOsDefaultSize(false)
-			.SetSize(1280, 800)
+			.SetSize(
+				restoreWindowGeometry ? savedWindowGeometry!.Width : 1280,
+				restoreWindowGeometry ? savedWindowGeometry!.Height : 800)
 			.SetDevToolsEnabled(devTools)
-			.SetContextMenuEnabled(devTools)
-			.Center()
+			.SetContextMenuEnabled(devTools);
+		// T-077: restore the saved position only when it (and its size, checked above) is still valid for
+		// the current monitor configuration; otherwise keep the previous default of a centered window.
+		window = restoreWindowGeometry
+			? window.SetLocation(new Point(savedWindowGeometry!.X, savedWindowGeometry.Y))
+			: window.Center();
+		// T-077 / R-01: whether this run's native window is being created already maximized from a
+		// restored geometry. Calling SetMaximized(true) this early — before the native window/webview
+		// exist — synchronously fires RegisterMaximizedHandler as a side effect (see the try/catch there),
+		// too early for the webview to be listening or for SendWebMessage to even succeed; nothing tells
+		// it the true initial state. Captured once and replayed reliably on the webview's first "ready"
+		// below (see the RegisterWebMessageReceivedHandler branch), which only runs once the webview is
+		// actually listening.
+		bool startedMaximized = restoreWindowGeometry && savedWindowGeometry!.Maximized;
+		if (startedMaximized)
+		{
+			window = window.SetMaximized(true);
+		}
+		window = window
 			// Photino creates its native HWND inside WaitForClose; WindowHandle throws before this callback.
 			// Attach while the created window is still on its owning UI thread and keep the delegate rooted
 			// until the message loop has ended.
@@ -202,10 +265,35 @@ internal static class Program
 				{
 					dialogClosingCts.CancelAfter(DialogClosingGrace);
 				}
+				// Belt-and-braces alongside the debounced move/resize/maximize/restore persistence above:
+				// catches whatever geometry change wasn't flushed yet as the window starts tearing down.
+				PersistWindowGeometry();
 				return deferClose;
 			})
-			.RegisterMaximizedHandler((_, _) => SendWindowState(maximized: true))
-			.RegisterRestoredHandler((_, _) => SendWindowState(maximized: false))
+			.RegisterMaximizedHandler((_, _) =>
+			{
+				try
+				{
+					SendWindowState(maximized: true);
+					PersistWindowGeometry();
+				}
+				catch (ApplicationException)
+				{
+					// R-01: a restored `Maximized: true` startup geometry applies SetMaximized(true) to the
+					// window BEFORE it is created (see startedMaximized above); Photino fires this Maximized
+					// event synchronously as a side effect of that call, before the native window/webview has
+					// finished initializing, so SendWebMessage (and the geometry reads below it) both throw
+					// here. Harmless to skip — the webview's true initial state is told reliably, once, from
+					// the "ready" handler below, which only runs after initialization has actually completed.
+				}
+			})
+			.RegisterRestoredHandler((_, _) =>
+			{
+				SendWindowState(maximized: false);
+				PersistWindowGeometry();
+			})
+			.RegisterLocationChangedHandler((_, _) => ScheduleWindowGeometryPersist())
+			.RegisterSizeChangedHandler((_, _) => ScheduleWindowGeometryPersist())
 			// Custom scheme handlers must be registered before the page loads. The asset root
 			// follows the open document's repo (null until the first document loads).
 			.RegisterCustomSchemeHandler(
@@ -218,6 +306,18 @@ internal static class Program
 				if (string.Equals(envelope?.Kind, MessageKinds.Ready, StringComparison.Ordinal))
 				{
 					closeCoordinator.MarkWebviewReady();
+					// R-01: replay the window's true initial maximize state on the FIRST ready. The only other
+					// place that would tell the webview (RegisterMaximizedHandler, fired as a side effect of
+					// SetMaximized(true) at creation time above) runs too early to reach the webview — see its
+					// try/catch — so without this the custom titlebar control would start on its default
+					// unpressed/"Maximize" state even though the native window is already maximized. Sent at
+					// most once so a later duplicate ready (see OnReady's own guard) can never re-assert a
+					// stale startup state over a real user toggle that happened in between.
+					if (startedMaximized && !initialWindowStateSent)
+					{
+						initialWindowStateSent = true;
+						SendWindowState(maximized: true);
+					}
 				}
 				if (!windowCommands.TryHandle(message))
 				{

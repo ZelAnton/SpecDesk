@@ -69,6 +69,11 @@ public static class AppPaths
 	/// and registered GitHub repositories. Backs the Start screen's picker; see SpecDesk.Host.WorkspaceStore.</summary>
 	public static string Workspace { get; } = Path.Combine(Root, "workspace.json");
 
+	/// <summary>The persisted UI-preferences sidecar (a host-owned JSON file): the color theme, the editor's
+	/// line-wrap toggle, the active view mode, and the native window's last geometry. See
+	/// SpecDesk.Host.PreferencesStore.</summary>
+	public static string Preferences { get; } = Path.Combine(Root, "preferences.json");
+
 	/// <summary>The rolling log files' shared name prefix (e.g. <c>specdesk-20260101.log</c>), derived
 	/// from <see cref="ProductInfo.Name"/> rather than a second hard-coded lowercase literal.</summary>
 	public static string LogFilePrefix { get; } = ProductInfo.Name.ToLowerInvariant() + "-";

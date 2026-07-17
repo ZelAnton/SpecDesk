@@ -36,6 +36,7 @@ import {
   type PrCommentPayload,
   type PrCommitPayload,
   type PrDetailsPayload,
+  type PreferencesPayload,
   type PreviewPayload,
   type PrListItemPayload,
   type PrListPayload,
@@ -53,6 +54,9 @@ import {
   type ReviewCommentAnchorPayload,
   type ReviewCommentPublishedPayload,
   type ReviewCommentSyncPayload,
+  type ReviewConflictPayload,
+  type SearchResultPayload,
+  type SearchResultsPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -87,6 +91,25 @@ export function isBoolean(value: unknown): value is boolean {
 
 export function parseWindowState(value: unknown): WindowStatePayload | null {
   return isRecord(value) && isBoolean(value.maximized) ? { maximized: value.maximized } : null;
+}
+
+const PREFERENCES_VIEW_MODES = ["code", "split", "formatted"] as const;
+
+function isPreferencesViewMode(value: unknown): value is PreferencesPayload["viewMode"] {
+  return isString(value) && (PREFERENCES_VIEW_MODES as readonly string[]).includes(value);
+}
+
+export function parsePreferencesState(value: unknown): PreferencesPayload | null {
+  if (!isRecord(value) || !isBoolean(value.wrap) || !isPreferencesViewMode(value.viewMode)) {
+    return null;
+  }
+  if (value.theme !== undefined && value.theme !== "light" && value.theme !== "dark") {
+    return null;
+  }
+  // `theme` is optional (exactOptionalPropertyTypes forbids an explicit `undefined`), so omit it.
+  return value.theme === undefined
+    ? { wrap: value.wrap, viewMode: value.viewMode }
+    : { theme: value.theme, wrap: value.wrap, viewMode: value.viewMode };
 }
 
 export function parseWindowCloseRequested(value: unknown): WindowCloseRequestedPayload | null {
@@ -805,6 +828,13 @@ export function parseReviewCommentPublished(value: unknown): ReviewCommentPublis
     : { localId: value.localId, githubId: value.githubId, succeeded: value.succeeded };
 }
 
+export function parseReviewConflict(value: unknown): ReviewConflictPayload | null {
+  if (!isRecord(value) || !isString(value.document) || value.document === "") {
+    return null;
+  }
+  return { document: value.document };
+}
+
 export function parseChatDelta(value: unknown): ChatDeltaPayload | null {
   if (!isRecord(value) || !isString(value.id) || !isString(value.text)) {
     return null;
@@ -999,6 +1029,29 @@ export function parseTree(value: unknown): TreePayload | null {
   if (value.error !== undefined) payload.error = value.error;
   if (value.remote !== undefined) payload.remote = value.remote;
   return payload;
+}
+
+function parseSearchResult(value: unknown): SearchResultPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.path) ||
+    !isNumber(value.line) ||
+    !isString(value.snippet)
+  ) {
+    return null;
+  }
+  return { path: value.path, line: value.line, snippet: value.snippet };
+}
+
+export function parseSearchResults(value: unknown): SearchResultsPayload | null {
+  if (!isRecord(value) || !isString(value.query) || !isBoolean(value.truncated)) {
+    return null;
+  }
+  const results = parseArray(value.results, parseSearchResult);
+  if (results === null) {
+    return null;
+  }
+  return { query: value.query, results, truncated: value.truncated };
 }
 
 export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload | null {
