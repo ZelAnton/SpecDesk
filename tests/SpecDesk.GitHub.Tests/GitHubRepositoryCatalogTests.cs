@@ -203,6 +203,44 @@ public sealed class GitHubRepositoryCatalogTests
 	}
 
 	[Test]
+	public async Task Requests_use_the_shared_GitHubHttp_UserAgent()
+	{
+		Handler handler = new(_ => Json("""{"default_branch":"main"}"""));
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		await catalog.GetMetadataAsync("octo", "specs", "secret");
+
+		// The hard-coded "SpecDesk/1.0" this catalog used to send is gone — it now shares GitHubHttp.UserAgent
+		// (name + version from ProductInfo) with the device-flow and review transports, so there is no longer
+		// a second User-Agent literal that can drift out of step with the product version.
+		Assert.That(handler.LastRequest?.Headers.UserAgent.ToString(), Is.EqualTo(GitHubHttp.UserAgent.ToString()));
+	}
+
+	[Test]
+	public async Task Requests_apply_the_shared_per_request_timeout()
+	{
+		CancellationToken? observed = null;
+		AsyncHandler handler = new((_, ct) =>
+		{
+			observed = ct;
+			return Task.FromResult(Json("""{"default_branch":"main"}"""));
+		});
+		using HttpClient http = new(handler);
+		GitHubRepositoryCatalog catalog = new(http);
+
+		// Called with the caller's default (never-cancellable) token.
+		await catalog.GetMetadataAsync("octo", "specs", "secret");
+
+		// GitHubHttp.NewTimeout links the caller's token into a fresh CancellationTokenSource with
+		// CancelAfter(RequestTimeout) already armed, so the token reaching the transport can always be
+		// cancelled — unlike CancellationToken.None passed above, which never can. This proves the shared
+		// per-request timeout is actually wired into the request without waiting out the real 30s budget a
+		// genuine stall would take to trigger.
+		Assert.That(observed?.CanBeCanceled, Is.True);
+	}
+
+	[Test]
 	public async Task File_returns_raw_text()
 	{
 		Handler handler = new(_ => new HttpResponseMessage(HttpStatusCode.OK)
