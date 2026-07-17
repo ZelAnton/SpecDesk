@@ -37,4 +37,7 @@
 	<Project Path="src/SpecDesk.GitHub/SpecDesk.GitHub.csproj" />
 	<Project Path="src/SpecDesk.Ai/SpecDesk.Ai.csproj" />
 	<Project Path="src/SpecDesk.Host/SpecDesk.Host.csproj" />
+	<Folder Name="/Bench/">
+		<Project Path="bench/SpecDesk.Bench/SpecDesk.Bench.fsproj" />
+	</Folder>
 </Solution>

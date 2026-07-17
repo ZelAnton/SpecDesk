@@ -55,7 +55,7 @@ const SCROLL_SETTLE_MS = 120;
  * positions remain part of the signature, so this still waits for the real editor layout to settle.
  * The signature store is reset per call so each settle is self-contained and can't false-positive.
  */
-export async function waitForGeometrySettle(page: Page): Promise<void> {
+export async function waitForGeometrySettle(page: Page, timeoutMs = 10_000): Promise<void> {
   await page.evaluate(() => {
     delete (window as unknown as { __sd_geoSig?: string }).__sd_geoSig;
   });
@@ -76,7 +76,9 @@ export async function waitForGeometrySettle(page: Page): Promise<void> {
       return stable;
     },
     undefined,
-    { polling: "raf", timeout: 10_000 },
+    // A large-document reconcile needs more frames to reach its fixed point than the geometry fixtures;
+    // the perf scenario passes a longer budget. Existing callers keep the 10 s default.
+    { polling: "raf", timeout: timeoutMs },
   );
 }
 
