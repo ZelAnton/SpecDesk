@@ -51,6 +51,27 @@ public sealed record ReviewSummary(
 public sealed record ReviewComment(
     string Id, string Path, string Author, string Body, DateTimeOffset When);
 
+/// <summary>One inline PR review comment pulled from GitHub with the anchor SpecDesk needs to project it
+/// back onto a document line. <see cref="Line"/> is the 1-based file line the comment is attached to
+/// (GitHub's <c>line</c>, or <c>original_line</c> when the head moved on and the comment went outdated);
+/// <see cref="Side"/> is <c>RIGHT</c> (head/new file) or <c>LEFT</c> (base/old file); <see cref="CommitId"/>
+/// is the commit the comment was written against; <see cref="InReplyToId"/> is 0 for a root thread and the
+/// parent id for a reply. The body is bounded exactly like <see cref="ReviewComment"/>.</summary>
+public sealed record ReviewCommentAnchor(
+    long Id, string Path, int Line, string Side, string CommitId, long InReplyToId,
+    string Author, string Body, DateTimeOffset When);
+
+/// <summary>The bounded projection one document needs to synchronise its inline comments with an open pull
+/// request. <see cref="HeadCommitId"/> is the PR's current head commit (what a newly-posted comment anchors
+/// to); <see cref="Path"/> is the document's repository-relative path; <see cref="CommentableLines"/> are the
+/// 1-based head-side (RIGHT) lines of that file that fall inside a diff hunk — GitHub only accepts an inline
+/// comment on those, so anything else stays local and labelled; <see cref="Comments"/> are the existing
+/// review comments already on that file (for both sides). GitHub sync is a projection over the app's local
+/// comment model, so this snapshot never carries the whole document, only these bounded anchors.</summary>
+public sealed record ReviewSyncSnapshot(
+    string HeadCommitId, string Path, IReadOnlyList<int> CommentableLines,
+    IReadOnlyList<ReviewCommentAnchor> Comments);
+
 /// <summary>One person or team participating in a pull-request review.</summary>
 public sealed record PullRequestParticipant(string Login, string AvatarUrl, string Kind);
 
@@ -192,6 +213,26 @@ public interface IGitHubReview
         string accessToken, string owner, string repo, long commentId, string body,
         CancellationToken cancellationToken = default) =>
         throw new NotSupportedException("Review comments are not available from this provider.");
+
+    /// <summary>Post a new inline review comment on <paramref name="pullNumber"/>, anchored to
+    /// <paramref name="path"/> at <paramref name="line"/> (1-based) on <paramref name="side"/>
+    /// (<c>RIGHT</c>/<c>LEFT</c>) against <paramref name="commitId"/>. The caller has already established
+    /// the line falls inside a diff hunk (GitHub rejects a comment on an unchanged line). Returns the new
+    /// comment's GitHub id (0 when a 2xx body couldn't be parsed) so the local model can mark the thread
+    /// synced. Throws on a transport / API failure.</summary>
+    Task<long> CreateReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, string commitId, string path,
+        int line, string side, string body, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Review comments are not available from this provider.");
+
+    /// <summary>The bounded <see cref="ReviewSyncSnapshot"/> for <paramref name="path"/> in
+    /// <paramref name="pullNumber"/>: the current head commit, the file's head-side lines that are inside a
+    /// diff hunk (postable), and the existing review comments on that file. Read-only and best-effort — the
+    /// host projects it over the local comment model and a failure leaves the last projection untouched.</summary>
+    Task<ReviewSyncSnapshot> GetReviewSyncAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Review sync is not available from this provider.");
 }
 
 /// <summary>
@@ -205,6 +246,11 @@ public sealed class GitHubReviewClient : IGitHubReview
     private const int MaxPullRequestCommentsPageBytes = 8_388_608;
     private const int MaxPullRequestCommentsTotalCharacters = 4_194_304;
     private const int MaxPullRequestCommentPages = 10;
+    // A changed file's unified-diff patch can be large; bound one /files page independently of comments.
+    private const int MaxReviewFilesPageBytes = 8_388_608;
+    // Cap the projected anchors so a pathological PR can't inflate the sync payload the host ships back.
+    private const int MaxCommentableLines = 50_000;
+    private const int MaxReviewCommentAnchors = 500;
     private static readonly TimeSpan PullRequestCommentsTimeout = TimeSpan.FromSeconds(5);
     private readonly HttpClient _http;
 
@@ -639,6 +685,290 @@ public sealed class GitHubReviewClient : IGitHubReview
         {
             throw new HttpRequestException($"GitHub rejected the {what} request (HTTP {(int)response.StatusCode}).");
         }
+    }
+
+    public async Task<long> CreateReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, string commitId, string path,
+        int line, string side, string body, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 65_536)
+        {
+            throw new ArgumentException("Comment text must be between 1 and 65,536 characters.", nameof(body));
+        }
+        if (string.IsNullOrWhiteSpace(commitId) || string.IsNullOrWhiteSpace(path) || line <= 0)
+        {
+            throw new ArgumentException("A review comment needs a commit, a path, and a positive line.");
+        }
+        // The line/side model is what the caller already resolved through the lineMap; RIGHT is the head
+        // (new-file) side. Normalise defensively so a stray value can't post to the wrong side of the diff.
+        string normalizedSide = string.Equals(side, "LEFT", StringComparison.OrdinalIgnoreCase) ? "LEFT" : "RIGHT";
+
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/comments");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Post, endpoint, accessToken);
+        string json = JsonSerializer.Serialize(
+            new { body, commit_id = commitId, path, line, side = normalizedSide });
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        string responseBody = await response.Content.ReadAsStringAsync(timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the review comment (HTTP {(int)response.StatusCode}).");
+        }
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("id", out JsonElement id)
+                && id.TryGetInt64(out long value)
+                ? value
+                : 0;
+        }
+        catch (JsonException)
+        {
+            // GitHub accepted the comment (2xx); an unparseable body only costs the id echo. Report it posted
+            // with an unknown id rather than as a failure that would push the author to re-post a duplicate.
+            return 0;
+        }
+    }
+
+    public async Task<ReviewSyncSnapshot> GetReviewSyncAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        string headCommitId = await ReadHeadCommitAsync(accessToken, owner, repo, pullNumber, timeout.Token);
+        IReadOnlyList<int> commentableLines =
+            await ReadCommentableLinesAsync(accessToken, owner, repo, pullNumber, path, timeout.Token);
+        IReadOnlyList<ReviewCommentAnchor> comments =
+            await ReadReviewCommentAnchorsAsync(accessToken, owner, repo, pullNumber, path, timeout.Token);
+        return new ReviewSyncSnapshot(headCommitId, path, commentableLines, comments);
+    }
+
+    private async Task<string> ReadHeadCommitAsync(
+        string accessToken, string owner, string repo, int pullNumber, CancellationToken cancellationToken)
+    {
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+        using HttpResponseMessage response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the pull-request read (HTTP {(int)response.StatusCode}).");
+        }
+        byte[] responseBody = await ReadBoundedAsync(
+            response.Content, MaxReviewCommentsResponseBytes, cancellationToken);
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        return TryProperty(document.RootElement, "head", out JsonElement head)
+            ? GitHubHttp.StringOf(head, "sha")
+            : string.Empty;
+    }
+
+    private async Task<IReadOnlyList<int>> ReadCommentableLinesAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken)
+    {
+        for (int page = 1; page <= MaxPullRequestCommentPages; page++)
+        {
+            Uri endpoint = new(
+                $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/files?per_page=100&page={page}");
+            using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+            using HttpResponseMessage response = await _http.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException(
+                    $"GitHub rejected the pull-request files request (HTTP {(int)response.StatusCode}).");
+            }
+            byte[] responseBody = await ReadBoundedAsync(
+                response.Content, MaxReviewFilesPageBytes, cancellationToken);
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new HttpRequestException("GitHub returned malformed pull-request files.");
+            }
+            int count = 0;
+            foreach (JsonElement file in document.RootElement.EnumerateArray())
+            {
+                count++;
+                if (GitHubHttp.StringOf(file, "filename") == path)
+                {
+                    return CommentableHeadLines(GitHubHttp.StringOf(file, "patch"));
+                }
+            }
+            if (count < 100)
+            {
+                break;
+            }
+        }
+        // The path isn't among the PR's changed files — nothing sits inside a hunk, so nothing is postable.
+        return [];
+    }
+
+    private async Task<IReadOnlyList<ReviewCommentAnchor>> ReadReviewCommentAnchorsAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken)
+    {
+        List<ReviewCommentAnchor> anchors = [];
+        for (int page = 1; page <= MaxPullRequestCommentPages; page++)
+        {
+            Uri endpoint = new(
+                $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/comments?per_page=100&page={page}&sort=created&direction=asc");
+            using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+            using HttpResponseMessage response = await _http.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException(
+                    $"GitHub rejected the review-comments request (HTTP {(int)response.StatusCode}).");
+            }
+            byte[] responseBody = await ReadBoundedAsync(
+                response.Content, MaxPullRequestCommentsPageBytes, cancellationToken);
+            using JsonDocument document = JsonDocument.Parse(responseBody);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                throw new HttpRequestException("GitHub returned malformed review comments.");
+            }
+            int count = 0;
+            foreach (JsonElement item in document.RootElement.EnumerateArray())
+            {
+                count++;
+                if (anchors.Count >= MaxReviewCommentAnchors)
+                {
+                    return anchors;
+                }
+                if (GitHubHttp.StringOf(item, "path") != path)
+                {
+                    continue;
+                }
+                string body = GitHubHttp.StringOf(item, "body");
+                if (body.Length == 0)
+                {
+                    continue;
+                }
+                // Guard on the JSON kind before TryGetInt64: `in_reply_to_id` is null on a root comment (and
+                // GitHub can omit numeric fields), and TryGetInt64 throws on a Null/absent element.
+                long id = item.TryGetProperty("id", out JsonElement idElement)
+                    && idElement.ValueKind == JsonValueKind.Number
+                    && idElement.TryGetInt64(out long parsedId)
+                    ? parsedId
+                    : 0;
+                string side = GitHubHttp.StringOf(item, "side");
+                long inReplyTo = item.TryGetProperty("in_reply_to_id", out JsonElement replyElement)
+                    && replyElement.ValueKind == JsonValueKind.Number
+                    && replyElement.TryGetInt64(out long parsedReply)
+                    ? parsedReply
+                    : 0;
+                string author = item.TryGetProperty("user", out JsonElement user)
+                    ? GitHubHttp.StringOf(user, "login")
+                    : string.Empty;
+                string boundedBody = body.Length <= 4_000 ? body : body[..4_000] + "…";
+                anchors.Add(new ReviewCommentAnchor(
+                    id, path, LineOf(item), side.Length == 0 ? "RIGHT" : side,
+                    GitHubHttp.StringOf(item, "commit_id"), inReplyTo, author, boundedBody,
+                    DateOf(item, "created_at")));
+            }
+            if (count < 100)
+            {
+                break;
+            }
+        }
+        return anchors;
+    }
+
+    // A review comment's head-side line is GitHub's `line`; when the head moved past it and the comment went
+    // outdated GitHub nulls `line` and keeps `original_line`, so fall back to that rather than dropping the
+    // thread (the app then re-anchors it through its own index and may mark it detached).
+    private static int LineOf(JsonElement item)
+    {
+        if (item.TryGetProperty("line", out JsonElement line)
+            && line.ValueKind == JsonValueKind.Number
+            && line.TryGetInt32(out int value))
+        {
+            return value;
+        }
+        return item.TryGetProperty("original_line", out JsonElement original)
+            && original.ValueKind == JsonValueKind.Number
+            && original.TryGetInt32(out int originalValue)
+            ? originalValue
+            : 0;
+    }
+
+    // Parse a unified-diff `patch` (one changed file) into the 1-based head-side (RIGHT) line numbers a
+    // review comment can target: the lines that appear in a hunk as context (' ') or additions ('+'). A
+    // removed ('-') line belongs to the base side and advances no head line. GitHub rejects an inline
+    // comment on a line outside a hunk, so this set is exactly what is postable; everything else stays local.
+    internal static IReadOnlyList<int> CommentableHeadLines(string patch)
+    {
+        if (string.IsNullOrEmpty(patch))
+        {
+            return [];
+        }
+        List<int> lines = [];
+        int headLine = 0;
+        bool inHunk = false;
+        foreach (string raw in patch.Split('\n'))
+        {
+            string line = raw.EndsWith('\r') ? raw[..^1] : raw;
+            if (line.StartsWith("@@", StringComparison.Ordinal))
+            {
+                headLine = ParseHunkHeadStart(line);
+                inHunk = headLine > 0;
+                continue;
+            }
+            if (!inHunk || line.Length == 0)
+            {
+                continue;
+            }
+            switch (line[0])
+            {
+                case '+':
+                case ' ':
+                    if (lines.Count >= MaxCommentableLines)
+                    {
+                        return lines;
+                    }
+                    lines.Add(headLine);
+                    headLine++;
+                    break;
+                case '-':
+                    break;
+                case '\\':
+                    // "\ No newline at end of file" — hunk metadata, not a line.
+                    break;
+                default:
+                    // An unexpected leading character means we've walked past the hunk body (e.g. a diff
+                    // trailer); stop trusting the head counter until the next @@ header re-seats it.
+                    inHunk = false;
+                    break;
+            }
+        }
+        return lines;
+    }
+
+    // The new-file (head/RIGHT) start line from a `@@ -a,b +c,d @@` hunk header (the number after '+').
+    private static int ParseHunkHeadStart(string header)
+    {
+        int plus = header.IndexOf('+', StringComparison.Ordinal);
+        if (plus < 0)
+        {
+            return 0;
+        }
+        int index = plus + 1;
+        int value = 0;
+        bool any = false;
+        while (index < header.Length && char.IsAsciiDigit(header[index]))
+        {
+            value = (value * 10) + (header[index] - '0');
+            any = true;
+            index++;
+        }
+        return any ? value : 0;
     }
 
     private static DateTimeOffset DateOf(JsonElement element, string property)

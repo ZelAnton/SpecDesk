@@ -246,4 +246,47 @@ internal sealed class FakeGitHubReview : IGitHubReview
         UpdatedComments.Add((commentId, body));
         return Task.CompletedTask;
     }
+
+    public List<(int Number, string CommitId, string Path, int Line, string Side, string Body)>
+        CreatedReviewComments { get; } = [];
+
+    /// <summary>The id <see cref="CreateReviewCommentAsync"/> returns; a test can set it to assert the id
+    /// is echoed back to the webview so a posted thread reads as synced.</summary>
+    public long CreateReviewCommentResult { get; set; } = 5005;
+
+    public bool ThrowOnCreateReviewComment { get; set; }
+
+    public Task<long> CreateReviewCommentAsync(
+        string accessToken, string owner, string repo, int pullNumber, string commitId, string path,
+        int line, string side, string body, CancellationToken cancellationToken = default)
+    {
+        CreatedReviewComments.Add((pullNumber, commitId, path, line, side, body));
+        if (ThrowOnCreateReviewComment)
+        {
+            throw new HttpRequestException("GitHub rejected the review comment (HTTP 422).");
+        }
+        return Task.FromResult(CreateReviewCommentResult);
+    }
+
+    /// <summary>What <see cref="GetReviewSyncAsync"/> returns; a test sets it to drive the projection.</summary>
+    public ReviewSyncSnapshot ReviewSyncValue { get; set; } = new(string.Empty, string.Empty, [], []);
+
+    public int GetReviewSyncCalls { get; private set; }
+
+    public string? ReviewSyncPath { get; private set; }
+
+    public bool ThrowOnGetReviewSync { get; set; }
+
+    public Task<ReviewSyncSnapshot> GetReviewSyncAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken = default)
+    {
+        GetReviewSyncCalls++;
+        ReviewSyncPath = path;
+        if (ThrowOnGetReviewSync)
+        {
+            throw new HttpRequestException("sync boom");
+        }
+        return Task.FromResult(ReviewSyncValue);
+    }
 }

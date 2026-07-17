@@ -34,6 +34,8 @@ import {
   parseRepoConfirmation,
   parseRepoDescription,
   parseRepoOperationCompleted,
+  parseReviewCommentPublished,
+  parseReviewCommentSync,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -141,6 +143,31 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     expect(details?.comments[0]?.viewerDidAuthor).toBe(false);
     expect(details?.commits[0]?.checkState).toBe("success");
     expect(parsePrMutationCompleted(fixture["pr.mutationCompleted"])).toEqual({ succeeded: true });
+  });
+
+  it("review.commentSync (commentable head lines + one projected inline comment)", () => {
+    const payload = parseReviewCommentSync(fixture["review.commentSync"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.number).toBe(42);
+    expect(payload?.headCommitId).toBe("abcdef0123456789");
+    expect(payload?.commentableLines).toEqual([3, 4, 5]);
+    expect(payload?.comments).toHaveLength(1);
+    expect(payload?.comments[0]).toMatchObject({
+      id: 1001,
+      line: 4,
+      side: "RIGHT",
+      inReplyToId: 0,
+      author: "sam",
+    });
+    expect(payload?.error).toBeUndefined();
+  });
+
+  it("review.comment.published (successful post; error absent)", () => {
+    expect(parseReviewCommentPublished(fixture["review.comment.published"])).toEqual({
+      localId: "selection-comment-3",
+      githubId: 2002,
+      succeeded: true,
+    });
   });
 
   it("diff.result (incl. nested children: changed plain block, changed container, removed)", () => {

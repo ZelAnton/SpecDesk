@@ -15,6 +15,9 @@ export interface CommentThreadActions {
   readonly reply: (commentId: string) => void;
   readonly delete: (commentId: string, replyId?: string) => void;
   readonly retry: () => void;
+  /** Post a local thread to the open pull request as a GitHub review comment (only offered when its anchor
+   * line is inside a diff hunk — see {@link SelectionComment.githubSync}). */
+  readonly postToReview: (commentId: string) => void;
 }
 
 export interface CommentThreadRender {
@@ -36,6 +39,7 @@ export const NO_COMMENT_ACTIONS: CommentThreadActions = {
   reply: () => undefined,
   delete: () => undefined,
   retry: () => undefined,
+  postToReview: () => undefined,
 };
 
 /** Keep a Markdown textarea exactly tall enough for its content. Width changes are observed because line
@@ -206,6 +210,7 @@ function message(
   actions: CommentThreadActions,
   principalId: string,
   commentsAvailable: boolean,
+  readOnly: boolean,
 ): HTMLElement {
   const item = document.createElement(replyId === undefined ? "div" : "li");
   item.className = replyId === undefined ? "selection-comment-message" : "selection-comment-reply";
@@ -215,7 +220,12 @@ function message(
   author.textContent = value.author.displayName;
   const timestamp = document.createElement("time");
   timestamp.dateTime = value.updatedAt ?? value.createdAt;
-  timestamp.textContent = value.updatedAt === undefined ? "Local" : "Edited";
+  // A thread projected from GitHub isn't a local draft, so it reads "On GitHub" rather than "Local".
+  timestamp.textContent = readOnly
+    ? "On GitHub"
+    : value.updatedAt === undefined
+      ? "Local"
+      : "Edited";
   meta.append(author, timestamp);
   const body = document.createElement("p");
   body.textContent = value.body;
@@ -226,8 +236,10 @@ function message(
       commentId,
       replyId,
       actions,
-      replyId === undefined,
-      value.author.principalId === principalId,
+      // A GitHub-projected thread is read-only in-app: no reply, edit, or delete (replies/resolve to GitHub
+      // are a later stage). Local threads keep the owner-only edit/delete and the reply affordance.
+      replyId === undefined && !readOnly,
+      !readOnly && value.author.principalId === principalId,
       commentsAvailable,
     ),
   );
@@ -262,6 +274,10 @@ export function commentThreadDOM(render: CommentThreadRender): HTMLElement {
   }
   element.dataset.commentId = render.comment.id;
   element.dataset.anchorState = render.comment.anchorState ?? "attached";
+  const isGithub = render.comment.origin === "github";
+  if (render.comment.githubSync !== undefined || isGithub) {
+    element.dataset.githubSync = isGithub ? "synced" : render.comment.githubSync;
+  }
   const principalId = render.principalId ?? "signed-out";
   if (render.comment.anchorState === "detached") {
     const detached = document.createElement("p");
@@ -279,6 +295,7 @@ export function commentThreadDOM(render: CommentThreadRender): HTMLElement {
       render.actions,
       principalId,
       commentsAvailable,
+      isGithub,
     ),
   );
   if (render.comment.replies.length > 0) {
@@ -286,11 +303,20 @@ export function commentThreadDOM(render: CommentThreadRender): HTMLElement {
     replies.className = "selection-comment-replies";
     for (const reply of render.comment.replies) {
       replies.appendChild(
-        message(render.comment.id, reply, reply.id, render.actions, principalId, commentsAvailable),
+        message(
+          render.comment.id,
+          reply,
+          reply.id,
+          render.actions,
+          principalId,
+          commentsAvailable,
+          isGithub,
+        ),
       );
     }
     element.appendChild(replies);
   }
+  appendGithubSyncRow(element, render.comment, render.actions, isGithub, commentsAvailable);
   if (render.draft !== undefined) {
     element.appendChild(
       composer(render.draft, render.actions, render.focusDraft ?? false, commentsAvailable),
@@ -298,6 +324,67 @@ export function commentThreadDOM(render: CommentThreadRender): HTMLElement {
   }
   if (render.persistence === "error") appendPersistenceError(element, render);
   return element;
+}
+
+/** The plain-language line (and, when postable, the Post-to-review action) describing how a thread relates
+ * to the open pull request. GitHub-projected threads read as coming from the review; a local thread inside a
+ * diff hunk offers to post; one outside a hunk (or with no open PR) is labelled "not yet on GitHub" rather
+ * than failing. No git vocabulary reaches the author. */
+function appendGithubSyncRow(
+  element: HTMLElement,
+  comment: SelectionComment,
+  actions: CommentThreadActions,
+  isGithub: boolean,
+  commentsAvailable: boolean,
+): void {
+  if (isGithub) {
+    appendGithubSyncLabel(element, "synced", "From the review on GitHub.");
+    return;
+  }
+  switch (comment.githubSync) {
+    case "synced":
+      appendGithubSyncLabel(element, "synced", "Posted to the review on GitHub.");
+      return;
+    case "local-only":
+      appendGithubSyncLabel(
+        element,
+        "local-only",
+        "Not yet on GitHub (this line isn't part of the review).",
+      );
+      return;
+    case "publishable": {
+      const row = document.createElement("div");
+      row.className = "selection-comment-github-sync is-publishable";
+      const label = document.createElement("span");
+      label.className = "selection-comment-github-label";
+      label.textContent = "Not yet on GitHub.";
+      const post = document.createElement("button");
+      post.type = "button";
+      post.className = "selection-comment-github-post";
+      post.textContent = "Post to review";
+      post.disabled = !commentsAvailable;
+      if (!commentsAvailable) post.title = "Comments unavailable until saved comments are loaded";
+      post.addEventListener("click", () => actions.postToReview(comment.id));
+      row.append(label, post);
+      element.appendChild(row);
+      return;
+    }
+    default:
+      // No open pull request (or the sync hasn't arrived): a plain local thread, no GitHub affordance.
+      return;
+  }
+}
+
+function appendGithubSyncLabel(
+  element: HTMLElement,
+  kind: "synced" | "local-only",
+  text: string,
+): void {
+  const row = document.createElement("p");
+  row.className = `selection-comment-github-sync is-${kind}`;
+  row.setAttribute("role", "status");
+  row.textContent = text;
+  element.appendChild(row);
 }
 
 function appendPersistenceError(element: HTMLElement, render: CommentThreadRender): void {

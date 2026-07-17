@@ -515,6 +515,44 @@ button {
   font: inherit;
 }
 
+/* GitHub review-comment sync state: a plain-language line describing how a thread relates to the open
+   review (posted / not yet on GitHub / from GitHub), plus a Post-to-review action when it is postable. */
+.selection-comment-github-sync {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.selection-comment-github-sync.is-publishable .selection-comment-github-label {
+  flex: 1 1 auto;
+}
+
+.selection-comment-github-post {
+  min-height: 1.65rem;
+  padding: 2px 9px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.selection-comment-github-post:hover:not(:disabled),
+.selection-comment-github-post:focus-visible:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.selection-comment-github-post:disabled {
+  opacity: 0.55;
+}
+
 .markdown-compose {
   display: grid;
   gap: 8px;

@@ -8,6 +8,10 @@ namespace SpecDesk.GitHub.Tests;
 [TestFixture]
 public sealed class GitHubReviewTests
 {
+	// Hoisted out of the test bodies so the array literals aren't flagged as repeated constant arguments (CA1861).
+	private static readonly int[] ExpectedCommentableLines = [1, 2, 3];
+	private static readonly int[] ExpectedMultiHunkLines = [1, 20, 21];
+
 	private sealed class OversizedCommentsHandler(int bytes = 1_048_577) : HttpMessageHandler
 	{
 		protected override Task<HttpResponseMessage> SendAsync(
@@ -769,6 +773,118 @@ public sealed class GitHubReviewTests
             Assert.That(handler.LastRequestBody, Does.Contain("\"head\":\"spec/draft\""));
             Assert.That(handler.LastRequestBody, Does.Contain("\"base\":\"main\""));
             Assert.That(handler.LastRequestBody, Does.Contain("\"body\":\"Body\""));
+        });
+    }
+
+    [Test]
+    public async Task CreateReviewCommentAsync_posts_the_commit_path_line_and_side_and_returns_the_id()
+    {
+        using StubHttpMessageHandler handler = new(HttpStatusCode.Created, """{"id":9099}""");
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+
+        long id = await client.CreateReviewCommentAsync(
+            "gho_token", "octo", "spec-repo", 42, "headsha", "specs/billing.md", 7, "RIGHT", "Clarify this.");
+
+        Assert.That(handler.LastRequest, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(id, Is.EqualTo(9099));
+            Assert.That(handler.LastRequest!.Method, Is.EqualTo(HttpMethod.Post));
+            Assert.That(
+                handler.LastRequest.RequestUri,
+                Is.EqualTo(new Uri("https://api.github.com/repos/octo/spec-repo/pulls/42/comments")));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"commit_id\":\"headsha\""));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"path\":\"specs/billing.md\""));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"line\":7"));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"side\":\"RIGHT\""));
+            Assert.That(handler.LastRequestBody, Does.Contain("\"body\":\"Clarify this.\""));
+        });
+    }
+
+    [Test]
+    public void CreateReviewCommentAsync_throws_when_GitHub_rejects_the_post()
+    {
+        // GitHub 422s a comment on a line outside the diff — the host surfaces a plain reason and the thread
+        // stays local. A blank body is rejected locally without a request.
+        using StubHttpMessageHandler handler = new(HttpStatusCode.UnprocessableEntity, "{}");
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+
+        Assert.ThrowsAsync<HttpRequestException>(async () =>
+            await client.CreateReviewCommentAsync(
+                "gho_token", "octo", "spec-repo", 42, "headsha", "spec.md", 7, "RIGHT", "Body"));
+        Assert.ThrowsAsync<ArgumentException>(async () =>
+            await client.CreateReviewCommentAsync(
+                "gho_token", "octo", "spec-repo", 42, "headsha", "spec.md", 7, "RIGHT", "  "));
+    }
+
+    [Test]
+    public async Task GetReviewSyncAsync_reads_head_commentable_lines_and_the_files_inline_comments()
+    {
+        const string pull = """{"number":42,"head":{"sha":"headsha123"}}""";
+        const string files = """
+            [{"filename":"specs/billing.md","patch":"@@ -1,2 +1,3 @@\n ctx\n+added line\n more"},
+             {"filename":"README.md","patch":"@@ -1 +1 @@\n-old\n+new"}]
+            """;
+        // One comment on the target file (kept, RIGHT side, root) and one on another file (dropped).
+        const string comments = """
+            [{"id":1001,"path":"specs/billing.md","line":2,"side":"RIGHT","commit_id":"headsha123",
+              "in_reply_to_id":null,"user":{"login":"sam"},"body":"Clarify the window here.",
+              "created_at":"2026-07-14T10:00:00Z"},
+             {"id":2002,"path":"README.md","line":1,"side":"RIGHT","commit_id":"headsha123",
+              "user":{"login":"alex"},"body":"Elsewhere","created_at":"2026-07-14T10:01:00Z"}]
+            """;
+        using ScriptedHttpMessageHandler handler = new(
+            (HttpStatusCode.OK, pull), (HttpStatusCode.OK, files), (HttpStatusCode.OK, comments));
+        using HttpClient http = new(handler);
+        GitHubReviewClient client = new(http);
+
+        ReviewSyncSnapshot snapshot = await client.GetReviewSyncAsync(
+            "gho_token", "octo", "spec-repo", 42, "specs/billing.md");
+
+        Assert.Multiple(() =>
+        {
+            Assert.That(snapshot.HeadCommitId, Is.EqualTo("headsha123"));
+            Assert.That(snapshot.Path, Is.EqualTo("specs/billing.md"));
+            // ' ctx' (line 1), '+added line' (line 2), ' more' (line 3) are commentable head lines.
+            Assert.That(snapshot.CommentableLines, Is.EqualTo(ExpectedCommentableLines));
+            Assert.That(snapshot.Comments, Has.Count.EqualTo(1));
+            Assert.That(snapshot.Comments[0].Id, Is.EqualTo(1001));
+            Assert.That(snapshot.Comments[0].Line, Is.EqualTo(2));
+            Assert.That(snapshot.Comments[0].Side, Is.EqualTo("RIGHT"));
+            Assert.That(snapshot.Comments[0].Author, Is.EqualTo("sam"));
+            Assert.That(snapshot.Comments[0].InReplyToId, Is.EqualTo(0));
+            Assert.That(handler.Requests[0].AbsolutePath, Is.EqualTo("/repos/octo/spec-repo/pulls/42"));
+            Assert.That(handler.Requests[1].AbsolutePath, Is.EqualTo("/repos/octo/spec-repo/pulls/42/files"));
+            Assert.That(handler.Requests[2].AbsolutePath, Is.EqualTo("/repos/octo/spec-repo/pulls/42/comments"));
+        });
+    }
+
+    [Test]
+    public void CommentableHeadLines_counts_context_and_additions_and_skips_removals()
+    {
+        // A removed ('-') line advances no head line, so the addition that follows takes the vacated number.
+        IReadOnlyList<int> lines = GitHubReviewClient.CommentableHeadLines(
+            "@@ -1,3 +1,3 @@\n ctx\n-removed\n+added\n ctx2");
+        Assert.That(lines, Is.EqualTo(ExpectedCommentableLines));
+    }
+
+    [Test]
+    public void CommentableHeadLines_reseats_the_head_counter_across_multiple_hunks()
+    {
+        IReadOnlyList<int> lines = GitHubReviewClient.CommentableHeadLines(
+            "@@ -1,1 +1,1 @@\n a\n@@ -10,1 +20,2 @@\n+b\n c");
+        Assert.That(lines, Is.EqualTo(ExpectedMultiHunkLines));
+    }
+
+    [Test]
+    public void CommentableHeadLines_returns_empty_for_an_empty_or_headerless_patch()
+    {
+        Assert.Multiple(() =>
+        {
+            Assert.That(GitHubReviewClient.CommentableHeadLines(string.Empty), Is.Empty);
+            Assert.That(GitHubReviewClient.CommentableHeadLines("no hunk header here"), Is.Empty);
         });
     }
 }

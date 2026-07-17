@@ -43,6 +43,8 @@ public sealed class HostControllerReviewTests
     private string _docPath = string.Empty;
     private readonly List<string> _sent = [];
     private readonly object _gate = new();
+    // Hoisted so the expected commentable-lines literal isn't flagged as a repeated constant argument (CA1861).
+    private static readonly int[] ExpectedCommentableLines = [3, 4, 5];
 
     [SetUp]
     public void SetUp()
@@ -1349,6 +1351,149 @@ public sealed class HostControllerReviewTests
             Assert.That(reply?.Id, Is.EqualTo("reply"));
             Assert.That(reply?.GetPayload<PrMutationCompletedPayload>()?.Succeeded, Is.True);
             Assert.That(review.CreatedComments.Single(), Is.EqualTo("@sam Thanks"));
+        });
+    }
+
+    [Test]
+    public void ReviewCommentSync_projects_the_open_prs_inline_comments_for_the_document()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new()
+        {
+            ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 42, PullRequestState.Open),
+            ReviewSyncValue = new ReviewSyncSnapshot(
+                "headsha", "billing.md", [3, 4, 5],
+                [new ReviewCommentAnchor(
+                    1001, "billing.md", 4, "RIGHT", "headsha", 0, "sam", "clarify", DateTimeOffset.UnixEpoch)]),
+        };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "setup: the draft should reach In review");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewCommentSyncRequest, new ReviewCommentSyncRequestPayload("doc-key"), id: "sync"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.ReviewCommentSync);
+        ReviewCommentSyncPayload? payload = reply?.GetPayload<ReviewCommentSyncPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply?.Id, Is.EqualTo("sync"), "the response echoes the request id");
+            Assert.That(payload?.DocumentKey, Is.EqualTo("doc-key"), "the opaque document key is echoed back");
+            Assert.That(payload?.Number, Is.EqualTo(42));
+            Assert.That(payload?.HeadCommitId, Is.EqualTo("headsha"));
+            Assert.That(payload?.Path, Does.EndWith("billing.md"));
+            Assert.That(payload?.CommentableLines, Is.EqualTo(ExpectedCommentableLines));
+            Assert.That(payload?.Comments.Single().Id, Is.EqualTo(1001));
+            Assert.That(payload?.Comments.Single().Line, Is.EqualTo(4));
+            Assert.That(payload?.Comments.Single().Author, Is.EqualTo("sam"));
+            // The host resolves the repository-relative path from its own current document, not the webview.
+            Assert.That(review.ReviewSyncPath, Is.EqualTo(payload?.Path));
+        });
+    }
+
+    [Test]
+    public void ReviewCommentSync_reports_no_open_pull_request_as_an_empty_projection()
+    {
+        FakeVersioning versioning = new();
+        // The branch has no open PR (a merged one, say) — the sync must reply with Number 0 and no comments
+        // so the webview settles every local thread to "not yet on GitHub" rather than hanging the request.
+        FakeGitHubReview review = new()
+        {
+            ReviewStatusValue = new ReviewStatus(ReviewDecision.InReview, 9, PullRequestState.Merged),
+        };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "setup: the draft should reach In review");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewCommentSyncRequest, new ReviewCommentSyncRequestPayload("doc-key"), id: "sync"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.ReviewCommentSync);
+        ReviewCommentSyncPayload? payload = reply?.GetPayload<ReviewCommentSyncPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload?.Number, Is.EqualTo(0));
+            Assert.That(payload?.Comments, Is.Empty);
+            Assert.That(review.GetReviewSyncCalls, Is.EqualTo(0), "no snapshot is fetched without an open PR");
+        });
+    }
+
+    [Test]
+    public void ReviewCommentPublish_posts_the_thread_and_echoes_the_github_id()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { CreateReviewCommentResult = 7007 };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "setup: the draft should reach In review");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewCommentPublish,
+            new ReviewCommentPublishPayload("doc-key", 42, "headsha", 4, "RIGHT", "Please clarify.", "selection-comment-1"),
+            id: "pub"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.ReviewCommentPublished);
+        ReviewCommentPublishedPayload? payload = reply?.GetPayload<ReviewCommentPublishedPayload>();
+        (int Number, string CommitId, string Path, int Line, string Side, string Body) posted =
+            review.CreatedReviewComments.Single();
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply?.Id, Is.EqualTo("pub"));
+            Assert.That(payload?.LocalId, Is.EqualTo("selection-comment-1"));
+            Assert.That(payload?.GithubId, Is.EqualTo(7007), "the new comment's id is echoed so the thread reads synced");
+            Assert.That(payload?.Succeeded, Is.True);
+            Assert.That(posted.Number, Is.EqualTo(42));
+            Assert.That(posted.CommitId, Is.EqualTo("headsha"));
+            Assert.That(posted.Line, Is.EqualTo(4));
+            Assert.That(posted.Side, Is.EqualTo("RIGHT"));
+            // The host resolves the path from its own current document, never the webview payload.
+            Assert.That(posted.Path, Does.EndWith("billing.md"));
+        });
+    }
+
+    [Test]
+    public void ReviewCommentPublish_reports_a_plain_reason_when_github_rejects_the_post()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowOnCreateReviewComment = true };
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "setup: the draft should reach In review");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewCommentPublish,
+            new ReviewCommentPublishPayload("doc-key", 42, "headsha", 4, "RIGHT", "Body", "local-1"),
+            id: "pub"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.ReviewCommentPublished);
+        ReviewCommentPublishedPayload? payload = reply?.GetPayload<ReviewCommentPublishedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload?.Succeeded, Is.False);
+            Assert.That(payload?.GithubId, Is.EqualTo(0));
+            Assert.That(payload?.Error, Is.Not.Null.And.Not.Empty);
+        });
+    }
+
+    [Test]
+    public void ReviewCommentPublish_rejects_an_invalid_line_without_calling_github()
+    {
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = Build(versioning, new FakeGitHubAuth(signedIn: true), review);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocSendForReview));
+        Assert.That(WaitForStatusState("inReview"), Is.True, "setup: the draft should reach In review");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(
+            MessageKinds.ReviewCommentPublish,
+            new ReviewCommentPublishPayload("doc-key", 42, "headsha", 0, "RIGHT", "Body", "local-1"),
+            id: "pub"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.ReviewCommentPublished);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply?.GetPayload<ReviewCommentPublishedPayload>()?.Succeeded, Is.False);
+            Assert.That(review.CreatedReviewComments, Is.Empty, "an invalid line is rejected before any network call");
         });
     }
 

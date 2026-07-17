@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Inline document comments now synchronize with an open change request's comments on GitHub: a comment on a line that is part of the change can be posted to the review from its thread and then reads as being on GitHub, comments left on GitHub appear inline in the document as read-only threads, and a comment on an unchanged line stays local with a plain "not yet on GitHub" label instead of failing. Synced threads re-anchor as the document is edited and when a newer version is shared for review.
+
 ### Changed
 
 - Markdown toolbars now stay on one row and move only commands that do not fit into an accessible measured overflow menu.

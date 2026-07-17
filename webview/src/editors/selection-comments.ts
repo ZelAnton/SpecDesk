@@ -25,6 +25,53 @@ export interface SelectionComment extends SourceSelection {
   readonly anchorState?: "attached" | "detached";
   /** Original bounded fingerprint retained while a thread is detached so a later edit can reattach it. */
   readonly detachedAnchor?: StoredSelectionAnchor;
+  /** GitHub review-comment id once this local thread has been posted to the pull request. Persisted, so a
+   * synced thread stays synced across reloads; a projected GitHub-authored thread also carries it. */
+  readonly githubId?: number;
+  /** Transient GitHub projection state for display — recomputed from the last sync, never persisted:
+   * `synced` (on GitHub), `publishable` (in a diff hunk, postable), `local-only` (out of hunk / no PR yet). */
+  readonly githubSync?: GithubCommentSync;
+  /** Set only on a thread projected FROM a GitHub review comment (read-only in-app). Never persisted. */
+  readonly origin?: "github";
+}
+
+/** How a thread relates to the open pull request's review comments (see {@link SelectionComment.githubSync}). */
+export type GithubCommentSync = "synced" | "publishable" | "local-only";
+
+/** One inline PR review comment the host projected back for the open document (mirror of the C#
+ * `ReviewCommentAnchorPayload`). `line` is the 1-based file line; `side` is `RIGHT` (head) or `LEFT` (base). */
+export interface ReviewCommentAnchorInput {
+  readonly id: number;
+  readonly line: number;
+  readonly side: string;
+  readonly commitId: string;
+  readonly inReplyToId: number;
+  readonly author: string;
+  readonly body: string;
+  readonly when: string;
+}
+
+/** The bounded GitHub sync projection for one document (mirror of the C# `ReviewCommentSyncPayload`).
+ * `number` is 0 when the branch has no open pull request — then every local thread stays local. */
+export interface GithubReviewSyncSnapshot {
+  readonly documentKey: string;
+  readonly number: number;
+  readonly headCommitId: string;
+  readonly path: string;
+  readonly commentableLines: readonly number[];
+  readonly comments: readonly ReviewCommentAnchorInput[];
+}
+
+/** The request to post one local thread to the review, derived by the session from a thread + the last
+ * sync (mirror of the C# `ReviewCommentPublishPayload`, minus the host-resolved repository/path). */
+export interface GithubPublishRequest {
+  readonly documentKey: string;
+  readonly number: number;
+  readonly commitId: string;
+  readonly line: number;
+  readonly side: "RIGHT";
+  readonly body: string;
+  readonly localId: string;
 }
 
 export interface SelectionCommentAuthor {
@@ -93,6 +140,8 @@ export interface StoredSelectionComment {
   readonly updatedAt?: string;
   readonly author: SelectionCommentAuthor;
   readonly replies: readonly SelectionCommentReply[];
+  /** Persisted GitHub review-comment id, so a thread already posted stays synced across reloads. */
+  readonly githubId?: number;
 }
 
 export interface SelectionCommentDiagnostics {
@@ -149,6 +198,7 @@ function validStoredSelection(value: unknown): value is StoredSelectionComment {
     typeof anchor.quoteTail === "string" &&
     typeof anchor.before === "string" &&
     typeof anchor.after === "string" &&
+    (item.githubId === undefined || typeof item.githubId === "number") &&
     Array.isArray(item.replies) &&
     item.replies.every(
       (reply) =>
@@ -268,6 +318,17 @@ class DocumentAnchorIndex {
   lineEndOffset(line: number): number {
     const nextStart = this.lineStarts[line + 1];
     return nextStart === undefined ? this.markdown.length : Math.max(0, nextStart - 1);
+  }
+
+  /** The source offset where a 0-based line begins (clamped into the document). */
+  lineStartOffset(line: number): number {
+    const clamped = Math.max(0, Math.min(line, this.lineStarts.length - 1));
+    return this.lineStarts[clamped] ?? this.markdown.length;
+  }
+
+  /** The count of source lines (one more than the number of newlines). */
+  get lineCount(): number {
+    return this.lineStarts.length;
   }
 
   fingerprint(fromOffset: number, length: number): string | null {
@@ -683,6 +744,7 @@ function storedComment(comment: SelectionComment, markdown: string): StoredSelec
     ...(comment.updatedAt === undefined ? {} : { updatedAt: comment.updatedAt }),
     author: comment.author,
     replies: comment.replies,
+    ...(comment.githubId === undefined ? {} : { githubId: comment.githubId }),
   };
 }
 
@@ -894,6 +956,7 @@ function restoredComment(
     replies: stored.replies,
     anchorState: anchor.state,
     ...(anchor.state === "detached" ? { detachedAnchor: stored.anchor } : {}),
+    ...(stored.githubId === undefined ? {} : { githubId: stored.githubId }),
   };
 }
 
@@ -917,6 +980,86 @@ function mergeStoredComments(
     merged.push({ ...comment, id });
   }
   return merged;
+}
+
+/** The GitHub sync state to display for one local thread against the last sync: `synced` once it carries a
+ * GitHub id; else `publishable` when its last selected line is inside a diff hunk (postable); else
+ * `local-only`. Undefined when there is no open pull request — then it is a plain local thread with no
+ * GitHub affordance. Detached threads have no resolvable line, so they are never publishable. */
+export function githubSyncStatus(
+  comment: SelectionComment,
+  snapshot: GithubReviewSyncSnapshot | null,
+  commentableLines: ReadonlySet<number>,
+): GithubCommentSync | undefined {
+  if (snapshot === null || snapshot.number <= 0) return undefined;
+  if (comment.githubId !== undefined) return "synced";
+  if (comment.anchorState === "detached") return "local-only";
+  return commentableLines.has(comment.toLine + 1) ? "publishable" : "local-only";
+}
+
+function githubPrincipal(login: string): SelectionCommentAuthor {
+  const clean = login.trim();
+  return clean.length === 0
+    ? { principalId: "github:unknown", displayName: "GitHub user" }
+    : { principalId: `github:${clean.toLocaleLowerCase()}`, displayName: clean };
+}
+
+/** Materialize the open PR's RIGHT-side (head) review comments as read-only inline threads anchored to their
+ * head line in the current markdown, skipping any whose GitHub id a local thread already owns (so a posted
+ * thread is not shown twice). Replies are grouped under their root by GitHub's `in_reply_to_id`. Base-side
+ * (LEFT) comments anchor to removed content that isn't in the head document, so they are left out. */
+export function projectGithubComments(
+  snapshot: GithubReviewSyncSnapshot,
+  index: DocumentAnchorIndex,
+  ownedGithubIds: ReadonlySet<number>,
+): SelectionComment[] {
+  const repliesByRoot = new Map<number, ReviewCommentAnchorInput[]>();
+  for (const comment of snapshot.comments) {
+    if (comment.inReplyToId > 0) {
+      const bucket = repliesByRoot.get(comment.inReplyToId) ?? [];
+      bucket.push(comment);
+      repliesByRoot.set(comment.inReplyToId, bucket);
+    }
+  }
+  const projected: SelectionComment[] = [];
+  for (const root of snapshot.comments) {
+    if (
+      root.inReplyToId > 0 ||
+      root.side.toUpperCase() !== "RIGHT" ||
+      ownedGithubIds.has(root.id)
+    ) {
+      continue;
+    }
+    const line0 = Math.max(0, Math.min(root.line - 1, index.lineCount - 1));
+    const fromOffset = index.lineStartOffset(line0);
+    const toOffset = index.lineEndOffset(line0);
+    const replies: SelectionCommentReply[] = (repliesByRoot.get(root.id) ?? []).map((reply) => ({
+      id: `github-reply-${reply.id}`,
+      body: reply.body,
+      createdAt: reply.when,
+      author: githubPrincipal(reply.author),
+    }));
+    projected.push({
+      fromLine: line0,
+      toLine: line0,
+      anchorLine: line0,
+      anchorKind: "line",
+      fromOffset,
+      toOffset,
+      anchorOffset: toOffset,
+      quote: index.markdown.slice(fromOffset, toOffset),
+      id: `github-comment-${root.id}`,
+      body: root.body,
+      createdAt: root.when,
+      author: githubPrincipal(root.author),
+      replies,
+      anchorState: "attached",
+      githubId: root.id,
+      githubSync: "synced",
+      origin: "github",
+    });
+  }
+  return projected;
 }
 
 export class SelectionCommentSession {
@@ -944,6 +1087,13 @@ export class SelectionCommentSession {
   private loadPending = false;
   private dirty = false;
   private notify: () => void = () => undefined;
+  // The last GitHub review-comment projection for this document (null until a sync arrives). Its commentable
+  // lines are cached as a set for O(1) status lookups, and its RIGHT-side comments are materialized as
+  // read-only projected threads. All three are transient — cleared on every document/account transition —
+  // because GitHub sync is a projection over the local model, never persisted alongside it.
+  private githubSnapshot: GithubReviewSyncSnapshot | null = null;
+  private commentableLineSet: ReadonlySet<number> = new Set();
+  private projectedGithubComments: SelectionComment[] = [];
 
   constructor(
     private readonly storage: SelectionCommentStorage = new BrowserSelectionCommentStorage(),
@@ -1016,6 +1166,10 @@ export class SelectionCommentSession {
     this.mutationRevision++;
     this.comments = [];
     this.draft = null;
+    // A projection belongs to one document/account; retire it so another context's PR comments can't leak in.
+    this.githubSnapshot = null;
+    this.commentableLineSet = new Set();
+    this.projectedGithubComments = [];
     this.currentLoadError = false;
     this.loadPending = false;
     this.dirty = false;
@@ -1288,8 +1442,14 @@ export class SelectionCommentSession {
   }
 
   view(): SelectionCommentView {
+    // Decorate each local thread with its transient GitHub sync state (recomputed, never stored) and append
+    // the read-only threads projected from the PR so both render inline through the one comment path.
+    const localComments = this.comments.map((comment) => {
+      const status = githubSyncStatus(comment, this.githubSnapshot, this.commentableLineSet);
+      return status === undefined ? comment : { ...comment, githubSync: status };
+    });
     return {
-      comments: this.comments,
+      comments: [...localComments, ...this.projectedGithubComments],
       draft: this.draft,
       principalId: this.principal.principalId,
       commentsAvailable: this.commentsAvailable(),
@@ -1298,6 +1458,81 @@ export class SelectionCommentSession {
         ? {}
         : { persistenceMessage: this.persistenceMessage }),
     };
+  }
+
+  /** The key of the document this session currently holds (opaque; used to correlate GitHub sync responses). */
+  currentDocumentKey(): string {
+    return this.documentKey;
+  }
+
+  /** Apply a GitHub review-comment projection to the open document. Ignored when it targets a different
+   * document (a response that raced a navigation) so another document's PR threads can't be painted here.
+   * Returns whether it was applied. */
+  applyGithubSync(snapshot: GithubReviewSyncSnapshot): boolean {
+    if (this.documentKey.length === 0 || snapshot.documentKey !== this.documentKey) return false;
+    this.githubSnapshot = snapshot;
+    this.commentableLineSet = new Set(snapshot.commentableLines);
+    this.rebuildProjectedGithubComments();
+    this.notify();
+    return true;
+  }
+
+  private rebuildProjectedGithubComments(): void {
+    const snapshot = this.githubSnapshot;
+    if (snapshot === null || snapshot.number <= 0) {
+      this.projectedGithubComments = [];
+      return;
+    }
+    const owned = new Set<number>();
+    for (const comment of this.comments) {
+      if (comment.githubId !== undefined) owned.add(comment.githubId);
+    }
+    const index = new DocumentAnchorIndex(this.markdown, this.diagnostics);
+    this.projectedGithubComments = projectGithubComments(snapshot, index, owned);
+  }
+
+  /** The request to post one local thread to the review, or null when it can't be posted right now (no open
+   * PR / unknown head / already synced / a projected GitHub thread / detached / outside a diff hunk). */
+  publishRequestFor(commentId: string): GithubPublishRequest | null {
+    const snapshot = this.githubSnapshot;
+    if (snapshot === null || snapshot.number <= 0 || snapshot.headCommitId.length === 0)
+      return null;
+    const comment = this.comments.find((item) => item.id === commentId);
+    if (
+      comment === undefined ||
+      comment.githubId !== undefined ||
+      comment.origin === "github" ||
+      comment.anchorState === "detached"
+    ) {
+      return null;
+    }
+    const line = comment.toLine + 1;
+    if (!this.commentableLineSet.has(line)) return null;
+    return {
+      documentKey: this.documentKey,
+      number: snapshot.number,
+      commitId: snapshot.headCommitId,
+      line,
+      side: "RIGHT",
+      body: comment.body,
+      localId: comment.id,
+    };
+  }
+
+  /** Stamp the GitHub review-comment id onto a just-posted local thread so it reads as synced and persists
+   * that way. Drops any projected copy of the same thread so it is not shown twice. Returns whether applied. */
+  markGithubId(localId: string, githubId: number): boolean {
+    if (!this.mutationsAllowed()) return false;
+    const index = this.comments.findIndex((comment) => comment.id === localId);
+    const comment = this.comments[index];
+    if (comment === undefined || comment.githubId !== undefined) return false;
+    this.comments[index] = { ...comment, githubId };
+    this.projectedGithubComments = this.projectedGithubComments.filter(
+      (item) => item.githubId !== githubId,
+    );
+    this.mutated();
+    this.notify();
+    return true;
   }
 
   async retryPersistence(): Promise<void> {
@@ -1480,7 +1715,13 @@ export class SelectionCommentSession {
     if (previous === markdown) return;
     if (!this.mutationsAllowed()) return;
     const comments = this.comments;
-    if (comments.length === 0 && this.draft?.documentKey !== this.documentKey) return;
+    if (
+      comments.length === 0 &&
+      this.projectedGithubComments.length === 0 &&
+      this.draft?.documentKey !== this.documentKey
+    ) {
+      return;
+    }
     const sourceIndex = new DocumentAnchorIndex(markdown, this.diagnostics);
     const runs = unchangedRuns(previous, markdown);
     const mapOffset = (offset: number, assoc: -1 | 1): number => {
@@ -1584,6 +1825,29 @@ export class SelectionCommentSession {
                 initialBody: this.draft.initialBody,
               };
       }
+    }
+    // Projected GitHub threads track live edits through the same mapper so they don't drift while the author
+    // types; one whose commented line was edited away is dropped (it returns on the next sync). They are
+    // never persisted, so no queuePersist is needed for them.
+    if (this.projectedGithubComments.length > 0) {
+      this.projectedGithubComments = this.projectedGithubComments.flatMap((comment) => {
+        const fromOffset = mapOffset(comment.fromOffset, 1);
+        const toOffset = Math.max(fromOffset, mapOffset(comment.toOffset, -1));
+        if (toOffset <= fromOffset) return [];
+        const anchorOffset = Math.max(toOffset, mapOffset(comment.anchorOffset, -1));
+        return [
+          {
+            ...comment,
+            fromOffset,
+            toOffset,
+            anchorOffset,
+            fromLine: sourceIndex.lineAt(fromOffset),
+            toLine: sourceIndex.lineAt(Math.max(fromOffset, toOffset - 1)),
+            anchorLine: sourceIndex.lineAt(anchorOffset),
+            quote: markdown.slice(fromOffset, toOffset),
+          },
+        ];
+      });
     }
     this.mutationRevision++;
     this.queuePersist(500);

@@ -48,6 +48,9 @@ import {
   type RepoDescriptionPayload,
   type RepoOperationCompletedPayload,
   type RepositoryStatusPayload,
+  type ReviewCommentAnchorPayload,
+  type ReviewCommentPublishedPayload,
+  type ReviewCommentSyncPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -720,6 +723,84 @@ export function parsePrMutationCompleted(value: unknown): PrMutationCompletedPay
   return isString(value.error)
     ? { succeeded: value.succeeded, error: value.error }
     : { succeeded: value.succeeded };
+}
+
+function parseReviewCommentAnchor(value: unknown): ReviewCommentAnchorPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.id) ||
+    !isNumber(value.line) ||
+    !isString(value.side) ||
+    !isString(value.commitId) ||
+    !isNumber(value.inReplyToId) ||
+    !isString(value.author) ||
+    !isString(value.body) ||
+    !isString(value.when)
+  ) {
+    return null;
+  }
+  return {
+    id: value.id,
+    line: value.line,
+    side: value.side,
+    commitId: value.commitId,
+    inReplyToId: value.inReplyToId,
+    author: value.author,
+    body: value.body,
+    when: value.when,
+  };
+}
+
+export function parseReviewCommentSync(value: unknown): ReviewCommentSyncPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.documentKey) ||
+    !isNumber(value.number) ||
+    !isString(value.headCommitId) ||
+    !isString(value.path) ||
+    (value.error !== undefined && value.error !== null && !isString(value.error))
+  ) {
+    return null;
+  }
+  const commentableLines = parseArray(value.commentableLines, (line) =>
+    isNumber(line) && Number.isInteger(line) ? line : null,
+  );
+  const comments = parseArray(value.comments, parseReviewCommentAnchor);
+  if (commentableLines === null || comments === null) {
+    return null;
+  }
+  const payload: ReviewCommentSyncPayload = {
+    documentKey: value.documentKey,
+    number: value.number,
+    headCommitId: value.headCommitId,
+    path: value.path,
+    commentableLines,
+    comments,
+  };
+  if (isString(value.error)) {
+    payload.error = value.error;
+  }
+  return payload;
+}
+
+export function parseReviewCommentPublished(value: unknown): ReviewCommentPublishedPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.localId) ||
+    !isNumber(value.githubId) ||
+    typeof value.succeeded !== "boolean" ||
+    (value.error !== undefined && value.error !== null && !isString(value.error))
+  ) {
+    return null;
+  }
+  return isString(value.error)
+    ? {
+        localId: value.localId,
+        githubId: value.githubId,
+        succeeded: value.succeeded,
+        error: value.error,
+      }
+    : { localId: value.localId, githubId: value.githubId, succeeded: value.succeeded };
 }
 
 export function parseChatDelta(value: unknown): ChatDeltaPayload | null {

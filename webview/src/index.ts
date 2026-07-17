@@ -49,6 +49,8 @@ import {
   parseRepoConfirmation,
   parseRepoDescription,
   parseRepoOperationCompleted,
+  parseReviewCommentPublished,
+  parseReviewCommentSync,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -534,6 +536,8 @@ function wire(): void {
   let invalidateActivityRequests = (): void => {};
   let githubAccountIdentity: string | null = null;
   let applySelectionCommentPrincipal = (_login: string | null, _boundaryId?: string): void => {};
+  // Requests a GitHub review-comment projection for the current document (assigned with the comment session).
+  let requestReviewCommentSync = (): void => {};
   let selectionComments: SelectionCommentSession;
   // The Start screen handle, assigned in wireWorkspace; index.ts feeds its recent-item shortcuts.
   // Undefined before the workspace wires (or in reduced-DOM tests).
@@ -715,6 +719,13 @@ function wire(): void {
       retry: (): void => {
         void selectionComments.retryPersistence();
       },
+      postToReview: (commentId: string): void => {
+        // Post a local thread to the open PR only when it maps to a diff-hunk line (the session enforces
+        // this and returns null otherwise). The GitHub id is stamped back when review.comment.published
+        // arrives; the host resolves the repository/path from its own current document.
+        const request = selectionComments.publishRequestFor(commentId);
+        if (request !== null) ipc.send(Kinds.reviewCommentPublish, request);
+      },
     });
     const codeCommentActions = commentActionsFor("code");
     const formattedCommentActions = commentActionsFor("formatted");
@@ -725,9 +736,21 @@ function wire(): void {
       reconcileHeights();
     };
     selectionComments.setNotifier(renderSelectionComments);
+    // Ask the host to project the open PR's inline review comments onto the current document. Gated on being
+    // under review (else there is no open PR to read) and on having a document loaded. The response arrives
+    // as review.commentSync and is applied to the session; a stale response (a raced navigation) is dropped
+    // by the session's document-key check.
+    requestReviewCommentSync = (): void => {
+      if (!underReview) return;
+      const documentKey = selectionComments.currentDocumentKey();
+      if (documentKey.length === 0) return;
+      ipc.send(Kinds.reviewCommentSyncRequest, { documentKey });
+    };
     applySelectionCommentPrincipal = (login, boundaryId) => {
       void selectionComments.setPrincipal(login, boundaryId);
       renderSelectionComments();
+      // A new principal re-keys the local store; re-project the PR comments once it settles.
+      requestReviewCommentSync();
     };
     const beginSelectionComment = (
       surface: CommentSurface,
@@ -1267,6 +1290,12 @@ function wire(): void {
         // full poll interval for the first refresh.
         ipc.send(Kinds.reviewRefresh);
       }
+      if (underReview) {
+        // A status change while under review can mean the head commit moved (Update review pushed a new
+        // version) — re-project the PR's inline comments so synced threads re-anchor to the new diff and the
+        // out-of-hunk labels stay accurate.
+        requestReviewCommentSync();
+      }
       lifecycleChrome.setLifecycle(payload.state);
       if (
         (repositoryTransitionRequestId !== null ||
@@ -1298,6 +1327,33 @@ function wire(): void {
       if (payload) {
         // An error message is not a lifecycle state — show it plainly (drops the dot's state colour).
         showPlainStatus(payload.message);
+      }
+    });
+
+    ipc.on(Kinds.reviewCommentSync, (message) => {
+      const payload = parseReviewCommentSync(message.payload);
+      if (payload === null || payload.error !== undefined) {
+        // A best-effort sync error keeps the last projection rather than clearing the author's context.
+        return;
+      }
+      // The session drops a projection whose document key no longer matches (a response that raced a
+      // navigation), and re-renders through its notifier when it applies one.
+      selectionComments.applyGithubSync(payload);
+    });
+
+    ipc.on(Kinds.reviewCommentPublished, (message) => {
+      const payload = parseReviewCommentPublished(message.payload);
+      if (payload === null) {
+        return;
+      }
+      if (payload.succeeded) {
+        // markGithubId re-renders through the session notifier; on an unknown id (0) the re-sync below still
+        // reconciles the thread once GitHub returns its own copy.
+        if (payload.githubId > 0) selectionComments.markGithubId(payload.localId, payload.githubId);
+        // Re-project so the just-posted comment reconciles with GitHub's own copy (and any threading).
+        requestReviewCommentSync();
+      } else if (payload.error !== undefined) {
+        showPlainStatus(payload.error);
       }
     });
 
@@ -1340,6 +1396,8 @@ function wire(): void {
     window.addEventListener("focus", () => {
       if (underReview) {
         ipc.send(Kinds.reviewRefresh); // just came back — check for a decision made while away
+        // Also re-pull inline review comments so those left on GitHub while away appear inline.
+        requestReviewCommentSync();
       }
     });
 

@@ -116,6 +116,34 @@
   "pr.mutationCompleted": {
     "succeeded": true
   },
+  "review.commentSync": {
+    "documentKey": "octo/spec-repo spec/refunds specs/billing.md",
+    "number": 42,
+    "headCommitId": "abcdef0123456789",
+    "path": "specs/billing.md",
+    "commentableLines": [
+      3,
+      4,
+      5
+    ],
+    "comments": [
+      {
+        "id": 1001,
+        "line": 4,
+        "side": "RIGHT",
+        "commitId": "abcdef0123456789",
+        "inReplyToId": 0,
+        "author": "sam",
+        "body": "Please clarify the window here.",
+        "when": "1970-01-01T00:00:00\u002B00:00"
+      }
+    ]
+  },
+  "review.comment.published": {
+    "localId": "selection-comment-3",
+    "githubId": 2002,
+    "succeeded": true
+  },
   "diff.result": {
     "entries": [
       {

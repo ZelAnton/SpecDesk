@@ -554,6 +554,12 @@ public sealed partial class HostController : IDisposable
 			case MessageKinds.PrCommentUpdate:
 				OnPrCommentUpdate(message);
 				break;
+			case MessageKinds.ReviewCommentSyncRequest:
+				OnReviewCommentSync(message);
+				break;
+			case MessageKinds.ReviewCommentPublish:
+				OnReviewCommentPublish(message);
+				break;
 			case MessageKinds.BranchNameRequest:
 				OnSuggestBranchName(message);
 				break;

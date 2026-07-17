@@ -69,6 +69,7 @@ describe("inline comment thread controls", () => {
       reply: vi.fn(),
       delete: vi.fn(),
       retry: vi.fn(),
+      postToReview: vi.fn(),
     };
   }
 
@@ -157,6 +158,61 @@ describe("inline comment thread controls", () => {
     expect(root.textContent).toContain("Alice");
     expect(root.querySelectorAll("button")).toHaveLength(1);
     expect(root.querySelector("button")?.textContent).toBe("Reply");
+  });
+
+  it("offers Post to review for a thread inside a diff hunk and forwards the click", () => {
+    const handlers = actions();
+    const root = commentThreadDOM({
+      comment: { ...comment, githubSync: "publishable" },
+      actions: handlers,
+      principalId: "github:alice",
+    });
+    document.body.appendChild(root);
+
+    const post = root.querySelector<HTMLButtonElement>(".selection-comment-github-post");
+    expect(post).not.toBeNull();
+    expect(root.dataset.githubSync).toBe("publishable");
+    post?.click();
+    expect(handlers.postToReview).toHaveBeenCalledWith("comment-1");
+  });
+
+  it("labels an out-of-hunk thread 'not yet on GitHub' with no post action", () => {
+    const handlers = actions();
+    const root = commentThreadDOM({
+      comment: { ...comment, githubSync: "local-only" },
+      actions: handlers,
+      principalId: "github:alice",
+    });
+    document.body.appendChild(root);
+
+    expect(root.querySelector(".selection-comment-github-post")).toBeNull();
+    expect(root.querySelector(".selection-comment-github-sync")?.textContent).toContain(
+      "Not yet on GitHub",
+    );
+  });
+
+  it("renders a GitHub-projected thread read-only and from the review", () => {
+    const handlers = actions();
+    const root = commentThreadDOM({
+      // A pulled thread: authored by someone else, carries a github id, and is flagged origin github.
+      comment: {
+        ...comment,
+        origin: "github",
+        githubId: 1001,
+        author: { principalId: "github:sam", displayName: "Sam" },
+        replies: [],
+      },
+      actions: handlers,
+      principalId: "github:alice",
+    });
+    document.body.appendChild(root);
+
+    expect(root.dataset.githubSync).toBe("synced");
+    expect(root.querySelector(".selection-comment-github-sync")?.textContent).toContain(
+      "From the review on GitHub",
+    );
+    // No Reply / Edit / Delete / Post affordances on a read-only projected thread.
+    expect(root.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("labels an unresolved thread as detached instead of implying a source attachment", () => {

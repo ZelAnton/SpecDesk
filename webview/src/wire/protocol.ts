@@ -25,6 +25,8 @@ export const Kinds = {
   prCommentCreate: "pr.comment.create",
   prCommentReply: "pr.comment.reply",
   prCommentUpdate: "pr.comment.update",
+  reviewCommentSyncRequest: "review.commentSync.request",
+  reviewCommentPublish: "review.comment.publish",
   imagePaste: "image.paste",
   log: "log",
   logExport: "log.export",
@@ -79,6 +81,8 @@ export const Kinds = {
   prList: "pr.list",
   prDetails: "pr.details",
   prMutationCompleted: "pr.mutationCompleted",
+  reviewCommentSync: "review.commentSync",
+  reviewCommentPublished: "review.comment.published",
   status: "status",
   error: "error",
   diffResult: "diff.result",
@@ -457,6 +461,64 @@ export interface PrDetailsPayload {
 }
 
 export interface PrMutationCompletedPayload {
+  succeeded: boolean;
+  error?: string;
+}
+
+/** Payload of `review.commentSync.request` (webview→native): ask the host to project the open PR's inline
+ * review comments onto the open document. `documentKey` is the webview's opaque per-document key, echoed
+ * back so a response that raced a navigation can be dropped. */
+export interface ReviewCommentSyncRequestPayload {
+  documentKey: string;
+}
+
+/** One inline PR review comment projected back to the webview (native→webview, inside
+ * {@link ReviewCommentSyncPayload}; mirror of the C# `ReviewCommentAnchorPayload`). `line` is the 1-based
+ * file line; `side` is `RIGHT` (head) or `LEFT` (base); `inReplyToId` is 0 for a root thread. */
+export interface ReviewCommentAnchorPayload {
+  id: number;
+  line: number;
+  side: string;
+  commitId: string;
+  inReplyToId: number;
+  author: string;
+  body: string;
+  when: string;
+}
+
+/** Payload of `review.commentSync` (native→webview, correlated to `review.commentSync.request` by id): the
+ * bounded projection for the open document. `number` is 0 when the branch has no open pull request (then no
+ * thread can be posted); `commentableLines` are the 1-based head-side lines inside a diff hunk (postable);
+ * `error` is a plain reason the sync couldn't run (the webview keeps its last projection). */
+export interface ReviewCommentSyncPayload {
+  documentKey: string;
+  number: number;
+  headCommitId: string;
+  path: string;
+  commentableLines: number[];
+  comments: ReviewCommentAnchorPayload[];
+  error?: string;
+}
+
+/** Payload of `review.comment.publish` (webview→native): post one local inline thread to the open PR.
+ * `number`/`commitId` come from the last sync; `line`/`side` are the head-side anchor; `localId` is the
+ * local thread id, echoed back so the returned GitHub id lands on the right thread. */
+export interface ReviewCommentPublishPayload {
+  documentKey: string;
+  number: number;
+  commitId: string;
+  line: number;
+  side: string;
+  body: string;
+  localId: string;
+}
+
+/** Payload of `review.comment.published` (native→webview, correlated by id): the outcome of a
+ * `review.comment.publish`. `githubId` is the created comment's id on success; `error` is a plain reason
+ * when it was rejected (e.g. the line fell outside the diff after the head moved). */
+export interface ReviewCommentPublishedPayload {
+  localId: string;
+  githubId: number;
   succeeded: boolean;
   error?: string;
 }

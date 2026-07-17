@@ -31,6 +31,8 @@ public static class MessageKinds
 	public const string PrCommentCreate = "pr.comment.create";
 	public const string PrCommentReply = "pr.comment.reply";
 	public const string PrCommentUpdate = "pr.comment.update";
+	public const string ReviewCommentSyncRequest = "review.commentSync.request";
+	public const string ReviewCommentPublish = "review.comment.publish";
 	public const string ImagePaste = "image.paste";
 	public const string Log = "log";
 	public const string LogExport = "log.export";
@@ -86,6 +88,8 @@ public static class MessageKinds
 	public const string PrList = "pr.list";
 	public const string PrDetails = "pr.details";
 	public const string PrMutationCompleted = "pr.mutationCompleted";
+	public const string ReviewCommentSync = "review.commentSync";
+	public const string ReviewCommentPublished = "review.comment.published";
 	public const string Status = "status";
 	public const string Error = "error";
 	public const string DiffResult = "diff.result";
@@ -337,6 +341,56 @@ public sealed record PrDetailsPayload(
 
 /// <summary>Terminal acknowledgement for a pull-request mutation. The webview refreshes details after success.</summary>
 public sealed record PrMutationCompletedPayload(bool Succeeded, string? Error);
+
+/// <summary>Payload of <c>review.commentSync.request</c> (webview→native): ask the host to project the open
+/// pull request's inline review comments onto the document the webview currently has open. <paramref
+/// name="DocumentKey"/> is the webview's opaque per-document key — the host echoes it back unread so a
+/// response that arrives after the author navigated away can be discarded. The host resolves the repository,
+/// branch, PR number, and repository-relative path from its own current-document state, never from the
+/// webview, so the token only ever reads the document actually open.</summary>
+public sealed record ReviewCommentSyncRequestPayload(string DocumentKey);
+
+/// <summary>One inline PR review comment projected back to the webview (native→webview, inside
+/// <see cref="ReviewCommentSyncPayload"/>). <paramref name="Line"/> is the 1-based file line;
+/// <paramref name="Side"/> is <c>RIGHT</c> (head) or <c>LEFT</c> (base); <paramref name="CommitId"/> is the
+/// commit it was written against; <paramref name="InReplyToId"/> is 0 for a root thread. Body is bounded.</summary>
+public sealed record ReviewCommentAnchorPayload(
+	long Id, int Line, string Side, string CommitId, long InReplyToId, string Author, string Body,
+	DateTimeOffset When);
+
+/// <summary>Payload of <c>review.commentSync</c> (native→webview, correlated to
+/// <c>review.commentSync.request</c> by id): the bounded projection for the open document.
+/// <paramref name="DocumentKey"/> echoes the request so the webview can drop a stale response;
+/// <paramref name="Number"/> is the open PR (0 when the branch has no open pull request — then no comment can
+/// be posted and every local thread stays local); <paramref name="HeadCommitId"/> is what a newly-posted
+/// comment anchors to; <paramref name="Path"/> is the repository-relative document path; <paramref
+/// name="CommentableLines"/> are the 1-based head-side lines inside a diff hunk (postable); <paramref
+/// name="Comments"/> are the existing review comments on that file. <paramref name="Error"/> is a plain
+/// reason the sync couldn't run (best-effort — the webview keeps its last projection).</summary>
+public sealed record ReviewCommentSyncPayload(
+	string DocumentKey,
+	int Number,
+	string HeadCommitId,
+	string Path,
+	IReadOnlyList<int> CommentableLines,
+	IReadOnlyList<ReviewCommentAnchorPayload> Comments,
+	string? Error);
+
+/// <summary>Payload of <c>review.comment.publish</c> (webview→native): post one local inline comment to the
+/// open PR as a GitHub review comment. <paramref name="Number"/>/<paramref name="CommitId"/> come from the
+/// last sync; <paramref name="Line"/>/<paramref name="Side"/> are the head-side anchor the webview resolved
+/// through its lineMap; <paramref name="Body"/> is the comment text; <paramref name="LocalId"/> is the
+/// webview's local thread id, echoed back so it can stamp the returned GitHub id onto the right thread. The
+/// host resolves owner/repo and the repository-relative path from its own current-document state.</summary>
+public sealed record ReviewCommentPublishPayload(
+	string DocumentKey, int Number, string CommitId, int Line, string Side, string Body, string LocalId);
+
+/// <summary>Payload of <c>review.comment.published</c> (native→webview, correlated by id): the outcome of a
+/// <c>review.comment.publish</c>. <paramref name="LocalId"/> echoes the local thread; <paramref
+/// name="GithubId"/> is the created comment's id on success (0 when GitHub returned an unparseable body);
+/// <paramref name="Succeeded"/>/<paramref name="Error"/> carry a plain reason when the post was rejected
+/// (e.g. the line fell outside the diff after the head moved).</summary>
+public sealed record ReviewCommentPublishedPayload(string LocalId, long GithubId, bool Succeeded, string? Error);
 
 /// <summary>Payload of <c>log</c> (webview→native): a structured log record routed to the host logger.
 /// <paramref name="Level"/> is one of debug/info/warn/error; <paramref name="Data"/> is optional JSON.</summary>

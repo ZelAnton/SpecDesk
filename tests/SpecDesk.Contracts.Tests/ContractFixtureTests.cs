@@ -62,6 +62,18 @@ public sealed class ContractFixtureTests
 			false,
 			null)),
 		(MessageKinds.PrMutationCompleted, new PrMutationCompletedPayload(true, null)),
+		// Inline review-comment sync (PoC-8): the open PR's commentable head lines and one existing inline
+		// comment projected onto the document; Error absent (the optional field is exercised by both decoders).
+		(MessageKinds.ReviewCommentSync, new ReviewCommentSyncPayload(
+			"octo/spec-repo spec/refunds specs/billing.md", 42, "abcdef0123456789", "specs/billing.md",
+			[3, 4, 5],
+			[new ReviewCommentAnchorPayload(
+				1001, 4, "RIGHT", "abcdef0123456789", 0, "sam", "Please clarify the window here.",
+				DateTimeOffset.UnixEpoch)],
+			null)),
+		// A successful post-to-review acknowledgement (Error absent).
+		(MessageKinds.ReviewCommentPublished,
+			new ReviewCommentPublishedPayload("selection-comment-3", 2002, Succeeded: true, null)),
 		(MessageKinds.DiffResult, new DiffResultPayload(
 		[
 			// A changed plain block carries its base rendered text and base raw source for inline word-diff.
