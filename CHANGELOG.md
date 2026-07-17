@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A performance harness for large documents guards against interactivity regressions: BenchmarkDotNet micro-benchmarks (Markdown reparse and AST diff on 5–10k-line generated specs) plus a Layer 1 budget scenario that checks reconciliation and scroll-sync stay within threshold and do not grow quadratically, run as an opt-in nightly stage that never slows ordinary builds.
+- The formatted view, the source editor, comment/note composers, the "save a version" note, and the "send for review" title/body now enable the browser's built-in spellchecker, so typos in prose get the usual red squiggle underline.
 - Inline document comments now synchronize with an open change request's comments on GitHub: a comment on a line that is part of the change can be posted to the review from its thread and then reads as being on GitHub, comments left on GitHub appear inline in the document as read-only threads, and a comment on an unchanged line stays local with a plain "not yet on GitHub" label instead of failing. Synced threads re-anchor as the document is edited and when a newer version is shared for review.
+- Property-based tests (fast-check) now guard the block-splice byte-for-byte round-trip and word-diff invertibility across generated Markdown documents (headings, lists, tables, code, quotes, hard line breaks), catching regressions the hand-written fixtures alone could miss.
 
 ### Changed
 
@@ -31,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every destructive action now requires an inline **Confirm deletion** step directly beneath the chosen action before SpecDesk can remove anything.
 - `GitHubRepositoryCatalog`'s organization, repository, metadata, tree, folder, and file requests (including the paginated organization/repository fetches) now share the same 30-second per-request timeout and User-Agent as SpecDesk's other GitHub transports, instead of relying on the shared `HttpClient`'s longer default timeout with no per-request bound; a stalled GitHub request during sign-in or repository browsing now fails and can be retried sooner instead of appearing to hang.
 - The "Show changes" compare overlay now explicitly requests the last-saved-version base it has always used, instead of the request path hard-coding that literal at the call site — laying the groundwork for future compare affordances against other bases without changing today's behavior.
+- Incoming webview messages are now routed through a per-domain handler registry that each feature area populates from its own file, replacing the single central switch, so a new message kind is added entirely within its domain; message routing, the `log` channel's exclusion from frame logging, and processing order are unchanged.
 
 ### Fixed
 

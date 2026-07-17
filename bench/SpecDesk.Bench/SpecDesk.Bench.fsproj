@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net10.0</TargetFramework>
+		<!-- A dev/nightly benchmark harness, never packaged or run as a test. IsTestProject=false keeps
+		     `dotnet test SpecDesk.slnx` from probing this console app for tests it does not carry. -->
+		<IsPackable>false</IsPackable>
+		<IsTestProject>false</IsTestProject>
+		<!-- BenchmarkDotNet's optimization guard warns (as an error here) unless the harness itself is
+		     built optimized; benchmarks are only ever meaningful in Release, so pin it on. -->
+		<Optimize>true</Optimize>
+		<ServerGarbageCollection>false</ServerGarbageCollection>
+	</PropertyGroup>
+
+	<!-- F# compile order is significant — list files in dependency order. -->
+	<ItemGroup>
+		<Compile Include="DocGenerator.fs" />
+		<Compile Include="MarkdownBenchmarks.fs" />
+		<Compile Include="DiffBenchmarks.fs" />
+		<Compile Include="Program.fs" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\SpecDesk.Markdown\SpecDesk.Markdown.fsproj" />
+		<ProjectReference Include="..\..\src\SpecDesk.Diff\SpecDesk.Diff.fsproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="FSharp.Core" />
+		<PackageReference Include="BenchmarkDotNet" />
+	</ItemGroup>
+
+</Project>

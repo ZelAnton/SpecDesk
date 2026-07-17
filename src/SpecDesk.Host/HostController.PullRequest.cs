@@ -6,6 +6,16 @@ namespace SpecDesk.Host;
 
 public sealed partial class HostController
 {
+	// Pull-request detail / reviewer / inline-comment mutation kinds (see the central RegisterMessageHandlers).
+	private void RegisterPullRequestHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.PrDetailsRequest, OnPrDetails);
+		_messageHandlers.Register(MessageKinds.PrReviewersRequest, OnPrReviewers);
+		_messageHandlers.Register(MessageKinds.PrCommentCreate, OnPrCommentCreate);
+		_messageHandlers.Register(MessageKinds.PrCommentReply, OnPrCommentReply);
+		_messageHandlers.Register(MessageKinds.PrCommentUpdate, OnPrCommentUpdate);
+	}
+
 	private static readonly TimeSpan PullRequestDocumentTimeout = TimeSpan.FromSeconds(20);
 
 	private void OnPrDetails(IpcMessage message)

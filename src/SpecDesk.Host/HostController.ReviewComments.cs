@@ -12,6 +12,13 @@ namespace SpecDesk.Host;
 // document actually open. The token is never stored or logged here.
 public sealed partial class HostController
 {
+	// Inline review-comment sync / publish kinds (see the central RegisterMessageHandlers).
+	private void RegisterReviewCommentHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.ReviewCommentSyncRequest, OnReviewCommentSync);
+		_messageHandlers.Register(MessageKinds.ReviewCommentPublish, OnReviewCommentPublish);
+	}
+
 	// One inline-comment sync round-trip touches three GitHub reads (status → files → comments), so it gets
 	// a slightly wider budget than a single-document read; still well under the webview's IPC wait.
 	private static readonly TimeSpan ReviewCommentSyncTimeout = TimeSpan.FromSeconds(35);

@@ -1,0 +1,122 @@
+# Performance harness — an OPT-IN stage kept out of the ordinary CI gate (ci.yml) so a normal
+# pull-request / push run is never slowed by it. It runs on a nightly schedule and on manual dispatch:
+#
+#   * bench      — the BenchmarkDotNet micro-benchmarks (Markdown reparse + AST diff on large synthetic
+#                  documents). Informational: it records result reports as artifacts so a regression is
+#                  visible in the trend, and does not gate.
+#   * e2e-perf   — the Layer 1 large-document interactivity BUDGET scenario. This one is a hard gate: it
+#                  asserts the reconcile / scroll-sync budgets and the sub-quadratic scaling, and fails
+#                  the run if they are exceeded.
+#
+# Developers can run the same two parts locally without CI:
+#   dotnet run -c Release --project bench/SpecDesk.Bench -- --filter '*'   # (add --job short for a quick pass)
+#   cd e2e && npm run e2e:perf
+name: Perf
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 04:00 UTC — off the normal working-hours CI load.
+    - cron: '0 4 * * *'
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: bench (BenchmarkDotNet)
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to a full commit SHA (supply-chain hardening); the trailing comment records
+      # the human-readable version, matching ci.yml.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('Directory.Packages.props', 'nuget.config', 'global.json') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # --job short keeps each benchmark to a bounded iteration count so the nightly stays within a
+      # sensible budget while still producing stable-enough numbers to spot a real regression.
+      - name: Run benchmarks
+        run: dotnet run -c Release --project bench/SpecDesk.Bench -- --filter '*' --job short
+
+      # BenchmarkDotNet writes its markdown/CSV reports here; upload them even on failure so a nightly is
+      # diagnosable from the numbers without re-running.
+      - name: Upload benchmark results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-results
+          path: BenchmarkDotNet.Artifacts/**
+          if-no-files-found: ignore
+
+  e2e-perf:
+    name: e2e perf (Layer 1 large-document budgets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # One Node (pinned by webview/.nvmrc) for both packages; cache the npm store keyed on BOTH
+      # lockfiles since this job installs webview AND e2e dependencies.
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: webview/.nvmrc
+          cache: npm
+          cache-dependency-path: |
+            webview/package-lock.json
+            e2e/package-lock.json
+
+      # The Layer 1 global-setup builds the bundle via webview/scripts/bundle.mjs (esbuild from
+      # webview/node_modules), so the webview deps must be installed here too, not just e2e's.
+      - name: Install webview dependencies
+        run: npm ci
+        working-directory: webview
+
+      - name: Install e2e dependencies
+        run: npm ci
+        working-directory: e2e
+
+      # Playwright transpiles TS without type-checking, so gate the e2e sources' types explicitly.
+      - name: Typecheck e2e
+        run: npm run typecheck
+        working-directory: e2e
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: e2e
+
+      # The opt-in perf project (webview-mock-perf): global-setup rebuilds and verifies the bundle, then
+      # the large-document scenario asserts the reconcile / scroll-sync budgets and their scaling.
+      - name: Run Layer 1 perf budgets
+        run: npm run e2e:perf
+        working-directory: e2e
+
+      # The scenario attaches its measured numbers (large-document-perf.json) and, on failure, the usual
+      # screenshot/trace bundle under artifacts/e2e; upload even on failure so a red run is diagnosable.
+      - name: Upload perf artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-perf-artifacts
+          path: |
+            artifacts/e2e/**
+            e2e/test-results/**
+          if-no-files-found: ignore

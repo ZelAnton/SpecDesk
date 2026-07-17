@@ -28,6 +28,7 @@ import { closestElement } from "../util/dom.js";
 import { isOpenableHref } from "../util/links.js";
 import { log } from "../util/log.js";
 import { rafThrottle } from "../util/raf.js";
+import { SPELLCHECK_ENABLED, SPELLCHECK_LANG } from "../util/spellcheck.js";
 import { trace } from "../util/trace.js";
 import { BlockGeometryCache } from "./block-geometry.js";
 import { BlockMap, startOfChild } from "./block-map.js";
@@ -394,7 +395,12 @@ export class FormattedEditor {
       // even while read-only; document edits themselves are gated by the filterTransaction plugin in
       // freshState (which offers to start a draft). This mirrors the source editor's read-only model.
       // Tag the content element so it shares the rendered-document stylesheet (§5) with the preview.
-      attributes: { class: "sd-doc" },
+      // spellcheck/lang enable WebView2/Chromium's built-in spellchecker on the formatted prose surface.
+      attributes: {
+        class: "sd-doc",
+        spellcheck: String(SPELLCHECK_ENABLED),
+        lang: SPELLCHECK_LANG,
+      },
       // Render images with their relative src resolved to `app://repo/…` (the node keeps the original
       // relative src, so serialization is unaffected). Without this the WYSIWYG <img> would resolve
       // against the webview's own app:// base and fail to load — only the native preview rewrote it.

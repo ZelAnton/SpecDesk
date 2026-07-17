@@ -10,6 +10,7 @@
   "scripts": {
     "e2e": "playwright test --project=webview-mock",
     "e2e:headed": "playwright test --project=webview-mock --headed",
+    "e2e:perf": "playwright test --project=webview-mock-perf",
     "e2e:app": "playwright test --project=full-app --workers=1",
     "e2e:install": "playwright install chromium",
     "typecheck": "tsc --noEmit"

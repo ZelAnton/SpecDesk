@@ -44,6 +44,10 @@ TestResults/
 *.coverage
 *.coveragexml
 
+# Performance harness (bench/) — BenchmarkDotNet writes its result reports and per-benchmark generated
+# projects here; they are run outputs, never committed.
+BenchmarkDotNet.Artifacts/
+
 ## -------
 ## Visual Studio
 ## -------
