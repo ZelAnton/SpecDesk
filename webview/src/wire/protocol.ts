@@ -14,6 +14,7 @@ export const Kinds = {
   docSaveVersion: "doc.saveVersion",
   docSendForReview: "doc.sendForReview",
   docUpdateReview: "doc.updateReview",
+  docPublish: "doc.publish",
   reviewRefresh: "review.refresh",
   docDiscard: "doc.discard",
   branchNameRequest: "branch.name.request",
@@ -712,6 +713,10 @@ export interface WorkspaceContextPayload {
   path: string;
   /** Display name of the local clone that owns the document; absent for remote-only/outside files. */
   localCopy?: string | null;
+  /** Whether this document's repository permits the author to publish their own approved document
+   *  (`[review] allow-author-publish`). The lifecycle chrome reveals "Publish" only when true; the host
+   *  re-checks it before merging, so this is a UX gate, not the security boundary. Defaults to false. */
+  canPublish: boolean;
 }
 
 /** One recent/favorite entry (native→webview, inside {@link WorkspaceStatePayload}). Local paths are absolute;

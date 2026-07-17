@@ -288,6 +288,7 @@ function wire(): void {
   const saveVersionBtn = document.querySelector<HTMLButtonElement>("#save-version-btn");
   const sendForReviewBtn = document.querySelector<HTMLButtonElement>("#send-for-review-btn");
   const updateReviewBtn = document.querySelector<HTMLButtonElement>("#update-review-btn");
+  const publishBtn = document.querySelector<HTMLButtonElement>("#publish-btn");
   const discardBtn = document.querySelector<HTMLButtonElement>("#discard-btn");
   const saveBtn = document.querySelector<HTMLButtonElement>("#save-btn");
   const wrapBtn = document.querySelector<HTMLButtonElement>("#wrap-btn");
@@ -1225,6 +1226,7 @@ function wire(): void {
       saveVersionBtn,
       sendForReviewBtn,
       updateReviewBtn,
+      publishBtn,
       discardBtn,
       saveBtn,
       formatBar,
@@ -1241,6 +1243,11 @@ function wire(): void {
       // Push the newly-saved versions to the already-open review (the host gates on a connected account and
       // a GitHub remote, and surfaces any problem as a plain status message).
       onUpdateReview: () => ipc.send(Kinds.docUpdateReview),
+      // Publish the approved document: the host merges the open review, removes the draft branch, and moves
+      // it to Published. The host is the authoritative gate — it re-reads the allow-author-publish policy and
+      // re-confirms an up-to-date approval before the irreversible merge, and reports any problem as a plain
+      // status/error. The button is only visible once approved AND the repo permits it (see setPublishAllowed).
+      onPublish: () => ipc.send(Kinds.docPublish),
       onDiscard: () => {
         let requestId = 0;
         const started = runDiscardTransition(
@@ -1363,6 +1370,10 @@ function wire(): void {
         return;
       }
       applyActiveContext(activeContextModel.workspaceChanged(payload));
+      // Whether this document's repository lets the author publish it themselves ([review]
+      // allow-author-publish). The chrome reveals "Publish" only when this is set (and the document is
+      // approved with GitHub configured); the host re-checks the same policy before it merges.
+      lifecycleChrome.setPublishAllowed(payload.canPublish);
       const fileName = payload.path.replaceAll("\\", "/").split("/").at(-1) ?? "";
       setContext(statusLocalCopy, payload.localCopy ?? "");
       setContext(statusBranch, payload.branchState === "named" ? (payload.branch ?? "") : "");

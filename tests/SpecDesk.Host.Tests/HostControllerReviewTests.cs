@@ -1061,6 +1061,107 @@ public sealed class HostControllerReviewTests
         Assert.That(review.GetReviewStatusCalls, Is.EqualTo(0));
     }
 
+    // Drive a freshly-built draft all the way to Approved: send for review, then reflect a GitHub approval
+    // (an open PR approved against its head sha) via a status refresh. Returns once the status has settled at
+    // Approved, ready to Publish. review.ReviewStatusValue stays set so OnPublish's own fresh pre-merge read
+    // sees the same approval.
+    private HostController BuildApproved(
+        FakeVersioning versioning, FakeGitHubReview review, string headSha = "headsha")
+    {
+        HostController controller = BuildInReview(versioning, review);
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 42, PullRequestState.Open, headSha);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitForStatusState("approved"), Is.True, "setup: the review should reach Approved");
+        return controller;
+    }
+
+    // Write a .spectool.toml that turns author publishing ON for the temp repo, so the Publish gate permits it.
+    private void AllowAuthorPublish() =>
+        File.WriteAllText(
+            Path.Combine(_tempDir, ".spectool.toml"), "[review]\nallow-author-publish = true\n");
+
+    [Test]
+    public void Publish_merges_the_approved_pr_removes_the_branch_and_moves_to_published()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildApproved(versioning, review, headSha: "head-abc");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForStatusState("published"), Is.True, "the approved document should reach Published");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(1));
+            Assert.That(review.MergedPullNumber, Is.EqualTo(42));
+            // The merge is pinned to the approved head sha, so a version pushed after approval can't slip in.
+            Assert.That(review.MergedExpectedHeadSha, Is.EqualTo("head-abc"));
+            // The merged draft branch is removed as cleanup.
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(1));
+            Assert.That(review.DeletedBranch, Does.StartWith("spec/billing-"));
+        });
+    }
+
+    [Test]
+    public void Publish_when_the_repo_does_not_allow_author_publish_reports_a_plain_reason_without_merging()
+    {
+        // No .spectool.toml — allow-author-publish defaults to false, so the author-publish gate is fail-closed.
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildApproved(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null, "a disallowed publish is reported plainly");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(0), "an unpermitted publish never merges");
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(0));
+            // The document is untouched — still Approved, never left in an in-between state.
+            Assert.That(LatestStatus()?.State, Is.EqualTo("approved"));
+        });
+    }
+
+    [Test]
+    public void Publish_when_the_merge_fails_reports_a_plain_reason_and_stays_approved()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowOnMerge = true };
+        using HostController controller = BuildApproved(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null, "a merge failure is surfaced plainly");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(1), "the merge was attempted");
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(0), "a failed merge never deletes the branch");
+            // The failure leaves the document Approved (never an in-between/undefined status) so it can retry.
+            Assert.That(LatestStatus()?.State, Is.EqualTo("approved"));
+        });
+    }
+
+    [Test]
+    public void Publish_from_a_non_approved_state_is_ignored()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        // In review, not yet Approved — Publish is not a legal transition, so it must be a no-op.
+        using HostController controller = BuildInReview(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Thread.Sleep(60);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+        });
+    }
+
     [Test]
     public void ListReviews_replies_with_the_users_open_reviews_mapped_to_plain_terms()
     {
