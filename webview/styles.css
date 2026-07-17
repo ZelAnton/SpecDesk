@@ -4757,3 +4757,142 @@ button.context-panel:hover {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* The assistant's gated proposeEdit confirmation (design §08-ai-agent / §10.5): a docked card near the
+   right-rail assistant that shows the proposed change and gates it behind an explicit apply. Reuses the
+   diff wash tokens (--add-hl / --del-hl) for the inline word-level difference. */
+.propose-edit {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 60;
+  display: grid;
+  gap: 0.55rem;
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: min(28rem, calc(100vh - 2rem));
+  padding: 0.85rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-pop);
+  font: 12px / 1.45 var(--font-ui);
+}
+
+.propose-edit-title {
+  color: var(--text-strong);
+  font-size: 13px;
+}
+
+.propose-edit-note {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.propose-edit-diff {
+  overflow: auto;
+  max-height: 14rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+}
+
+.propose-edit-inline,
+.propose-edit-block-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px / 1.5 var(--font-mono);
+}
+
+.propose-edit-word-added {
+  background: var(--add-hl);
+  border-radius: 2px;
+}
+
+.propose-edit-word-removed {
+  background: var(--del-hl);
+  color: var(--del-text);
+  text-decoration: line-through;
+  border-radius: 2px;
+}
+
+.propose-edit-block {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.propose-edit-block + .propose-edit-block {
+  margin-top: 0.5rem;
+}
+
+.propose-edit-block-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.propose-edit-block-removed .propose-edit-block-text {
+  background: var(--del-hl);
+  color: var(--del-text);
+}
+
+.propose-edit-block-added .propose-edit-block-text {
+  background: var(--add-hl);
+}
+
+.propose-edit-block-removed .propose-edit-block-text,
+.propose-edit-block-added .propose-edit-block-text {
+  padding: 0.3rem 0.4rem;
+  border-radius: var(--r-sm);
+}
+
+.propose-edit-editor {
+  min-height: 6rem;
+  padding: 0.5rem;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  font: 12px / 1.5 var(--font-mono);
+  resize: vertical;
+}
+
+.propose-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.propose-edit-btn {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 700 12px var(--font-ui);
+  cursor: pointer;
+}
+
+.propose-edit-edit {
+  margin-right: auto;
+}
+
+.propose-edit-btn:hover,
+.propose-edit-btn:focus-visible {
+  border-color: var(--accent);
+}
+
+.propose-edit-accept {
+  color: var(--surface-raised);
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.propose-edit-accept:hover,
+.propose-edit-accept:focus-visible {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}

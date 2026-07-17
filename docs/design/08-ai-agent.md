@@ -17,8 +17,8 @@ process and never logs it, creates a separate persisted copy, or sends it to the
 
 ## Planned tools
 
-The current chat has no tools. A later milestone may expose thin functions over existing app operations
-(the same operations the buttons use):
+The streaming chat has no tools yet. A later milestone may expose thin functions over existing app
+operations (the same operations the buttons use):
 
 | Tool | Purpose | Mutating? |
 |------|---------|-----------|
@@ -28,7 +28,18 @@ The current chat has no tools. A later milestone may expose thin functions over 
 | `suggestVersionNote` | draft a version note (commit message) from the diff | no (proposes) |
 | `suggestPrDescription` | draft PR title + body from the branch diff | no (proposes) |
 | `suggestImageDescription` | draft alt text / `{slug:DESC}` for a pasted image | no (proposes) |
-| `proposeEdit` | propose a document edit as a reviewable change | **yes — gated** |
+| `proposeEdit` | propose a document edit as a reviewable change | **yes — gated (implemented)** |
+
+`proposeEdit` (`SpecDesk.Ai.ProposeEditTool`) is wired: it can only *stage* a proposal on the host's
+`IEditProposalSink` — it holds no document-mutation capability at all, so it structurally cannot edit,
+commit, or push. The host renders the difference (`confirm.request`, reusing the existing word-diff) and
+the author confirms, edits, or discards it in a confirmation surface. Only a confirmed proposal is applied,
+and only through the **same** editing path as a manual change (`OnEdit`/`_text`/generation increments,
+under the existing `_sync` discipline), after the host re-checks the document is still exactly the one — at
+the same content generation — the proposal was staged against; a concurrent edit refuses the apply. It is
+deliberately kept out of the read-only tool allowlist (`AiReadOnlyTools`), the one named mutating
+affordance. See [09-ipc-protocol.md](09-ipc-protocol.md) (`confirm.request` / `confirm.result` /
+`confirm.applied`).
 
 ## Hard safety rule
 

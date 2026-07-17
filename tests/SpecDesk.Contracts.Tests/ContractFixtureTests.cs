@@ -124,6 +124,14 @@ public sealed class ContractFixtureTests
 		// AI assistant (PoC-8): a streamed reply chunk, a turn-complete marker, and the prompt library.
 		(MessageKinds.ChatDelta, new ChatDeltaPayload("7", "Here is a summary of the change: ")),
 		(MessageKinds.ChatDone, new ChatDonePayload("7")),
+		// The gated proposeEdit confirmation round-trip: the staged before/after (Summary present exercises
+		// the optional field through both decoders) and the applied-text echo on a confirmed edit.
+		(MessageKinds.ConfirmRequest, new ConfirmRequestPayload(
+			"3",
+			"The refund window is 14 days.\n",
+			"The refund window is 30 days.\n",
+			"Extend the refund window to 30 days.")),
+		(MessageKinds.ConfirmApplied, new ConfirmAppliedPayload("3", "The refund window is 30 days.\n")),
 		(MessageKinds.ChatAttachmentPicked,
 			new ChatAttachmentPayload("file", "billing.md", @"C:\specs\billing.md")),
 		(MessageKinds.DocumentActivity, new DocumentActivityPayload(

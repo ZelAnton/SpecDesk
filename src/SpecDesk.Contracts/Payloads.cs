@@ -47,6 +47,7 @@ public static class MessageKinds
 	public const string GitHubAccountApplied = "github.accountApplied";
 	public const string ChatSend = "chat.send";
 	public const string ChatAttachmentPick = "chat.attachment.pick";
+	public const string ConfirmResult = "confirm.result";
 	public const string DocumentActivityRequest = "document.activity.request";
 	public const string TemplatesRequest = "templates.request";
 	public const string FolderOpen = "folder.open";
@@ -101,6 +102,8 @@ public static class MessageKinds
 	public const string ChatDelta = "chat.delta";
 	public const string ChatDone = "chat.done";
 	public const string ChatAttachmentPicked = "chat.attachment.picked";
+	public const string ConfirmRequest = "confirm.request";
+	public const string ConfirmApplied = "confirm.applied";
 	public const string DocumentActivity = "document.activity";
 	public const string Templates = "templates";
 	public const string Tree = "tree";
@@ -606,6 +609,43 @@ public sealed record ChatDeltaPayload(string Id, string Text);
 /// name="Id"/> has finished streaming. The webview re-enables the composer and finalizes the message.
 /// The <paramref name="Id"/> echoes the client-generated turn token so a late/duplicate done can be ignored.</summary>
 public sealed record ChatDonePayload(string Id);
+
+/// <summary>Payload of <c>confirm.request</c> (native→webview): the assistant's gated <c>proposeEdit</c>
+/// staged a full-document replacement and the host asks the author to confirm it, exactly like a manual
+/// edit (docs/design/08-ai-agent.md). <paramref name="Id"/> correlates the round-trip to its
+/// <see cref="ConfirmResultPayload"/> reply; <paramref name="CurrentText"/> and
+/// <paramref name="ProposedText"/> are the before/after the webview renders the difference from (reusing
+/// its existing word-diff surface — no new diff algorithm); <paramref name="Summary"/> is an optional
+/// short plain-language description of the change. Nothing is applied until the author confirms.</summary>
+public sealed record ConfirmRequestPayload(
+	string Id,
+	string CurrentText,
+	string ProposedText,
+	string? Summary = null);
+
+/// <summary>Payload of <c>confirm.result</c> (webview→native): the author's decision on a staged
+/// <c>proposeEdit</c> proposal. <paramref name="Id"/> echoes the <see cref="ConfirmRequestPayload"/> so a
+/// stale/superseded reply is dropped; <paramref name="Decision"/> is one of
+/// <see cref="ConfirmDecisions"/>. <paramref name="Text"/> carries the author-confirmed (possibly edited)
+/// text on <see cref="ConfirmDecisions.Accepted"/>, and is absent on <see cref="ConfirmDecisions.Rejected"/>
+/// — a rejected or edited-then-rejected proposal leaves no trace in the document.</summary>
+public sealed record ConfirmResultPayload(string Id, string Decision, string? Text = null);
+
+/// <summary>Payload of <c>confirm.applied</c> (native→webview): the host verified the confirmed proposal
+/// was still current (same document identity and content generation as when it was staged) and applied it
+/// through the ordinary document-editing path. <paramref name="Id"/> correlates it to the request;
+/// <paramref name="Text"/> is the exact text the host applied, for the editor to reflect. Sent only on a
+/// successful apply — a proposal whose document changed underneath it is refused with a plain error and
+/// never produces this.</summary>
+public sealed record ConfirmAppliedPayload(string Id, string Text);
+
+/// <summary>The <see cref="ConfirmResultPayload.Decision"/> values — the author accepted (apply the
+/// confirmed text) or rejected (discard, no change).</summary>
+public static class ConfirmDecisions
+{
+	public const string Accepted = "accepted";
+	public const string Rejected = "rejected";
+}
 
 /// <summary>One prompt-library entry (shared by the personal store, the remote source, and the wire).
 /// <paramref name="Id"/> is a stable identifier, <paramref name="Title"/> the picker label, and

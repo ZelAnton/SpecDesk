@@ -12,6 +12,8 @@ import {
   type ChatDeltaPayload,
   type ChatDonePayload,
   type ChildDiffPayload,
+  type ConfirmAppliedPayload,
+  type ConfirmRequestPayload,
   type DiffEntryPayload,
   type DiffOverflowPayload,
   type DiffResultPayload,
@@ -815,6 +817,33 @@ export function parseChatDone(value: unknown): ChatDonePayload | null {
     return null;
   }
   return { id: value.id };
+}
+
+export function parseConfirmRequest(value: unknown): ConfirmRequestPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.currentText) ||
+    !isString(value.proposedText)
+  ) {
+    return null;
+  }
+  if (value.summary !== undefined && !isString(value.summary)) {
+    return null;
+  }
+  return {
+    id: value.id,
+    currentText: value.currentText,
+    proposedText: value.proposedText,
+    ...(value.summary === undefined ? {} : { summary: value.summary }),
+  };
+}
+
+export function parseConfirmApplied(value: unknown): ConfirmAppliedPayload | null {
+  if (!isRecord(value) || !isString(value.id) || !isString(value.text)) {
+    return null;
+  }
+  return { id: value.id, text: value.text };
 }
 
 export function parseChatAttachment(value: unknown): ChatAttachment | null {

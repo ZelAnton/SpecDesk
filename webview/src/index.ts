@@ -28,6 +28,8 @@ import {
   parseChatAttachment,
   parseChatDelta,
   parseChatDone,
+  parseConfirmApplied,
+  parseConfirmRequest,
   parseDiffResult,
   parseDocDiscardCompleted,
   parseDocLoaded,
@@ -80,6 +82,7 @@ import { DocumentActivityPanel } from "./workspace/tools/document-activity.js";
 import { FileTree } from "./workspace/tools/file-tree.js";
 import type { HomeView } from "./workspace/tools/home-view.js";
 import { type Outline, parseOutline } from "./workspace/tools/outline.js";
+import { ProposeEditConfirmation } from "./workspace/tools/propose-edit-confirmation.js";
 import {
   CommentDetailPanel,
   PrCommentsPanel,
@@ -693,6 +696,31 @@ function wire(): void {
       docVersion += 1;
       ipc.send(Kinds.editorChanged, { text }, { version: docVersion });
     };
+
+    // The assistant's gated proposeEdit confirmation (design §08-ai-agent): the host stages a proposed
+    // full-document replacement (`confirm.request`) and this surface shows the difference for the author to
+    // edit, apply, or discard. A confirmed proposal goes back as `confirm.result` (accepted) and the host —
+    // after re-checking the document is unchanged — applies it and echoes `confirm.applied` with the exact
+    // applied text, which is reflected silently below (no editor.changed echo). Discarding sends a rejection
+    // and leaves the document untouched.
+    const proposeEditConfirmation = new ProposeEditConfirmation({
+      container: document.body,
+      onAccept: (id, text) =>
+        ipc.send(Kinds.confirmResult, {
+          id,
+          decision: "accepted",
+          text: normalizeLineEndings(text),
+        }),
+      onReject: (id) => ipc.send(Kinds.confirmResult, { id, decision: "rejected" }),
+    });
+    const applyConfirmedEdit = (raw: string): void => {
+      const text = normalizeLineEndings(raw);
+      // Reflect the host-applied text in both panes silently — the host already applied it through the
+      // ordinary editing path, so a non-silent set would round-trip a spurious editor.changed back.
+      editor.setText(text, true);
+      formatted.setText(text);
+      updateOutline(text);
+    };
     selectionComments = new SelectionCommentSession();
     type CommentSurface = "code" | "formatted";
     const commentActionsFor = (surface: CommentSurface) => ({
@@ -1196,6 +1224,9 @@ function wire(): void {
           payload.readOnly && payload.repositoryPath ? payload.repositoryPath : payload.path,
         );
         dialogs.closeAll();
+        // A freshly loaded document is a new identity boundary: dismiss any open edit-proposal confirmation
+        // (its proposal belonged to the document that just went away; the host rejects a stale confirm anyway).
+        proposeEditConfirmation.close();
         // If we just returned from a non-editor central view, move focus into the freshly shown editing
         // surface so a keyboard user isn't left on the now-hidden Start screen (and lands ready to edit).
         if (returnedToEditor) {
@@ -1205,6 +1236,27 @@ function wire(): void {
             formatted.focus();
           }
         }
+      }
+    });
+
+    // The assistant staged an edit proposal — show the confirmation surface with the difference. Nothing is
+    // applied until the author confirms (design §08-ai-agent's hard safety rule).
+    ipc.on(Kinds.confirmRequest, (message) => {
+      const payload = parseConfirmRequest(message.payload);
+      if (payload) {
+        proposeEditConfirmation.open({
+          id: payload.id,
+          currentText: payload.currentText,
+          proposedText: payload.proposedText,
+          summary: payload.summary ?? null,
+        });
+      }
+    });
+    // The host applied a confirmed proposal through the ordinary editing path — reflect its exact text.
+    ipc.on(Kinds.confirmApplied, (message) => {
+      const payload = parseConfirmApplied(message.payload);
+      if (payload) {
+        applyConfirmedEdit(payload.text);
       }
     });
 

@@ -41,6 +41,7 @@ export const Kinds = {
   githubAccountApplied: "github.accountApplied",
   chatSend: "chat.send",
   chatAttachmentPick: "chat.attachment.pick",
+  confirmResult: "confirm.result",
   documentActivityRequest: "document.activity.request",
   templatesRequest: "templates.request",
   folderOpen: "folder.open",
@@ -94,6 +95,8 @@ export const Kinds = {
   chatDelta: "chat.delta",
   chatDone: "chat.done",
   chatAttachmentPicked: "chat.attachment.picked",
+  confirmRequest: "confirm.request",
+  confirmApplied: "confirm.applied",
   documentActivity: "document.activity",
   templates: "templates",
   tree: "tree",
@@ -623,6 +626,42 @@ export interface ChatDeltaPayload {
 /** Payload of `chat.done` (native→webview): the assistant turn identified by `id` finished streaming. */
 export interface ChatDonePayload {
   id: string;
+}
+
+/** Payload of `confirm.request` (native→webview): the assistant's gated `proposeEdit` staged a full-document
+ *  replacement and the host asks the author to confirm it, exactly like a manual edit (design §08-ai-agent).
+ *  `id` correlates the round-trip to its {@link ConfirmResultPayload} reply; `currentText`/`proposedText` are
+ *  the before/after the confirmation surface renders the difference from (reusing the existing word-diff — no
+ *  new diff algorithm); `summary` is an optional short plain-language description. Nothing is applied until the
+ *  author confirms. */
+export interface ConfirmRequestPayload {
+  id: string;
+  currentText: string;
+  proposedText: string;
+  summary?: string;
+}
+
+/** The author's decision on a staged `proposeEdit` proposal (webview→native, {@link ConfirmResultPayload}). */
+export type ConfirmDecision = "accepted" | "rejected";
+
+/** Payload of `confirm.result` (webview→native): the author's decision on a staged `proposeEdit` proposal.
+ *  `id` echoes the {@link ConfirmRequestPayload}; `decision` is accept/reject; `text` carries the
+ *  author-confirmed (possibly edited) text on accept, and is absent on reject — a rejected or edited-then-
+ *  rejected proposal leaves no trace in the document. */
+export interface ConfirmResultPayload {
+  id: string;
+  decision: ConfirmDecision;
+  text?: string;
+}
+
+/** Payload of `confirm.applied` (native→webview): the host verified the confirmed proposal was still current
+ *  (same document identity and content generation as when it was staged) and applied it through the ordinary
+ *  editing path. `id` correlates it to the request; `text` is the exact text the host applied, for the editor
+ *  to reflect. Sent only on a successful apply — a proposal whose document changed underneath it comes back as
+ *  a plain `error` instead. */
+export interface ConfirmAppliedPayload {
+  id: string;
+  text: string;
 }
 
 /** One prompt-library entry (native→webview, inside {@link TemplatesPayload}). `body` is inserted into

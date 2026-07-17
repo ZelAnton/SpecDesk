@@ -16,6 +16,10 @@ public sealed partial class HostController
 		_messageHandlers.Register(MessageKinds.ChatSend, OnChatSend);
 		_messageHandlers.Register(MessageKinds.ChatAttachmentPick, OnChatAttachmentPick);
 		_messageHandlers.Register(MessageKinds.TemplatesRequest, OnRequestTemplates);
+		_messageHandlers.Register(MessageKinds.ConfirmResult, OnConfirmResult);
+		// Bind the assistant's one gated mutating tool (proposeEdit) to this host's sink. The tool can only
+		// stage a proposal; StageEditProposal renders it for confirmation and never mutates on its own.
+		_proposeEditTool = new ProposeEditTool(new EditProposalSink(this));
 	}
 
 	// Cancels the in-flight chat turn (window teardown). Guarded by _sync; a non-null value also single-
@@ -26,6 +30,28 @@ public sealed partial class HostController
 	// Monotonic per-turn id, stamped into chat.done so the webview can ignore a late/duplicate completion.
 	private long _chatTurnCounter;
 	private readonly HashSet<string> _pickedChatAttachments = new(StringComparer.OrdinalIgnoreCase);
+
+	// The assistant's gated proposeEdit tool, bound to this host's IEditProposalSink in RegisterChatHandlers.
+	// The tool can only STAGE a proposal (never apply); exposed so the wiring is exercisable end-to-end.
+	private ProposeEditTool _proposeEditTool = null!;
+	internal ProposeEditTool ProposeEditTool => _proposeEditTool;
+
+	// The single in-flight proposeEdit proposal awaiting human confirmation (guarded by _sync). Single-
+	// flighted: a new proposal replaces any earlier one, whose confirm.result then no longer matches by id
+	// and is dropped. Captured with the document identity + generations it was proposed against, so a
+	// concurrent edit while the author reviews it is detected before anything is applied.
+	private PendingEditProposal? _pendingEditProposal;
+	private long _editProposalCounter;
+
+	private sealed record PendingEditProposal(
+		string Id, DocumentMutationSnapshot Snapshot, string ProposedText, string? Summary);
+
+	// Forwards the proposeEdit tool's staged proposal to the host. A separate type (not HostController
+	// itself implementing IEditProposalSink) keeps the sink surface off the controller's public shape.
+	private sealed class EditProposalSink(HostController owner) : IEditProposalSink
+	{
+		public EditProposalStatus Stage(EditProposal proposal) => owner.StageEditProposal(proposal);
+	}
 
 	// Stream one assistant turn: run the agent on a background task (it can run for seconds), emitting each
 	// text chunk as chat.delta and a terminal chat.done. Single-flighted; ignores an empty message.
@@ -628,4 +654,158 @@ public sealed partial class HostController
 
 	private string NextChatTurnIdLocked() =>
 		(++_chatTurnCounter).ToString(CultureInfo.InvariantCulture);
+
+	// The IEditProposalSink the assistant's proposeEdit tool stages onto (docs/design/08-ai-agent.md). It
+	// captures the open editable document's identity + generations, remembers the single in-flight proposal,
+	// and asks the author to confirm the difference — it NEVER touches the document. Only a later, still-
+	// current confirm.result applies anything (OnConfirmResult). Returns Unavailable when there is no open,
+	// editable local draft to propose against (nothing is staged, nothing changes).
+	private EditProposalStatus StageEditProposal(EditProposal proposal)
+	{
+		string id;
+		string currentText;
+		lock (_sync)
+		{
+			DraftSession session = _session;
+			if (_disposed
+				|| _remoteDocument is not null
+				|| _currentPath is null
+				|| _repoRoot is null
+				|| _closePreparationClaimed
+				|| _documentMutationLeaseClaimed
+				|| _documentOpenTransition
+				|| _documentRepositoryTransition
+				|| _documentDiscardTransition
+				|| !IsEditingState(session.State))
+			{
+				return EditProposalStatus.Unavailable;
+			}
+
+			id = (++_editProposalCounter).ToString(CultureInfo.InvariantCulture);
+			currentText = _text;
+			DocumentMutationSnapshot snapshot = new(
+				_currentPath,
+				_repoRoot,
+				_text,
+				_lineEnding,
+				Interlocked.Read(ref _draftGeneration),
+				Interlocked.Read(ref _contentGeneration),
+				session.Branch,
+				session.BaseBranch);
+			_pendingEditProposal = new PendingEditProposal(id, snapshot, proposal.ProposedText, proposal.Summary);
+		}
+
+		// Emitted outside _sync: the author confirms/edits/rejects the difference in the confirmation UI, and
+		// only a matching, still-current confirm.result applies the edit through the ordinary editing path.
+		Emit(IpcSerializer.SerializeEvent(
+			MessageKinds.ConfirmRequest,
+			new ConfirmRequestPayload(id, currentText, proposal.ProposedText, proposal.Summary)));
+		_logger.LogInformation("Staged an assistant edit proposal for confirmation (id {Id})", id);
+		return EditProposalStatus.Staged;
+	}
+
+	// The author's decision on a staged proposeEdit proposal. Rejection drops the proposal and leaves the
+	// document untouched (no partial or intermediate state). Acceptance applies the confirmed (possibly
+	// author-edited) text through the SAME path as a manual edit — _text/_contentGeneration/dirty/autosave —
+	// but ONLY after re-checking the document is still exactly the one, at the same checkout and content
+	// generation, the proposal was staged against, so a concurrent edit during the review cannot corrupt state.
+	private void OnConfirmResult(IpcMessage message)
+	{
+		ConfirmResultPayload? payload = SafeGetPayload<ConfirmResultPayload>(message);
+		if (payload is null || string.IsNullOrEmpty(payload.Id))
+		{
+			return;
+		}
+
+		string id = payload.Id;
+		bool applied = false;
+		bool announce = false;
+		bool stale = false;
+		string? appliedText = null;
+		lock (_sync)
+		{
+			if (_pendingEditProposal is not { } pending
+				|| !string.Equals(pending.Id, id, StringComparison.Ordinal))
+			{
+				// No matching proposal: a superseded, duplicate, or stale reply. Ignore it.
+				return;
+			}
+
+			if (!string.Equals(payload.Decision, ConfirmDecisions.Accepted, StringComparison.Ordinal))
+			{
+				// Rejected (or any non-accept decision): discard, leaving no trace in the document.
+				_pendingEditProposal = null;
+				return;
+			}
+
+			string finalText = payload.Text ?? pending.ProposedText;
+			if (!IsEditProposalCurrentLocked(pending.Snapshot))
+			{
+				// The document changed (a concurrent edit, a document switch, a discard) while the author
+				// reviewed the proposal — refuse to apply it against a document it was not proposed for.
+				_pendingEditProposal = null;
+				stale = true;
+			}
+			else
+			{
+				DraftSession session = _session;
+				_text = finalText;
+				Interlocked.Increment(ref _contentGeneration);
+				announce = !session.Dirty;
+				_session = session with
+				{
+					Generation = Interlocked.Read(ref _draftGeneration),
+					Dirty = true,
+				};
+				_autosaveTimer?.Dispose();
+				_autosaveTimer = new Timer(
+					_ => RunDiskAutosave(), null, _autosaveIdle, Timeout.InfiniteTimeSpan);
+				_pendingEditProposal = null;
+				appliedText = finalText;
+				applied = true;
+			}
+		}
+
+		if (applied)
+		{
+			_logger.LogInformation("Applied a confirmed assistant edit ({Length} chars)", appliedText!.Length);
+			Emit(IpcSerializer.SerializeEvent(
+				MessageKinds.ConfirmApplied, new ConfirmAppliedPayload(id, appliedText!)));
+			if (announce)
+			{
+				SendTransientStatus("Unsaved changes");
+			}
+		}
+		else if (stale)
+		{
+			SendError(
+				"The document changed while the suggested edit was open, so it was not applied. "
+					+ "Ask the assistant again for a fresh suggestion.");
+		}
+	}
+
+	// Called under _sync: is the open document still exactly the one, at the same checkout and content
+	// generation, the proposal was staged against? Mirrors the TryClaimDocumentMutation currency discipline
+	// (identity via PathIdentity, generations via the _draftGeneration/_contentGeneration companions) plus the
+	// editing-state requirement, since a confirmed edit applies through the ordinary editing path.
+	private bool IsEditProposalCurrentLocked(DocumentMutationSnapshot snapshot)
+	{
+		DraftSession session = _session;
+		return !_disposed
+			&& _remoteDocument is null
+			&& !_closePreparationClaimed
+			&& !_documentMutationLeaseClaimed
+			&& !_documentOpenTransition
+			&& !_documentRepositoryTransition
+			&& !_documentDiscardTransition
+			&& _currentPath is not null
+			&& _repoRoot is not null
+			&& IsEditingState(session.State)
+			&& PathIdentity.SameSessionPath(_currentPath, snapshot.Path)
+			&& PathIdentity.SameSessionPath(_repoRoot, snapshot.RepoRoot)
+			&& Interlocked.Read(ref _draftGeneration) == snapshot.DraftGeneration
+			&& Interlocked.Read(ref _contentGeneration) == snapshot.ContentGeneration
+			&& string.Equals(session.Branch, snapshot.Branch, StringComparison.Ordinal)
+			&& string.Equals(session.BaseBranch, snapshot.BaseBranch, StringComparison.Ordinal);
+	}
 }

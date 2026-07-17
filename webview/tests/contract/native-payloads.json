@@ -248,6 +248,16 @@
   "chat.done": {
     "id": "7"
   },
+  "confirm.request": {
+    "id": "3",
+    "currentText": "The refund window is 14 days.\n",
+    "proposedText": "The refund window is 30 days.\n",
+    "summary": "Extend the refund window to 30 days."
+  },
+  "confirm.applied": {
+    "id": "3",
+    "text": "The refund window is 30 days.\n"
+  },
   "chat.attachment.picked": {
     "kind": "file",
     "label": "billing.md",

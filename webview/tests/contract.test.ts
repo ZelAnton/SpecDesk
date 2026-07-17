@@ -13,6 +13,8 @@ import {
   parseChatAttachment,
   parseChatDelta,
   parseChatDone,
+  parseConfirmApplied,
+  parseConfirmRequest,
   parseDiffResult,
   parseDocDiscardCompleted,
   parseDocLoaded,
@@ -304,6 +306,25 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
   it("chat.done", () => {
     const payload = parseChatDone(fixture["chat.done"]);
     expect(payload?.id).toBe("7");
+  });
+
+  it("confirm.request (staged proposeEdit before/after + summary)", () => {
+    const payload = parseConfirmRequest(fixture["confirm.request"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.id).toBe("3");
+    expect(payload?.currentText).toBe("The refund window is 14 days.\n");
+    expect(payload?.proposedText).toBe("The refund window is 30 days.\n");
+    expect(payload?.summary).toBe("Extend the refund window to 30 days.");
+    expect(parseConfirmRequest({ id: "3", currentText: "a" })).toBeNull();
+    expect(
+      parseConfirmRequest({ id: "3", currentText: "a", proposedText: "b", summary: 7 }),
+    ).toBeNull();
+  });
+
+  it("confirm.applied (host-applied confirmed edit)", () => {
+    const payload = parseConfirmApplied(fixture["confirm.applied"]);
+    expect(payload).toEqual({ id: "3", text: "The refund window is 30 days.\n" });
+    expect(parseConfirmApplied({ id: "3" })).toBeNull();
   });
 
   it("chat.attachment.picked", () => {
