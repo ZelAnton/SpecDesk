@@ -1,5 +1,6 @@
 # SpecDesk — Documentation
 
+- **[user-guide.md](user-guide.md)** — the author-facing guide to using SpecDesk itself.
 - **[ROADMAP.md](ROADMAP.md)** — the PoC-driven execution plan we work by (start here).
 - **[design/](design/README.md)** — the concept & architecture docs describing *what* SpecDesk is.
 

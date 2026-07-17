@@ -74,6 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A new `docs/user-guide.md` walks authors through the whole in-app workflow end to end — starting SpecDesk, opening a repository or folder, editing and saving versions, sending a draft for review, inline comments, the change-request document, the AI assistant, Disk and favorites, and what to do if something goes wrong — entirely in the app's plain-language vocabulary.
 - Connected accounts can refresh newly approved GitHub organizations and repositories from the avatar menu, with an automatic throttled check when the window regains focus.
 - Individual files can now be deleted from Disk with handle-bound, root-contained native validation, exact recent/favorite cleanup, and automatic closing when the deleted file is open.
 - Selected text can carry persistent local comment threads with replies, editing, and confirmed deletion in Code and Formatted views, anchored after complete blocks and kept out of the Markdown file.
