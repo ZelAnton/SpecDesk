@@ -46,6 +46,7 @@ export const Kinds = {
   folderOpen: "folder.open",
   treeRequest: "tree.request",
   fileDelete: "file.delete",
+  searchRequest: "search.request",
   workspaceRequest: "workspace.request",
   workspaceFavorite: "workspace.favorite",
   repoRegister: "repo.register",
@@ -98,6 +99,7 @@ export const Kinds = {
   templates: "templates",
   tree: "tree",
   fileDeleteCompleted: "file.deleteCompleted",
+  searchResults: "search.results",
   workspaceState: "workspace.state",
   repoCloneDestination: "repo.cloneDestination",
   repoCloneConflict: "repo.cloneConflict",
@@ -701,6 +703,32 @@ export interface TreePayload {
   error?: string;
   /** Explicit origin for empty/error GitHub levels that have no node path from which to infer it. */
   remote?: boolean;
+}
+
+/** Payload of `search.request` (webview→native): a plain, case-insensitive substring search across the
+ *  Markdown files under the active workspace root (or the open document's folder), the same authorized
+ *  perimeter as `tree.request`. Distinct from the toolbar's in-document search (index.ts) — this one spans
+ *  every Markdown file in the workspace, not just the open document. */
+export interface SearchRequestPayload {
+  query: string;
+}
+
+/** One search hit (native→webview, inside {@link SearchResultsPayload}): the absolute file `path`, the
+ *  1-based `line` the match was found on, and a bounded `snippet` of the surrounding text. */
+export interface SearchResultPayload {
+  path: string;
+  line: number;
+  snippet: string;
+}
+
+/** Payload of `search.results` (native→webview, correlated to `search.request` by envelope id): the bounded
+ *  set of matches for `query` across the workspace's Markdown files. `truncated` is true when the search
+ *  stopped early on a limit (entries examined, elapsed time, or the result cap) rather than exhausting the
+ *  tree. */
+export interface SearchResultsPayload {
+  query: string;
+  results: SearchResultPayload[];
+  truncated: boolean;
 }
 
 /** Authoritative repository/version/path context for the open document. The file-tree root is separate. */

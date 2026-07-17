@@ -51,6 +51,8 @@ import {
   type ReviewCommentAnchorPayload,
   type ReviewCommentPublishedPayload,
   type ReviewCommentSyncPayload,
+  type SearchResultPayload,
+  type SearchResultsPayload,
   STATUS_STATES,
   type StatusPayload,
   type StatusState,
@@ -970,6 +972,29 @@ export function parseTree(value: unknown): TreePayload | null {
   if (value.error !== undefined) payload.error = value.error;
   if (value.remote !== undefined) payload.remote = value.remote;
   return payload;
+}
+
+function parseSearchResult(value: unknown): SearchResultPayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.path) ||
+    !isNumber(value.line) ||
+    !isString(value.snippet)
+  ) {
+    return null;
+  }
+  return { path: value.path, line: value.line, snippet: value.snippet };
+}
+
+export function parseSearchResults(value: unknown): SearchResultsPayload | null {
+  if (!isRecord(value) || !isString(value.query) || !isBoolean(value.truncated)) {
+    return null;
+  }
+  const results = parseArray(value.results, parseSearchResult);
+  if (results === null) {
+    return null;
+  }
+  return { query: value.query, results, truncated: value.truncated };
 }
 
 export function parseWorkspaceContext(value: unknown): WorkspaceContextPayload | null {

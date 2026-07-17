@@ -26,6 +26,7 @@ import { buildHomeView, type HomeView } from "./tools/home-view.js";
 import { type NavDestination, Navigator } from "./tools/navigator.js";
 import { buildNotificationsView } from "./tools/notifications-view.js";
 import { Outline } from "./tools/outline.js";
+import type { SearchPanel } from "./tools/search-panel.js";
 
 /** The central view id of the Start screen — the concrete second view the navigator substitutes in. */
 export const CENTRAL_VIEW_HOME = "home";
@@ -89,6 +90,8 @@ export interface WorkspaceTools {
   readonly history?: PanelTool;
   /** The left rail's workspace file navigator (the folder tree). Absent → a placeholder in a reduced DOM. */
   readonly files?: PanelTool;
+  /** The left rail's workspace-wide Markdown search. Absent → a placeholder in a reduced DOM. */
+  readonly search?: SearchPanel;
   /** The left rail's Recent panel (recently-opened files/folders). Absent → a placeholder. */
   readonly recent?: PanelTool;
   /** The left rail's Favorites panel (starred files/folders). Absent → a placeholder. */
@@ -330,6 +333,14 @@ export function setupWorkspace(
           icon("files"),
           "The folders and specs of an opened workspace will appear here.",
         ),
+      // The real workspace-wide search when index.ts wired it; a placeholder in a reduced DOM.
+      tools.search ??
+        placeholderTool(
+          "search",
+          "Search",
+          icon("search"),
+          "Open a folder, then search its specs here.",
+        ),
       editorOutline,
     ],
     right: [
@@ -449,7 +460,9 @@ export function setupWorkspace(
 
   // Before the first document frame only the globally useful Assistant applies.
   docks.get("right")?.setAvailableTools(rightToolsForContext(EMPTY_ACTIVE_CONTEXT));
-  docks.get("left")?.setAvailableTools(new Set(["navigator", "repositories", "prs", "files"]));
+  docks
+    .get("left")
+    ?.setAvailableTools(new Set(["navigator", "repositories", "prs", "files", "search"]));
 
   // A dock open/close/resize changes the centre's box; observing it (rather than each dock) catches all
   // three uniformly and coalesces a live drag into one re-measure per frame. Guarded for jsdom, which has
@@ -480,7 +493,7 @@ export function setupWorkspace(
   contextPanel("pull-request")?.addEventListener("click", () => revealTool("left", "prs"));
   const setActiveContext = (context: ActiveContext): void => {
     docks.get("right")?.setAvailableTools(rightToolsForContext(context));
-    const left = new Set(["navigator", "repositories", "prs", "files"]);
+    const left = new Set(["navigator", "repositories", "prs", "files", "search"]);
     if (context.file !== null) left.add("editor");
     docks.get("left")?.setAvailableTools(left);
     activeContext = context;

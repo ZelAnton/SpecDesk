@@ -318,6 +318,17 @@
     "requestId": 32,
     "succeeded": true
   },
+  "search.results": {
+    "query": "refund",
+    "results": [
+      {
+        "path": "C:\\specs\\billing-repo\\specs\\billing.md",
+        "line": 3,
+        "snippet": "The refund window is 30 days."
+      }
+    ],
+    "truncated": false
+  },
   "workspace.context": {
     "repository": "billing-repo",
     "repositoryRoot": "C:\\specs\\billing-repo",

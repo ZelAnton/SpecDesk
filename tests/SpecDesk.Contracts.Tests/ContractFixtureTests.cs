@@ -154,6 +154,13 @@ public sealed class ContractFixtureTests
 		], RequestId: 31)),
 		(MessageKinds.FileDeleteCompleted, new FileDeleteCompletedPayload(
 			@"C:\specs\billing-repo\README.md", @"C:\specs\billing-repo", 32, Succeeded: true)),
+		// Workspace-wide search (T-078): one bounded match, not truncated (the optional field is exercised
+		// by the "no matches" / truncated cases the webview decoder test covers directly).
+		(MessageKinds.SearchResults, new SearchResultsPayload(
+			"refund",
+			[new SearchResultPayload(
+				@"C:\specs\billing-repo\specs\billing.md", 3, "The refund window is 30 days.")],
+			Truncated: false)),
 		// CanPublish true exercises the author-publish gate through both decoders (the repo permits publishing).
 		(MessageKinds.WorkspaceContext, new WorkspaceContextPayload(
 			"billing-repo", @"C:\specs\billing-repo", "spec/billing-refunds", "named", "main", "specs/billing.md",

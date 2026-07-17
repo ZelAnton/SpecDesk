@@ -553,6 +553,7 @@ public sealed partial class HostController : IDisposable
 		RegisterActivityHandlers();
 		RegisterWorkspaceHandlers();
 		RegisterRepositoryBrowseHandlers();
+		RegisterSearchHandlers();
 	}
 
 	// The cross-cutting diagnostics / link channels whose handlers live in this file (HostController.cs):

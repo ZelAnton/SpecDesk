@@ -51,6 +51,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseSearchResults,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -92,6 +93,7 @@ import {
   RepositoriesPanel,
 } from "./workspace/tools/repositories-panel.js";
 import { ReviewRequestsPanel } from "./workspace/tools/review-requests-panel.js";
+import { SearchPanel } from "./workspace/tools/search-panel.js";
 import {
   favoritesPanel,
   recentPanel,
@@ -500,6 +502,17 @@ function wire(): void {
         ipc.send(Kinds.docOpen, path === undefined ? { requestId } : { path, requestId });
       },
     );
+  };
+  // A search-result click's requested scroll target, consumed by the doc.loaded handler once the matching
+  // document has loaded (openDocument is async — it round-trips through doc.open/doc.loaded). Cleared
+  // unconditionally on the next load: a stale target for a document that never actually opened (the open was
+  // blocked, or a different load raced ahead of it) must not later misfire against an unrelated document.
+  let pendingSearchNavigation: { path: string; line: number } | null = null;
+  const openSearchResult = (path: string, line: number): void => {
+    pendingSearchNavigation = { path, line };
+    if (!openDocument(path)) {
+      pendingSearchNavigation = null;
+    }
   };
   let review: ReviewController;
   let formatToolbar: FormatToolbar;
@@ -1185,6 +1198,17 @@ function wire(): void {
         setHover(null);
         // Align the source editor's line heights to the freshly rendered formatted blocks.
         reconcileHeights();
+        // A search-result click asked for this exact document at a specific line — jump there now that the
+        // pane heights above are settled (a scroll-to-line before that would clamp against stale geometry).
+        // A pending target for a DIFFERENT document (the click's open lost a race, or was superseded) is
+        // simply dropped rather than misapplied.
+        if (pendingSearchNavigation !== null) {
+          const target = pendingSearchNavigation;
+          pendingSearchNavigation = null;
+          if (target.path === payload.path) {
+            navigateToLine(target.line);
+          }
+        }
         // Read-only until the author clicks Edit (which forks a working branch). A freshly loaded
         // document is Published: the chrome offers Edit and hides the draft-only actions.
         editing = false;
@@ -1878,6 +1902,21 @@ function wire(): void {
     });
     fileTree = files;
 
+    // The left-rail workspace-wide Markdown search (T-078): a bounded host-side search, distinct from the
+    // toolbar's in-document search above. One request/reply round-trip per submitted query; a result click
+    // opens its document and scrolls to the match (see openSearchResult/pendingSearchNavigation).
+    const search = new SearchPanel({
+      request: (query) =>
+        ipc.request(Kinds.searchRequest, { query }).then((reply) => {
+          const payload = parseSearchResults(reply.payload);
+          if (payload === null) {
+            throw new Error("Malformed search.results reply");
+          }
+          return payload;
+        }),
+      onOpenResult: (path, line) => openSearchResult(path, line),
+    });
+
     // Open a workspace item — a folder as the file navigator's root (`folder.open`), a file in the editor
     // (`doc.open`). Shared by the Recent/Favorites panels and the Start screen's recent list; the integrator
     // keeps the ipc/Kinds knowledge so those tools stay callback-driven and unit-testable.
@@ -2216,6 +2255,7 @@ function wire(): void {
         comments: prComments,
         history,
         files,
+        search,
         recent,
         favorites,
         repositories,

@@ -81,6 +81,8 @@
   "review.commentSync",
   "review.commentSync.request",
   "review.refresh",
+  "search.request",
+  "search.results",
   "status",
   "templates",
   "templates.request",

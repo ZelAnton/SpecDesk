@@ -36,6 +36,7 @@ import {
   parseRepoOperationCompleted,
   parseReviewCommentPublished,
   parseReviewCommentSync,
+  parseSearchResults,
   parseStatus,
   parseTemplates,
   parseTree,
@@ -358,6 +359,19 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       root: "C:\\specs\\billing-repo",
       requestId: 32,
       succeeded: true,
+    });
+  });
+
+  it("search.results (one bounded, non-truncated match)", () => {
+    const payload = parseSearchResults(fixture["search.results"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.query).toBe("refund");
+    expect(payload?.truncated).toBe(false);
+    expect(payload?.results).toHaveLength(1);
+    expect(payload?.results[0]).toEqual({
+      path: "C:\\specs\\billing-repo\\specs\\billing.md",
+      line: 3,
+      snippet: "The refund window is 30 days.",
     });
   });
 

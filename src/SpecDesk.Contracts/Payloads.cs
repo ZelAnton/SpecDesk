@@ -52,6 +52,7 @@ public static class MessageKinds
 	public const string FolderOpen = "folder.open";
 	public const string TreeRequest = "tree.request";
 	public const string FileDelete = "file.delete";
+	public const string SearchRequest = "search.request";
 	public const string WorkspaceRequest = "workspace.request";
 	public const string WorkspaceFavorite = "workspace.favorite";
 	public const string RepoRegister = "repo.register";
@@ -105,6 +106,7 @@ public static class MessageKinds
 	public const string Templates = "templates";
 	public const string Tree = "tree";
 	public const string FileDeleteCompleted = "file.deleteCompleted";
+	public const string SearchResults = "search.results";
 	public const string WorkspaceState = "workspace.state";
 	public const string RepoConfirmation = "repo.confirmation";
 	public const string RepoOperationCompleted = "repo.operationCompleted";
@@ -215,6 +217,30 @@ public sealed record TreeNode(
 /// </summary>
 public sealed record TreePayload(
 	string Root, IReadOnlyList<TreeNode> Nodes, long RequestId = 0, string? Error = null, bool? Remote = null);
+
+/// <summary>
+/// Payload of <c>search.request</c> (webview→native): a plain, case-insensitive substring search across
+/// the Markdown files under the active workspace root (or the open document's folder when no workspace is
+/// open) — the same authorized perimeter as <c>tree.request</c>. Distinct from the toolbar's in-document
+/// search (webview/src/index.ts): this one is host-side and spans every Markdown file, not just the open
+/// document.
+/// </summary>
+public sealed record SearchRequestPayload(string Query);
+
+/// <summary>One search hit (native→webview, inside <see cref="SearchResultsPayload"/>): the absolute file
+/// <paramref name="Path"/>, the 1-based <paramref name="Line"/> the match was found on, and a bounded
+/// <paramref name="Snippet"/> of the surrounding text (never the whole file/line when it is long).</summary>
+public sealed record SearchResultPayload(string Path, int Line, string Snippet);
+
+/// <summary>
+/// Payload of <c>search.results</c> (native→webview, correlated to <c>search.request</c> by envelope id):
+/// the bounded set of matches for <paramref name="Query"/> across the workspace's Markdown files.
+/// <paramref name="Truncated"/> is true when the search stopped early on a limit (files/entries examined,
+/// elapsed time, or the result cap) rather than exhausting the tree — the webview notes the results may be
+/// incomplete rather than implying it saw everything.
+/// </summary>
+public sealed record SearchResultsPayload(
+	string Query, IReadOnlyList<SearchResultPayload> Results, bool Truncated);
 
 /// <summary>Authoritative context for the open document. Repository fields come from the document's
 /// versioning root (never the independently browsed file-tree root); <c>Branch</c> is the actual named

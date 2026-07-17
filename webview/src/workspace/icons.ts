@@ -41,6 +41,8 @@ const ICON_BODIES: Record<string, string> = {
   createBranch: `<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="12" r="2"/><path d="M6 7v10"/><path d="M8 7c6 0 4 5 8 5"/><line x1="18" y1="5" x2="18" y2="9"/><line x1="16" y1="7" x2="20" y2="7"/>`,
   more: `<circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/>`,
   delete: `<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 15H6L5 6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/>`,
+  // magnifying glass — search across the workspace's specs
+  search: `<circle cx="10.5" cy="10.5" r="6.5"/><line x1="20" y1="20" x2="15.3" y2="15.3"/>`,
   // dot fallback — an unknown mode
   fallback: `<circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/>`,
 };
