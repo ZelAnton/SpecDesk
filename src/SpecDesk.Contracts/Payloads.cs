@@ -54,6 +54,8 @@ public static class MessageKinds
 	public const string FileDelete = "file.delete";
 	public const string WorkspaceRequest = "workspace.request";
 	public const string WorkspaceFavorite = "workspace.favorite";
+	public const string PreferencesRequest = "preferences.request";
+	public const string PreferencesUpdate = "preferences.update";
 	public const string RepoRegister = "repo.register";
 	public const string RepoUnregister = "repo.unregister";
 	public const string RepoOpen = "repo.open";
@@ -106,6 +108,7 @@ public static class MessageKinds
 	public const string Tree = "tree";
 	public const string FileDeleteCompleted = "file.deleteCompleted";
 	public const string WorkspaceState = "workspace.state";
+	public const string PreferencesState = "preferences.state";
 	public const string RepoConfirmation = "repo.confirmation";
 	public const string RepoOperationCompleted = "repo.operationCompleted";
 	public const string RepoCloneDestination = "repo.cloneDestination";
@@ -759,6 +762,17 @@ public sealed record WorkspaceFavoritePayload(
 	string? RepositoryId = null,
 	string? Branch = null,
 	bool? IsFolder = null);
+
+/// <summary>
+/// Payload of <c>preferences.state</c> (native→webview, sent on <c>preferences.request</c>) and
+/// <c>preferences.update</c> (webview→native): the persisted UI preferences (T-077). <paramref
+/// name="Theme"/> is <c>"light"</c>/<c>"dark"</c>, or <c>null</c> when the author has never overridden it —
+/// the webview then falls back to the OS colour scheme, exactly as before this store existed. <paramref
+/// name="Wrap"/> is the editor's line-wrap toggle. <paramref name="ViewMode"/> is the wire view-mode name
+/// (<c>code</c>/<c>split</c>/<c>formatted</c>). Unlike <c>workspace.state</c>, an update is write-only: the
+/// webview already holds the values it just changed, so the host does not broadcast a reply.
+/// </summary>
+public sealed record PreferencesPayload(string? Theme, bool Wrap, string ViewMode);
 
 /// <summary>Payload of <c>repo.register</c> (webview→native): register a GitHub repository from a URL or spec
 /// (<c>https://github.com/owner/name(.git)</c>, <c>owner/name</c>, or <c>git@github.com:owner/name(.git)</c>).

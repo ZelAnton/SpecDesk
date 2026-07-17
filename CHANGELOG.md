@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Versioned releases are now published automatically: pushing a `vX.Y.Z` tag builds and tests SpecDesk on the tagged commit, then creates a GitHub Release with notes drawn from the changelog (falling back to the commit history) and the self-contained Windows `.exe` attached for download.
 - A Layer 1 e2e accessibility gate now runs an axe-core (WCAG 2.0/2.1 A + AA) scan, in both the light and dark theme, over the editor's three view modes, the workspace-panel left rail, the inline prompt bars, the native pull-request document, and the GitHub account/sign-in chrome, failing on any serious or critical violation not already sanctioned as a documented, pre-existing exception.
 - The assistant can now see the open document and what has changed in it without you attaching anything, and the "Save a version" and "Send for review" prompts can pre-fill their note and review title/body with an assistant-drafted suggestion based on that change. The suggestion is only ever a starting point you review and edit before it is applied — nothing is sent automatically — and whenever the assistant is unavailable or slow the prompts fall back to the previous plain-language wording, so saving a version or sending for review is never blocked.
+- Your theme, line-wrap, and view-mode choices now persist across restarts, and the window reopens at its last position, size, and maximized state (falling back to the previous centered default if that no longer fits your current monitors).
 
 ### Changed
 

@@ -48,6 +48,8 @@ export const Kinds = {
   fileDelete: "file.delete",
   workspaceRequest: "workspace.request",
   workspaceFavorite: "workspace.favorite",
+  preferencesRequest: "preferences.request",
+  preferencesUpdate: "preferences.update",
   repoRegister: "repo.register",
   repoUnregister: "repo.unregister",
   repoOpen: "repo.open",
@@ -99,6 +101,7 @@ export const Kinds = {
   tree: "tree",
   fileDeleteCompleted: "file.deleteCompleted",
   workspaceState: "workspace.state",
+  preferencesState: "preferences.state",
   repoCloneDestination: "repo.cloneDestination",
   repoCloneConflict: "repo.cloneConflict",
   repoConfirmation: "repo.confirmation",
@@ -783,6 +786,17 @@ export interface WorkspaceFavoritePayload {
   repositoryId?: string;
   branch?: string;
   isFolder?: boolean;
+}
+
+/** Payload of `preferences.state` (native→webview, sent on `preferences.request`) and
+ *  `preferences.update` (webview→native): the persisted UI preferences (T-077). `theme` is absent when
+ *  the author has never overridden it — the webview then falls back to the OS colour scheme, exactly as
+ *  before this store existed. Unlike `workspace.state`, an update is write-only: the webview already holds
+ *  the values it just changed, so the host does not broadcast a reply. */
+export interface PreferencesPayload {
+  theme?: "light" | "dark";
+  wrap: boolean;
+  viewMode: "code" | "split" | "formatted";
 }
 
 /** Payload of `repo.register` (webview→native): register a GitHub repository from a URL or spec

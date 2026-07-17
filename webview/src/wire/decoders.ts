@@ -34,6 +34,7 @@ import {
   type PrCommentPayload,
   type PrCommitPayload,
   type PrDetailsPayload,
+  type PreferencesPayload,
   type PreviewPayload,
   type PrListItemPayload,
   type PrListPayload,
@@ -85,6 +86,25 @@ export function isBoolean(value: unknown): value is boolean {
 
 export function parseWindowState(value: unknown): WindowStatePayload | null {
   return isRecord(value) && isBoolean(value.maximized) ? { maximized: value.maximized } : null;
+}
+
+const PREFERENCES_VIEW_MODES = ["code", "split", "formatted"] as const;
+
+function isPreferencesViewMode(value: unknown): value is PreferencesPayload["viewMode"] {
+  return isString(value) && (PREFERENCES_VIEW_MODES as readonly string[]).includes(value);
+}
+
+export function parsePreferencesState(value: unknown): PreferencesPayload | null {
+  if (!isRecord(value) || !isBoolean(value.wrap) || !isPreferencesViewMode(value.viewMode)) {
+    return null;
+  }
+  if (value.theme !== undefined && value.theme !== "light" && value.theme !== "dark") {
+    return null;
+  }
+  // `theme` is optional (exactOptionalPropertyTypes forbids an explicit `undefined`), so omit it.
+  return value.theme === undefined
+    ? { wrap: value.wrap, viewMode: value.viewMode }
+    : { theme: value.theme, wrap: value.wrap, viewMode: value.viewMode };
 }
 
 export function parseWindowCloseRequested(value: unknown): WindowCloseRequestedPayload | null {

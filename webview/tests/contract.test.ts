@@ -25,6 +25,7 @@ import {
   parseGitHubRepositories,
   parseImageInserted,
   parsePrDetails,
+  parsePreferencesState,
   parsePreview,
   parsePrList,
   parsePrMutationCompleted,
@@ -399,6 +400,20 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
     });
     expect(payload?.favorites.map((item) => item.kind)).toEqual(["clone", "branch"]);
     expect(payload?.favorites[1]?.branch).toBe("review-copy");
+  });
+
+  it("preferences.state (T-077: theme present, wrap on, split)", () => {
+    expect(parsePreferencesState(fixture["preferences.state"])).toEqual({
+      theme: "dark",
+      wrap: true,
+      viewMode: "split",
+    });
+    expect(parsePreferencesState({ wrap: true, viewMode: "split" })).toEqual({
+      wrap: true,
+      viewMode: "split",
+    });
+    expect(parsePreferencesState({ theme: "blue", wrap: true, viewMode: "split" })).toBeNull();
+    expect(parsePreferencesState({ theme: "dark", wrap: true, viewMode: "wide" })).toBeNull();
   });
 
   it("workspace.context (authoritative repository, branches, and relative path)", () => {

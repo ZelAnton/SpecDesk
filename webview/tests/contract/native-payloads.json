@@ -403,5 +403,10 @@
         ]
       }
     ]
+  },
+  "preferences.state": {
+    "theme": "dark",
+    "wrap": true,
+    "viewMode": "split"
   }
 }

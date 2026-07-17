@@ -111,6 +111,11 @@ public sealed partial class HostController : IDisposable
 	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
 	// _auth / _chatAgent. See HostController.Workspace.cs.
 	private readonly WorkspaceStore? _workspace;
+	// T-077: the persisted UI-preferences store (theme/wrap/view mode/window geometry). Optional — null
+	// leaves the preferences handlers inert (preferences.request answers with the same hard-coded defaults
+	// the webview assumed before this store existed; preferences.update is a no-op), the same
+	// graceful-degradation pattern as _workspace. See HostController.Preferences.cs.
+	private readonly PreferencesStore? _preferences;
 	// A6: clones a GitHub repo into a managed local folder so it can be opened as a workspace (repo.open).
 	// Optional — null leaves OnOpenRepo inert (nothing to clone), the same graceful-degradation pattern as the
 	// other injected dependencies. See HostController.Workspace.cs.
@@ -310,6 +315,7 @@ public sealed partial class HostController : IDisposable
 		ISuggestionAgent? suggestionAgent = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
+		PreferencesStore? preferences = null,
 		IRepositoryCloner? cloner = null,
 		ILocalRepositoryInspector? repositoryInspector = null,
 		IGitHubRepositoryCatalog? repositoryCatalog = null)
@@ -333,6 +339,7 @@ public sealed partial class HostController : IDisposable
 		_suggestionAgent = suggestionAgent;
 		_templates = templates;
 		_workspace = workspace;
+		_preferences = preferences;
 		_cloner = cloner;
 		_repositoryInspector = repositoryInspector;
 		_repositoryCatalog = repositoryCatalog;
@@ -553,6 +560,7 @@ public sealed partial class HostController : IDisposable
 		RegisterActivityHandlers();
 		RegisterWorkspaceHandlers();
 		RegisterRepositoryBrowseHandlers();
+		RegisterPreferencesHandlers();
 	}
 
 	// The cross-cutting diagnostics / link channels whose handlers live in this file (HostController.cs):

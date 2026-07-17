@@ -188,6 +188,9 @@ public sealed class ContractFixtureTests
 					],
 					new RepositoryStatusPayload(2, 1, true, 3, false))]),
 		])),
+		// T-077: persisted UI preferences. Theme present exercises the optional field through both decoders
+		// (a fresh install with no saved theme omits it instead).
+		(MessageKinds.PreferencesState, new PreferencesPayload("dark", true, "split")),
 	];
 
 	[TestCase(0, true)]
