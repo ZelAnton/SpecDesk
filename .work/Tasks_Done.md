@@ -1790,3 +1790,113 @@ artifact-size guard и empty-notes guard (оба fail closed), `gh release creat
 Документация процедуры среза версии в `docs/release-process.md`/`CONTRIBUTING.md`. Запись в
 CHANGELOG.md. Approval-request `apr-3a180bdef003f47bcf53be04c4ed2635` подан на аудит
 (production-инфраструктура) — не блокировал публикацию.
+
+# Активная задача
+
+Статус: выполнена
+Исходная задача: [T-073] Добавить действие «Опубликовать»: merge одобренного PR с гейтом allow-author-publish
+
+Оценка сложности: средняя
+Оценка ответственности: высокая
+Риск: high — сливает одобренный PR в основную линию и удаляет ветку черновика (необратимое
+git-действие в чужой истории), плюс расширяет публичный native↔webview IPC-контракт новым
+видом сообщения (`action.publish`) — категория «изменение архитектурных границ и публичных
+контрактов/API» из `.work/constraints.md`.
+
+Машина жизненного цикла уже определяла переход Approved → Publish → Published
+(`src/SpecDesk.Core/Lifecycle.fs`), но в UI действия «Publish» не существовало, а протокольная
+строка `action.publish` была помечена в docs/design/09-ipc-protocol.md как «not yet built».
+
+Итог: реальный фикс. Новая webview-команда `doc.publish` (protocol.ts/decoders.ts +
+SpecDesk.Contracts IpcMessage/Payloads); host-обработчик `OnPublish` в
+`HostController.Review.cs` (зарегистрирован в `RegisterReviewHandlers`, K-012) сливает
+одобренный PR через `SpecDesk.GitHub`/`GitHubHttp` (K-006) с переякорением к approved head
+SHA (отказ при устаревшем одобрении), удаляет ветку черновика best-effort
+(`DeleteMergedBranchBestEffort`, не откатывает merge при сбое), переводит lifecycle → Published.
+Действие в lifecycle-chrome гейтится конфигом `allow-author-publish`
+(`WorkflowConfig.allowAuthorPublishForHost`, авторитетно перечитан host-side, не доверяя
+webview) и переучитывается только простоязычной формулировкой. Ошибка merge не двигает
+lifecycle, автору — понятная ошибка. Тесты (host + webview) покрывают гейт конфига,
+успешный merge, ошибку merge. CHANGELOG.md обновлён. Approval-request
+`apr-80ccd6b305cf5f7b64db73433f19d55a` подан на аудит (архитектурная граница/публичный
+контракт) — не блокировал публикацию.
+
+# Активная задача
+
+Статус: выполнена
+Исходная задача: [T-076] Автоматическая фоновая синхронизация зарегистрированных локальных копий
+
+Оценка сложности: высокая
+Оценка ответственности: высокая
+Риск: medium — автоматически мутирует локальное git-состояние без явного действия
+пользователя (fetch + fast-forward), но строго ограничено чистыми основными линиями,
+без выхода на публичные контракты/публикацию.
+
+Ручные «Get updates» / «Share changes» были удалены «in preparation for automatic
+synchronization», остался только ручной Refresh на панели репозиториев; роадмап PoC-4
+планировал background auto-fetch.
+
+Итог: реальный фикс. `SpecDesk.Git` `FetchAndFastForwardCleanLine`/
+`TryFastForwardCleanDefaultLine` — консервативный safe fast-forward: пропускает detached
+HEAD, не-дефолтную линию, конфликты индекса, грязное дерево, отсутствие upstream-трекинга и
+любую дивергенцию; всегда фетчит для обновления индикаторов. Host-цикл в
+`HostController.Workspace.cs` (`OnAutoSyncRepositories`) — троттлинг 45с + focus-gated
+webview-poll (180с, `document.hasFocus()`), single-flight, отменяемость по sign-out/teardown
+рабочей области. Ручной Refresh не сломан (делегирует в общий `SyncRepositories`). Тесты
+(host: троттлинг/focus-gating/отказ от merge при грязном дереве/отмена; webview:
+обновление индикаторов) покрывают критерии. CHANGELOG.md обновлён.
+
+Примечание: в процессе интеграции этой задачи в батч был обнаружен и исправлен
+инфраструктурный дефект коммита (bookmark ветки задачи по ошибке указывал на пустой коммит
+из-за VCS cwd-carryover при коммите оркестратором) — исправлено оркестратором напрямую
+(коррекция топологии bookmark'а), без изменения кода задачи; после коррекции реализация
+прошла полное независимое ревью без находок.
+
+# Активная задача
+
+Статус: выполнена
+Исходная задача: [T-079] Дать ассистенту read-only контекст документа и AI-подсказки заметок версий и текстов PR
+
+Оценка сложности: высокая
+Оценка ответственности: высокая
+Риск: medium — новые read-only AI-инструменты (getCurrentDoc/getDiff) в hardened SDK-режиме
+с явным allowlist, немутирующие; содержимое документа и вывод инструментов трактуются как
+данные, а не инструкции. Обязательный откат на детерминированные шаблоны при недоступности/
+падении провайдера ограничивает блок-радиус.
+
+Ассистент получал контекст только через явные вложения; заметки версий и тексты PR
+генерировались детерминированными шаблонами (`WorkflowSeeds.cs`).
+
+Итог: реальный фикс. Новые read-only hardened-SDK инструменты `getCurrentDoc`/`getDiff` в
+`src/SpecDesk.Ai` (explicit allowlist, немутирующие — только геттеры/immutable-снимок).
+`suggestVersionNote`/`suggestPrDescription` заменяют шаблоны в диалогах «Save a version»/
+«Send for review» как редактируемое предложение (не автоприменение), с гарантированным
+детерминированным откатом на шаблон при недоступности/ошибке/таймауте провайдера
+(`SuggestionTimeout=12s`). `Program.cs` намеренно передаёт `null` агент — ships template-only
+by construction, seam полностью подключён и покрыт `FakeSuggestionAgent`. Контент документа
+и вывод инструментов встраиваются как данные с явной prompt-injection-границей. K-004/K-005
+соблюдены (чтения `_currentPath`/`_repoRoot`/`_text` под `_sync`). Тесты (host + webview:
+happy-path, откат, немутирующая природа) покрывают критерии. CHANGELOG.md обновлён.
+
+# Активная задача
+
+Статус: выполнена
+Исходная задача: [T-086] Добавить автоматизированный аудит доступности axe-core в Layer 1 e2e
+
+Оценка сложности: средняя
+Оценка ответственности: низкая
+Риск: low — test-only добавление, не затрагивает production-код/контракты; единственный
+эффект — новый исполняемый CI-гейт.
+
+Дизайн-концепт требует WCAG AA и полную доступность, но автоматической проверки не было —
+только точечные ручные e2e-проверки.
+
+Итог: реальный фикс. Новый Layer 1 e2e-сценарий `accessibility-audit.e2e.ts` (`@axe-core/
+playwright` как dev-зависимость `e2e/`) сканирует редактор (raw/rendered/split), панели
+рабочей области, диалоги, документ проверки PR, вход GitHub — в светлой и тёмной теме;
+падает на нарушениях serious/critical. Сознательно допущенные пред-существующие исключения
+(dock-rail role=radio+aria-expanded, CodeMirror `.cm-content` без accessible name, несколько
+color-contrast случаев) зафиксированы явным списком `KNOWN_EXCEPTIONS` с обоснованием —
+проверено позитивным контрольным тестом, что список действительно узкий (гейт падает на
+новых несанкционированных нарушениях). `npm run typecheck` проходит, сценарий запускается
+через `npm run e2e --project=webview-mock`. CHANGELOG.md обновлён.
