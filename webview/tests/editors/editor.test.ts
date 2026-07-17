@@ -60,6 +60,15 @@ function pressModI(view: EditorView): boolean {
   );
 }
 
+describe("MarkdownEditor spellcheck (jsdom, T-081)", () => {
+  it("enables the browser spellchecker on the editable content", () => {
+    const { ed } = mount();
+    const view = viewOf(ed);
+    expect(view.contentDOM.getAttribute("spellcheck")).toBe("true");
+    expect(view.contentDOM.getAttribute("lang")).toBe("en");
+  });
+});
+
 describe("MarkdownEditor diff overlay (jsdom)", () => {
   it("highlights changed source words inline in a changed paragraph, keeping the line wash", () => {
     const { ed, host } = mount();

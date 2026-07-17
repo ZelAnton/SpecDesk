@@ -73,6 +73,10 @@ public sealed partial class HostController : IDisposable
 
 	private readonly Func<string, string, Renderer.RenderResult> _render;
 	private readonly Action<string> _send;
+	// The "kind → handler" dispatch table (see IpcHandlerRegistry) that replaced the central OnMessage
+	// switch. Populated once at construction by RegisterMessageHandlers, where each partial slice registers
+	// its own kinds in its own file; DispatchMessage routes through it.
+	private readonly IpcHandlerRegistry _messageHandlers = new();
 	private readonly object _outboundSync = new();
 	private readonly Queue<OutboundEntry> _outboundFrames = new();
 	private readonly record struct OutboundEntry(string? Json, Action? Completion);
@@ -331,6 +335,7 @@ public sealed partial class HostController : IDisposable
 		_traceBridge = new TraceBridge(_logger, Logging.LogDirectory);
 		_logBridge = new LogBridge(
 			_logger, _dialogs, SendError, Logging.LogDirectory, () => _traceBridge.RenderTail(200));
+		RegisterMessageHandlers();
 		RecoverPendingRepositoryRenames();
 	}
 
@@ -495,188 +500,14 @@ public sealed partial class HostController : IDisposable
 				message.Payload?.GetRawText().Length ?? 0);
 		}
 
-		switch (message.Kind)
+		if (_messageHandlers.TryGetHandler(message.Kind, out Action<IpcMessage> handler))
 		{
-			case MessageKinds.Ready:
-				OnReady();
-				break;
-			case MessageKinds.EditorChanged:
-				OnEditorChanged(message);
-				break;
-			case MessageKinds.DocOpen:
-				OnOpen(message);
-				break;
-			case MessageKinds.FolderOpen:
-				OnOpenFolder(message);
-				break;
-			case MessageKinds.TreeRequest:
-				OnTreeRequest(message);
-				break;
-			case MessageKinds.FileDelete:
-				OnDeleteFile(message);
-				break;
-			case MessageKinds.DocSave:
-				OnSave();
-				break;
-			case MessageKinds.DocEdit:
-				OnEdit(message);
-				break;
-			case MessageKinds.DocSaveVersion:
-				OnSaveVersion(message);
-				break;
-			case MessageKinds.DocSendForReview:
-				OnSendForReview(message);
-				break;
-			case MessageKinds.PrSuggestedRequest:
-				OnSuggestPrText(message);
-				break;
-			case MessageKinds.DocUpdateReview:
-				OnUpdateReview();
-				break;
-			case MessageKinds.ReviewRefresh:
-				OnRefreshReviewStatus();
-				break;
-			case MessageKinds.PrListRequest:
-				OnListReviews(message);
-				break;
-			case MessageKinds.PrDetailsRequest:
-				OnPrDetails(message);
-				break;
-			case MessageKinds.PrReviewersRequest:
-				OnPrReviewers(message);
-				break;
-			case MessageKinds.PrCommentCreate:
-				OnPrCommentCreate(message);
-				break;
-			case MessageKinds.PrCommentReply:
-				OnPrCommentReply(message);
-				break;
-			case MessageKinds.PrCommentUpdate:
-				OnPrCommentUpdate(message);
-				break;
-			case MessageKinds.ReviewCommentSyncRequest:
-				OnReviewCommentSync(message);
-				break;
-			case MessageKinds.ReviewCommentPublish:
-				OnReviewCommentPublish(message);
-				break;
-			case MessageKinds.BranchNameRequest:
-				OnSuggestBranchName(message);
-				break;
-			case MessageKinds.VersionNoteRequest:
-				OnSuggestVersionNote(message);
-				break;
-			case MessageKinds.DocDiscard:
-				OnDiscard(message);
-				break;
-			case MessageKinds.ImagePaste:
-				OnImagePaste(message);
-				break;
-			case MessageKinds.Log:
-				OnLog(message);
-				break;
-			case MessageKinds.TraceDump:
-				OnTraceDump(message);
-				break;
-			case MessageKinds.LogExport:
-				OnExportLog();
-				break;
-			case MessageKinds.LinkOpen:
-				OnOpenExternal(message);
-				break;
-			case MessageKinds.DiffRequest:
-				OnCompare(message);
-				break;
-			case MessageKinds.GitHubSignIn:
-				OnGitHubSignIn();
-				break;
-			case MessageKinds.GitHubSignInCancel:
-				OnGitHubSignInCancel();
-				break;
-			case MessageKinds.GitHubSignOut:
-				OnGitHubSignOut();
-				break;
-			case MessageKinds.GitHubAccountRefresh:
-				OnGitHubAccountRefresh();
-				break;
-			case MessageKinds.GitHubAccountApplied:
-				OnGitHubAccountApplied(message);
-				break;
-			case MessageKinds.ChatSend:
-				OnChatSend(message);
-				break;
-			case MessageKinds.ChatAttachmentPick:
-				OnChatAttachmentPick(message);
-				break;
-			case MessageKinds.DocumentActivityRequest:
-				OnDocumentActivityRequest(message);
-				break;
-			case MessageKinds.TemplatesRequest:
-				OnRequestTemplates(message);
-				break;
-			case MessageKinds.WorkspaceRequest:
-				OnWorkspaceRequest();
-				break;
-			case MessageKinds.WorkspaceFavorite:
-				OnWorkspaceFavorite(message);
-				break;
-			case MessageKinds.RepoRegister:
-				OnRegisterRepo(message);
-				break;
-			case MessageKinds.RepoUnregister:
-				OnUnregisterRepo(message);
-				break;
-			case MessageKinds.RepoOpen:
-				OnOpenRepo(message);
-				break;
-			case MessageKinds.RepoClone:
-				OnCloneRepo(message);
-				break;
-			case MessageKinds.RepoCloneManaged:
-				OnCloneRepoManaged(message);
-				break;
-			case MessageKinds.RepoCloneToFolder:
-				OnCloneRepoToFolder(message);
-				break;
-			case MessageKinds.RepoCloneDestinationRequest:
-				OnCloneDestinationRequest(message);
-				break;
-			case MessageKinds.RepoDescriptionRequest:
-				OnRepositoryDescriptionRequest(message);
-				break;
-			case MessageKinds.RepoBrowse:
-				OnBrowseRepo(message);
-				break;
-			case MessageKinds.RepoSwitchBranch:
-				OnSwitchRepoBranch(message);
-				break;
-			case MessageKinds.RepoCreateBranch:
-				OnCreateRepoBranch(message);
-				break;
-			case MessageKinds.RepoRenameClone:
-				OnRenameRepoClone(message);
-				break;
-			case MessageKinds.RepoRenameBranch:
-				OnRenameRepoBranch(message);
-				break;
-			case MessageKinds.RepoDeleteClone:
-				OnDeleteRepoClone(message);
-				break;
-			case MessageKinds.RepoDeleteBranch:
-				OnDeleteRepoBranch(message);
-				break;
-			case MessageKinds.RepoRefreshAll:
-				OnRefreshAllRepositories(message);
-				break;
-			case MessageKinds.RepoPull:
-				OnPullRepository(message);
-				break;
-			case MessageKinds.RepoPush:
-				OnPushRepository(message);
-				break;
-			default:
-				_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
-				break;
+			handler(message);
+		}
+		else
+		{
+			// The switch's former default arm: an unrecognized kind is ignored, never dropped noisily.
+			_logger.LogDebug("Ignoring unknown IPC kind {Kind}", message.Kind);
 		}
 		}
 		finally
@@ -690,6 +521,37 @@ public sealed partial class HostController : IDisposable
 				Monitor.Exit(_signInPublishSync);
 			}
 		}
+	}
+
+	// Builds the "kind → handler" dispatch table once, at construction. This method only NAMES the
+	// domains; each slice contributes its own kinds from its own file (Register...Handlers below and in
+	// the sibling HostController.*.cs partials). So adding a new kind to an existing domain is a one-line
+	// change to that domain's Register...Handlers method and never touches this router — the whole point
+	// of the registry. A slice with no incoming kinds (e.g. HostController.Cancellation.cs) registers
+	// nothing and is simply absent here. Registration throws on a duplicate kind, so the audit that every
+	// former switch case is present exactly once is enforced at startup, not left to inspection.
+	private void RegisterMessageHandlers()
+	{
+		RegisterCoreHandlers();
+		RegisterSessionHandlers();
+		RegisterReviewHandlers();
+		RegisterPullRequestHandlers();
+		RegisterReviewCommentHandlers();
+		RegisterSignInHandlers();
+		RegisterChatHandlers();
+		RegisterActivityHandlers();
+		RegisterWorkspaceHandlers();
+		RegisterRepositoryBrowseHandlers();
+	}
+
+	// The cross-cutting diagnostics / link channels whose handlers live in this file (HostController.cs):
+	// they have no domain slice, so they self-register here alongside their handlers.
+	private void RegisterCoreHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.Log, OnLog);
+		_messageHandlers.Register(MessageKinds.TraceDump, OnTraceDump);
+		_messageHandlers.Register(MessageKinds.LogExport, OnExportLog);
+		_messageHandlers.Register(MessageKinds.LinkOpen, OnOpenExternal);
 	}
 
 	private static bool IsAccountBoundRemoteMutation(string kind) => kind is
