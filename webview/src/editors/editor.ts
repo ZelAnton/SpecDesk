@@ -36,6 +36,7 @@ import { assertNever } from "../util/assert.js";
 import { debounce } from "../util/debounce.js";
 import { urlAtColumn } from "../util/links.js";
 import { rafThrottle } from "../util/raf.js";
+import { SPELLCHECK_ENABLED, SPELLCHECK_LANG } from "../util/spellcheck.js";
 import { clip, trace } from "../util/trace.js";
 import { isRecord } from "../wire/decoders.js";
 import {
@@ -710,6 +711,11 @@ export class MarkdownEditor {
           // Strikethrough node at all.
           markdown({ base: markdownLanguage }),
           Prec.high(keymap.of(formattingKeymapFor((command) => this.applyFormat(command)))),
+          // spellcheck/lang enable WebView2/Chromium's built-in spellchecker on the editable content.
+          EditorView.contentAttributes.of({
+            spellcheck: String(SPELLCHECK_ENABLED),
+            lang: SPELLCHECK_LANG,
+          }),
           editorTheme,
           syntaxHighlighting(editorHighlight),
           this.wrap.of(EditorView.lineWrapping),

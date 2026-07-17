@@ -1,3 +1,4 @@
+import { SPELLCHECK_ENABLED, SPELLCHECK_LANG } from "../util/spellcheck.js";
 import { DestructiveConfirmation } from "../workspace/destructive-confirmation.js";
 import type {
   SelectionComment,
@@ -89,6 +90,12 @@ function composer(
   textarea.rows = 1;
   textarea.placeholder = draft.mode === "reply" ? "Write a reply…" : "Write a comment…";
   textarea.setAttribute("aria-label", label.textContent);
+  // setAttribute (not the `.spellcheck`/`.lang` IDL properties) so the attribute is present in the DOM
+  // markup itself — jsdom doesn't reflect those properties onto the underlying attribute, so a property
+  // assignment here would be invisible both to a jsdom test's `getAttribute` and, in principle, to any
+  // consumer that reads the markup rather than the live property.
+  textarea.setAttribute("spellcheck", String(SPELLCHECK_ENABLED));
+  textarea.setAttribute("lang", SPELLCHECK_LANG);
   const stopGrowing = autoGrow(textarea);
   textarea.addEventListener("input", () => actions.changeDraft(textarea.value));
   const buttons = document.createElement("div");

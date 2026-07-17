@@ -7,6 +7,7 @@
  * keeps it unit-testable.
  */
 
+import { SPELLCHECK_ENABLED, SPELLCHECK_LANG } from "../util/spellcheck.js";
 import { PromptBar } from "./prompt-bar.js";
 
 /** Keep a draft name a valid git ref as the author types: backslashes become '/', and spaces or any
@@ -112,6 +113,22 @@ export class Dialogs {
     this.branchBar = new PromptBar(this.branchNameBar);
     this.versionBar = new PromptBar(this.versionNoteBar);
     this.prBar = new PromptBar(this.prTextBar);
+
+    // spellcheck/lang enable WebView2/Chromium's built-in spellchecker on the prose fields (the version
+    // note and the PR title/body); the draft-name field is deliberately excluded — it is sanitized down
+    // to a git-ref-safe string as the author types (see sanitizeDraftName), not prose. setAttribute (not
+    // the `.spellcheck`/`.lang` IDL properties) so the attribute lands in the actual DOM markup — jsdom
+    // doesn't reflect those properties onto the underlying attribute.
+    for (const field of [
+      this.versionNoteInput,
+      this.versionNoteTextarea,
+      this.prTitleInput,
+      this.prBodyTextarea,
+    ]) {
+      if (field === null) continue;
+      field.setAttribute("spellcheck", String(SPELLCHECK_ENABLED));
+      field.setAttribute("lang", SPELLCHECK_LANG);
+    }
 
     // Escape closes/cancels a bar no matter which of its own elements holds focus (button or text
     // field) — bound on the bar container itself so it fires regardless of the focused descendant,
