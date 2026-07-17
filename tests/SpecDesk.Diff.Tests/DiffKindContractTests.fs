@@ -23,19 +23,27 @@ let private fixturePath (fileName: string) : string =
         | null -> invalidOp "Could not locate the repo root (no SpecDesk.slnx above the test binary)."
         | d when File.Exists(Path.Combine(d.FullName, "SpecDesk.slnx")) -> d.FullName
         | d -> ascend d.Parent
+
     Path.Combine(ascend (DirectoryInfo AppContext.BaseDirectory), "webview", "tests", "contract", fileName)
 
 [<Test>]
 let ``diff kinds match the committed webview contract fixture`` () =
-    let actual = DiffWire.DiffKind.all |> Array.sortWith (fun a b -> String.CompareOrdinal(a, b))
+    let actual =
+        DiffWire.DiffKind.all |> Array.sortWith (fun a b -> String.CompareOrdinal(a, b))
+
     let path = fixturePath "diff-kinds.json"
 
     // Regeneration is an explicit opt-in (like the C# fixtures): a missing fixture is a failure, never a
     // silent regenerate — deleting it must not quietly disable the guard.
     if Environment.GetEnvironmentVariable "UPDATE_CONTRACT_FIXTURE" = "1" then
         Directory.CreateDirectory(nonNull (Path.GetDirectoryName path)) |> ignore
-        let json = JsonSerializer.Serialize(actual, JsonSerializerOptions(WriteIndented = true)) + "\n"
+
+        let json =
+            JsonSerializer.Serialize(actual, JsonSerializerOptions(WriteIndented = true))
+            + "\n"
+
         File.WriteAllText(path, json)
+
         Assert.Pass(
             $"Diff-kinds fixture (re)generated at {path}. Commit it and keep webview/src/protocol.ts (DIFF_KINDS) in sync."
         )

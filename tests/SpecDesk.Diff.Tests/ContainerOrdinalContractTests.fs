@@ -44,7 +44,7 @@ type ScenarioFixture =
 
 /// Walk up from the test binary to the repo root (the dir holding SpecDesk.slnx) and resolve the shared
 /// webview contract-fixture path — the same anchor DiffKindContractTests/ContractFixtureTests use.
-let private fixturePath : string =
+let private fixturePath: string =
     let rec ascend (dir: DirectoryInfo | null) =
         match dir with
         | null -> invalidOp "Could not locate the repo root (no SpecDesk.slnx above the test binary)."

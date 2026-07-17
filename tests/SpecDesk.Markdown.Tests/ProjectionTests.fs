@@ -17,8 +17,12 @@ let private paragraphInlines (md: string) : Inline list =
 [<Test>]
 let ``heading projects level, text and a single-line range`` () =
     Assert.That(
-        Projection.toAst "# Title" = [ { Content = Heading(1, [ Text "Title" ]); LineStart = 0; LineEnd = 0 } ],
-        Is.True)
+        Projection.toAst "# Title" =
+            [ { Content = Heading(1, [ Text "Title" ])
+                LineStart = 0
+                LineEnd = 0 } ],
+        Is.True
+    )
 
 [<Test>]
 let ``emphasis is projected`` () =
@@ -43,8 +47,10 @@ let ``inline code is projected`` () =
 [<Test>]
 let ``link projects text and url`` () =
     Assert.That(
-        paragraphInlines "[label](http://x)" |> List.contains (Link([ Text "label" ], "http://x")),
-        Is.True)
+        paragraphInlines "[label](http://x)"
+        |> List.contains (Link([ Text "label" ], "http://x")),
+        Is.True
+    )
 
 [<Test>]
 let ``image projects alt and url`` () =
@@ -66,7 +72,8 @@ let ``fenced code block projects language and code`` () =
 let ``unordered list projects items as blocks`` () =
     Assert.That(
         single "- a\n- b" = ListBlock(false, [ [ Paragraph [ Text "a" ] ]; [ Paragraph [ Text "b" ] ] ]),
-        Is.True)
+        Is.True
+    )
 
 [<Test>]
 let ``ordered list sets the ordered flag`` () =
@@ -111,7 +118,8 @@ let ``an angle-bracket autolink projects a link to its url`` () =
     Assert.That(
         paragraphInlines "<https://example.com>"
         |> List.contains (Link([ Text "https://example.com" ], "https://example.com")),
-        Is.True)
+        Is.True
+    )
 
 [<Test>]
 let ``an html entity projects its decoded text`` () =
@@ -140,7 +148,8 @@ let ``a list nested inside a list item projects a nested ListBlock`` () =
             |> List.exists (function
                 | ListBlock _ -> true
                 | _ -> false),
-            Is.True)
+            Is.True
+        )
     | other -> Assert.Fail($"expected a single unordered list, got %A{other}")
 
 // S-08 regression guards: TaskList/FootnoteLink/DefinitionList used to fall into `| _ -> None` in
@@ -170,10 +179,12 @@ let ``toggling a task-list checkbox changes the projected list content`` () =
 [<Test>]
 let ``a footnote reference projects its label`` () =
     let md = "See note[^1].\n\n[^1]: The note body."
+
     Assert.That(
         Projection.toAst md
         |> List.exists (fun n -> n.Content = Paragraph [ Text "See note"; FootnoteRef "^1"; Text "." ]),
-        Is.True)
+        Is.True
+    )
 
 let private footnoteGroup (md: string) : Footnote list option =
     Projection.toAst md
@@ -236,13 +247,15 @@ let ``childLineRanges gives each list item its 0-based source line range`` () =
 
 [<Test>]
 let ``childLineRanges gives a table its header row first, then body rows`` () =
-    let ranges = Projection.childLineRanges "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
+    let ranges =
+        Projection.childLineRanges "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
     // Header on line 0; the delimiter (line 1) is NOT a child; body rows on lines 2 and 3.
     Assert.That(ranges.[0] = [ (0, 0); (2, 2); (3, 3) ], Is.True)
 
 [<Test>]
 let ``childLineRanges spans a multi-paragraph list item across its whole source range`` () =
-    let ranges = Projection.childLineRanges "- india\n\n  second paragraph of india\n\n- juliett\n"
+    let ranges =
+        Projection.childLineRanges "- india\n\n  second paragraph of india\n\n- juliett\n"
 
     match Map.tryFind 0 ranges with
     | Some [ (0, indiaEnd); (juliettStart, _) ] ->

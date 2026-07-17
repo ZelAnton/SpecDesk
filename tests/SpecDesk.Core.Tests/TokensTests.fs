@@ -18,9 +18,7 @@ let ``folder pattern expands docSlug`` () =
 
 [<Test>]
 let ``naming pattern expands all tokens (seq zero-padded)`` () =
-    Assert.That(
-        Tokens.expand ctx "{docSlug}-{date:yyyyMMdd}-{seq}-{hash8}",
-        Is.EqualTo "billing-20260614-003-9f3a1c0b")
+    Assert.That(Tokens.expand ctx "{docSlug}-{date:yyyyMMdd}-{seq}-{hash8}", Is.EqualTo "billing-20260614-003-9f3a1c0b")
 
 [<Test>]
 let ``docDir token expands`` () =

@@ -36,9 +36,31 @@ let ``FsCheck smoke: integer addition is commutative`` () =
 // (quote, backslash, newline, tab, CR) plus the tokens that drive comment/array/table parsing (hash,
 // brackets, equals, comma) mixed with ordinary letters, digits, spaces and a few Unicode letters.
 let private tomlChars: char list =
-    [ 'a'; 'B'; 'z'; '0'; '9'; ' '; '-'; '_'; '.'; '/'; '!'
-      '"'; '\\'; '\n'; '\t'; '\r'; '#'; '['; ']'; '='; ','
-      'é'; 'Ä'; 'ß'; 'Ω' ]
+    [ 'a'
+      'B'
+      'z'
+      '0'
+      '9'
+      ' '
+      '-'
+      '_'
+      '.'
+      '/'
+      '!'
+      '"'
+      '\\'
+      '\n'
+      '\t'
+      '\r'
+      '#'
+      '['
+      ']'
+      '='
+      ','
+      'é'
+      'Ä'
+      'ß'
+      'Ω' ]
 
 let private tomlString: Gen<string> = stringOf tomlChars
 
@@ -78,7 +100,9 @@ let ``a quoted string array round-trips through escape -> readTable -> getList``
     let nonEmpty = Gen.map2 (fun h t -> h :: t) tomlString (Gen.listOf tomlString)
 
     let prop (items: string list) =
-        let body = items |> List.map (fun s -> "\"" + escapeBasic s + "\"") |> String.concat ", "
+        let body =
+            items |> List.map (fun s -> "\"" + escapeBasic s + "\"") |> String.concat ", "
+
         let text = sprintf "[t]\nk = [%s]\n" body
         Toml.getList (Toml.readTable "t" text) "k" [ "missing-sentinel" ] = items
 
@@ -169,7 +193,9 @@ let ``truncatePreservingSuffix stays within the limit and keeps the suffix`` () 
 // ------------------------------------------------------------------------------------------------
 
 let private allStates = [ Published; Draft; InReview; ChangesRequested; Approved ]
-let private allCommands = [ Edit; SaveVersion; SendForReview; UpdateReview; Publish; Discard ]
+
+let private allCommands =
+    [ Edit; SaveVersion; SendForReview; UpdateReview; Publish; Discard ]
 
 let private stateGen: Gen<State> = Gen.elements allStates
 let private commandGen: Gen<Command> = Gen.elements allCommands

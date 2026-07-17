@@ -8,16 +8,18 @@ module SpecDesk.Core.WorkflowConfig
 open System
 
 type WorkflowConfig =
-    { /// The published branch a working branch forks from (e.g. "main").
-      DefaultBase: string
-      /// Working-branch name pattern; expanded with the document tokens (e.g. "spec/{docSlug}-{date:yyyyMMdd}").
-      BranchPattern: string
-      /// Version-note (commit message) template; expanded with the document tokens. Seeds the
-      /// editable note shown when the author saves a version.
-      CommitTemplate: string
-      /// `[review] reviewers` — the @users/@teams to request on a pull request, or the literal
-      /// "codeowners" to defer to the repo's CODEOWNERS (GitHub's own auto-request). Empty by default.
-      Reviewers: string list }
+    {
+        /// The published branch a working branch forks from (e.g. "main").
+        DefaultBase: string
+        /// Working-branch name pattern; expanded with the document tokens (e.g. "spec/{docSlug}-{date:yyyyMMdd}").
+        BranchPattern: string
+        /// Version-note (commit message) template; expanded with the document tokens. Seeds the
+        /// editable note shown when the author saves a version.
+        CommitTemplate: string
+        /// `[review] reviewers` — the @users/@teams to request on a pull request, or the literal
+        /// "codeowners" to defer to the repo's CODEOWNERS (GitHub's own auto-request). Empty by default.
+        Reviewers: string list
+    }
 
 let defaults: WorkflowConfig =
     { DefaultBase = "main"
@@ -129,7 +131,11 @@ let commitMessageForHost (tomlText: string | null) (docSlug: string) (date: Date
 /// "Edit" throw and silently no-op) — invalid config must never break the workflow (design 10).
 let defaultBaseForHost (tomlText: string | null) : string =
     let configured = (parse (Option.ofObj tomlText)).DefaultBase
-    if String.IsNullOrWhiteSpace configured then defaults.DefaultBase else configured
+
+    if String.IsNullOrWhiteSpace configured then
+        defaults.DefaultBase
+    else
+        configured
 
 /// Whether a reviewer entry is the "codeowners" sentinel (optionally written "@codeowners"), which
 /// defers to the repo's CODEOWNERS via GitHub's own auto-request rather than an explicit ask.

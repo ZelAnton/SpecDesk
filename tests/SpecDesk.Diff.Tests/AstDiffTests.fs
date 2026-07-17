@@ -4,7 +4,8 @@ open NUnit.Framework
 open SpecDesk.Markdown
 open SpecDesk.Diff.AstDiff
 
-let private count predicate (d: DocumentDiff) = d |> List.filter predicate |> List.length
+let private count predicate (d: DocumentDiff) =
+    d |> List.filter predicate |> List.length
 
 let private isUnchanged =
     function
@@ -73,14 +74,18 @@ let ``a heading level change is one Changed, not delete + add`` () =
 
 [<Test>]
 let ``an edited paragraph with high overlap is Changed`` () =
-    let d = diffText "# H\n\nThe quick brown fox jumps.\n" "# H\n\nThe quick brown fox leaps high.\n"
+    let d =
+        diffText "# H\n\nThe quick brown fox jumps.\n" "# H\n\nThe quick brown fox leaps high.\n"
+
     Assert.That(count isChanged d, Is.EqualTo 1)
     Assert.That(count isRemoved d, Is.EqualTo 0)
     Assert.That(count isAdded d, Is.EqualTo 0)
 
 [<Test>]
 let ``a wholly rewritten paragraph is Removed + Added, not Changed`` () =
-    let d = diffText "# H\n\nalpha beta gamma delta.\n" "# H\n\ntotally unrelated wording here.\n"
+    let d =
+        diffText "# H\n\nalpha beta gamma delta.\n" "# H\n\ntotally unrelated wording here.\n"
+
     Assert.That(count isChanged d, Is.EqualTo 0)
     Assert.That(count isRemoved d, Is.EqualTo 1)
     Assert.That(count isAdded d, Is.EqualTo 1)
@@ -104,7 +109,9 @@ let ``two text-free paragraphs that share no characters are Removed + Added, not
 [<Test>]
 let ``change matching pairs the most similar block, not the first in order`` () =
     // The head paragraph overlaps the SECOND base paragraph (line 4) far more than the first (line 2).
-    let d = diffText "# H\n\naa bb cc.\n\naa bb cc dd ee.\n" "# H\n\naa bb cc dd ee ff.\n"
+    let d =
+        diffText "# H\n\naa bb cc.\n\naa bb cc dd ee.\n" "# H\n\naa bb cc dd ee ff.\n"
+
     Assert.That(count isChanged d, Is.EqualTo 1)
     Assert.That(count isRemoved d, Is.EqualTo 1)
     Assert.That(count isAdded d, Is.EqualTo 0)

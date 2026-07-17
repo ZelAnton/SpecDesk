@@ -32,6 +32,7 @@ let rec private inlineOf (inl: Inline) : Ast.Inline option =
     | :? CodeInline as code -> Some(Ast.Code code.Content)
     | :? LinkInline as link ->
         let url = defaultArg (Option.ofObj link.Url) ""
+
         if link.IsImage then
             Some(Ast.Image(Inlines.flatten (inlinesOf link), url))
         else

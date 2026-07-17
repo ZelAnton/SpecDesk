@@ -46,7 +46,9 @@ let ``every top-level block emits a line attribute`` () =
 // shared by two consecutive body paragraphs (the term-less continuation item for a second `:` line).
 [<Test>]
 let ``a definition list's terms get a line attribute; bodies (which Markdig never attributes) do not`` () =
-    let md = "Term1\n:   Definition one.\n\nTerm2\n:   Definition two part A.\n:   Definition two part B.\n"
+    let md =
+        "Term1\n:   Definition one.\n\nTerm2\n:   Definition two part A.\n:   Definition two part B.\n"
+
     let result = Renderer.render "" md
 
     // The invariant this whole test exists to pin: every LineMap entry has a matching HTML attribute.
@@ -83,7 +85,9 @@ let ``relative image link is resolved against the document directory`` () =
 
 [<Test>]
 let ``absolute image links are left untouched`` () =
-    let result = Renderer.render "" "![a](https://example.com/x.png) ![b](app://repo/y.png)"
+    let result =
+        Renderer.render "" "![a](https://example.com/x.png) ![b](app://repo/y.png)"
+
     Assert.That(result.Html, Does.Contain "src=\"https://example.com/x.png\"")
     Assert.That(result.Html, Does.Contain "src=\"app://repo/y.png\"")
 

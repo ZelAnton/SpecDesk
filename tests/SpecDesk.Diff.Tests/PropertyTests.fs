@@ -19,7 +19,8 @@ let private pair (a: Gen<'a>) (b: Gen<'b>) : Gen<'a * 'b> = Gen.map2 (fun x y ->
 let private words =
     [ "alpha"; "beta"; "gamma"; "delta"; "epsilon"; "quick"; "fox"; "lazy"; "" ]
 
-let private wordInlines: Gen<Ast.Inline list> = Gen.elements words |> Gen.map (fun w -> [ Ast.Text w ])
+let private wordInlines: Gen<Ast.Inline list> =
+    Gen.elements words |> Gen.map (fun w -> [ Ast.Text w ])
 
 /// A single top-level block of a varied-but-small set of kinds — enough for the diff's kind-tagged matching
 /// (headings vs. paragraphs vs. code) to be exercised without pulling in container descent (list/table),
@@ -35,7 +36,12 @@ let private blockGen: Gen<Ast.Block> =
 /// Content, not on line ranges, so the positions only need to be well-formed).
 let private documentGen: Gen<Ast.Document> =
     Gen.listOf blockGen
-    |> Gen.map (List.mapi (fun i block -> { Ast.Content = block; Ast.LineStart = i; Ast.LineEnd = i }))
+    |> Gen.map (
+        List.mapi (fun i block ->
+            { Ast.Content = block
+              Ast.LineStart = i
+              Ast.LineEnd = i })
+    )
 
 let private isUnchanged =
     function
@@ -73,10 +79,26 @@ let ``the diff conserves base and head node counts`` () =
         let d = diff baseDoc headDoc
         let countOf f = d |> List.filter f |> List.length
         let unchanged = countOf isUnchanged
-        let added = countOf (function Added _ -> true | _ -> false)
-        let removed = countOf (function Removed _ -> true | _ -> false)
-        let changed = countOf (function Changed _ -> true | _ -> false)
-        let moved = countOf (function Moved _ -> true | _ -> false)
+
+        let added =
+            countOf (function
+                | Added _ -> true
+                | _ -> false)
+
+        let removed =
+            countOf (function
+                | Removed _ -> true
+                | _ -> false)
+
+        let changed =
+            countOf (function
+                | Changed _ -> true
+                | _ -> false)
+
+        let moved =
+            countOf (function
+                | Moved _ -> true
+                | _ -> false)
 
         unchanged + added + changed + moved = List.length headDoc
         && unchanged + removed + changed + moved = List.length baseDoc
@@ -94,14 +116,16 @@ let private kindName (entry: DiffEntry) : string =
     | Changed _ -> "changed"
     | Moved _ -> "moved"
 
-let private knownKinds = Set.ofArray (Array.append [| "unchanged" |] DiffWire.DiffKind.all)
+let private knownKinds =
+    Set.ofArray (Array.append [| "unchanged" |] DiffWire.DiffKind.all)
 
 [<Test>]
 let ``every diff entry carries a known DiffKind`` () =
     // No entry classifies to anything outside {unchanged} ∪ DiffWire.DiffKind.all — every result node
     // carries a kind the wire and the webview know how to render.
     let prop (baseDoc: Ast.Document, headDoc: Ast.Document) =
-        diff baseDoc headDoc |> List.forall (fun entry -> Set.contains (kindName entry) knownKinds)
+        diff baseDoc headDoc
+        |> List.forall (fun entry -> Set.contains (kindName entry) knownKinds)
 
     Check.QuickThrowOnFailure(Prop.forAll (Arb.fromGen (pair documentGen documentGen)) prop)
 
@@ -111,9 +135,15 @@ let ``diff from an empty base is all Added and to an empty head is all Removed``
         let fromEmpty = diff [] doc
         let toEmpty = diff doc []
 
-        (fromEmpty |> List.forall (function Added _ -> true | _ -> false))
+        (fromEmpty
+         |> List.forall (function
+             | Added _ -> true
+             | _ -> false))
         && fromEmpty.Length = List.length doc
-        && (toEmpty |> List.forall (function Removed _ -> true | _ -> false))
+        && (toEmpty
+            |> List.forall (function
+                | Removed _ -> true
+                | _ -> false))
         && toEmpty.Length = List.length doc
 
     Check.QuickThrowOnFailure(Prop.forAll (Arb.fromGen documentGen) prop)
@@ -121,8 +151,18 @@ let ``diff from an empty base is all Added and to an empty head is all Removed``
 // A pool of parseable Markdown lines so the DiffWire round-trip runs on real parsed documents (parse → diff
 // → wire) rather than synthetic AST, exercising the whole projection end to end.
 let private markdownLines =
-    [ "# Heading"; "## Section"; ""; "A paragraph of text."; "Another line here."
-      "- item one"; "- item two"; "> a quote"; "```"; "code line"; "---"; "Final words." ]
+    [ "# Heading"
+      "## Section"
+      ""
+      "A paragraph of text."
+      "Another line here."
+      "- item one"
+      "- item two"
+      "> a quote"
+      "```"
+      "code line"
+      "---"
+      "Final words." ]
 
 let private markdownText: Gen<string> =
     Gen.elements markdownLines |> Gen.listOf |> Gen.map (String.concat "\n")

@@ -7,13 +7,15 @@ open System.Globalization
 open System.Text.RegularExpressions
 
 type TokenContext =
-    { DocSlug: string
-      /// Document directory relative to the repo root, forward slashes, "" at the root.
-      DocDir: string
-      Date: DateTimeOffset
-      Seq: int
-      Hash8: string
-      OriginalName: string option }
+    {
+        DocSlug: string
+        /// Document directory relative to the repo root, forward slashes, "" at the root.
+        DocDir: string
+        Date: DateTimeOffset
+        Seq: int
+        Hash8: string
+        OriginalName: string option
+    }
 
 let private tokenPattern = Regex(@"\{(\w+)(?::([^}]*))?\}", RegexOptions.Compiled)
 
@@ -24,7 +26,12 @@ let expand (ctx: TokenContext) (pattern: string) : string =
         pattern,
         fun (m: Match) ->
             let name = m.Groups.[1].Value.ToLowerInvariant()
-            let arg = if m.Groups.[2].Success then Some m.Groups.[2].Value else None
+
+            let arg =
+                if m.Groups.[2].Success then
+                    Some m.Groups.[2].Value
+                else
+                    None
 
             match name, arg with
             | "docslug", _ -> ctx.DocSlug
@@ -35,4 +42,5 @@ let expand (ctx: TokenContext) (pattern: string) : string =
             | "hash8", _ -> ctx.Hash8
             | "originalname", _ -> defaultArg ctx.OriginalName ""
             | "slug", _ -> ""
-            | _ -> m.Value)
+            | _ -> m.Value
+    )
