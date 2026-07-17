@@ -6,6 +6,12 @@ namespace SpecDesk.Host;
 
 public sealed partial class HostController
 {
+	// Document activity-timeline request kind (see the central RegisterMessageHandlers).
+	private void RegisterActivityHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.DocumentActivityRequest, OnDocumentActivityRequest);
+	}
+
 	private static readonly TimeSpan DocumentActivityTimeout = TimeSpan.FromSeconds(20);
 
 	private void OnDocumentActivityRequest(IpcMessage message)

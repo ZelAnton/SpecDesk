@@ -17,6 +17,25 @@ namespace SpecDesk.Host;
 // The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	// Editor-session, document, filesystem-tree and compare kinds (see the central RegisterMessageHandlers).
+	private void RegisterSessionHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.Ready, OnReady);
+		_messageHandlers.Register(MessageKinds.EditorChanged, OnEditorChanged);
+		_messageHandlers.Register(MessageKinds.DocOpen, OnOpen);
+		_messageHandlers.Register(MessageKinds.FolderOpen, OnOpenFolder);
+		_messageHandlers.Register(MessageKinds.TreeRequest, OnTreeRequest);
+		_messageHandlers.Register(MessageKinds.FileDelete, OnDeleteFile);
+		_messageHandlers.Register(MessageKinds.DocSave, OnSave);
+		_messageHandlers.Register(MessageKinds.DocEdit, OnEdit);
+		_messageHandlers.Register(MessageKinds.DocSaveVersion, OnSaveVersion);
+		_messageHandlers.Register(MessageKinds.BranchNameRequest, OnSuggestBranchName);
+		_messageHandlers.Register(MessageKinds.VersionNoteRequest, OnSuggestVersionNote);
+		_messageHandlers.Register(MessageKinds.DocDiscard, OnDiscard);
+		_messageHandlers.Register(MessageKinds.ImagePaste, OnImagePaste);
+		_messageHandlers.Register(MessageKinds.DiffRequest, OnCompare);
+	}
+
 	private const int MaxPreviewBytes = 4 * 1024 * 1024;
 	private void OnReady()
 	{

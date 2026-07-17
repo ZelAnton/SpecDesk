@@ -7,6 +7,12 @@ namespace SpecDesk.Host;
 
 public sealed partial class HostController
 {
+	// Remote (online) repository-browse kind (see the central RegisterMessageHandlers).
+	private void RegisterRepositoryBrowseHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.RepoBrowse, OnBrowseRepo);
+	}
+
 	private long _remoteBrowseGeneration;
 	private long _remoteBrowseIntentGeneration;
 	private string? _remoteBrowseIntentRepoId;
