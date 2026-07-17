@@ -306,6 +306,13 @@ describe("FormattedEditor (jsdom)", () => {
     expect(() => mount()).not.toThrow();
   });
 
+  it("enables the browser spellchecker on the editable content (T-081)", () => {
+    const { ed } = mountWithHost();
+    const view = viewOf(ed);
+    expect(view.dom.getAttribute("spellcheck")).toBe("true");
+    expect(view.dom.getAttribute("lang")).toBe("en");
+  });
+
   it("does not re-render or measure when updateState receives the current state", () => {
     const { ed, host } = mountWithHost();
     ed.setText("A paragraph that wraps when the pane narrows.\n");

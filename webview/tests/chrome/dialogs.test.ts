@@ -133,6 +133,22 @@ function mount(
 
 beforeEach(setupDom);
 
+describe("Dialogs spellcheck (T-081)", () => {
+  it("enables the browser spellchecker on the prose fields, but not the draft-name field", () => {
+    mount();
+    expect(input("branch-name-input").getAttribute("spellcheck")).toBeNull();
+    for (const el of [
+      input("version-note-input"),
+      textarea("version-note-textarea"),
+      input("pr-title-input"),
+      textarea("pr-body-textarea"),
+    ]) {
+      expect(el.getAttribute("spellcheck")).toBe("true");
+      expect(el.getAttribute("lang")).toBe("en");
+    }
+  });
+});
+
 describe("sanitizeDraftName", () => {
   it("maps backslashes to '/' and any other disallowed char to '_', preserving length", () => {
     expect(sanitizeDraftName("Feature One")).toBe("Feature_One");
