@@ -72,13 +72,15 @@ export class ReviewController {
   constructor(private readonly deps: ReviewDeps) {}
 
   /** Toggle the overlay: clear a showing one, or start a fresh compare (press the button and ask the
-   *  host to diff — the marks arrive later via {@link applyResult}). The local "Show changes" affordance
-   *  always compares against the last saved version; PoC-7's PR/published affordances will call a
-   *  variant that passes a different base. The compare request itself is deferred — see
-   *  {@link requestCompareOnceSettled} — until every surface reports no pending, not-yet-reported edit,
-   *  so the host is never asked to diff a head that's about to change out from under the reply. */
-  toggle(): void {
-    trace("review", "review.toggle", { entering: !this.reviewing });
+   *  host to diff — the marks arrive later via {@link applyResult}). `base` defaults to `"lastVersion"`
+   *  — the local "Show changes" affordance's compare — but the overlay itself owns the choice: a caller
+   *  wiring a different affordance (PoC-7's PR/published compares, once the host supports them) passes
+   *  that base straight through instead of the class hard-coding the literal. The compare request itself
+   *  is deferred — see {@link requestCompareOnceSettled} — until every surface reports no pending,
+   *  not-yet-reported edit, so the host is never asked to diff a head that's about to change out from
+   *  under the reply. */
+  toggle(base: DiffBaseKind = "lastVersion"): void {
+    trace("review", "review.toggle", { entering: !this.reviewing, base });
     if (this.reviewing) {
       this.clear();
       return;
@@ -86,24 +88,25 @@ export class ReviewController {
     this.reviewing = true;
     this.deps.setPressed(true);
     this.settleToken += 1;
-    this.requestCompareOnceSettled(this.settleToken, 0);
+    this.requestCompareOnceSettled(this.settleToken, 0, base);
   }
 
-  /** Poll every surface's {@link DiffSurface.hasPendingChange}; fire the compare request once none are
+  /** Poll every surface's {@link DiffSurface.hasPendingChange}; fire the compare request (against
+   *  `base`, carried through from the {@link toggle} call that started this chain) once none are
    *  pending (immediately, on the first check, when nothing was in flight — the common case), or after
    *  {@link MAX_SETTLE_POLLS} bounded retries if one never settles. Aborts silently once `token` no
    *  longer matches {@link settleToken} — this chain's own toggle() call was superseded by a clear() or
    *  a fresh re-arm since it started. */
-  private requestCompareOnceSettled(token: number, attempt: number): void {
+  private requestCompareOnceSettled(token: number, attempt: number, base: DiffBaseKind): void {
     if (token !== this.settleToken) {
       return;
     }
     const settled = this.deps.surfaces.every((surface) => !surface.hasPendingChange());
     if (settled || attempt >= MAX_SETTLE_POLLS) {
-      this.deps.requestCompare("lastVersion");
+      this.deps.requestCompare(base);
       return;
     }
-    setTimeout(() => this.requestCompareOnceSettled(token, attempt + 1), SETTLE_POLL_MS);
+    setTimeout(() => this.requestCompareOnceSettled(token, attempt + 1, base), SETTLE_POLL_MS);
   }
 
   /** Drop the overlay: un-press the button and clear the marks in every surface. A genuine edit, a
