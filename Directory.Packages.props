@@ -49,5 +49,10 @@
 		<!-- Property-based testing for the F# domain (Toml/Slug/Lifecycle/AstDiff). Dev-only, referenced
 		     from the F# test projects; runs under the existing NUnit runner via Check.QuickThrowOnFailure. -->
 		<PackageVersion Include="FsCheck" Version="3.3.3" />
+
+		<!-- Performance harness (bench/). BenchmarkDotNet drives the Markdown reparse + AST-diff
+		     micro-benchmarks on large synthetic documents. Dev/nightly-only: referenced solely by the
+		     bench console project, never by src/ or the Host, so it ships in no product output. -->
+		<PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
 	</ItemGroup>
 </Project>

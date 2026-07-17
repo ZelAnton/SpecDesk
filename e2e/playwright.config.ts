@@ -25,10 +25,20 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
   },
   projects: [
-    // Layer 1: the real built bundle in Playwright's own Chromium against a mock host.
+    // Layer 1: the real built bundle in Playwright's own Chromium against a mock host. The perf budget
+    // scenario (`*.perf.e2e.ts`) is excluded here so the ordinary `npm run e2e` gate is never slowed by
+    // it; it runs only via the dedicated `webview-mock-perf` project below (`npm run e2e:perf`, nightly).
     {
       name: "webview-mock",
       testMatch: "webview-mock/**/*.e2e.ts",
+      testIgnore: "**/*.perf.e2e.ts",
+      use: { browserName: "chromium" },
+    },
+    // The opt-in performance stage: the large-document interactivity budget scenario, kept out of the
+    // default run. Invoked by `npm run e2e:perf` and the nightly perf workflow.
+    {
+      name: "webview-mock-perf",
+      testMatch: "webview-mock/**/*.perf.e2e.ts",
       use: { browserName: "chromium" },
     },
     // Layer 2: the REAL SpecDesk.Host.exe over CDP against a disposable fixture repo — Windows-only
