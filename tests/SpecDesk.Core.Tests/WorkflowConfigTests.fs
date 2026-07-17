@@ -25,17 +25,13 @@ let ``the repo, branch, and commit tables are parsed`` () =
 
 [<Test>]
 let ``branchNameForHost expands the slug and date`` () =
-    Assert.That(
-        WorkflowConfig.branchNameForHost null "billing" date,
-        Is.EqualTo "spec/billing-20260614")
+    Assert.That(WorkflowConfig.branchNameForHost null "billing" date, Is.EqualTo "spec/billing-20260614")
 
 [<Test>]
 let ``commitMessageForHost expands the configured template`` () =
     let toml = "[commit]\ntemplate = \"Edit {docSlug} on {date:yyyy-MM-dd}\"\n"
 
-    Assert.That(
-        WorkflowConfig.commitMessageForHost toml "billing" date,
-        Is.EqualTo "Edit billing on 2026-06-14")
+    Assert.That(WorkflowConfig.commitMessageForHost toml "billing" date, Is.EqualTo "Edit billing on 2026-06-14")
 
 [<Test>]
 let ``an unexpandable template token falls back to the default`` () =
@@ -48,9 +44,7 @@ let ``an unexpandable template token falls back to the default`` () =
 let ``reviewersForHost returns the explicit user and team entries`` () =
     let toml = "[review]\nreviewers = [\"@alice\", \"@octo/reviewers\"]\n"
 
-    Assert.That(
-        WorkflowConfig.reviewersForHost toml |> Array.toList,
-        Is.EqualTo(box [ "@alice"; "@octo/reviewers" ]))
+    Assert.That(WorkflowConfig.reviewersForHost toml |> Array.toList, Is.EqualTo(box [ "@alice"; "@octo/reviewers" ]))
 
 [<Test>]
 let ``reviewersForHost drops the codeowners sentinel but keeps explicit entries`` () =

@@ -34,8 +34,12 @@ let private nameStem (path: string) : string =
 /// extension never contains separators or dots, so stripping them defeats a `preferred = "png/../.."`
 /// path-traversal write outside the repo.
 let internal sanitizeExt (ext: string) : string =
-    let isAsciiAlnum c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-    let cleaned = String(ext.ToLowerInvariant() |> Seq.filter isAsciiAlnum |> Seq.toArray)
+    let isAsciiAlnum c =
+        (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+
+    let cleaned =
+        String(ext.ToLowerInvariant() |> Seq.filter isAsciiAlnum |> Seq.toArray)
+
     if cleaned = "" then "png" else cleaned
 
 /// Containment guard (same rule as the PoC-1 app:// resolver): the target must stay inside root.
@@ -58,7 +62,10 @@ let internal isInside (rootFull: string) (candidate: string) : bool =
 /// (a spec repo has no reason to use links under it), mirroring the app:// read-path guard.
 let private traversesReparsePoint (rootFull: string) (candidate: string) : bool =
     let relative = Path.GetRelativePath(rootFull, Path.GetFullPath candidate)
-    let segments = relative.Split([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
+
+    let segments =
+        relative.Split([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
+
     let mutable current = rootFull
     let mutable found = false
 
@@ -99,6 +106,7 @@ let internal percentEncodeForLink (path: string) : string =
 
 let private buildResult (docDirAbs: string) (filePath: string) (alt: string) (reused: bool) : InsertResult =
     let relative = toForwardSlashes (Path.GetRelativePath(docDirAbs, filePath))
+
     { Markdown = $"![{alt}]({percentEncodeForLink relative})"
       RelativePath = relative
       Reused = reused }
@@ -111,6 +119,7 @@ let private buildResult (docDirAbs: string) (filePath: string) (alt: string) (re
 /// complete previous write and "reuse" forever.
 let internal writeFileAtomically (target: string) (bytes: byte[]) : unit =
     let tempPath = target + "." + Guid.NewGuid().ToString("N") + ".tmp"
+
     try
         File.WriteAllBytes(tempPath, bytes)
         File.Move(tempPath, target)
@@ -129,7 +138,12 @@ let insertImage
     | Error e -> Error e
     | Ok processed ->
         let rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath repoRoot)
-        let docDirAbs = Path.GetDirectoryName(Path.GetFullPath docPath) |> Option.ofObj |> Option.defaultValue rootFull
+
+        let docDirAbs =
+            Path.GetDirectoryName(Path.GetFullPath docPath)
+            |> Option.ofObj
+            |> Option.defaultValue rootFull
+
         let docSlug = Slug.slugify config.Case (nameStem docPath)
 
         let docDirRel =
@@ -225,7 +239,10 @@ let insertForHost
             { Markdown = result.Markdown
               Error = null
               Reused = result.Reused }
-        | Error e -> { Markdown = null; Error = e; Reused = false }
+        | Error e ->
+            { Markdown = null
+              Error = e
+              Reused = false }
     with ex ->
         { Markdown = null
           Error = $"Could not save the image: {ex.Message}"

@@ -19,6 +19,32 @@ namespace SpecDesk.Host;
 // cloning yet. The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	// Workspace (recents/favorites) and local repository-management kinds — register / open / clone,
+	// branch switch/create/rename, delete, refresh, pull, push (see the central RegisterMessageHandlers).
+	// The online-browse kind (repo.browse) lives in HostController.RepositoryBrowse.cs and registers there.
+	private void RegisterWorkspaceHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.WorkspaceRequest, OnWorkspaceRequest);
+		_messageHandlers.Register(MessageKinds.WorkspaceFavorite, OnWorkspaceFavorite);
+		_messageHandlers.Register(MessageKinds.RepoRegister, OnRegisterRepo);
+		_messageHandlers.Register(MessageKinds.RepoUnregister, OnUnregisterRepo);
+		_messageHandlers.Register(MessageKinds.RepoOpen, OnOpenRepo);
+		_messageHandlers.Register(MessageKinds.RepoClone, OnCloneRepo);
+		_messageHandlers.Register(MessageKinds.RepoCloneManaged, OnCloneRepoManaged);
+		_messageHandlers.Register(MessageKinds.RepoCloneToFolder, OnCloneRepoToFolder);
+		_messageHandlers.Register(MessageKinds.RepoCloneDestinationRequest, OnCloneDestinationRequest);
+		_messageHandlers.Register(MessageKinds.RepoDescriptionRequest, OnRepositoryDescriptionRequest);
+		_messageHandlers.Register(MessageKinds.RepoSwitchBranch, OnSwitchRepoBranch);
+		_messageHandlers.Register(MessageKinds.RepoCreateBranch, OnCreateRepoBranch);
+		_messageHandlers.Register(MessageKinds.RepoRenameClone, OnRenameRepoClone);
+		_messageHandlers.Register(MessageKinds.RepoRenameBranch, OnRenameRepoBranch);
+		_messageHandlers.Register(MessageKinds.RepoDeleteClone, OnDeleteRepoClone);
+		_messageHandlers.Register(MessageKinds.RepoDeleteBranch, OnDeleteRepoBranch);
+		_messageHandlers.Register(MessageKinds.RepoRefreshAll, OnRefreshAllRepositories);
+		_messageHandlers.Register(MessageKinds.RepoPull, OnPullRepository);
+		_messageHandlers.Register(MessageKinds.RepoPush, OnPushRepository);
+	}
+
 	private enum PendingRepoActionKind
 	{
 		Register,

@@ -23,12 +23,17 @@ type LineSpan = { LineStart: int; LineEnd: int }
 /// Rendered HTML plus the ordered line map (parallel to the document's top-level blocks / the DOM).
 type RenderResult = { Html: string; LineMap: LineSpan[] }
 
-let private schemeRegex = Regex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*:", RegexOptions.Compiled)
+let private schemeRegex =
+    Regex(@"^[a-zA-Z][a-zA-Z0-9+.\-]*:", RegexOptions.Compiled)
 
 /// The lowercase scheme of a URL (without the trailing colon), or "" when it has none (relative/anchor).
 let private schemeOf (url: string) : string =
     let m = schemeRegex.Match url
-    if m.Success then url.Substring(0, m.Length - 1).ToLowerInvariant() else ""
+
+    if m.Success then
+        url.Substring(0, m.Length - 1).ToLowerInvariant()
+    else
+        ""
 
 /// A clickable link href is kept only for a navigable scheme (or a relative/anchor link). Untrusted
 /// document content can otherwise carry `javascript:`/`data:` hrefs that — absent a CSP — would run in
@@ -58,7 +63,9 @@ let private normalizeRelative (path: string) : string =
         match part with
         | ""
         | "." -> ()
-        | ".." -> if stack.Count > 0 then stack.RemoveAt(stack.Count - 1)
+        | ".." ->
+            if stack.Count > 0 then
+                stack.RemoveAt(stack.Count - 1)
         | segment -> stack.Add segment
 
     String.concat "/" stack
@@ -66,7 +73,12 @@ let private normalizeRelative (path: string) : string =
 /// Rewrite a relative image URL to `app://repo/<path relative to repo root>` so the preview can
 /// load it via the custom scheme. Absolute (scheme, root-anchored, or anchor) URLs are untouched.
 let private rewriteImageUrl (docDir: string) (url: string) : string =
-    if url.Length = 0 || schemeRegex.IsMatch url || url.StartsWith "/" || url.StartsWith "#" then
+    if
+        url.Length = 0
+        || schemeRegex.IsMatch url
+        || url.StartsWith "/"
+        || url.StartsWith "#"
+    then
         url
     else
         let combined = if docDir = "" then url else docDir.TrimEnd('/') + "/" + url
@@ -107,7 +119,11 @@ let private stampLineAnchors (text: string) (doc: MarkdownDocument) : LineSpan[]
         let attrs = node.GetAttributes()
         attrs.AddProperty("data-line-start", string startLine)
         attrs.AddProperty("data-line-end", string endLine)
-        spans.Add({ LineStart = startLine; LineEnd = endLine })
+
+        spans.Add(
+            { LineStart = startLine
+              LineEnd = endLine }
+        )
 
     // Anchor at the finest rendered granularity so each source line aligns with its rendered
     // counterpart — not just the top of a multi-line block. Container blocks are recursed into and
@@ -131,7 +147,9 @@ let private stampLineAnchors (text: string) (doc: MarkdownDocument) : LineSpan[]
                 match itemObject with
                 | :? ListItemBlock as item -> tag item item.Line item.Span
                 | _ -> ()
-        | :? QuoteBlock as quote -> for child in quote do tagTree child
+        | :? QuoteBlock as quote ->
+            for child in quote do
+                tagTree child
         | :? DefinitionItem as item ->
             // Markdig's own HTML renderer only ever writes `data-line-*` for the `<dt>` (the
             // DefinitionTerm) — verified empirically: it calls WriteAttributes for the term but renders
@@ -144,7 +162,9 @@ let private stampLineAnchors (text: string) (doc: MarkdownDocument) : LineSpan[]
                 | :? DefinitionTerm -> tag child child.Line child.Span
                 | _ -> ()
         | :? LeafBlock -> tag block block.Line block.Span
-        | :? ContainerBlock as container -> for child in container do tagTree child
+        | :? ContainerBlock as container ->
+            for child in container do
+                tagTree child
         | _ -> ()
 
     for block in doc do

@@ -6,6 +6,16 @@ namespace SpecDesk.Host;
 
 public sealed partial class HostController
 {
+	// GitHub sign-in / sign-out / account-refresh kinds (see the central RegisterMessageHandlers).
+	private void RegisterSignInHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.GitHubSignIn, OnGitHubSignIn);
+		_messageHandlers.Register(MessageKinds.GitHubSignInCancel, OnGitHubSignInCancel);
+		_messageHandlers.Register(MessageKinds.GitHubSignOut, OnGitHubSignOut);
+		_messageHandlers.Register(MessageKinds.GitHubAccountRefresh, OnGitHubAccountRefresh);
+		_messageHandlers.Register(MessageKinds.GitHubAccountApplied, OnGitHubAccountApplied);
+	}
+
 	private readonly record struct AccountSession(long Generation, CancellationToken CancellationToken);
 	private sealed record PendingAccountApplication(
 		string PublicationId,

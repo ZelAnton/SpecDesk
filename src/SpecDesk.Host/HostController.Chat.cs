@@ -10,6 +10,14 @@ namespace SpecDesk.Host;
 // The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	// Assistant chat / attachment / prompt-template kinds (see the central RegisterMessageHandlers).
+	private void RegisterChatHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.ChatSend, OnChatSend);
+		_messageHandlers.Register(MessageKinds.ChatAttachmentPick, OnChatAttachmentPick);
+		_messageHandlers.Register(MessageKinds.TemplatesRequest, OnRequestTemplates);
+	}
+
 	// Cancels the in-flight chat turn (window teardown). Guarded by _sync; a non-null value also single-
 	// flights: only one turn streams at a time, which matches the composer being disabled while streaming
 	// and keeps concurrent runs off the agent's (not thread-safe) session.

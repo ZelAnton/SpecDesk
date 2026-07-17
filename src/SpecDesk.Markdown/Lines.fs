@@ -9,9 +9,11 @@ type Index = int[]
 let build (text: string) : Index =
     let starts = ResizeArray<int>()
     starts.Add(0)
+
     for i in 0 .. text.Length - 1 do
         if text.[i] = '\n' then
             starts.Add(i + 1)
+
     starts.ToArray()
 
 /// The 0-based line number containing the given character offset (the largest line whose start
@@ -24,11 +26,14 @@ let lineOfOffset (index: Index) (offset: int) : int =
         let mutable lo = 0
         let mutable hi = index.Length - 1
         let mutable result = 0
+
         while lo <= hi do
             let mid = lo + (hi - lo) / 2
+
             if index.[mid] <= offset then
                 result <- mid
                 lo <- mid + 1
             else
                 hi <- mid - 1
+
         result

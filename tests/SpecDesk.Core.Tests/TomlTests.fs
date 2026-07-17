@@ -56,7 +56,9 @@ let ``a hash right after a single escaped quote is still inside the string (odd-
 
 [<Test>]
 let ``a real inline comment after a value with escaped quotes is still stripped`` () =
-    let t = Toml.readTable "repo" "[repo]\ntemplate = \"Say \\\"hi\\\"\" # a real comment\n"
+    let t =
+        Toml.readTable "repo" "[repo]\ntemplate = \"Say \\\"hi\\\"\" # a real comment\n"
+
     Assert.That(Toml.getString t "template" "", Is.EqualTo "Say \"hi\"")
 
 [<Test>]
@@ -164,36 +166,48 @@ let ``getList falls back when the key is absent`` () =
 [<Test>]
 let ``getList reads a multi-line array`` () =
     // The common one-entry-per-line TOML form must parse the same as its single-line equivalent.
-    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\",\n  \"@bob\",\n]\n"
+    let t =
+        Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\",\n  \"@bob\",\n]\n"
+
     Assert.That(Toml.getList t "reviewers" [] = [ "@alice"; "@bob" ], Is.True)
 
 [<Test>]
 let ``a multi-line array does not swallow the following keys`` () =
     // Once the array closes, later keys in the same table are still read.
-    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\"\n]\ndraft-first = true\n"
+    let t =
+        Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\"\n]\ndraft-first = true\n"
+
     Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
     Assert.That(Toml.getBool t "draft-first" false, Is.True)
 
 [<Test>]
 let ``a multi-line array in another table is not read into the target`` () =
-    let t = Toml.readTable "review" "[repo]\nspec-globs = [\n  \"**/*.md\"\n]\n[review]\nreviewers = [\"@alice\"]\n"
+    let t =
+        Toml.readTable "review" "[repo]\nspec-globs = [\n  \"**/*.md\"\n]\n[review]\nreviewers = [\"@alice\"]\n"
+
     Assert.That(Toml.getList t "reviewers" [] = [ "@alice" ], Is.True)
 
 [<Test>]
 let ``a bracket in a trailing comment does not close a multi-line array early`` () =
-    let t = Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\", # lead [temp]\n  \"@bob\",\n]\n"
+    let t =
+        Toml.readTable "review" "[review]\nreviewers = [\n  \"@alice\", # lead [temp]\n  \"@bob\",\n]\n"
+
     Assert.That(Toml.getList t "reviewers" [] = [ "@alice"; "@bob" ], Is.True)
 
 [<Test>]
 let ``an unclosed array degrades only its own key`` () =
     // A missing ']' must not swallow later keys back to their defaults (regression guard).
-    let t = Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"**/*.md\"\ndefault-base = \"develop\"\n"
+    let t =
+        Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"**/*.md\"\ndefault-base = \"develop\"\n"
+
     Assert.That(Toml.getString t "default-base" "main", Is.EqualTo "develop")
 
 [<Test>]
 let ``a bracket inside a quoted entry does not close a multi-line array early`` () =
     // A glob character class contains ']'; the close test must be quote-aware, not a raw substring match.
-    let t = Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"docs/[a-z].md\",\n  \"specs/x.md\"\n]\n"
+    let t =
+        Toml.readTable "repo" "[repo]\nspec-globs = [\n  \"docs/[a-z].md\",\n  \"specs/x.md\"\n]\n"
+
     Assert.That(Toml.getList t "spec-globs" [] = [ "docs/[a-z].md"; "specs/x.md" ], Is.True)
 
 [<Test>]
@@ -207,5 +221,7 @@ let ``an array left open at end of input keeps its partial value`` () =
 // `"Say \"hi\""` is cut into pieces at the escaped quote instead of parsed (and unescaped) as one item.
 [<Test>]
 let ``getList treats an escaped quote inside an entry as part of that entry, not a boundary`` () =
-    let t = Toml.readTable "review" "[review]\nreviewers = [\"Say \\\"hi\\\"\", \"@bob\"]\n"
+    let t =
+        Toml.readTable "review" "[review]\nreviewers = [\"Say \\\"hi\\\"\", \"@bob\"]\n"
+
     Assert.That(Toml.getList t "reviewers" [] = [ "Say \"hi\""; "@bob" ], Is.True)

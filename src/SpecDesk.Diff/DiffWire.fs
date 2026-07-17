@@ -44,8 +44,7 @@ type ChildWireEntry =
       AnchorIndex: int // for removed: the head child it sat before; -1 otherwise
       RemovedText: string // for removed: the base child's flattened text; "" otherwise
       BaseText: string // for changed: the base child's flattened text (Formatted-pane inline word-diff inside the item)
-      BaseSource: string // for changed: the base child's raw source slice (Code-pane inline word-diff); "" otherwise
-    }
+      BaseSource: string } // for changed: the base child's raw source slice (Code-pane inline word-diff); "" otherwise
 
 /// One changed top-level block — the flat intermediate the host reads by field (CLIMutable) and then
 /// projects to the wire's per-kind discriminated payload (SpecDesk.Host.DiffProjection →
@@ -61,8 +60,7 @@ type DiffWireEntry =
       RemovedText: string // for removed: the base source slice; "" otherwise
       Children: ChildWireEntry[] // per-child diff for a CHANGED list/table; [||] otherwise (whole-block)
       BaseText: string // for a CHANGED plain block: the base rendered text (Formatted-pane inline word-diff)
-      BaseSource: string // for a CHANGED plain block: the base raw source (Code-pane inline word-diff)
-    }
+      BaseSource: string } // for a CHANGED plain block: the base raw source (Code-pane inline word-diff)
 
 /// Per-kind builders for the flat wire DTOs above — the single construction path in this module. Each sets
 /// ONLY the fields its kind uses and leaves the rest at their neutral sentinel, so a wire entry can't be
@@ -170,7 +168,13 @@ let private childTexts (block: Ast.Block) : string list option =
     | Ast.ListBlock(_, items) -> Some(items |> List.map listItemText)
     | Ast.Table(header, rows) ->
         let bodyTexts = rows |> List.map tableRowText
-        Some(if List.isEmpty header then bodyTexts else tableRowText header :: bodyTexts)
+
+        Some(
+            if List.isEmpty header then
+                bodyTexts
+            else
+                tableRowText header :: bodyTexts
+        )
     | _ -> None
 
 /// Wrap flattened child texts as synthetic single-paragraph nodes whose line range IS the child ordinal,
@@ -339,8 +343,17 @@ let toWireDetailed (baseText: string) (headText: string) : DiffWireEntry[] * Ove
     let diffResult, overflow = AstDiff.diffTextDetailed baseText headText
 
     if overflow then
-        let removedCount = diffResult |> List.sumBy (function AstDiff.Removed _ -> 1 | _ -> 0)
-        let addedCount = diffResult |> List.sumBy (function AstDiff.Added _ -> 1 | _ -> 0)
+        let removedCount =
+            diffResult
+            |> List.sumBy (function
+                | AstDiff.Removed _ -> 1
+                | _ -> 0)
+
+        let addedCount =
+            diffResult
+            |> List.sumBy (function
+                | AstDiff.Added _ -> 1
+                | _ -> 0)
 
         [||],
         { Overflowed = true

@@ -88,6 +88,14 @@ describe("inline comment thread controls", () => {
     expect(handlers.submit).toHaveBeenCalledWith("A new anchored comment");
   });
 
+  it("enables the browser spellchecker on the comment composer (T-081)", () => {
+    const root = commentThreadDOM({ draft: draft("create"), actions: actions() });
+    const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
+    if (textarea === null) throw new Error("Expected textarea");
+    expect(textarea.getAttribute("spellcheck")).toBe("true");
+    expect(textarea.getAttribute("lang")).toBe("en");
+  });
+
   it("grows down to its full scroll height on multiline input without an internal scrollbar", () => {
     const textarea = document.createElement("textarea");
     let scrollHeight = 48;

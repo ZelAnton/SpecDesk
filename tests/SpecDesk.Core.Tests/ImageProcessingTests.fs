@@ -24,7 +24,9 @@ let ``corrupt bytes are rejected`` () =
 // M-04 ————————————————————————————————————————————————————————————————————————————————————————————
 
 let private utf8Bom = [| 0xEFuy; 0xBBuy; 0xBFuy |]
-let private svgBytes = System.Text.Encoding.UTF8.GetBytes "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
+
+let private svgBytes =
+    System.Text.Encoding.UTF8.GetBytes "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>"
 
 [<Test>]
 let ``an SVG with a leading UTF-8 BOM is recognised as SVG, not rejected`` () =

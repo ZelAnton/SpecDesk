@@ -51,8 +51,7 @@ let private overflows (baseCount: int) (headCount: int) : bool =
 /// removed and re-added" rather than "no changes") — an explicit, documented trade-off against hanging
 /// or exhausting memory, not a silent behavior change: {@link diff}'s doc comment states it.
 let private flatDiff (baseArr: Ast.Node[]) (headArr: Ast.Node[]) : DocumentDiff =
-    [ yield! baseArr |> Array.map Removed
-      yield! headArr |> Array.map Added ]
+    [ yield! baseArr |> Array.map Removed; yield! headArr |> Array.map Added ]
 
 /// How a non-backbone base↔head pairing is classified — a typed tag (not a string) so the assembly
 /// match is exhaustive and a mislabel can't slip through silently.
@@ -82,19 +81,32 @@ let rec blockText (block: Ast.Block) : string =
     | Ast.CodeBlock(_, code) -> code
     | Ast.ListBlock(_, items) -> items |> List.collect id |> List.map blockText |> String.concat " "
     | Ast.Quote blocks -> blocks |> List.map blockText |> String.concat " "
-    | Ast.Table(header, rows) -> header :: rows |> List.collect id |> List.map Inlines.flatten |> String.concat " "
+    | Ast.Table(header, rows) ->
+        header :: rows
+        |> List.collect id
+        |> List.map Inlines.flatten
+        |> String.concat " "
     | Ast.ThematicBreak -> ""
     | Ast.DefinitionList items ->
         items
         |> List.collect (fun item -> (item.Terms |> List.map Inlines.flatten) @ (item.Body |> List.map blockText))
         |> String.concat " "
     | Ast.Footnotes notes ->
-        notes |> List.collect (fun note -> note.Body |> List.map blockText) |> String.concat " "
+        notes
+        |> List.collect (fun note -> note.Body |> List.map blockText)
+        |> String.concat " "
 
 /// Lowercase alphanumeric word tokens of a node's visible text.
 let private tokens (node: Ast.Node) : Set<string> =
     let lowered = (blockText node.Content).ToLowerInvariant()
-    let normalized = String(lowered |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else ' ') |> Seq.toArray)
+
+    let normalized =
+        String(
+            lowered
+            |> Seq.map (fun c -> if Char.IsLetterOrDigit c then c else ' ')
+            |> Seq.toArray
+        )
+
     normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries) |> Set.ofArray
 
 /// Jaccard overlap of two nodes' precomputed token sets, in [0, 1]. Two nodes with NO word tokens
@@ -104,7 +116,11 @@ let private tokens (node: Ast.Node) : Set<string> =
 /// every same-kind unmatched pair, so recomputing per pair would re-flatten each node O(m)/O(n) times).
 let private similarity (ta: Set<string>) (tb: Set<string>) : float =
     let union = Set.union ta tb |> Set.count
-    if union = 0 then 0.0 else float (Set.intersect ta tb |> Set.count) / float union
+
+    if union = 0 then
+        0.0
+    else
+        float (Set.intersect ta tb |> Set.count) / float union
 
 /// The O(m·n) LCS + pairwise-similarity matching — everything {@link diff} does below the size guard.
 /// Content equality drives the unchanged backbone (an LCS, so a shifted-but-identical node stays
@@ -151,8 +167,12 @@ let private diffBounded (baseArr: Ast.Node[]) (headArr: Ast.Node[]) : DocumentDi
     // "move" or "change"), or stays None → Removed / Added.
     let basePartner: (int * Pairing) option[] = Array.create m None
     let headPartner: (int * Pairing) option[] = Array.create n None
-    let headFree (hi: int) = not matchedHead.[hi] && (headPartner.[hi]).IsNone
-    let baseFree (bi: int) = not matchedBase.[bi] && (basePartner.[bi]).IsNone
+
+    let headFree (hi: int) =
+        not matchedHead.[hi] && (headPartner.[hi]).IsNone
+
+    let baseFree (bi: int) =
+        not matchedBase.[bi] && (basePartner.[bi]).IsNone
 
     // Moves: an unmatched base whose content equals an unmatched head (a reorder).
     for bi in 0 .. m - 1 do
@@ -174,8 +194,11 @@ let private diffBounded (baseArr: Ast.Node[]) (headArr: Ast.Node[]) : DocumentDi
     // Precompute each still-unmatched node's tokens once: the loop below scores every same-kind base x
     // head pair, so calling `tokens` inside it would re-flatten each node O(m) / O(n) times (matched
     // nodes are never scored, so they get an unused empty placeholder).
-    let baseTokens = Array.init m (fun bi -> if baseFree bi then tokens baseArr.[bi] else Set.empty)
-    let headTokens = Array.init n (fun hi -> if headFree hi then tokens headArr.[hi] else Set.empty)
+    let baseTokens =
+        Array.init m (fun bi -> if baseFree bi then tokens baseArr.[bi] else Set.empty)
+
+    let headTokens =
+        Array.init n (fun hi -> if headFree hi then tokens headArr.[hi] else Set.empty)
 
     let changeCandidates =
         [ for bi in 0 .. m - 1 do
@@ -255,4 +278,5 @@ let diffTextDetailed (baseText: string) (headText: string) : DocumentDiff * bool
     diff baseDoc headDoc, overflows (List.length baseDoc) (List.length headDoc)
 
 /// Diff two Markdown source strings end to end (parse each to the shared AST, then diff).
-let diffText (baseText: string) (headText: string) : DocumentDiff = fst (diffTextDetailed baseText headText)
+let diffText (baseText: string) (headText: string) : DocumentDiff =
+    fst (diffTextDetailed baseText headText)

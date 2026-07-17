@@ -15,17 +15,23 @@ open System.Security.Cryptography
 open System.Text
 open SkiaSharp
 
-type Processed = { Bytes: byte[]; Ext: string; Hash: string }
+type Processed =
+    { Bytes: byte[]
+      Ext: string
+      Hash: string }
 
 let private sha256Hex (bytes: byte[]) : string =
-    SHA256.HashData(bytes) |> Array.map (fun b -> b.ToString("x2")) |> String.concat ""
+    SHA256.HashData(bytes)
+    |> Array.map (fun b -> b.ToString("x2"))
+    |> String.concat ""
 
 /// Sniff the raster format from the leading magic bytes — enough to choose the re-encode target. The
 /// real decode below is what ultimately validates the pixels, so an unrecognised header just defaults
 /// to "png" and is caught there if it is not actually decodable.
 let private sniffExt (bytes: byte[]) : string =
     let hasPrefix (prefix: byte[]) =
-        bytes.Length >= prefix.Length && Array.forall2 (=) prefix bytes[0 .. prefix.Length - 1]
+        bytes.Length >= prefix.Length
+        && Array.forall2 (=) prefix bytes[0 .. prefix.Length - 1]
 
     if hasPrefix [| 0x89uy; 0x50uy; 0x4Euy; 0x47uy |] then
         "png"
@@ -68,7 +74,8 @@ let internal looksLikeSvg (bytes: byte[]) : bool =
         // editors/exporters prepend one to a saved SVG, and without stripping it first neither the
         // `<svg` nor the `<?xml` prefix check matched, so a BOM-prefixed SVG fell through to the raster
         // decode path and was rejected outright ("Could not read the image").
-        let head = Encoding.UTF8.GetString(bytes, 0, min bytes.Length 256).TrimStart(char 0xFEFF).TrimStart()
+        let head =
+            Encoding.UTF8.GetString(bytes, 0, min bytes.Length 256).TrimStart(char 0xFEFF).TrimStart()
 
         head.StartsWith("<svg", StringComparison.OrdinalIgnoreCase)
         || (head.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase)
@@ -105,7 +112,11 @@ let private reencode
         | Some data ->
             use data = data
             let output = data.ToArray()
-            Ok { Bytes = output; Ext = ext; Hash = sha256Hex output }
+
+            Ok
+                { Bytes = output
+                  Ext = ext
+                  Hash = sha256Hex output }
 
 /// Process raw image bytes per the repo config. SVG is passed through unchanged (Skia cannot rasterize
 /// it); raster formats are decoded, optionally downscaled, and re-encoded. Returns an error string for
@@ -115,7 +126,10 @@ let processImage (config: ImagesConfig.ImagesConfig) (bytes: byte[]) : Result<Pr
 
     if looksLikeSvg bytes then
         if List.contains "svg" allowedLower then
-            Ok { Bytes = bytes; Ext = "svg"; Hash = sha256Hex bytes }
+            Ok
+                { Bytes = bytes
+                  Ext = "svg"
+                  Hash = sha256Hex bytes }
         else
             Error "SVG images are not allowed in this repository."
     else
@@ -140,7 +154,11 @@ let processImage (config: ImagesConfig.ImagesConfig) (bytes: byte[]) : Result<Pr
                     | None -> Error "Could not read the image."
                     | Some bitmap ->
                         bitmap.Dispose()
-                        Ok { Bytes = bytes; Ext = targetExt; Hash = sha256Hex bytes }
+
+                        Ok
+                            { Bytes = bytes
+                              Ext = targetExt
+                              Hash = sha256Hex bytes }
                 else
                     reencode config bytes SKEncodedImageFormat.Png "png"
         with ex ->

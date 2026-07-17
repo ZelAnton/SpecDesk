@@ -3,7 +3,8 @@ module SpecDesk.Diff.Tests.DiffWireTests
 open NUnit.Framework
 open SpecDesk.Diff.DiffWire
 
-let private kinds (entries: DiffWireEntry[]) = entries |> Array.map (fun e -> e.Kind) |> String.concat ","
+let private kinds (entries: DiffWireEntry[]) =
+    entries |> Array.map (fun e -> e.Kind) |> String.concat ","
 
 [<Test>]
 let ``no changes yields no entries`` () =
@@ -106,7 +107,9 @@ let ``a formatting-only edit inside a list item falls back to the whole-list bas
 
 [<Test>]
 let ``a formatting-only edit inside a table cell falls back to the whole-table base text, not empty`` () =
-    let w = toWire "| A | B |\n| - | - |\n| 1 | 2 |\n" "| A | B |\n| - | - |\n| **1** | 2 |\n"
+    let w =
+        toWire "| A | B |\n| - | - |\n| 1 | 2 |\n" "| A | B |\n| - | - |\n| **1** | 2 |\n"
+
     Assert.That(kinds w, Is.EqualTo "changed")
     Assert.That(w.[0].Children.Length, Is.EqualTo 0)
     Assert.That(w.[0].BaseText, Is.Not.Empty)
@@ -141,9 +144,7 @@ let ``a changed table row carries its base source slice in BaseSource`` () =
     // The edit ADDS a word (keeping the base tokens a subset) so the row stays above the change-similarity
     // threshold and is matched as one changed child, not split into a removed + added pair.
     let w =
-        toWire
-            "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n"
-            "| A | B |\n| - | - |\n| 1 | 2 changed |\n| 3 | 4 |\n"
+        toWire "| A | B |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |\n" "| A | B |\n| - | - |\n| 1 | 2 changed |\n| 3 | 4 |\n"
 
     Assert.That(w.[0].Children.Length, Is.EqualTo 1)
     let child = w.[0].Children.[0]
@@ -179,7 +180,8 @@ let ``a non-changed child carries an empty BaseSource`` () =
 // text) over the wire; a compact count-only OverflowSignal replaces them.
 
 let private paragraphDocText (count: int) (label: string) : string =
-    [ for i in 0 .. count - 1 -> sprintf "%s paragraph %d" label i ] |> String.concat "\n\n"
+    [ for i in 0 .. count - 1 -> sprintf "%s paragraph %d" label i ]
+    |> String.concat "\n\n"
 
 [<Test>]
 let ``an overflowing pair yields no entries and a count-only overflow signal`` () =

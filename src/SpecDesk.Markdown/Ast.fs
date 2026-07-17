@@ -48,9 +48,7 @@ and DefinitionItem =
       Body: Block list }
 
 /// One footnote's body, keyed by its reference label (`[^label]`).
-and Footnote =
-    { Label: string
-      Body: Block list }
+and Footnote = { Label: string; Body: Block list }
 
 /// A top-level block plus its 0-based, inclusive source line range.
 type Node =

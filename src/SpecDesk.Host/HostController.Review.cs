@@ -10,6 +10,16 @@ namespace SpecDesk.Host;
 // The shared fields, locks, constructor, and the IPC router live in HostController.cs.
 public sealed partial class HostController
 {
+	// Review-publishing and PR-suggestion / listing kinds (see the central RegisterMessageHandlers).
+	private void RegisterReviewHandlers()
+	{
+		_messageHandlers.Register(MessageKinds.DocSendForReview, OnSendForReview);
+		_messageHandlers.Register(MessageKinds.PrSuggestedRequest, OnSuggestPrText);
+		_messageHandlers.Register(MessageKinds.DocUpdateReview, OnUpdateReview);
+		_messageHandlers.Register(MessageKinds.ReviewRefresh, OnRefreshReviewStatus);
+		_messageHandlers.Register(MessageKinds.PrListRequest, OnListReviews);
+	}
+
 	// "Send for review": push the draft branch to GitHub and open a pull request, then move the
 	// document to In review. Needs the GitHub feature wired, a connected account, and a GitHub remote;
 	// the access token is taken transiently (WithAccessTokenAsync) for the push + API call and is never

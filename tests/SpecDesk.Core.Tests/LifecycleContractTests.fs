@@ -35,6 +35,7 @@ let private fixturePath (fileName: string) : string =
         | null -> invalidOp "Could not locate the repo root (no SpecDesk.slnx above the test binary)."
         | d when File.Exists(Path.Combine(d.FullName, "SpecDesk.slnx")) -> d.FullName
         | d -> ascend d.Parent
+
     Path.Combine(ascend (DirectoryInfo AppContext.BaseDirectory), "webview", "tests", "contract", fileName)
 
 [<Test>]
@@ -46,8 +47,13 @@ let ``lifecycle state names match the committed webview contract fixture`` () =
     // silent regenerate — deleting it must not quietly disable the guard.
     if Environment.GetEnvironmentVariable "UPDATE_CONTRACT_FIXTURE" = "1" then
         Directory.CreateDirectory(nonNull (Path.GetDirectoryName path)) |> ignore
-        let json = JsonSerializer.Serialize(actual, JsonSerializerOptions(WriteIndented = true)) + "\n"
+
+        let json =
+            JsonSerializer.Serialize(actual, JsonSerializerOptions(WriteIndented = true))
+            + "\n"
+
         File.WriteAllText(path, json)
+
         Assert.Pass(
             $"Lifecycle-states fixture (re)generated at {path}. Commit it and keep webview/src/protocol.ts (STATUS_STATES) in sync."
         )

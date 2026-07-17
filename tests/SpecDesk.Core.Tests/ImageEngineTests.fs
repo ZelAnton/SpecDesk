@@ -6,7 +6,9 @@ open NUnit.Framework
 open SpecDesk.Core
 
 let private tempRepo () : string =
-    let dir = Path.Combine(Path.GetTempPath(), "specdesk-img-" + Guid.NewGuid().ToString("N"))
+    let dir =
+        Path.Combine(Path.GetTempPath(), "specdesk-img-" + Guid.NewGuid().ToString("N"))
+
     Directory.CreateDirectory(dir) |> ignore
     dir
 
@@ -30,7 +32,9 @@ let ``writes the image under the doc-slug folder and links it relatively`` () =
             Assert.That(result.RelativePath, Does.EndWith ".png")
             Assert.That(result.Markdown, Does.StartWith "![")
 
-            let onDisk = Path.Combine(root, result.RelativePath.Replace('/', Path.DirectorySeparatorChar))
+            let onDisk =
+                Path.Combine(root, result.RelativePath.Replace('/', Path.DirectorySeparatorChar))
+
             Assert.That(File.Exists onDisk, Is.True)
         | Error e -> Assert.Fail e
     finally
@@ -67,7 +71,9 @@ let ``a folder containing a space is percent-encoded in the emitted link, not th
         File.WriteAllText(docPath, "# Billing")
         // A relative path with a space breaks a BARE CommonMark link destination (and un-escaped it
         // would render `![image](../my images/x.png)` literally, per M-03).
-        let config = { ImagesConfig.defaults with Folder = "my images/{docSlug}" }
+        let config =
+            { ImagesConfig.defaults with
+                Folder = "my images/{docSlug}" }
 
         match ImageEngine.insertImage root docPath config (capture ()) with
         | Ok result ->
@@ -75,7 +81,10 @@ let ``a folder containing a space is percent-encoded in the emitted link, not th
             Assert.That(result.RelativePath, Does.Contain "my images/")
             Assert.That(result.Markdown, Does.Not.Contain " ")
             Assert.That(result.Markdown, Does.Contain "my%20images/")
-            let onDisk = Path.Combine(root, result.RelativePath.Replace('/', Path.DirectorySeparatorChar))
+
+            let onDisk =
+                Path.Combine(root, result.RelativePath.Replace('/', Path.DirectorySeparatorChar))
+
             Assert.That(File.Exists onDisk, Is.True)
         | Error e -> Assert.Fail e
     finally
@@ -91,7 +100,10 @@ let ``percentEncodeForLink escapes space, parens, hash, and a literal percent`` 
 
 [<Test>]
 let ``percentEncodeForLink leaves an already-safe path untouched`` () =
-    Assert.That(ImageEngine.percentEncodeForLink "images/billing/diagram-1.png", Is.EqualTo "images/billing/diagram-1.png")
+    Assert.That(
+        ImageEngine.percentEncodeForLink "images/billing/diagram-1.png",
+        Is.EqualTo "images/billing/diagram-1.png"
+    )
 
 [<Test>]
 let ``writeFileAtomically leaves no temp artifact behind and writes the exact bytes`` () =
@@ -142,7 +154,10 @@ let ``a folder rule escaping the repo is rejected`` () =
     try
         let docPath = Path.Combine(root, "billing.md")
         File.WriteAllText(docPath, "# Billing")
-        let config = { ImagesConfig.defaults with Folder = "../escape" }
+
+        let config =
+            { ImagesConfig.defaults with
+                Folder = "../escape" }
 
         match ImageEngine.insertImage root docPath config (capture ()) with
         | Ok _ -> Assert.Fail "expected the escaping folder to be rejected"
