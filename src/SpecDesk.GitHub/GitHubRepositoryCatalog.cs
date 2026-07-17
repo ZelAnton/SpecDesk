@@ -70,12 +70,13 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	public async Task<string?> GetAvatarUrlAsync(
 		string accessToken, CancellationToken cancellationToken = default)
 	{
+		using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 		using HttpRequestMessage request = CreateRequest("https://api.github.com/user", accessToken);
-		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 		response.EnsureSuccessStatusCode();
-		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
 		using JsonDocument json = JsonDocument.Parse(
-			await response.Content.ReadAsStreamAsync(cancellationToken));
+			await response.Content.ReadAsStreamAsync(timeout.Token));
 		string? avatarUrl = json.RootElement.TryGetProperty("avatar_url", out JsonElement avatar)
 			&& avatar.ValueKind == JsonValueKind.String
 			? avatar.GetString()
@@ -94,13 +95,14 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 		HashSet<string> organizations = new(StringComparer.OrdinalIgnoreCase);
 		for (int page = 1; page <= MaxOrganizationPages; page++)
 		{
+			using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 			using HttpRequestMessage request = CreateRequest(
 				$"https://api.github.com/user/orgs?per_page=100&page={page}", accessToken);
-			using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+			using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 			response.EnsureSuccessStatusCode();
-			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
 			using JsonDocument json = JsonDocument.Parse(
-				await response.Content.ReadAsStreamAsync(cancellationToken));
+				await response.Content.ReadAsStreamAsync(timeout.Token));
 			if (json.RootElement.ValueKind != JsonValueKind.Array)
 			{
 				throw new InvalidDataException("GitHub returned an invalid organization list.");
@@ -134,12 +136,13 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 			"https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member&sort=full_name&per_page=100";
 		for (int page = 1; pageUrl is not null && page <= MaxRepositoryPages; page++)
 		{
+			using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 			using HttpRequestMessage request = CreateRequest(pageUrl, accessToken);
-			using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+			using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 			response.EnsureSuccessStatusCode();
-			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
+			await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
 			using JsonDocument json = JsonDocument.Parse(
-				await response.Content.ReadAsStreamAsync(cancellationToken));
+				await response.Content.ReadAsStreamAsync(timeout.Token));
 			if (json.RootElement.ValueKind != JsonValueKind.Array)
 			{
 				throw new InvalidDataException("GitHub returned an invalid repository list.");
@@ -200,12 +203,13 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	public async Task<GitHubRepositoryMetadata> GetMetadataAsync(
 		string owner, string name, string accessToken, CancellationToken cancellationToken = default)
 	{
+		using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 		using HttpRequestMessage request = CreateRequest(
 			$"https://api.github.com/repos/{Escape(owner)}/{Escape(name)}", accessToken);
-		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 		response.EnsureSuccessStatusCode();
-		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
-		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
+		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(timeout.Token));
 		if (!json.RootElement.TryGetProperty("default_branch", out JsonElement branch)
 			|| branch.ValueKind != JsonValueKind.String
 			|| string.IsNullOrWhiteSpace(branch.GetString()))
@@ -226,13 +230,14 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 		string owner, string name, string branch, string accessToken,
 		CancellationToken cancellationToken = default)
 	{
+		using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 		using HttpRequestMessage request = CreateRequest(
 			$"https://api.github.com/repos/{Escape(owner)}/{Escape(name)}/git/trees/{Escape(branch)}?recursive=1",
 			accessToken);
-		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 		response.EnsureSuccessStatusCode();
-		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
-		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
+		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(timeout.Token));
 		if (!json.RootElement.TryGetProperty("tree", out JsonElement tree) || tree.ValueKind != JsonValueKind.Array)
 		{
 			throw new InvalidDataException("GitHub returned no repository tree.");
@@ -312,13 +317,14 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 		CancellationToken cancellationToken)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 		using HttpRequestMessage request = CreateRequest(
 			$"https://api.github.com/repos/{Escape(owner)}/{Escape(name)}/git/trees/{Escape(treeish)}",
 			accessToken);
-		using HttpResponseMessage response = await http.SendAsync(request, cancellationToken);
+		using HttpResponseMessage response = await http.SendAsync(request, timeout.Token);
 		response.EnsureSuccessStatusCode();
-		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, cancellationToken);
-		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+		await response.Content.LoadIntoBufferAsync(MaxTreeBytes, timeout.Token);
+		using JsonDocument json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(timeout.Token));
 		if (!json.RootElement.TryGetProperty("tree", out JsonElement tree)
 			|| tree.ValueKind != JsonValueKind.Array)
 		{
@@ -374,25 +380,26 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 			throw new ArgumentException("Repository path must be a contained file path.", nameof(path));
 		}
 		string safePath = string.Join('/', segments.Select(Escape));
+		using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
 		using HttpRequestMessage request = CreateRequest(
 			$"https://api.github.com/repos/{Escape(owner)}/{Escape(name)}/contents/{safePath}?ref={Escape(branch)}",
 			accessToken);
 		request.Headers.Accept.Clear();
 		request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw+json"));
 		using HttpResponseMessage response = await http.SendAsync(
-			request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+			request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
 		response.EnsureSuccessStatusCode();
 		if (response.Content.Headers.ContentLength is > MaxFileBytes)
 		{
 			throw new InvalidDataException("The selected file is too large to preview.");
 		}
 
-		using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+		using Stream stream = await response.Content.ReadAsStreamAsync(timeout.Token);
 		byte[] buffer = new byte[MaxFileBytes + 1];
 		int length = 0;
 		while (length < buffer.Length)
 		{
-			int read = await stream.ReadAsync(buffer.AsMemory(length, buffer.Length - length), cancellationToken);
+			int read = await stream.ReadAsync(buffer.AsMemory(length, buffer.Length - length), timeout.Token);
 			if (read == 0)
 			{
 				break;
@@ -419,7 +426,7 @@ public sealed class GitHubRepositoryCatalog(HttpClient http) : IGitHubRepository
 	private static HttpRequestMessage CreateRequest(string url, string accessToken)
 	{
 		HttpRequestMessage request = new(HttpMethod.Get, url);
-		request.Headers.UserAgent.ParseAdd("SpecDesk/1.0");
+		request.Headers.UserAgent.Add(GitHubHttp.UserAgent);
 		request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
 		if (!string.IsNullOrWhiteSpace(accessToken))
 		{
