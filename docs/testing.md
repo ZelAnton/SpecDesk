@@ -15,10 +15,13 @@ it has passed the rung that actually exercises what it changed — not merely th
 | 2 | **Contract fixtures** | part of the unit runs | The native↔webview wire contract can't drift silently (C#/F# ↔ TS pinned by JSON fixtures). | dev + CI |
 | 3 | **jsdom delivery gate** | `cd webview && npm run test:delivery` | The *shipped* `webview.js` bundle is present and wired — real modules, real `index.ts`, but **rigged (synthetic) layout**. | dev + CI |
 | 4 | **Layer 1 — Playwright + real Chromium** | `cd e2e && npm run e2e` | **Real rendered geometry** of the bundle against a mock host: the current no-spacer Split policy, selection overlays, list indentation, and scroll coupling — the things jsdom can't render. Screenshots. | dev + ubuntu CI |
-| 5 | **Layer 2 — full app over CDP** | `cd e2e && npm run e2e:app` | The **real `SpecDesk.Host.exe`** (Photino + WebView2) over a disposable git repo: native startup (ready → auto-load → lifecycle-from-git → render), and **native effects** (autosave-to-disk, git commit). | **Windows only, local** |
+| 5 | **Layer 2 — full app over CDP** | `cd e2e && npm run e2e:app` | The **real `SpecDesk.Host.exe`** (Photino + WebView2) over a disposable git repo: native startup (ready → auto-load → lifecycle-from-git → render), and **native effects** (autosave-to-disk, git commit). | Windows-local + nightly CI |
 
-Rungs 1–4 run in CI on every push/PR. **Rung 5 is Windows-only and local** (Photino needs a real window
-+ WebView2); CI does not run it, but CI *does* typecheck the `e2e/` package so the Layer 2 code can't rot.
+Rungs 1–4 run in CI on every push/PR. **Rung 5 is Windows-only**, run locally on demand and, since
+`.github/workflows/layer2-nightly.yml` (T-087), also **nightly + on demand in CI** on a `windows-latest`
+hosted runner — see "Layer 2 in CI" below. It does not run on every push/PR (a full native launch is too
+slow for that cadence); `ci.yml` still typechecks the `e2e/` package on every push/PR so the Layer 2 code
+itself can't rot between nightly runs.
 
 ### When you must climb which rung
 
@@ -43,7 +46,7 @@ npm run e2e:headed                              # watch it run
 npx playwright test webview-mock/split-geometry.e2e.ts   # one scenario
 ```
 
-## Layer 2 — `e2e/` full-app over CDP (rung 5, Windows-local)
+## Layer 2 — `e2e/` full-app over CDP (rung 5)
 
 Launches the built `SpecDesk.Host.exe` with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port`
 (WebView2 exposes CDP), an isolated `WEBVIEW2_USER_DATA_FOLDER`, and `SPECDESK_DATA_ROOT` pointing at a
@@ -68,6 +71,29 @@ that window; `--workers=1` is what makes it safe.) Layer 2 does not use Playwrig
 The guards (`MainWorktreeGuard`, `WebviewBundleGuard`) stay **armed** in Layer 2: a stale build or a stale
 main working copy fails the launch loudly rather than being tested. Do not set the `SPECDESK_*_ALLOW_STALE`
 overrides for E2E.
+
+### Layer 2 in CI (T-087)
+
+`.github/workflows/layer2-nightly.yml` runs Layer 2 on a `windows-latest` hosted runner: nightly
+(`schedule`) and on demand (`workflow_dispatch`, e.g. from the Actions tab). It builds `SpecDesk.Host`
+once (`dotnet build src/SpecDesk.Host/SpecDesk.Host.csproj -c Debug`, webview bundled), then runs
+`npm run e2e:app` with `E2E_SKIP_BUILD=1` so the per-spec-file `buildHost()` calls don't rebuild the
+already-current host. Artifacts (screenshots, `geometry.json`, `trace-ring.json`, `app-log.txt`) are
+uploaded via `actions/upload-artifact` on every outcome, same as the local failure bundle below.
+
+GitHub's own hosted Windows runner images ship the Microsoft Edge WebView2 Runtime and run as a real,
+non-headless interactive session (unlike the Linux runners, which need a virtual display for GUI apps),
+so a Photino/WebView2 window is expected to come up there the same as on a Windows dev machine or a
+self-hosted runner. **This has not yet been confirmed by a live run**: the workflow can only be exercised
+by GitHub Actions itself once it exists on a ref GitHub knows about, which is outside what a coding agent
+without push access can trigger — so the first real signal is the first nightly run (or an immediate
+`workflow_dispatch` after merge). If that first run shows the hosted runner genuinely cannot create a
+Photino/WebView2 window (rather than a fixable test/harness bug — check `app-log.txt` and the Playwright
+output first), do not leave the job permanently red: disable the `schedule` trigger, record the concrete
+failure mode here, and stand up a **self-hosted Windows runner** instead (a Windows box — physical or a
+VM with GUI, e.g. a persistent Windows 11 VM or an existing dev machine — registered as a self-hosted
+runner is the natural fallback since it is just a real desktop session, which is exactly what Layer 2
+needs and what a hosted Linux-style headless runner can't offer).
 
 ## Failure artifacts
 
