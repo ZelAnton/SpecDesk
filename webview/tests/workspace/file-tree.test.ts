@@ -61,6 +61,7 @@ const CONTEXT: WorkspaceContextPayload = {
   branchState: "named",
   defaultBranch: "main",
   path: "README.md",
+  canPublish: false,
 };
 
 describe("FileTree", () => {
@@ -430,6 +431,7 @@ describe("FileTree", () => {
       branch: "main",
       branchState: "named",
       defaultBranch: "main",
+      canPublish: false,
       path: "",
     });
     remote.tree.setTree({
@@ -578,6 +580,7 @@ describe("FileTree", () => {
       branch: "main",
       branchState: "named",
       defaultBranch: "main",
+      canPublish: false,
       path: "README.md",
     });
     staleConfirm?.click();

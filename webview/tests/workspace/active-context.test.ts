@@ -18,6 +18,7 @@ const named: WorkspaceContextPayload = {
   branchState: "named",
   defaultBranch: "main",
   path: "docs/proposal.md",
+  canPublish: false,
 };
 
 function tools(context: ReturnType<ActiveContextModel["current"]>): string[] {
@@ -79,6 +80,7 @@ describe("active workspace context", () => {
       branch: null,
       branchState: "unavailable",
       defaultBranch: null,
+      canPublish: false,
       path: "outside.md",
     });
     const context = model.documentLoaded("C:\\notes\\outside.md");

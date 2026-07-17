@@ -19,13 +19,18 @@ type WorkflowConfig =
         /// `[review] reviewers` — the @users/@teams to request on a pull request, or the literal
         /// "codeowners" to defer to the repo's CODEOWNERS (GitHub's own auto-request). Empty by default.
         Reviewers: string list
+        /// `[review] allow-author-publish` — may the author merge their own approved pull request and
+        /// publish the document themselves? Off by default (publishing stays a maintainer action); the
+        /// host exposes the "Publish" action only where this permits it.
+        AllowAuthorPublish: bool
     }
 
 let defaults: WorkflowConfig =
     { DefaultBase = "main"
       BranchPattern = "spec/{docSlug}-{date:yyyyMMdd}"
       CommitTemplate = "Update {docSlug}"
-      Reviewers = [] }
+      Reviewers = []
+      AllowAuthorPublish = false }
 
 /// Parse `[repo] default-base`, `[branch] pattern`, `[commit] template`, and `[review] reviewers`. Any
 /// error returns the full defaults (design 10: invalid config must never break the app).
@@ -42,7 +47,8 @@ let parse (tomlText: string option) : WorkflowConfig =
             { DefaultBase = Toml.getString repo "default-base" defaults.DefaultBase
               BranchPattern = Toml.getString branch "pattern" defaults.BranchPattern
               CommitTemplate = Toml.getString commit "template" defaults.CommitTemplate
-              Reviewers = Toml.getList review "reviewers" defaults.Reviewers }
+              Reviewers = Toml.getList review "reviewers" defaults.Reviewers
+              AllowAuthorPublish = Toml.getBool review "allow-author-publish" defaults.AllowAuthorPublish }
         with _ ->
             // Malformed config is the maintainer's problem to fix; naming degrades to the built-in
             // defaults rather than breaking the workflow (design 10: invalid config must never break).
@@ -151,3 +157,10 @@ let reviewersForHost (tomlText: string | null) : string[] =
     (parse (Option.ofObj tomlText)).Reviewers
     |> List.filter (fun entry -> not (isCodeowners entry))
     |> List.toArray
+
+/// C#-facing facade: whether the repo permits an author to merge their own approved pull request and
+/// publish the document, from `[review] allow-author-publish`. Off by default (an absent/invalid config
+/// keeps publishing a maintainer action). The host uses this both to reveal the "Publish" action and,
+/// authoritatively, to gate the merge itself — so a stale UI can never drive an unpermitted publish.
+let allowAuthorPublishForHost (tomlText: string | null) : bool =
+    (parse (Option.ofObj tomlText)).AllowAuthorPublish

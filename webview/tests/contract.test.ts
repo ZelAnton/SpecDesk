@@ -411,6 +411,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       defaultBranch: "main",
       path: "specs/billing.md",
       localCopy: "billing-repo",
+      canPublish: true,
     });
   });
 
@@ -465,6 +466,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       defaultBranch: null,
       path: "docs/guide.md",
       localCopy: null,
+      canPublish: false,
     });
     expect(parseWorkspaceContext({ branchState: "unavailable", path: "outside.md" })).toEqual({
       repository: null,
@@ -474,6 +476,7 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       defaultBranch: null,
       path: "outside.md",
       localCopy: null,
+      canPublish: false,
     });
   });
 });

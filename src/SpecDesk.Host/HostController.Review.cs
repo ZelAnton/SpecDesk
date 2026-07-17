@@ -16,6 +16,7 @@ public sealed partial class HostController
 		_messageHandlers.Register(MessageKinds.DocSendForReview, OnSendForReview);
 		_messageHandlers.Register(MessageKinds.PrSuggestedRequest, OnSuggestPrText);
 		_messageHandlers.Register(MessageKinds.DocUpdateReview, OnUpdateReview);
+		_messageHandlers.Register(MessageKinds.DocPublish, OnPublish);
 		_messageHandlers.Register(MessageKinds.ReviewRefresh, OnRefreshReviewStatus);
 		_messageHandlers.Register(MessageKinds.PrListRequest, OnListReviews);
 	}
@@ -302,6 +303,182 @@ public sealed partial class HostController
 					},
 					ct);
 				});
+	}
+
+	// "Publish": merge the approved document's open pull request, remove its draft branch, and move the
+	// document to Published — the final author step that ships an approved spec. Gated three ways, all
+	// fail-closed: the lifecycle must allow Approved → Publish (only Approved does), the repo's
+	// `[review] allow-author-publish` policy must permit it (re-read here, authoritative — the webview's
+	// shown/hidden button is only UX), and GitHub must re-confirm the open PR is still approved against its
+	// current head right before the irreversible merge (the periodic status can trail replication — see
+	// OnRefreshReviewStatus). Shares OnSendForReview's single-flight + off-thread scaffold (RunReviewPublish):
+	// the merge is the one network step whose success advances the lifecycle; the branch delete is best-
+	// effort cleanup that never undoes a completed publish. Needs the GitHub feature wired, a connected
+	// account, and a GitHub remote; the token is taken transiently and never stored or logged.
+	private void OnPublish()
+	{
+		// Gate the transition AND claim the shared single-flight slot atomically under _sync (see
+		// OnSendForReview / OnUpdateReview). generation snapshots the checkout so a same-named draft recreated
+		// mid-publish can't be stamped Published by this run (M-13, via TryAdvanceReview).
+		string next;
+		string? repoRoot;
+		string? branch;
+		string fromState;
+		long shared;
+		long generation;
+		long publishClaim;
+		lock (_sync)
+		{
+			DraftSession session = _session;
+			next = Lifecycle.tryStep(session.State, "publish");
+			if (next.Length == 0)
+			{
+				_logger.LogDebug("Publish ignored from state {State}", session.State);
+				return;
+			}
+
+			if (_publishInFlight)
+			{
+				_logger.LogDebug("Publish ignored: a review publish is already in flight");
+				return;
+			}
+
+			fromState = session.State;
+			repoRoot = _repoRoot;
+			branch = session.Branch;
+			// Publishing shares no NEW versions, so the terminal Published state records the same
+			// VersionsShared the review already had (carried through TryAdvanceReview unchanged).
+			shared = session.VersionsShared;
+			generation = Interlocked.Read(ref _draftGeneration);
+			_publishInFlight = true;
+			publishClaim = ++_publishClaimCounter;
+			_activePublishClaim = publishClaim;
+		}
+
+		if (_auth is null || _publishing is null || _review is null
+			|| !TryCaptureAccountSession(out AccountSession accountSession))
+		{
+			ClearPublishInFlight(publishClaim);
+			SendError("Connect a GitHub account to publish this document.");
+			return;
+		}
+
+		if (repoRoot is null || branch is null)
+		{
+			ClearPublishInFlight(publishClaim);
+			return;
+		}
+
+		// The authoritative author-publish gate (fail-closed): re-read the repo policy here rather than
+		// trusting the webview's shown/hidden button, so a stale UI — or a hand-crafted message — can never
+		// drive an unpermitted publish. A plain local .spectool.toml read (no network; TryReadRepoToml guards
+		// its own IO), so it is safe on the synchronous path.
+		if (!WorkflowConfig.allowAuthorPublishForHost(WorkflowSeeds.TryReadRepoToml(repoRoot)))
+		{
+			ClearPublishInFlight(publishClaim);
+			SendError("Publishing a document yourself isn't turned on for this workspace.");
+			return;
+		}
+
+		// Non-null copies so the background closure below sees them as non-nullable.
+		string root = repoRoot;
+		string branchName = branch;
+
+		RunReviewPublish(
+			accountSession, publishClaim, fromState, branchName, next, shared, generation, "Published",
+			"Couldn't publish this document. Check your connection and try again.",
+			async ct =>
+			{
+				if (!IsAccountSessionCurrent(accountSession))
+				{
+					return false;
+				}
+
+				if (ResolveGitHubReviewRepo(root) is not { } repo)
+				{
+					PublishForAccountSession(accountSession, () =>
+						SendError("This document isn't in a GitHub repository, so it can't be published."));
+					return false;
+				}
+
+				if (!PublishForAccountSession(accountSession, () => SendTransientStatus("Publishing…")))
+				{
+					return false;
+				}
+
+				return await _auth.WithAccessTokenAsync(
+					async (token, innerCt) =>
+					{
+						// Re-confirm the review is still open AND approved against its CURRENT head, right
+						// before the irreversible merge: the periodic status can trail GitHub's replication,
+						// and a version pushed after approval must force another review rather than publish
+						// unseen content. GitHub also re-checks the head at merge time (we pass the sha), so
+						// this is defence in depth, not the sole guard.
+						Task<ReviewStatus?>? statusOperation = null;
+						if (!StartForAccountSession(accountSession, () =>
+							statusOperation = _review.GetReviewStatusAsync(
+								token, repo.Owner, repo.Name, branchName, innerCt)))
+						{
+							return false;
+						}
+						ReviewStatus? status = await statusOperation!;
+						if (status is null || status.PrState != PullRequestState.Open
+							|| status.Decision != ReviewDecision.Approved)
+						{
+							PublishForAccountSession(accountSession, () => SendError(
+								"This document needs an up-to-date approval before it can be published."));
+							return false;
+						}
+
+						Task? mergeOperation = null;
+						if (!StartForAccountSession(accountSession, () =>
+							mergeOperation = _review.MergePullRequestAsync(
+								token, repo.Owner, repo.Name, status.Number, status.HeadSha, innerCt)))
+						{
+							return false;
+						}
+						await mergeOperation!;
+
+						// The merge published the document. Remove the merged draft branch as cleanup — never
+						// let a delete fault undo the publish (the doc must still reach Published), so this is
+						// fully best-effort and swallows every fault, including a cancellation.
+						await DeleteMergedBranchBestEffort(accountSession, token, repo, branchName, innerCt);
+						return true;
+					},
+					ct);
+			});
+	}
+
+	// Delete the just-merged draft branch on GitHub, best-effort. The merge already published the document,
+	// so a cleanup failure — a protected branch, an already-deleted ref, a transport blip, even a sign-out
+	// cancelling the request — must NOT prevent the document reaching Published. Every fault is logged and
+	// swallowed; the author can delete a lingering branch on GitHub.
+	private async Task DeleteMergedBranchBestEffort(
+		AccountSession accountSession, string token, GitHubRepo repo, string branchName, CancellationToken ct)
+	{
+		if (_review is null)
+		{
+			return;
+		}
+
+		try
+		{
+			Task? deleteOperation = null;
+			if (!StartForAccountSession(accountSession, () =>
+				deleteOperation = _review.DeleteBranchAsync(token, repo.Owner, repo.Name, branchName, ct)))
+			{
+				return;
+			}
+			await deleteOperation!;
+			_logger.LogInformation("Removed the merged draft branch {Branch}", branchName);
+		}
+		catch (Exception ex)
+		{
+			// Best-effort cleanup: the publish (merge) already succeeded, so nothing here may fail it. A
+			// protected-branch refusal, an already-gone ref, a transport fault, or a cancellation all just
+			// leave the branch in place — the document is published either way.
+			_logger.LogWarning(ex, "Could not remove the merged draft branch {Branch}", branchName);
+		}
 	}
 
 	// "Refresh review status": while a document is under review, read GitHub's current review decision for
