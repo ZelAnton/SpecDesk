@@ -144,6 +144,9 @@
     "githubId": 2002,
     "succeeded": true
   },
+  "review.conflict": {
+    "document": "billing.md"
+  },
   "diff.result": {
     "entries": [
       {
