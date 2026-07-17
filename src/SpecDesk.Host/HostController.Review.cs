@@ -452,12 +452,16 @@ public sealed partial class HostController
 	// unanswered. No git vocabulary reaches the author.
 	private void OnListReviews(IpcMessage message)
 	{
-		if (message.GetPayload<PrListRequestPayload>()?.Scope == "reviewRequests")
+		// A single parse (a malformed scope — e.g. a number or an array payload — must not throw and leave
+		// this correlated request unanswered; see SafeGetPayload). scope is null both when the field is
+		// absent and when the whole payload didn't parse, which correctly falls through to the legacy list.
+		string? scope = SafeGetPayload<PrListRequestPayload>(message)?.Scope;
+		if (scope == "reviewRequests")
 		{
 			OnListReviewRequests(message);
 			return;
 		}
-		if (message.GetPayload<PrListRequestPayload>()?.Scope == "pullRequests")
+		if (scope == "pullRequests")
 		{
 			OnListPullRequests(message);
 			return;

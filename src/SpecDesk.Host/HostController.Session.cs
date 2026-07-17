@@ -1995,8 +1995,13 @@ public sealed partial class HostController
 	private void OnSuggestVersionNote(IpcMessage message)
 	{
 		string? id = message.Id;
-		string? repoRoot = _repoRoot;
-		string? path = _currentPath;
+		string? repoRoot;
+		string? path;
+		lock (_sync)
+		{
+			repoRoot = _repoRoot;
+			path = _currentPath;
+		}
 		string note = repoRoot is not null && path is not null ? WorkflowSeeds.SuggestedVersionNote(repoRoot, path) : string.Empty;
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.VersionNoteSuggested,
@@ -2009,8 +2014,13 @@ public sealed partial class HostController
 	private void OnSuggestBranchName(IpcMessage message)
 	{
 		string? id = message.Id;
-		string? repoRoot = _repoRoot;
-		string? path = _currentPath;
+		string? repoRoot;
+		string? path;
+		lock (_sync)
+		{
+			repoRoot = _repoRoot;
+			path = _currentPath;
+		}
 		string name = repoRoot is not null && path is not null
 			? WorkflowSeeds.SuggestedBranchName(repoRoot, path)
 			: string.Empty;
@@ -2436,13 +2446,21 @@ public sealed partial class HostController
 	/// <summary>The open document's directory relative to the repo root (forward slashes, "" at root).</summary>
 	private string DocRelativeDir()
 	{
-		if (_currentPath is null || _repoRoot is null)
+		string? path;
+		string? repoRoot;
+		lock (_sync)
+		{
+			path = _currentPath;
+			repoRoot = _repoRoot;
+		}
+
+		if (path is null || repoRoot is null)
 		{
 			return string.Empty;
 		}
 
-		string docDir = Path.GetDirectoryName(Path.GetFullPath(_currentPath)) ?? _repoRoot;
-		string relative = Path.GetRelativePath(_repoRoot, docDir);
+		string docDir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? repoRoot;
+		string relative = Path.GetRelativePath(repoRoot, docDir);
 		return relative == "." ? string.Empty : relative.Replace('\\', '/');
 	}
 

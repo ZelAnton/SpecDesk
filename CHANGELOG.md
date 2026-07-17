@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Case-distinct local folders in Disk now keep independent expansion state and show only their own loaded children.
 - Pull-request details now load from GitHub instead of failing because of a malformed GraphQL document.
 - The right-panel resize divider now stops above an expanded bottom panel instead of leaving a bright vertical seam through it.
+- Requesting your reviews list with a malformed request no longer leaves the request stuck until it times out.
 - `.spectool.toml`'s hand-rolled reader (`Toml.fs`) split a string-array entry containing an escaped
   quote (e.g. `reviewers = ["Say \"hi\""]`) into multiple wrong elements at the `\"`, and never
   un-escaped it, unlike the single-string reading path. Array-element parsing is now escape-aware, and
@@ -223,6 +224,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract
   change can no longer be regenerated with a narrowed `--filter` that silently leaves some fixtures
   stale.
+- A drift-guard regression suite (`tests/SpecDesk.GitHub.Tests/GitHubHttpTests.cs`) pins the shared
+  `GitHubHttp` plumbing that `DeviceFlowApi` and `GitHubReview` already consolidated onto: the 30-second
+  per-request timeout, the `ProductInfo`-derived User-Agent (no second hard-coded `SpecDesk/1.0` out of step
+  with the product version), and the linked-`CancellationTokenSource` timeout pattern; it also drives both
+  transports through a stub handler to prove each tags its real outgoing request with the exact shared
+  User-Agent. The pre-existing per-transport tests only assert the header *contains* `SpecDesk`, which a
+  future re-hard-coded divergent value would still pass — this suite catches that drift. Test-only
+  regression coverage for the already-completed consolidation; no behavior change.
 
 ### Changed
 
