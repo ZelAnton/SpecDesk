@@ -17,6 +17,7 @@
 		<Compile Include="WorkflowConfigTests.fs" />
 		<Compile Include="ImageProcessingTests.fs" />
 		<Compile Include="ImageEngineTests.fs" />
+		<Compile Include="PropertyTests.fs" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -29,6 +30,7 @@
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="NUnit" />
 		<PackageReference Include="NUnit3TestAdapter" />
+		<PackageReference Include="FsCheck" />
 		<!-- The Linux native binary so the image tests run on the ubuntu CI leg; the base SkiaSharp
 		     package already carries the Windows/macOS natives. -->
 		<PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
