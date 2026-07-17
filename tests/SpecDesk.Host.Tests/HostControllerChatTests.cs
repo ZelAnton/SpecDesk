@@ -35,14 +35,65 @@ public sealed class HostControllerChatTests
 
 	private readonly List<string> _sent = [];
 	private readonly object _gate = new();
+	private string? _docDir;
 
 	[SetUp]
 	public void SetUp()
 	{
+		_docDir = null;
 		lock (_gate)
 		{
 			_sent.Clear();
 		}
+	}
+
+	[TearDown]
+	public void TearDown()
+	{
+		if (_docDir is not null && Directory.Exists(_docDir))
+		{
+			Directory.Delete(_docDir, recursive: true);
+		}
+	}
+
+	// Create a temp repo folder with one Markdown document and return its path, tracked for teardown.
+	private string CreateDocument(string content)
+	{
+		_docDir = Path.Combine(Path.GetTempPath(), "specdesk-chat-doc-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_docDir);
+		string path = Path.Combine(_docDir, "spec.md");
+		File.WriteAllText(path, content);
+		return path;
+	}
+
+	// A controller with an open (auto-loaded) local document, an optional AI suggestion agent, and the given
+	// fake versioning — used to exercise the version-note suggestion and the implicit chat document context.
+	private HostController NewControllerWithDocument(
+		string docPath,
+		FakeVersioning versioning,
+		IChatAgent? agent = null,
+		SpecDesk.Ai.ISuggestionAgent? suggestionAgent = null)
+	{
+		void Send(string json)
+		{
+			lock (_gate)
+			{
+				_sent.Add(json);
+			}
+		}
+
+		HostController controller = new(
+			StubRender,
+			Send,
+			new NoDialogs(),
+			(_, _, _, _, _) => null,
+			versioning,
+			NullLogger<HostController>.Instance,
+			docPath,
+			chatAgent: agent,
+			suggestionAgent: suggestionAgent);
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
+		return controller;
 	}
 
 	private HostController NewController(
@@ -634,6 +685,140 @@ public sealed class HostControllerChatTests
 		{
 			Assert.That(payload!.Personal, Is.Empty);
 			Assert.That(payload.Remote, Is.Empty);
+		});
+	}
+
+	// —— T-079: implicit document context + AI version-note suggestion with template fallback ————————————
+
+	[Test]
+	public void ChatSend_WithAnOpenDocument_ImplicitlyIncludesTheCurrentDocumentAndDiffContext()
+	{
+		string doc = CreateDocument("# Spec\n\nRefund window is 30 days.\n");
+		FakeVersioning versioning = new() { HeadContent = "# Spec\n\nRefund window is 14 days.\n" };
+		FakeChatAgent agent = new();
+		using HostController controller = NewControllerWithDocument(doc, versioning, agent: agent);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(
+			MessageKinds.ChatSend, new ChatSendPayload("Summarize this", [])));
+
+		Assert.That(WaitForKind(MessageKinds.ChatDone), Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			// The author's message leads; the open document + its working change follow as getCurrentDoc /
+			// getDiff context, framed as data — no explicit attachment needed.
+			Assert.That(agent.LastMessage, Does.StartWith("Summarize this"));
+			Assert.That(agent.LastMessage, Does.Contain("getCurrentDoc"));
+			Assert.That(agent.LastMessage, Does.Contain("getDiff"));
+			Assert.That(agent.LastMessage, Does.Contain("not instructions"));
+			Assert.That(agent.LastMessage, Does.Contain("spec.md"));
+			Assert.That(agent.LastMessage, Does.Contain("Refund window is 30 days."));
+			Assert.That(agent.LastMessage, Does.Contain("+ Refund window is 30 days."));
+		});
+	}
+
+	[Test]
+	public void VersionNoteRequest_WithASuggestionAgent_RepliesWithTheAiDraftFromTheReadOnlyTools()
+	{
+		string doc = CreateDocument("# Spec\n\nRefund window is 30 days.\n");
+		FakeVersioning versioning = new() { HeadContent = "# Spec\n\nRefund window is 14 days.\n" };
+		FakeSuggestionAgent suggestions = new() { VersionNote = "Clarify the refund window" };
+		using HostController controller =
+			NewControllerWithDocument(doc, versioning, suggestionAgent: suggestions);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.VersionNoteRequest, id: "v1"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.VersionNoteSuggested);
+		Assert.That(reply, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply!.Id, Is.EqualTo("v1"));
+			Assert.That(
+				reply.GetPayload<VersionNoteSuggestedPayload>()!.Note, Is.EqualTo("Clarify the refund window"));
+			// The assistant received the open document via getCurrentDoc (no explicit attachment) + its diff.
+			Assert.That(suggestions.LastDocument, Is.Not.Null);
+			Assert.That(suggestions.LastDocument!.DocumentName, Is.EqualTo("spec.md"));
+			Assert.That(suggestions.LastDiff, Is.Not.Null);
+			Assert.That(suggestions.LastDiff!.HasChanges, Is.True);
+		});
+	}
+
+	[Test]
+	public void VersionNoteRequest_WhenTheProviderReturnsNull_FallsBackToTheDeterministicTemplate()
+	{
+		string doc = CreateDocument("# Spec\n");
+		FakeSuggestionAgent suggestions = new() { VersionNote = null };
+		using HostController controller =
+			NewControllerWithDocument(doc, new FakeVersioning(), suggestionAgent: suggestions);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.VersionNoteRequest, id: "v2"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.VersionNoteSuggested);
+		Assert.That(reply, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(suggestions.VersionNoteCalls, Is.EqualTo(1), "the provider was consulted");
+			// An unavailable draft (null) falls back to the non-empty deterministic template.
+			Assert.That(reply!.GetPayload<VersionNoteSuggestedPayload>()!.Note, Is.Not.Empty);
+		});
+	}
+
+	[Test]
+	public void VersionNoteRequest_WhenTheProviderThrows_FallsBackToTheDeterministicTemplate()
+	{
+		string doc = CreateDocument("# Spec\n");
+		FakeSuggestionAgent suggestions = new() { Throw = true };
+		using HostController controller =
+			NewControllerWithDocument(doc, new FakeVersioning(), suggestionAgent: suggestions);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.VersionNoteRequest, id: "v3"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.VersionNoteSuggested);
+		Assert.That(reply, Is.Not.Null);
+		Assert.That(reply!.GetPayload<VersionNoteSuggestedPayload>()!.Note, Is.Not.Empty);
+	}
+
+	[Test]
+	public void VersionNoteRequest_WithNoSuggestionAgent_RepliesWithTheTemplateAndNeverGoesAsync()
+	{
+		string doc = CreateDocument("# Spec\n");
+		using HostController controller = NewControllerWithDocument(doc, new FakeVersioning());
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.VersionNoteRequest, id: "v0"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.VersionNoteSuggested);
+		Assert.That(reply, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(reply!.Id, Is.EqualTo("v0"));
+			Assert.That(reply.GetPayload<VersionNoteSuggestedPayload>()!.Note, Is.Not.Empty);
+		});
+	}
+
+	[Test]
+	public void VersionNoteRequest_ReadsTheDocumentWithoutMutatingItOrTheRepository()
+	{
+		string doc = CreateDocument("# Spec\n\nBody.\n");
+		FakeVersioning versioning = new() { HeadContent = "# Spec\n" };
+		FakeSuggestionAgent suggestions = new() { VersionNote = "A note" };
+		using HostController controller =
+			NewControllerWithDocument(doc, versioning, suggestionAgent: suggestions);
+
+		controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.VersionNoteRequest, id: "v4"));
+
+		IpcMessage? reply = WaitForKind(MessageKinds.VersionNoteSuggested);
+		Assert.That(reply, Is.Not.Null);
+		Assert.Multiple(() =>
+		{
+			Assert.That(
+				reply!.GetPayload<VersionNoteSuggestedPayload>()!.Note,
+				Is.EqualTo("A note"),
+				"the read-only tools produced the draft");
+			// getCurrentDoc / getDiff only READ: no version committed, no draft forked, nothing discarded, and
+			// the document on disk is untouched.
+			Assert.That(versioning.SaveVersionCalls, Is.Zero);
+			Assert.That(versioning.BeginEditCalls, Is.Zero);
+			Assert.That(versioning.DiscardCalled, Is.False);
+			Assert.That(File.ReadAllText(doc), Is.EqualTo("# Spec\n\nBody.\n"));
 		});
 	}
 

@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Property-based tests (fast-check) now guard the block-splice byte-for-byte round-trip and word-diff invertibility across generated Markdown documents (headings, lists, tables, code, quotes, hard line breaks), catching regressions the hand-written fixtures alone could miss.
 - CI now checks F# formatting with Fantomas (pinned as a local dotnet tool via `.config/dotnet-tools.json`) and fails on any unformatted `.fs` file under `src/` or `tests/`.
 - Versioned releases are now published automatically: pushing a `vX.Y.Z` tag builds and tests SpecDesk on the tagged commit, then creates a GitHub Release with notes drawn from the changelog (falling back to the commit history) and the self-contained Windows `.exe` attached for download.
+- The assistant can now see the open document and what has changed in it without you attaching anything, and the "Save a version" and "Send for review" prompts can pre-fill their note and review title/body with an assistant-drafted suggestion based on that change. The suggestion is only ever a starting point you review and edit before it is applied — nothing is sent automatically — and whenever the assistant is unavailable or slow the prompts fall back to the previous plain-language wording, so saving a version or sending for review is never blocked.
 
 ### Changed
 

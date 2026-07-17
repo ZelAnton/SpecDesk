@@ -545,6 +545,61 @@ describe("Dialogs — send-for-review (PR title/body) prompt", () => {
   });
 });
 
+describe("Dialogs — AI suggestions with template fallback (T-079)", () => {
+  // The host now drafts the version note / PR text with the assistant (getCurrentDoc / getDiff) and falls
+  // back to its deterministic template on any failure. Either way the suggestion arrives through the SAME
+  // reply the dialog already displays, so the bar shows it prefilled and editable — never auto-applied.
+
+  it("shows the AI-drafted version note prefilled and editable, and saves the author's edit", async () => {
+    const { dialogs, onVersionNote } = mount({ version: "Clarify the refund window" });
+
+    await dialogs.openVersionNote();
+    expect(input("version-note-input").value).toBe("Clarify the refund window");
+
+    // The author adjusts the AI draft before saving — the edited text is committed, not the raw suggestion.
+    input("version-note-input").value = "Clarify the refund window to 30 days";
+    button("version-note-confirm").click();
+    expect(onVersionNote).toHaveBeenCalledWith("Clarify the refund window to 30 days");
+  });
+
+  it("shows the deterministic template version note when the AI draft is unavailable", async () => {
+    // AI unavailable / failed → the host replies with its template through the same channel; still editable.
+    const { dialogs } = mount({ version: "Update the billing spec" });
+
+    await dialogs.openVersionNote();
+    expect(div("version-note-bar").hidden).toBe(false);
+    expect(input("version-note-input").value).toBe("Update the billing spec");
+  });
+
+  it("shows the AI-drafted review title/body prefilled and editable, and sends the author's edit", async () => {
+    const { dialogs, onPrText } = mount({
+      pr: { title: "Clarify refunds", body: "Updates the refund window to 30 days." },
+    });
+
+    await dialogs.openPrText();
+    expect(input("pr-title-input").value).toBe("Clarify refunds");
+    expect(textarea("pr-body-textarea").value).toBe("Updates the refund window to 30 days.");
+
+    input("pr-title-input").value = "Clarify refunds (reviewed)";
+    button("pr-text-confirm").click();
+    expect(onPrText).toHaveBeenCalledWith({
+      title: "Clarify refunds (reviewed)",
+      body: "Updates the refund window to 30 days.",
+    });
+  });
+
+  it("shows the deterministic template review text when the AI draft is unavailable", async () => {
+    const { dialogs } = mount({
+      pr: { title: "Review: billing.md", body: "Review requested for billing.md." },
+    });
+
+    await dialogs.openPrText();
+    expect(div("pr-text-bar").hidden).toBe(false);
+    expect(input("pr-title-input").value).toBe("Review: billing.md");
+    expect(textarea("pr-body-textarea").value).toBe("Review requested for billing.md.");
+  });
+});
+
 describe("Dialogs — closing", () => {
   it("closeAll hides every bar; closeVersionNote leaves the draft-name bar alone", async () => {
     const { dialogs } = mount();

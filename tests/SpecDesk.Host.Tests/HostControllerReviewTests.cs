@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
@@ -75,7 +76,8 @@ public sealed class HostControllerReviewTests
         IGitHubAuth auth,
         FakeGitHubReview review,
         bool startDraft = true,
-        IFileDialogs? dialogs = null)
+        IFileDialogs? dialogs = null,
+        ISuggestionAgent? suggestionAgent = null)
     {
         void Send(string json)
         {
@@ -88,7 +90,7 @@ public sealed class HostControllerReviewTests
         HostController controller = new(
             StubRender, Send, dialogs ?? new NoDialogs(), (_, _, _, _, _) => null,
             versioning, NullLogger<HostController>.Instance, _docPath,
-            auth: auth, publishing: versioning, review: review);
+            auth: auth, publishing: versioning, review: review, suggestionAgent: suggestionAgent);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
         if (startDraft)
         {
@@ -595,6 +597,103 @@ public sealed class HostControllerReviewTests
         IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
         Assert.That(reply, Is.Not.Null);
         Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Save a version"));
+    }
+
+    // —— T-079: AI PR-description suggestion, with the deterministic template as fallback ——————————————
+
+    [Test]
+    public void SuggestPrText_with_a_suggestion_agent_replies_with_the_ai_draft()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new()
+        {
+            PrDescription = new PrDescription("Clarify refunds", "Updates the refund window to 30 days."),
+        };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-ai"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            Assert.That(payload.Title, Is.EqualTo("Clarify refunds"));
+            Assert.That(payload.Body, Is.EqualTo("Updates the refund window to 30 days."));
+            Assert.That(suggestions.PrCalls, Is.EqualTo(1));
+            Assert.That(suggestions.LastDocument, Is.Not.Null, "the assistant saw the document via getCurrentDoc");
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_the_provider_returns_null_falls_back_to_the_generated_text()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new() { PrDescription = null };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-fb"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            // The deterministic generated text (the last version note as the title, the document name in body).
+            Assert.That(payload.Title, Is.EqualTo("Clarify the refund window"));
+            Assert.That(payload.Body, Does.Contain("billing.md"));
+            Assert.That(suggestions.PrCalls, Is.EqualTo(1), "the provider was consulted before falling back");
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_the_provider_throws_falls_back_to_the_generated_text()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new() { Throw = true };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-throw"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            Assert.That(payload.Title, Is.EqualTo("Clarify the refund window"));
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_blocked_never_consults_the_provider()
+    {
+        FakeVersioning versioning = new() { HasCommitsValue = false };
+        FakeSuggestionAgent suggestions = new()
+        {
+            PrDescription = new PrDescription("should not", "be used"),
+        };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-blk"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Save a version"));
+            Assert.That(suggestions.PrCalls, Is.Zero, "a blocked send never drafts AI text");
+        });
     }
 
     [Test]

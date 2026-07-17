@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
 using SpecDesk.GitHub;
@@ -856,6 +857,7 @@ public sealed partial class HostController
 		string? branch;
 		string? baseBranch;
 		string? path;
+		string text;
 		bool sendLegal;
 		bool publishInFlight;
 		lock (_sync)
@@ -865,6 +867,7 @@ public sealed partial class HostController
 			branch = session.Branch;
 			baseBranch = session.BaseBranch;
 			path = _currentPath;
+			text = _text;
 			sendLegal = Lifecycle.tryStep(session.State, "sendForReview").Length > 0;
 			publishInFlight = _publishInFlight;
 		}
@@ -910,9 +913,49 @@ public sealed partial class HostController
 			blocked = "Couldn't prepare the review. Try again.";
 		}
 
+		// Ready to send with an AI provider configured: draft the title/body from the read-only document tools
+		// off the message thread (bounded), then fall back to the deterministic template. Any failure or
+		// timeout keeps the generated text, so the prompt still opens with usable content.
+		if (blocked is null && _suggestionAgent is not null && repoRoot is not null && path is not null)
+		{
+			string templateTitle = title;
+			string templateBody = body;
+			string documentText = text;
+			string? draftBranch = branch;
+			string? draftBaseBranch = baseBranch;
+			_ = Task.Run(async () =>
+			{
+				string finalTitle = templateTitle;
+				string finalBody = templateBody;
+				try
+				{
+					IReadOnlyDocumentTools tools =
+						BuildDocumentToolset(repoRoot, path, documentText, draftBranch, draftBaseBranch);
+					using CancellationTokenSource cts = new(SuggestionTimeout);
+					PrDescription? suggested = await _suggestionAgent.SuggestPrDescriptionAsync(tools, cts.Token);
+					if (suggested is not null && !string.IsNullOrWhiteSpace(suggested.Title))
+					{
+						finalTitle = suggested.Title;
+						finalBody = suggested.Body ?? string.Empty;
+					}
+				}
+				catch (Exception ex)
+				{
+					// Best-effort, like the version note: any fault falls back to the generated text so the
+					// prompt still opens. The base "Send for review" flow never depends on the AI provider.
+					_logger.LogWarning(ex, "AI PR-description suggestion failed; using the generated text");
+				}
+				EmitPrSuggested(id, finalTitle, finalBody, null);
+			});
+			return;
+		}
+
+		EmitPrSuggested(id, title, body, blocked);
+	}
+
+	private void EmitPrSuggested(string? id, string title, string body, string? blocked) =>
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.PrSuggested,
 			new PrSuggestedPayload(title, body, blocked),
 			id: id));
-	}
 }
