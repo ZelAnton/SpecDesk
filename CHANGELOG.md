@@ -222,6 +222,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-solution `UPDATE_CONTRACT_FIXTURE=1 dotnet test SpecDesk.slnx` run, so an intentional contract
   change can no longer be regenerated with a narrowed `--filter` that silently leaves some fixtures
   stale.
+- A drift-guard regression suite (`tests/SpecDesk.GitHub.Tests/GitHubHttpTests.cs`) pins the shared
+  `GitHubHttp` plumbing that `DeviceFlowApi` and `GitHubReview` already consolidated onto: the 30-second
+  per-request timeout, the `ProductInfo`-derived User-Agent (no second hard-coded `SpecDesk/1.0` out of step
+  with the product version), and the linked-`CancellationTokenSource` timeout pattern; it also drives both
+  transports through a stub handler to prove each tags its real outgoing request with the exact shared
+  User-Agent. The pre-existing per-transport tests only assert the header *contains* `SpecDesk`, which a
+  future re-hard-coded divergent value would still pass — this suite catches that drift. Test-only
+  regression coverage for the already-completed consolidation; no behavior change.
 
 ### Changed
 
