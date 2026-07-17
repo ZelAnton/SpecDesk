@@ -128,6 +128,94 @@ public sealed class LibGit2RepositoryCloner : IRepositoryCloner, ILocalRepositor
 		return Inspect(repository, knownDefaultBranch);
 	}
 
+	public LocalRepositoryInfo FetchAndFastForwardCleanLine(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string defaultBranch,
+		string? accessToken,
+		CancellationToken ct) =>
+		FetchAndFastForwardCleanLine(
+			repositoryPath,
+			expectedRepositoryUrl,
+			knownDefaultBranch,
+			defaultBranch,
+			accessToken,
+			beforeNetwork: null,
+			beforeCredentials: null,
+			ct);
+
+	internal static LocalRepositoryInfo FetchAndFastForwardCleanLine(
+		string repositoryPath,
+		string expectedRepositoryUrl,
+		string knownDefaultBranch,
+		string defaultBranch,
+		string? accessToken,
+		Action? beforeNetwork,
+		Action? beforeCredentials,
+		CancellationToken ct)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
+		ArgumentException.ThrowIfNullOrWhiteSpace(expectedRepositoryUrl);
+		ArgumentException.ThrowIfNullOrWhiteSpace(defaultBranch);
+		ct.ThrowIfCancellationRequested();
+		using Repository repository = new(repositoryPath);
+		EnsureExactWorkingTree(repository, repositoryPath);
+		ValidatedRemote origin = CaptureOrigin(repository, expectedRepositoryUrl, forPush: false);
+		// Always fetch: this advances the remote-tracking references the "updates available"/"conflict"
+		// indicators read, even for a line we will deliberately never fast-forward.
+		FetchCore(repository, origin, accessToken, beforeNetwork, beforeCredentials, ct);
+		TryFastForwardCleanDefaultLine(repository, defaultBranch, ct);
+		return Inspect(repository, knownDefaultBranch);
+	}
+
+	// A non-throwing, best-effort fast-forward for background auto-sync: it advances ONLY a clean default (main)
+	// line that is strictly behind its upstream. Any local work — a draft/feature line, a detached HEAD,
+	// unfinished or overlapping edits, unshared local versions, or a divergence — leaves the working tree exactly
+	// as it was. An automatic sync never forces, merges, or discards local work; a line it declines is left for
+	// the author to update deliberately, and its refreshed indicators already show that updates are waiting.
+	private static void TryFastForwardCleanDefaultLine(
+		Repository repository,
+		string defaultBranch,
+		CancellationToken ct)
+	{
+		if (repository.Info.IsHeadDetached
+			|| !string.Equals(repository.Head.FriendlyName, defaultBranch, StringComparison.Ordinal))
+		{
+			return;
+		}
+		if (repository.Index.Conflicts.Any() || HasWorkingChanges(repository))
+		{
+			return;
+		}
+		Branch local = repository.Head;
+		Branch? tracked = ResolveTrackedBranch(repository, local);
+		if (tracked is null)
+		{
+			return;
+		}
+		HistoryDivergence divergence = repository.ObjectDatabase.CalculateHistoryDivergence(local.Tip, tracked.Tip);
+		// Only a clean, behind-only line fast-forwards: ahead-by-anything (unshared local versions) or a
+		// non-comparable/divergent history is left untouched.
+		if (divergence.AheadBy is not 0 || divergence.BehindBy is not > 0)
+		{
+			return;
+		}
+		EnsureIgnoredFilesAreNotOverwritten(repository, local.Tip.Tree, tracked.Tip.Tree);
+		ct.ThrowIfCancellationRequested();
+		Signature signature = new("SpecDesk", "specdesk@local", DateTimeOffset.Now);
+		// FastForwardOnly can only advance the ref or report NonFastForward; it never writes a merge commit, so a
+		// line that stopped being fast-forwardable between the divergence check and here is simply left as-is.
+		_ = repository.Merge(
+			tracked,
+			signature,
+			new MergeOptions
+			{
+				FastForwardStrategy = FastForwardStrategy.FastForwardOnly,
+				FailOnConflict = true,
+			});
+	}
+
 	public LocalRepositoryInfo PushBranchSafely(
 		string repositoryPath,
 		string expectedRepositoryUrl,

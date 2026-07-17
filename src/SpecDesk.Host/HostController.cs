@@ -66,6 +66,11 @@ public sealed partial class HostController : IDisposable
 	// load surfaces as a failure and the real reply is dropped against an abandoned request id.
 	private static readonly TimeSpan PrListTimeout = TimeSpan.FromSeconds(20);
 
+	// T-079: upper bound on an AI version-note / PR-description suggestion. Deliberately well below the
+	// webview's ipc.request timeout (30s): if the provider is slow or hangs, the host abandons the AI draft
+	// and answers the prompt with the deterministic template rather than letting the prompt hang.
+	private static readonly TimeSpan SuggestionTimeout = TimeSpan.FromSeconds(12);
+
 	// Upper bound on an incoming wire frame (UTF-16 chars). The webview is untrusted, so a single
 	// malformed/hostile frame must not be able to exhaust memory. Generous: a large spec plus a
 	// base64 image paste fit well under this.
@@ -97,6 +102,10 @@ public sealed partial class HostController : IDisposable
 	private IChatAgent? _chatAgent;
 	private readonly IChatAgentFactory? _chatAgentFactory;
 	private readonly SemaphoreSlim _chatAgentGate = new(1, 1);
+	// T-079: drafts version notes / PR text from the read-only document tools (getCurrentDoc / getDiff).
+	// Optional — null means the "Save a version" / "Send for review" prompts fall back to the deterministic
+	// WorkflowSeeds templates, so the base workflow never depends on an AI provider being present.
+	private readonly ISuggestionAgent? _suggestionAgent;
 	private readonly ITemplateLibrary? _templates;
 	// A4: the persisted workspace store (recents / favorites / registered repos). Optional — null leaves the
 	// workspace handlers inert (they emit nothing / record nothing), the same graceful-degradation pattern as
@@ -298,6 +307,7 @@ public sealed partial class HostController : IDisposable
 		IGitHubReview? review = null,
 		IChatAgent? chatAgent = null,
 		IChatAgentFactory? chatAgentFactory = null,
+		ISuggestionAgent? suggestionAgent = null,
 		ITemplateLibrary? templates = null,
 		WorkspaceStore? workspace = null,
 		IRepositoryCloner? cloner = null,
@@ -320,6 +330,7 @@ public sealed partial class HostController : IDisposable
 		_review = review;
 		_chatAgent = chatAgent;
 		_chatAgentFactory = chatAgentFactory;
+		_suggestionAgent = suggestionAgent;
 		_templates = templates;
 		_workspace = workspace;
 		_cloner = cloner;

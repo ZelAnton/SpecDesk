@@ -112,6 +112,53 @@ internal sealed class FakeGitHubReview : IGitHubReview
         return ReviewStatusValue;
     }
 
+    public int MergeCalls { get; private set; }
+
+    public int MergedPullNumber { get; private set; }
+
+    public string? MergedExpectedHeadSha { get; private set; }
+
+    /// <summary>When set, <see cref="MergePullRequestAsync"/> throws — to exercise the "a failed publish
+    /// surfaces a plain reason and leaves the document Approved (never an in-between state)" path.</summary>
+    public bool ThrowOnMerge { get; set; }
+
+    public Task MergePullRequestAsync(
+        string accessToken, string owner, string repo, int pullNumber, string expectedHeadSha,
+        CancellationToken cancellationToken = default)
+    {
+        MergeCalls++;
+        MergedPullNumber = pullNumber;
+        MergedExpectedHeadSha = expectedHeadSha;
+        if (ThrowOnMerge)
+        {
+            throw new HttpRequestException("GitHub rejected the publish (HTTP 409).");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public int DeleteBranchCalls { get; private set; }
+
+    public string? DeletedBranch { get; private set; }
+
+    /// <summary>When set, <see cref="DeleteBranchAsync"/> throws — to confirm the branch cleanup is
+    /// best-effort and a delete failure never undoes the merge that already published the document.</summary>
+    public bool ThrowOnDeleteBranch { get; set; }
+
+    public Task DeleteBranchAsync(
+        string accessToken, string owner, string repo, string branch,
+        CancellationToken cancellationToken = default)
+    {
+        DeleteBranchCalls++;
+        DeletedBranch = branch;
+        if (ThrowOnDeleteBranch)
+        {
+            throw new HttpRequestException("GitHub rejected the branch delete (HTTP 422).");
+        }
+
+        return Task.CompletedTask;
+    }
+
     /// <summary>What <see cref="ListReviewsAsync"/> returns; a test sets it. Defaults to empty.</summary>
     public IReadOnlyList<ReviewSummary> ReviewsValue { get; set; } = [];
 

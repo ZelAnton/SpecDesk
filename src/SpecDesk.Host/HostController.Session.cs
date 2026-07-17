@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using SpecDesk.Ai;
 using SpecDesk.AppInfo;
 using SpecDesk.Contracts;
 using SpecDesk.Core;
@@ -2022,22 +2023,101 @@ public sealed partial class HostController
 		}
 	}
 	// Reply to the webview's request for a version note to prefill the "Save a version" prompt. The
-	// reply is correlated by the request id (the webview awaits it).
+	// reply is correlated by the request id (the webview awaits it). When an AI provider is configured, the
+	// note is drafted from the read-only document tools (getCurrentDoc / getDiff); on any failure or timeout,
+	// or with no provider, the deterministic WorkflowSeeds template is used so the prompt is never blocked.
 	private void OnSuggestVersionNote(IpcMessage message)
 	{
 		string? id = message.Id;
 		string? repoRoot;
 		string? path;
+		string text;
+		string? branch;
+		string? baseBranch;
 		lock (_sync)
 		{
 			repoRoot = _repoRoot;
 			path = _currentPath;
+			text = _text;
+			branch = _session.Branch;
+			baseBranch = _session.BaseBranch;
 		}
-		string note = repoRoot is not null && path is not null ? WorkflowSeeds.SuggestedVersionNote(repoRoot, path) : string.Empty;
+
+		string template = repoRoot is not null && path is not null
+			? WorkflowSeeds.SuggestedVersionNote(repoRoot, path)
+			: string.Empty;
+
+		// No AI provider, or no open document to draft from: reply with the deterministic template
+		// synchronously (the pre-T-079 behaviour, unchanged).
+		if (_suggestionAgent is null || repoRoot is null || path is null)
+		{
+			EmitVersionNoteSuggested(id, template);
+			return;
+		}
+
+		// Draft off the message thread (bounded by SuggestionTimeout), then fall back to the template. The
+		// base "Save a version" flow is never blocked: any failure or timeout yields the template.
+		_ = Task.Run(async () =>
+		{
+			string note = template;
+			try
+			{
+				IReadOnlyDocumentTools tools = BuildDocumentToolset(repoRoot, path, text, branch, baseBranch);
+				using CancellationTokenSource cts = new(SuggestionTimeout);
+				string? suggested = await _suggestionAgent.SuggestVersionNoteAsync(tools, cts.Token);
+				if (!string.IsNullOrWhiteSpace(suggested))
+				{
+					note = suggested!;
+				}
+			}
+			catch (Exception ex)
+			{
+				// The suggestion is best-effort: any fault (or a provider that throws instead of honouring the
+				// null-on-failure contract) falls back to the template so the prompt still opens. Broad by
+				// design — an unanswered/blocked prompt is worse than a deterministic note.
+				_logger.LogWarning(ex, "AI version-note suggestion failed; using the deterministic template");
+			}
+			EmitVersionNoteSuggested(id, note);
+		});
+	}
+
+	private void EmitVersionNoteSuggested(string? id, string note) =>
 		Emit(IpcSerializer.SerializeEvent(
 			MessageKinds.VersionNoteSuggested,
 			new VersionNoteSuggestedPayload(note),
 			id: id));
+
+	// Capture a read-only snapshot of the open document as the getCurrentDoc / getDiff tools the AI layer may
+	// read (docs/design/08-ai-agent.md). The caller has already snapshotted the session fields under _sync;
+	// the committed base for the diff is read under _repoGate (matching OnCompare). The returned toolset is an
+	// immutable snapshot — the AI layer cannot observe or change live host state through it, and the tools
+	// expose no mutating operation at all.
+	private DocumentToolset BuildDocumentToolset(
+		string repoRoot, string path, string text, string? branch, string? baseBranch)
+	{
+		string relativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+		string documentName = Path.GetFileName(path);
+		string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+
+		string? baseText = null;
+		try
+		{
+			lock (_repoGate)
+			{
+				baseText = _versioning.ReadHeadContent(repoRoot, relativePath);
+			}
+		}
+		catch (Exception ex) when (
+			ex is LibGit2SharpException or IOException or UnauthorizedAccessException or InvalidOperationException)
+		{
+			// The committed base could not be read — the diff degrades to "new document". The suggestion is
+			// best-effort and still falls back to the template if the provider then produces nothing.
+			_logger.LogDebug(ex, "Could not read the committed base for the AI diff of {Path}", path);
+		}
+
+		DocumentContext document = new(documentName, relativePath, text, repository, branch, baseBranch);
+		DocumentDiff diff = DocumentDiff.Between(baseText, text);
+		return new DocumentToolset(document, diff);
 	}
 
 	// Reply to the webview's request for a draft (branch) name to prefill the Edit prompt. Correlated
@@ -2536,9 +2616,13 @@ public sealed partial class HostController
 		string branchState = "unavailable";
 		string? defaultBranch = null;
 		string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+		// Read the repo's workflow config once for both the default-base resolve and the author-publish
+		// gate the webview uses to reveal (or hide) the "Publish" action for this document's repository.
+		string? repoToml = WorkflowSeeds.TryReadRepoToml(repoRoot);
+		bool canPublish = WorkflowConfig.allowAuthorPublishForHost(repoToml);
 		try
 		{
-			string? configured = WorkflowConfig.defaultBaseForHost(WorkflowSeeds.TryReadRepoToml(repoRoot));
+			string? configured = WorkflowConfig.defaultBaseForHost(repoToml);
 			lock (_repoGate)
 			{
 				CurrentBranchInfo current = _versioning.DescribeCurrentBranch(repoRoot);
@@ -2573,7 +2657,8 @@ public sealed partial class HostController
 				defaultBranch,
 				relative,
 				_workspace?.FindCloneName(repoRoot)
-					?? Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot))));
+					?? Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot)),
+				canPublish));
 	}
 
 	/// <summary>Explicit context publication path shared by local documents and remote-only document

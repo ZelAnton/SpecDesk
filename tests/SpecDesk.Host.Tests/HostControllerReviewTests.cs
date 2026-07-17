@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using SpecDesk.Ai;
 using SpecDesk.Contracts;
 using SpecDesk.GitHub;
 using SpecDesk.Markdown;
@@ -75,7 +76,8 @@ public sealed class HostControllerReviewTests
         IGitHubAuth auth,
         FakeGitHubReview review,
         bool startDraft = true,
-        IFileDialogs? dialogs = null)
+        IFileDialogs? dialogs = null,
+        ISuggestionAgent? suggestionAgent = null)
     {
         void Send(string json)
         {
@@ -88,7 +90,7 @@ public sealed class HostControllerReviewTests
         HostController controller = new(
             StubRender, Send, dialogs ?? new NoDialogs(), (_, _, _, _, _) => null,
             versioning, NullLogger<HostController>.Instance, _docPath,
-            auth: auth, publishing: versioning, review: review);
+            auth: auth, publishing: versioning, review: review, suggestionAgent: suggestionAgent);
         controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.Ready));
         if (startDraft)
         {
@@ -597,6 +599,103 @@ public sealed class HostControllerReviewTests
         Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Save a version"));
     }
 
+    // —— T-079: AI PR-description suggestion, with the deterministic template as fallback ——————————————
+
+    [Test]
+    public void SuggestPrText_with_a_suggestion_agent_replies_with_the_ai_draft()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new()
+        {
+            PrDescription = new PrDescription("Clarify refunds", "Updates the refund window to 30 days."),
+        };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-ai"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            Assert.That(payload.Title, Is.EqualTo("Clarify refunds"));
+            Assert.That(payload.Body, Is.EqualTo("Updates the refund window to 30 days."));
+            Assert.That(suggestions.PrCalls, Is.EqualTo(1));
+            Assert.That(suggestions.LastDocument, Is.Not.Null, "the assistant saw the document via getCurrentDoc");
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_the_provider_returns_null_falls_back_to_the_generated_text()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new() { PrDescription = null };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-fb"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            // The deterministic generated text (the last version note as the title, the document name in body).
+            Assert.That(payload.Title, Is.EqualTo("Clarify the refund window"));
+            Assert.That(payload.Body, Does.Contain("billing.md"));
+            Assert.That(suggestions.PrCalls, Is.EqualTo(1), "the provider was consulted before falling back");
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_the_provider_throws_falls_back_to_the_generated_text()
+    {
+        FakeVersioning versioning = new();
+        FakeSuggestionAgent suggestions = new() { Throw = true };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-throw"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        PrSuggestedPayload? payload = reply!.GetPayload<PrSuggestedPayload>();
+        Assert.Multiple(() =>
+        {
+            Assert.That(payload!.Blocked, Is.Null);
+            Assert.That(payload.Title, Is.EqualTo("Clarify the refund window"));
+        });
+    }
+
+    [Test]
+    public void SuggestPrText_when_blocked_never_consults_the_provider()
+    {
+        FakeVersioning versioning = new() { HasCommitsValue = false };
+        FakeSuggestionAgent suggestions = new()
+        {
+            PrDescription = new PrDescription("should not", "be used"),
+        };
+        using HostController controller = Build(
+            versioning, new FakeGitHubAuth(signedIn: true), new FakeGitHubReview(),
+            suggestionAgent: suggestions);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.PrSuggestedRequest, id: "req-blk"));
+
+        IpcMessage? reply = WaitForKind(MessageKinds.PrSuggested);
+        Assert.That(reply, Is.Not.Null);
+        Assert.Multiple(() =>
+        {
+            Assert.That(reply!.GetPayload<PrSuggestedPayload>()!.Blocked, Does.Contain("Save a version"));
+            Assert.That(suggestions.PrCalls, Is.Zero, "a blocked send never drafts AI text");
+        });
+    }
+
     [Test]
     public void Discard_during_an_in_flight_send_is_ignored_so_the_open_pr_is_not_orphaned()
     {
@@ -1059,6 +1158,107 @@ public sealed class HostControllerReviewTests
 
         Thread.Sleep(50);
         Assert.That(review.GetReviewStatusCalls, Is.EqualTo(0));
+    }
+
+    // Drive a freshly-built draft all the way to Approved: send for review, then reflect a GitHub approval
+    // (an open PR approved against its head sha) via a status refresh. Returns once the status has settled at
+    // Approved, ready to Publish. review.ReviewStatusValue stays set so OnPublish's own fresh pre-merge read
+    // sees the same approval.
+    private HostController BuildApproved(
+        FakeVersioning versioning, FakeGitHubReview review, string headSha = "headsha")
+    {
+        HostController controller = BuildInReview(versioning, review);
+        review.ReviewStatusValue = new ReviewStatus(ReviewDecision.Approved, 42, PullRequestState.Open, headSha);
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.ReviewRefresh));
+        Assert.That(WaitForStatusState("approved"), Is.True, "setup: the review should reach Approved");
+        return controller;
+    }
+
+    // Write a .spectool.toml that turns author publishing ON for the temp repo, so the Publish gate permits it.
+    private void AllowAuthorPublish() =>
+        File.WriteAllText(
+            Path.Combine(_tempDir, ".spectool.toml"), "[review]\nallow-author-publish = true\n");
+
+    [Test]
+    public void Publish_merges_the_approved_pr_removes_the_branch_and_moves_to_published()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildApproved(versioning, review, headSha: "head-abc");
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForStatusState("published"), Is.True, "the approved document should reach Published");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(1));
+            Assert.That(review.MergedPullNumber, Is.EqualTo(42));
+            // The merge is pinned to the approved head sha, so a version pushed after approval can't slip in.
+            Assert.That(review.MergedExpectedHeadSha, Is.EqualTo("head-abc"));
+            // The merged draft branch is removed as cleanup.
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(1));
+            Assert.That(review.DeletedBranch, Does.StartWith("spec/billing-"));
+        });
+    }
+
+    [Test]
+    public void Publish_when_the_repo_does_not_allow_author_publish_reports_a_plain_reason_without_merging()
+    {
+        // No .spectool.toml — allow-author-publish defaults to false, so the author-publish gate is fail-closed.
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        using HostController controller = BuildApproved(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null, "a disallowed publish is reported plainly");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(0), "an unpermitted publish never merges");
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(0));
+            // The document is untouched — still Approved, never left in an in-between state.
+            Assert.That(LatestStatus()?.State, Is.EqualTo("approved"));
+        });
+    }
+
+    [Test]
+    public void Publish_when_the_merge_fails_reports_a_plain_reason_and_stays_approved()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new() { ThrowOnMerge = true };
+        using HostController controller = BuildApproved(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Assert.That(WaitForKind(MessageKinds.Error), Is.Not.Null, "a merge failure is surfaced plainly");
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(1), "the merge was attempted");
+            Assert.That(review.DeleteBranchCalls, Is.EqualTo(0), "a failed merge never deletes the branch");
+            // The failure leaves the document Approved (never an in-between/undefined status) so it can retry.
+            Assert.That(LatestStatus()?.State, Is.EqualTo("approved"));
+        });
+    }
+
+    [Test]
+    public void Publish_from_a_non_approved_state_is_ignored()
+    {
+        AllowAuthorPublish();
+        FakeVersioning versioning = new();
+        FakeGitHubReview review = new();
+        // In review, not yet Approved — Publish is not a legal transition, so it must be a no-op.
+        using HostController controller = BuildInReview(versioning, review);
+
+        controller.OnMessage(IpcSerializer.SerializeEvent(MessageKinds.DocPublish));
+
+        Thread.Sleep(60);
+        Assert.Multiple(() =>
+        {
+            Assert.That(review.MergeCalls, Is.EqualTo(0));
+            Assert.That(LatestStatus()?.State, Is.EqualTo("inReview"));
+        });
     }
 
     [Test]

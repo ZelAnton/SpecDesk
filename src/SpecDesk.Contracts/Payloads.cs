@@ -20,6 +20,7 @@ public static class MessageKinds
 	public const string DocSaveVersion = "doc.saveVersion";
 	public const string DocSendForReview = "doc.sendForReview";
 	public const string DocUpdateReview = "doc.updateReview";
+	public const string DocPublish = "doc.publish";
 	public const string ReviewRefresh = "review.refresh";
 	public const string DocDiscard = "doc.discard";
 	public const string BranchNameRequest = "branch.name.request";
@@ -69,6 +70,7 @@ public static class MessageKinds
 	public const string RepoDeleteClone = "repo.deleteClone";
 	public const string RepoDeleteBranch = "repo.deleteBranch";
 	public const string RepoRefreshAll = "repo.refreshAll";
+	public const string RepoAutoSync = "repo.autoSync";
 	public const string RepoPull = "repo.pull";
 	public const string RepoPush = "repo.push";
 	public const string WindowMinimize = "window.minimize";
@@ -218,7 +220,9 @@ public sealed record TreePayload(
 /// versioning root (never the independently browsed file-tree root); <c>Branch</c> is the actual named
 /// checkout, <c>BranchState</c> distinguishes named, detached, and unavailable state,
 /// <c>DefaultBranch</c> is resolved from the configured/remote/local branches, and <c>Path</c> is relative
-/// to that repository root.</summary>
+/// to that repository root. <c>CanPublish</c> mirrors the repo's <c>[review] allow-author-publish</c>
+/// policy — the webview reveals the author-facing "Publish" action only where it is set (the host
+/// re-checks it authoritatively before merging, so this flag is a UX gate, never the security boundary).</summary>
 public sealed record WorkspaceContextPayload(
 	string? Repository,
 	string? RepositoryRoot,
@@ -226,7 +230,8 @@ public sealed record WorkspaceContextPayload(
 	string BranchState,
 	string? DefaultBranch,
 	string Path,
-	string? LocalCopy = null);
+	string? LocalCopy = null,
+	bool CanPublish = false);
 
 /// <summary>Payload of <c>error</c> (native→webview): a plain-language message, never a stack trace.</summary>
 public sealed record ErrorPayload(string Message);

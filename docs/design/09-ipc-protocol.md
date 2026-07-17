@@ -16,9 +16,9 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 
 - `kind` — dotted message name, grouped by domain (`doc.*`, `diff.*`, `image.*`, `branch.*`,
   `version.*`, `github.*`, `pr.*`, …); the cross-cutting channels `ready` / `log` / `error` / `status`
-  stay bare. (A remaining `action.*` row is a pre-convention placeholder for a not-yet-built action; it
-  takes a domain name when implemented — as `sendForReview` / `update` did, now `doc.sendForReview` /
-  `doc.updateReview`.)
+  stay bare. (The pre-convention `action.*` placeholder is now fully retired: every such row took a
+  domain name when implemented — `sendForReview` / `update` became `doc.sendForReview` /
+  `doc.updateReview`, and the last one, `action.publish`, became `doc.publish`.)
 - `id` — present only when a correlated reply is expected; otherwise `null`.
 - `version` — monotonic counter for editor content; lets the receiver drop stale work.
 - `payload` — message-specific object.
@@ -37,7 +37,7 @@ directions. C# deserializes `kind` and routes; request/response pairs match on `
 | `doc.sendForReview` | `{ title, body }` | push + open PR with the author-confirmed title/description (blank title → generated; empty body honoured) |
 | `doc.updateReview` | `{}` | push the newly-saved versions to the open PR |
 | `review.refresh` | `{}` | re-read the open PR's review decision from GitHub (host emits a fresh `status` if it changed); fired while under review — polled (focus-gated) and on window focus |
-| `action.publish` | `{}` | merge the PR (if permitted) — *not yet built (PoC-10)* |
+| `doc.publish` | `{}` | publish an approved document: the host merges its open pull request and removes the draft branch, then moves it to Published. Gated by `[review] allow-author-publish`; a stale/unpermitted request is refused host-side with a plain reason (formerly the reserved `action.*` placeholder `action.publish`) |
 | `github.signIn` / `github.signInCancel` / `github.signOut` | `{}` | connect / cancel-connecting / disconnect a GitHub account (device flow) |
 | `github.account.refresh` | `{}` | re-read the connected account's organizations, avatar, and accessible repositories; sent explicitly from the account menu and automatically after returning focus to a stale session |
 | `github.accountApplied` | `{ publicationId }` | acknowledge that the correlated account boundary has been applied before the host resumes a queued authenticated repository action |

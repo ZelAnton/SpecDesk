@@ -41,6 +41,7 @@ public sealed partial class HostController
 		_messageHandlers.Register(MessageKinds.RepoDeleteClone, OnDeleteRepoClone);
 		_messageHandlers.Register(MessageKinds.RepoDeleteBranch, OnDeleteRepoBranch);
 		_messageHandlers.Register(MessageKinds.RepoRefreshAll, OnRefreshAllRepositories);
+		_messageHandlers.Register(MessageKinds.RepoAutoSync, OnAutoSyncRepositories);
 		_messageHandlers.Register(MessageKinds.RepoPull, OnPullRepository);
 		_messageHandlers.Register(MessageKinds.RepoPush, OnPushRepository);
 	}
@@ -2469,6 +2470,21 @@ public sealed partial class HostController
 		string? accessToken,
 		CancellationTokenSource actionCts,
 		long actionGeneration,
+		CancellationToken ct) =>
+		// Manual Refresh only ever refreshes the "updates"/"conflict" indicators (fetch); it never advances a
+		// working line on the author's behalf.
+		SyncRepositories(manager, targets, accessToken, actionCts, actionGeneration, fastForward: false, ct);
+
+	// The shared per-copy loop behind manual Refresh and background auto-sync. With <paramref name="fastForward"/>
+	// it also fast-forwards a clean default (main) line; without it, it only fetches. Either way it publishes only
+	// state that still matches the current registration, and a copy that changed identity is skipped, not forced.
+	private RepositoryRefreshResult SyncRepositories(
+		ILocalRepositoryManager manager,
+		IReadOnlyList<RepositoryRefreshTarget> targets,
+		string? accessToken,
+		CancellationTokenSource actionCts,
+		long actionGeneration,
+		bool fastForward,
 		CancellationToken ct)
 	{
 		int refreshed = 0;
@@ -2481,12 +2497,20 @@ public sealed partial class HostController
 				LocalRepositoryInfo info;
 				lock (_repoGate)
 				{
-					info = manager.Fetch(
-						target.LocalCopy.Path,
-						target.Url,
-						target.DefaultBranch,
-						accessToken,
-						ct);
+					info = fastForward
+						? manager.FetchAndFastForwardCleanLine(
+							target.LocalCopy.Path,
+							target.Url,
+							target.DefaultBranch,
+							target.DefaultBranch,
+							accessToken,
+							ct)
+						: manager.Fetch(
+							target.LocalCopy.Path,
+							target.Url,
+							target.DefaultBranch,
+							accessToken,
+							ct);
 				}
 				bool publish = CanPublishLocalRepositoryAction(
 					actionCts, actionGeneration, AllRepositoriesActionId);
@@ -2514,7 +2538,10 @@ public sealed partial class HostController
 				if (!updated)
 				{
 					failed++;
-					_logger.LogWarning(
+					// Background auto-sync runs unattended and can meet a copy whose registration or source moved
+					// mid-cycle; that is routine there (Debug), but noteworthy for a manual Refresh (Warning).
+					_logger.Log(
+						fastForward ? LogLevel.Debug : LogLevel.Warning,
 						"Skipped refreshed state for local repository copy {Path} because its registration or GitHub source changed",
 						target.LocalCopy.Path);
 					continue;
@@ -2533,10 +2560,115 @@ public sealed partial class HostController
 					or ArgumentException)
 			{
 				failed++;
-				_logger.LogWarning(ex, "Could not refresh local repository copy {Path}", target.LocalCopy.Path);
+				// An offline or otherwise unreachable copy is an expected, silent skip for a background auto-sync
+				// (Debug — no noisy errors reach the author); a manual Refresh reports the failure count and logs
+				// at Warning.
+				_logger.Log(
+					fastForward ? LogLevel.Debug : LogLevel.Warning,
+					ex,
+					"Could not refresh local repository copy {Path}",
+					target.LocalCopy.Path);
 			}
 		}
 		return new RepositoryRefreshResult(refreshed, failed);
+	}
+
+	// The shortest gap between two background auto-syncs. Focus and poll triggers arrive from the webview whenever
+	// the window is in use; this throttle coalesces them so a rapid focus/blur or an eager poll can never hammer
+	// upstream. Internal so a test can widen or shrink the window; production keeps the default.
+	internal TimeSpan AutoSyncMinInterval { get; set; } = TimeSpan.FromSeconds(45);
+
+	// When the last background auto-sync began (UTC), guarded by _sync. Null until the first cycle starts.
+	private DateTimeOffset? _lastAutoSyncStartedUtc;
+
+	// Background auto-sync of every registered local copy (T-076). The webview's focus-gated poll drives this
+	// while the window is in use (there is no host-side window-focus signal, so the cadence lives in the panel,
+	// exactly like the review-status poll). It fetches upstream — refreshing the "updates available"/"conflict"
+	// indicators without a manual Refresh — and fast-forwards ONLY a clean default (main) line, never a
+	// draft/feature line or any local work. Best-effort and silent: it needs a connected account, coalesces via a
+	// throttle and the shared single-flight, surfaces no error on an offline/failed cycle, and stops with the
+	// account session or window teardown so it never keeps working for a context that no longer exists.
+	private void OnAutoSyncRepositories()
+	{
+		if (_repositoryInspector is not ILocalRepositoryManager manager)
+		{
+			return;
+		}
+		RepositoryRefreshTarget[]? targets;
+		lock (_sync)
+		{
+			if (_disposed || _workspace is null)
+			{
+				return;
+			}
+			DateTimeOffset now = DateTimeOffset.UtcNow;
+			if (_lastAutoSyncStartedUtc is DateTimeOffset last && now - last < AutoSyncMinInterval)
+			{
+				return;
+			}
+			targets = _workspace.State().Repositories
+				.SelectMany(repo => repo.Clones.Select(clone =>
+					new RepositoryRefreshTarget(repo.Id, repo.Url, repo.DefaultBranch, clone)))
+				.ToArray();
+		}
+		if (targets.Length == 0)
+		{
+			return;
+		}
+		// Background sync is a connected-account convenience: with no account there is no GitHub context to sync,
+		// and requiring one is exactly how the sync stops the moment the author signs out.
+		if (!TryCaptureAccountSession(out AccountSession accountSession))
+		{
+			return;
+		}
+		if (!TryBeginLocalRepositoryAction(AllRepositoriesActionId, out CancellationTokenSource cts, out long generation))
+		{
+			// A manual Refresh/pull/push or another auto-sync is already running; skip this tick rather than queue.
+			return;
+		}
+		lock (_sync)
+		{
+			_lastAutoSyncStartedUtc = DateTimeOffset.UtcNow;
+		}
+
+		_ = Task.Run(async () =>
+		{
+			using CancellationTokenSource refreshCts =
+				CancellationTokenSource.CreateLinkedTokenSource(cts.Token, accountSession.CancellationToken);
+			try
+			{
+				await (_auth ?? throw new InvalidOperationException("GitHub authorization is unavailable."))
+					.WithAccessTokenAsync(
+						(token, tokenCt) => Task.FromResult(
+							SyncRepositories(manager, targets, token, cts, generation, fastForward: true, tokenCt)),
+						refreshCts.Token).ConfigureAwait(false);
+
+				if (CanPublishLocalRepositoryAction(cts, generation, AllRepositoriesActionId))
+				{
+					// Re-emits only when a fast-forward actually advanced a copy (the workspace revision changed);
+					// an all-quiet cycle publishes nothing and never disturbs the author.
+					EmitWorkspaceState();
+				}
+			}
+			catch (OperationCanceledException) when (cts.IsCancellationRequested)
+			{
+				// Window teardown or unregistering a repository cancelled the batch; no stale result is published.
+			}
+			catch (OperationCanceledException) when (accountSession.CancellationToken.IsCancellationRequested)
+			{
+				// Signing out retired the captured token before the sync finished.
+			}
+			catch (InvalidOperationException ex)
+			{
+				// The account can disconnect between the IsSignedIn capture and the transient token scope. Silent
+				// by design: a background sync never raises an error to the author.
+				_logger.LogDebug(ex, "Skipped a background repository auto-sync cycle");
+			}
+			finally
+			{
+				FinishLocalRepositoryActionAfterOutbound(cts);
+			}
+		});
 	}
 
 	private void OnPullRepository(IpcMessage message) =>

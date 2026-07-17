@@ -29,9 +29,11 @@ public enum PullRequestState
 }
 
 /// <summary>The live status of the most recent pull request for a branch: whether it is still open
-/// (<see cref="PrState"/>), its review <see cref="Decision"/> (meaningful only while open), and the PR
-/// <see cref="Number"/>.</summary>
-public sealed record ReviewStatus(ReviewDecision Decision, int Number, PullRequestState PrState);
+/// (<see cref="PrState"/>), its review <see cref="Decision"/> (meaningful only while open), the PR
+/// <see cref="Number"/>, and the PR's current <see cref="HeadSha"/> (the head commit the decision was
+/// aggregated against — empty when unknown). Publish passes <see cref="HeadSha"/> back to the merge as a
+/// freshness guard so a head that moved since approval can't be merged unreviewed.</summary>
+public sealed record ReviewStatus(ReviewDecision Decision, int Number, PullRequestState PrState, string HeadSha = "");
 
 /// <summary>The signed-in user's relationship to a review: they <see cref="Author"/>ed it, or they were
 /// asked to <see cref="Reviewer"/> it.</summary>
@@ -145,6 +147,34 @@ public interface IGitHubReview
         string repo,
         string branch,
         CancellationToken cancellationToken = default);
+
+    /// <summary>Merge pull request <paramref name="pullNumber"/> in <paramref name="owner"/>/<paramref
+    /// name="repo"/>, publishing the spec. <paramref name="expectedHeadSha"/> is passed to GitHub as the
+    /// SHA the PR head must still match (a freshness guard): if the head moved since it was approved —
+    /// someone pushed a new version — GitHub refuses the merge and this throws, so an unreviewed change can
+    /// never be published. Throws on any non-success (a still-open review requirement, a merge conflict, a
+    /// SHA mismatch, a revoked permission, or a transport failure); the caller reports a plain reason and
+    /// leaves the document where it was — a failed publish never strands it in an in-between state.</summary>
+    Task MergePullRequestAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        string expectedHeadSha,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Merging a pull request is not available from this provider.");
+
+    /// <summary>Delete the branch named <paramref name="branch"/> in <paramref name="owner"/>/<paramref
+    /// name="repo"/> (removing the merged draft's ref on GitHub after it is published). Throws on a transport
+    /// / API failure; the caller treats this as best-effort cleanup — a failure to delete never undoes the
+    /// merge that already published the document.</summary>
+    Task DeleteBranchAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string branch,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Deleting a branch is not available from this provider.");
 
     /// <summary>The open pull requests the signed-in user is involved in — as author or requested reviewer —
     /// most recently updated first, across all their repositories. Empty when there are none. Throws on a
@@ -1060,7 +1090,63 @@ public sealed class GitHubReviewClient : IGitHubReview
             }
         }
 
-        return new ReviewStatus(AggregateDecision(node), GitHubHttp.NumberOf(node, "number"), PrStateOf(node));
+        return new ReviewStatus(
+            AggregateDecision(node), GitHubHttp.NumberOf(node, "number"), PrStateOf(node),
+            GitHubHttp.StringOf(node, "headRefOid"));
+    }
+
+    public async Task MergePullRequestAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        string expectedHeadSha,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}/merge");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Put, endpoint, accessToken);
+        // Pin the merge to the exact head we approved: GitHub rejects (409) the merge if the head moved on,
+        // so a version pushed after approval can't slip through unreviewed. An empty sha means we couldn't
+        // read the head — omit it rather than send "" (which GitHub would treat as a real, never-matching sha).
+        object body = string.IsNullOrEmpty(expectedHeadSha)
+            ? new { }
+            : new { sha = expectedHeadSha };
+        request.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
+
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            // 405 (not mergeable — an unmet review requirement / a conflict), 409 (the head moved since it was
+            // approved), 403 (permission revoked), 404 — all surface as one plain, bounded line (never a body
+            // that might echo the branch/PR internals), so the host reports a plain reason and leaves the
+            // document where it was.
+            throw new HttpRequestException(
+                $"GitHub rejected the publish (HTTP {(int)response.StatusCode}).");
+        }
+    }
+
+    public async Task DeleteBranchAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string branch,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        // The ref lives at git/refs/heads/{branch}; escape each path segment but keep the '/' separators a
+        // hierarchical branch name (e.g. spec/refunds) carries, so the ref resolves rather than 404ing.
+        string encodedRef = string.Join('/', branch.Split('/').Select(Uri.EscapeDataString));
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/git/refs/heads/{encodedRef}");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Delete, endpoint, accessToken);
+        using HttpResponseMessage response = await _http.SendAsync(request, timeout.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the branch delete (HTTP {(int)response.StatusCode}).");
+        }
     }
 
     // The signed-in user's open PRs as author and, separately, as requested reviewer — two searches so the

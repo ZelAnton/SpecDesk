@@ -80,6 +80,12 @@ internal static class Program
 		// inside the host. The prompt library combines the author's personal templates (a
 		// host-owned JSON file) with a remote set fetched from SPECDESK_AI_TEMPLATES_URL (empty if unset or
 		// the fetch fails). Disposed after the controller so an in-flight turn is cancelled first.
+		//
+		// T-079: the "Save a version" / "Send for review" prompts also draft their text from the read-only
+		// document tools (getCurrentDoc / getDiff) when an ISuggestionAgent is supplied. No provider is wired
+		// by default (the same offline default as the chat provider seam), so the deterministic WorkflowSeeds
+		// templates are shown; a ChatSuggestionAgent over an isolated provider session drops in here without
+		// touching the host or the webview, and the host already falls back on any failure or timeout.
 		AiOptions aiOptions = AiOptions.FromEnvironment();
 		using HttpClient aiHttp = new();
 		CopilotChatAgentFactory chatAgentFactory = new(

@@ -361,8 +361,20 @@ public sealed partial class HostController
 	private string BuildChatPrompt(string text, IReadOnlyList<ChatAttachmentPayload> attachments)
 	{
 		const int maxChars = 200_000;
-		List<string> contexts = [];
 		int remaining = maxChars;
+
+		// Implicit current-document context (getCurrentDoc + getDiff): the assistant sees the open document and
+		// what has changed in it without the author attaching anything, so "tighten this section" or
+		// "summarize what changed" have context. Bounded and framed as data, never instructions (see
+		// DocumentContext/DocumentDiff.ToContextBlock). chat.attachment.pick stays the route for every other
+		// attachment.
+		string? currentDocument = BuildCurrentDocumentContext(Math.Min(remaining, 80_000));
+		if (!string.IsNullOrEmpty(currentDocument))
+		{
+			remaining -= currentDocument.Length;
+		}
+
+		List<string> contexts = [];
 		foreach (ChatAttachmentPayload attachment in attachments.Take(12))
 		{
 			if (attachment.Kind is "file" or "folder" && !ConsumePickedChatAttachment(attachment))
@@ -387,7 +399,100 @@ public sealed partial class HostController
 				break;
 			}
 		}
-		return contexts.Count == 0 ? text : $"{text}\n\n--- Attached context ---\n{string.Join("\n\n", contexts)}";
+
+		System.Text.StringBuilder prompt = new(text);
+		if (!string.IsNullOrEmpty(currentDocument))
+		{
+			prompt.Append("\n\n").Append(currentDocument);
+		}
+		if (contexts.Count > 0)
+		{
+			prompt.Append("\n\n--- Attached context ---\n").Append(string.Join("\n\n", contexts));
+		}
+		return prompt.ToString();
+	}
+
+	// Capture the open local document as the getCurrentDoc context to include implicitly in a chat turn, or
+	// null when there is no open local document (a remote-only preview is read-only and not included here).
+	// Reads _currentPath/_repoRoot under _sync, matching the other document-state readers (see K-005).
+	private string? BuildCurrentDocumentContext(int budget)
+	{
+		if (budget <= 0)
+		{
+			return null;
+		}
+
+		string? repoRoot;
+		string? path;
+		string text;
+		string? branch;
+		RemoteDocumentContext? remote;
+		lock (_sync)
+		{
+			repoRoot = _repoRoot;
+			path = _currentPath;
+			text = _text;
+			branch = _session.Branch;
+			remote = _remoteDocument;
+		}
+
+		if (remote is not null || path is null || repoRoot is null)
+		{
+			return null;
+		}
+
+		string relativePath = Path.GetRelativePath(repoRoot, path).Replace('\\', '/');
+		string repository = Path.GetFileName(Path.TrimEndingDirectorySeparator(repoRoot));
+		DocumentContext document = new(Path.GetFileName(path), relativePath, text, repository, branch, null);
+		string documentBlock = document.ToContextBlock(budget);
+
+		string? diffBlock = TryBuildWorkingDiffContext(
+			repoRoot, relativePath, text, Math.Min(budget - documentBlock.Length, 16_000));
+		return diffBlock is null ? documentBlock : $"{documentBlock}\n\n{diffBlock}";
+	}
+
+	// The getDiff context for the implicit chat document, best-effort: read the committed base ONLY if the
+	// repository gate is free right now (a bounded TryEnter, not a blocking lock), so a chat turn is never held
+	// behind a long-running push/commit. When the gate is busy, or the read faults, the diff is simply omitted
+	// — the assistant still has the document itself (getCurrentDoc). Runs on the message thread, so it must not
+	// block; _repoGate is taken here without _sync held (BuildCurrentDocumentContext released _sync first), so
+	// the repository→session lock order is preserved.
+	private string? TryBuildWorkingDiffContext(string repoRoot, string relativePath, string text, int budget)
+	{
+		if (budget <= 0)
+		{
+			return null;
+		}
+
+		string? baseText = null;
+		bool taken = false;
+		try
+		{
+			Monitor.TryEnter(_repoGate, TimeSpan.FromMilliseconds(50), ref taken);
+			if (!taken)
+			{
+				return null;
+			}
+			baseText = _versioning.ReadHeadContent(repoRoot, relativePath);
+		}
+		catch (Exception ex) when (
+			ex is LibGit2Sharp.LibGit2SharpException
+				or IOException
+				or UnauthorizedAccessException
+				or InvalidOperationException)
+		{
+			return null;
+		}
+		finally
+		{
+			if (taken)
+			{
+				Monitor.Exit(_repoGate);
+			}
+		}
+
+		DocumentDiff diff = DocumentDiff.Between(baseText, text);
+		return diff.HasChanges || diff.IsNewDocument ? diff.ToContextBlock(budget) : null;
 	}
 
 	private bool ConsumePickedChatAttachment(ChatAttachmentPayload attachment)

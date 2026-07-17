@@ -325,7 +325,8 @@
     "branchState": "named",
     "defaultBranch": "main",
     "path": "specs/billing.md",
-    "localCopy": "billing-repo"
+    "localCopy": "billing-repo",
+    "canPublish": true
   },
   "window.state": {
     "maximized": true

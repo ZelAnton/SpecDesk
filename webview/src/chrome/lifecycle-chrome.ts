@@ -9,10 +9,11 @@ import { isReviewState, type StatusState } from "../wire/protocol.js";
  * draft actions (Save version / Discard / Send for review) take over while Edit hides. Discard and Send
  * for review are Draft-only (Discard isn't a legal move once In review; a sent draft is already
  * submitted); once the draft is under review, Update review replaces Send for review (push the
- * newly-saved versions to the open PR). Both Send for review and Update review additionally need GitHub
- * to be configured — without it there is no Connect affordance, so the button would be a dead end. No
- * IPC/protocol knowledge: index.ts supplies each action as a callback (it owns the wire kinds) and the
- * pane-editable coordination.
+ * newly-saved versions to the open PR). Once the review is Approved, Publish becomes available — but only
+ * when the repo permits the author to publish (see setPublishAllowed) AND GitHub is configured. Both Send
+ * for review and Update review (and Publish) additionally need GitHub to be configured — without it there
+ * is no Connect affordance, so the button would be a dead end. No IPC/protocol knowledge: index.ts
+ * supplies each action as a callback (it owns the wire kinds) and the pane-editable coordination.
  */
 export interface LifecycleChromeDeps {
   openBtn: HTMLButtonElement | null;
@@ -20,6 +21,7 @@ export interface LifecycleChromeDeps {
   saveVersionBtn: HTMLButtonElement | null;
   sendForReviewBtn: HTMLButtonElement | null;
   updateReviewBtn: HTMLButtonElement | null;
+  publishBtn: HTMLButtonElement | null;
   discardBtn: HTMLButtonElement | null;
   saveBtn: HTMLButtonElement | null;
   formatBar: HTMLFieldSetElement | null;
@@ -30,6 +32,7 @@ export interface LifecycleChromeDeps {
   onSaveVersion: () => void;
   onSendForReview: () => void;
   onUpdateReview: () => void;
+  onPublish: () => void;
   onDiscard: () => void;
   onSave: () => void;
 }
@@ -38,6 +41,7 @@ export class LifecycleChrome {
   private readonly deps: LifecycleChromeDeps;
   private state: StatusState = "published";
   private githubAvailable = false;
+  private publishAllowed = false;
   private documentReadOnly = false;
 
   constructor(deps: LifecycleChromeDeps) {
@@ -47,6 +51,7 @@ export class LifecycleChrome {
     deps.saveVersionBtn?.addEventListener("click", () => deps.onSaveVersion());
     deps.sendForReviewBtn?.addEventListener("click", () => deps.onSendForReview());
     deps.updateReviewBtn?.addEventListener("click", () => deps.onUpdateReview());
+    deps.publishBtn?.addEventListener("click", () => deps.onPublish());
     deps.discardBtn?.addEventListener("click", () => deps.onDiscard());
     deps.saveBtn?.addEventListener("click", () => deps.onSave());
   }
@@ -55,8 +60,9 @@ export class LifecycleChrome {
    * Apply the chrome for a lifecycle state: both panes editable in any non-published state; the format
    * bar enabled and Save version shown while a draft is in progress; Edit shown only when published; Discard and
    * Send for review shown only in the Draft state (Discard isn't legal once In review; a sent draft is
-   * already submitted); Update review shown only while a review is open. Send for review and Update review
-   * additionally require GitHub to be configured (see setGitHubAvailable).
+   * already submitted); Update review shown only while a review is open; Publish shown only once Approved.
+   * Send for review, Update review, and Publish additionally require GitHub to be configured (see
+   * setGitHubAvailable), and Publish also requires the repo to permit it (see setPublishAllowed).
    */
   setLifecycle(state: StatusState): void {
     this.state = state;
@@ -87,11 +93,22 @@ export class LifecycleChrome {
 
   /**
    * Whether GitHub sign-in is configured for this host (mirrors the account affordance). When it isn't,
-   * "Send for review" / "Update review" stay hidden — there is no Connect button to act on their
-   * "connect first" message.
+   * "Send for review" / "Update review" / "Publish" stay hidden — there is no Connect button to act on
+   * their "connect first" message.
    */
   setGitHubAvailable(available: boolean): void {
     this.githubAvailable = available;
+    this.applyReviewButtons();
+  }
+
+  /**
+   * Whether the open document's repository permits the author to publish it themselves
+   * (`[review] allow-author-publish`, carried on the workspace context). When it doesn't, "Publish" stays
+   * hidden even on an approved document. This is only a UX gate — the host re-checks the same policy before
+   * it merges — so it defaults to false (fail closed) until the context confirms it is allowed.
+   */
+  setPublishAllowed(allowed: boolean): void {
+    this.publishAllowed = allowed;
     this.applyReviewButtons();
   }
 
@@ -103,6 +120,13 @@ export class LifecycleChrome {
     if (this.deps.updateReviewBtn) {
       this.deps.updateReviewBtn.hidden =
         this.documentReadOnly || !(isReviewState(this.state) && this.githubAvailable);
+    }
+    if (this.deps.publishBtn) {
+      // Publish appears only on an approved document, and only where GitHub is configured AND the repo
+      // permits the author to publish (a destructive, irreversible merge — kept fail-closed).
+      this.deps.publishBtn.hidden =
+        this.documentReadOnly ||
+        !(this.state === "approved" && this.githubAvailable && this.publishAllowed);
     }
   }
 }
