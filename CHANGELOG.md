@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local working lines now list the repository's actual main line first, while manual Get updates and Share changes controls are removed in preparation for automatic synchronization.
 - Every destructive action now requires an inline **Confirm deletion** step directly beneath the chosen action before SpecDesk can remove anything.
 - `GitHubRepositoryCatalog`'s organization, repository, metadata, tree, folder, and file requests (including the paginated organization/repository fetches) now share the same 30-second per-request timeout and User-Agent as SpecDesk's other GitHub transports, instead of relying on the shared `HttpClient`'s longer default timeout with no per-request bound; a stalled GitHub request during sign-in or repository browsing now fails and can be retried sooner instead of appearing to hang.
+- The "Show changes" compare overlay now explicitly requests the last-saved-version base it has always used, instead of the request path hard-coding that literal at the call site — laying the groundwork for future compare affordances against other bases without changing today's behavior.
 
 ### Fixed
 
