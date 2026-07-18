@@ -336,4 +336,50 @@ internal sealed class FakeGitHubReview : IGitHubReview
         }
         return Task.FromResult(ReviewSyncValue);
     }
+
+    // --- PoC-7 Part C: in-flight PR awareness (pr.forFile) and comparison (pr.compare) ---
+
+    public IReadOnlyList<PullRequestForFile> PullRequestsForFileValue { get; set; } = [];
+
+    public bool ThrowOnListForFile { get; set; }
+
+    public int ListForFileCalls { get; private set; }
+
+    public string? ForFilePath { get; private set; }
+
+    public Task<IReadOnlyList<PullRequestForFile>> ListOpenPullRequestsForFileAsync(
+        string accessToken, string owner, string repo, string path,
+        CancellationToken cancellationToken = default)
+    {
+        ListForFileCalls++;
+        ForFilePath = path;
+        if (ThrowOnListForFile)
+        {
+            throw new HttpRequestException("for-file boom");
+        }
+        return Task.FromResult(PullRequestsForFileValue);
+    }
+
+    /// <summary>What <see cref="ReadFileAtPullRequestHeadAsync"/> returns; null simulates a file absent at the
+    /// PR head (the proposal removed it).</summary>
+    public string? HeadFileContentValue { get; set; } = "# Head\n";
+
+    public bool ThrowOnReadHeadFile { get; set; }
+
+    public int ReadHeadFileCalls { get; private set; }
+
+    public (int Number, string Path)? ReadHeadFileQuery { get; private set; }
+
+    public Task<string?> ReadFileAtPullRequestHeadAsync(
+        string accessToken, string owner, string repo, int pullNumber, string path,
+        CancellationToken cancellationToken = default)
+    {
+        ReadHeadFileCalls++;
+        ReadHeadFileQuery = (pullNumber, path);
+        if (ThrowOnReadHeadFile)
+        {
+            throw new HttpRequestException("head-file boom");
+        }
+        return Task.FromResult(HeadFileContentValue);
+    }
 }

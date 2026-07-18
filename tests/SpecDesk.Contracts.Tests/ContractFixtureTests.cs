@@ -54,6 +54,18 @@ public sealed class ContractFixtureTests
 			new PrListItemPayload(7, "Payment terms", "https://github.com/octo/other/pull/7",
 				"octo/other", "reviewer", "inReview", "In review"),
 		], null)),
+		// PoC-7 Part C: the open PRs touching the current file (one match; Error absent — the optional field is
+		// exercised by the webview decoder's own null cases).
+		(MessageKinds.PrForFile, new PrForFilePayload(
+			"specs/billing.md",
+			[new PrForFileItemPayload(
+				51, "Tighten the refund wording", "https://github.com/octo/spec-repo/pull/51", "octo/spec-repo")],
+			null)),
+		// A rendered comparison of a PR's version against the working copy (Error absent; Html is the
+		// self-contained comparison markup the compare surface injects).
+		(MessageKinds.PrCompareRendered, new PrComparePayload(
+			"<div class=\"pr-compare pr-compare--rendered\"><p data-line-start=\"0\" data-diff=\"changed\">The refund window is 30 days.</p></div>",
+			"rendered", "workingCopy", null)),
 		(MessageKinds.PrDetails, new PrDetailsPayload(
 			42, "octo/spec-repo", "Clarify refunds", "Explain the refund window.",
 			"https://github.com/octo/spec-repo/pull/42", "open", false, "alex", "https://img/alex",

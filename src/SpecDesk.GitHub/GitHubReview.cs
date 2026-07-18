@@ -49,6 +49,11 @@ public enum ReviewRole
 public sealed record ReviewSummary(
     int Number, string Title, string Url, string Repo, ReviewRole Role, ReviewDecision Decision);
 
+/// <summary>One open pull request whose changed-file set includes a queried document (PoC-7, Part C
+/// "in-flight PR awareness"): its <see cref="Number"/>, <see cref="Title"/>, and web <see cref="Url"/>. The
+/// repository is the one the caller queried, so it is not repeated here.</summary>
+public sealed record PullRequestForFile(int Number, string Title, string Url);
+
 /// <summary>One bounded inline review comment from GitHub, including its repository-relative file path.</summary>
 public sealed record ReviewComment(
     string Id, string Path, string Author, string Body, DateTimeOffset When);
@@ -195,6 +200,34 @@ public interface IGitHubReview
     Task<IReadOnlyList<ReviewSummary>> ListPullRequestsAsync(
         string accessToken, CancellationToken cancellationToken = default);
 
+    /// <summary>The open pull requests in <paramref name="owner"/>/<paramref name="repo"/> whose set of
+    /// changed files includes <paramref name="path"/> (a repository-relative, forward-slash path) — PoC-7
+    /// Part C's "what else is in flight on this file". A bounded browse read (the most recently updated open
+    /// requests, each inspected for the path among its first changed-files page); empty when none touch it.
+    /// Throws on a transport / API failure (the host surfaces a plain "couldn't check for other reviews").</summary>
+    Task<IReadOnlyList<PullRequestForFile>> ListOpenPullRequestsForFileAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string path,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Listing pull requests for a file is not available from this provider.");
+
+    /// <summary>The text content of <paramref name="path"/> (a repository-relative, forward-slash path) as it
+    /// stands at the head commit of pull request <paramref name="pullNumber"/> in <paramref name="owner"/>/
+    /// <paramref name="repo"/> — the "PR's proposed version" of the file to compare against a chosen base
+    /// (PoC-7 Part C). Reads the head repository/commit the pull request tracks (which may be a fork), so a
+    /// cross-repository proposal still resolves. Returns <c>null</c> when the file is absent at that head (the
+    /// PR removed it, or never had it). Throws on a transport / API failure.</summary>
+    Task<string?> ReadFileAtPullRequestHeadAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        string path,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Reading a pull-request file is not available from this provider.");
+
     /// <summary>Return at most 100 inline comments from the first API page of a review.</summary>
     Task<IReadOnlyList<ReviewComment>> ListReviewCommentsAsync(
         string accessToken,
@@ -278,6 +311,8 @@ public sealed class GitHubReviewClient : IGitHubReview
     private const int MaxPullRequestCommentPages = 10;
     // A changed file's unified-diff patch can be large; bound one /files page independently of comments.
     private const int MaxReviewFilesPageBytes = 8_388_608;
+    // A single spec file's blob read for a PR comparison (PoC-7 Part C) — a spec document, not a whole tree.
+    private const int MaxCompareBlobBytes = 4_194_304;
     // Cap the projected anchors so a pathological PR can't inflate the sync payload the host ships back.
     private const int MaxCommentableLines = 50_000;
     private const int MaxReviewCommentAnchors = 500;
@@ -1243,6 +1278,149 @@ public sealed class GitHubReviewClient : IGitHubReview
                 .OrderByDescending(item => item.UpdatedAt, StringComparer.Ordinal)
                 .Select(item => item.Summary),
         ];
+    }
+
+    // Open PRs (most-recently-updated first, bounded) with the first page of each one's changed-file paths, in
+    // one GraphQL round-trip — so filtering "which open PRs touch this file" costs a single request rather than
+    // a per-PR /files fan-out. `first:30` covers a shared spec repo's live reviews; `files(first:100)` covers
+    // any single spec PR (a PR touching >100 files that hides the path past the first page is not surfaced —
+    // an acceptable bound for this best-effort background awareness).
+    private const string PullRequestsForFileQuery =
+        "query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){"
+        + "pullRequests(states:OPEN,first:30,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
+        + "number title url files(first:100){nodes{path}}}}}}";
+
+    public async Task<IReadOnlyList<PullRequestForFile>> ListOpenPullRequestsForFileAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        using JsonDocument document = await PostGraphQlAsync(
+            accessToken,
+            new { query = PullRequestsForFileQuery, variables = new { owner, repo } },
+            "pull-requests-for-file",
+            cancellationToken);
+        JsonElement root = document.RootElement;
+        // A partial GraphQL response (a resolved-to-null field, throttling) can't be trusted to be complete —
+        // treat any errors as a fault so the host reports it rather than silently under-listing in-flight work.
+        if (HasGraphQlErrors(root))
+        {
+            throw new HttpRequestException("GitHub returned errors for the pull-requests-for-file query.");
+        }
+        if (!TryProperty(root, "data", out JsonElement data)
+            || !TryProperty(data, "repository", out JsonElement repository)
+            || !TryProperty(repository, "pullRequests", out JsonElement pulls)
+            || !TryProperty(pulls, "nodes", out JsonElement nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+        {
+            // A cleanly-missing level (the repo not resolving) is "no open reviews touch it", not a fault.
+            return [];
+        }
+
+        List<PullRequestForFile> matches = [];
+        foreach (JsonElement node in nodes.EnumerateArray())
+        {
+            if (!TryProperty(node, "files", out JsonElement files)
+                || !TryProperty(files, "nodes", out JsonElement fileNodes)
+                || fileNodes.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+            bool touchesPath = false;
+            foreach (JsonElement file in fileNodes.EnumerateArray())
+            {
+                if (GitHubHttp.StringOf(file, "path") == path)
+                {
+                    touchesPath = true;
+                    break;
+                }
+            }
+            int number = GitHubHttp.NumberOf(node, "number");
+            if (touchesPath && number > 0)
+            {
+                matches.Add(new PullRequestForFile(
+                    number, GitHubHttp.StringOf(node, "title"), GitHubHttp.StringOf(node, "url")));
+            }
+        }
+        return matches;
+    }
+
+    public async Task<string?> ReadFileAtPullRequestHeadAsync(
+        string accessToken,
+        string owner,
+        string repo,
+        int pullNumber,
+        string path,
+        CancellationToken cancellationToken = default)
+    {
+        using CancellationTokenSource timeout = GitHubHttp.NewTimeout(cancellationToken);
+        (string headSha, string headOwner, string headRepo) =
+            await ReadPullRequestHeadRefAsync(accessToken, owner, repo, pullNumber, timeout.Token);
+        if (headSha.Length == 0 || headOwner.Length == 0 || headRepo.Length == 0)
+        {
+            // The head repository was deleted (a fork removed after the PR opened) or unreadable — nothing to
+            // compare against, so report "no content at head" rather than throwing on a best-effort compare.
+            return null;
+        }
+
+        // The Contents API returns the file's bytes verbatim under the raw media type (no base64/JSON wrapper),
+        // pinned to the head commit. Escape each path segment but keep the '/' separators so a nested spec path
+        // resolves. A 404 means the file isn't present at that head (the PR removed it) — a null, not a fault.
+        string encodedPath = string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(headOwner)}/{Uri.EscapeDataString(headRepo)}/contents/{encodedPath}?ref={Uri.EscapeDataString(headSha)}");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+        request.Headers.Accept.Clear();
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github.raw"));
+        using HttpResponseMessage response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the pull-request file read (HTTP {(int)response.StatusCode}).");
+        }
+        byte[] responseBody = await ReadBoundedAsync(response.Content, MaxCompareBlobBytes, timeout.Token);
+        return Encoding.UTF8.GetString(responseBody);
+    }
+
+    // Read a pull request's head ref: the head commit SHA and the owner/name of the (possibly forked) head
+    // repository the commit lives in. Empty strings when the head repository is gone or the response is
+    // unreadable — the caller then treats the compare as "no content at head".
+    private async Task<(string Sha, string Owner, string Repo)> ReadPullRequestHeadRefAsync(
+        string accessToken, string owner, string repo, int pullNumber, CancellationToken cancellationToken)
+    {
+        Uri endpoint = new(
+            $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/pulls/{pullNumber}");
+        using HttpRequestMessage request = NewRequest(HttpMethod.Get, endpoint, accessToken);
+        using HttpResponseMessage response = await _http.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"GitHub rejected the pull-request read (HTTP {(int)response.StatusCode}).");
+        }
+        byte[] responseBody = await ReadBoundedAsync(
+            response.Content, MaxReviewCommentsResponseBytes, cancellationToken);
+        using JsonDocument document = JsonDocument.Parse(responseBody);
+        if (!TryProperty(document.RootElement, "head", out JsonElement head))
+        {
+            return (string.Empty, string.Empty, string.Empty);
+        }
+        string sha = GitHubHttp.StringOf(head, "sha");
+        // head.repo is null when the fork the branch lived on was deleted after the PR opened.
+        string fullName = TryProperty(head, "repo", out JsonElement headRepo)
+            ? GitHubHttp.StringOf(headRepo, "full_name")
+            : string.Empty;
+        string[] segments = fullName.Split('/');
+        return segments.Length == 2 && segments[0].Length > 0 && segments[1].Length > 0
+            ? (sha, segments[0], segments[1])
+            : (string.Empty, string.Empty, string.Empty);
     }
 
     private async Task CollectRestSearchAsync(

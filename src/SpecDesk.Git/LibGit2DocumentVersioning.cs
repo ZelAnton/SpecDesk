@@ -38,6 +38,20 @@ public sealed class LibGit2DocumentVersioning : IDocumentVersioning, IGitPublish
         return repo.Head.Tip.Tree[repoRelativePath]?.Target is Blob blob ? blob.GetContentText() : null;
     }
 
+    public string? ReadBranchContent(string repoRoot, string branch, string repoRelativePath)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(repoRoot);
+        ArgumentException.ThrowIfNullOrEmpty(branch);
+        ArgumentException.ThrowIfNullOrEmpty(repoRelativePath);
+
+        using Repository repo = new(repoRoot);
+        // The named local branch may not exist (never fetched), and its tip may be unborn — either way there
+        // is no baseline blob to compare against. Tree[path] is null when the file is not tracked at that tip.
+        return repo.Branches[branch]?.Tip?.Tree[repoRelativePath]?.Target is Blob blob
+            ? blob.GetContentText()
+            : null;
+    }
+
     public IReadOnlyList<DocumentVersion> GetDocumentVersions(
         string repoRoot,
         string repoRelativePath,

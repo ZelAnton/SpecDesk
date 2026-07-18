@@ -22,6 +22,8 @@ export const Kinds = {
   versionNoteRequest: "version.note.request",
   prSuggestedRequest: "pr.suggested.request",
   prListRequest: "pr.list.request",
+  prForFile: "pr.forFile",
+  prCompareRequest: "pr.compare.request",
   prDetailsRequest: "pr.details.request",
   prReviewersRequest: "pr.reviewers.request",
   prCommentCreate: "pr.comment.create",
@@ -88,6 +90,7 @@ export const Kinds = {
   versionNoteSuggested: "version.note.suggested",
   prSuggested: "pr.suggested",
   prList: "pr.list",
+  prCompareRendered: "pr.compare.rendered",
   prDetails: "pr.details",
   prMutationCompleted: "pr.mutationCompleted",
   reviewCommentSync: "review.commentSync",
@@ -435,6 +438,55 @@ export interface PrListItemPayload {
  *  connected / transport failure) — present means `items` is empty and the panel shows the reason. */
 export interface PrListPayload {
   items: PrListItemPayload[];
+  error?: string;
+}
+
+/** One open pull request touching the current file (native→webview, inside {@link PrForFilePayload}) —
+ *  PoC-7 Part C. `repo` is `owner/name`. The author picks one of these to compare against their working
+ *  copy or `main`. Plain-language only; a "pull request" is a "review" in the UI. */
+export interface PrForFileItemPayload {
+  number: number;
+  title: string;
+  url: string;
+  repo: string;
+}
+
+/** Payload of `pr.forFile` (native→webview, correlated to the `pr.forFile` request by id): the open pull
+ *  requests whose changed-file set includes the open document. `path` is the repository-relative path the
+ *  host resolved and matched on; `items` are the touching reviews (empty when none); `error` is a plain reason
+ *  the list couldn't be loaded — present means `items` is empty and the affordance stays hidden. */
+export interface PrForFilePayload {
+  path: string;
+  items: PrForFileItemPayload[];
+  error?: string;
+}
+
+/** The two comparison lenses of PoC-7 Part C (mirror of C# `PrCompareBases`). `workingCopy` is the author's
+ *  current local content including unsaved edits; `main` is the published baseline at the local `main` tip. */
+export type PrCompareBase = "workingCopy" | "main";
+
+/** The two representations of a comparison (mirror of C# `PrCompareModes`) — the mandatory raw/rendered
+ *  toggle. `rendered` is the structural rendered diff; `raw` is the literal `.md` line diff. */
+export type PrCompareMode = "rendered" | "raw";
+
+/** Payload of `pr.compare.request` (webview→native, PoC-7 Part C): compare pull request `prNumber`'s version
+ *  of the open file against a chosen `base`, in the requested `mode`. The host resolves owner/repo and the
+ *  repository-relative path from its own current-document state, never this payload. */
+export interface PrCompareRequestPayload {
+  prNumber: number;
+  base: PrCompareBase;
+  mode: PrCompareMode;
+}
+
+/** Payload of `pr.compare.rendered` (native→webview, correlated to `pr.compare.request` by id): the rendered
+ *  comparison. `html` is the pre-rendered comparison (the PR head version with the differences from the chosen
+ *  base marked, in the requested representation); `mode`/`base` echo the request so a stale reply can be dropped
+ *  and the active toggle reflected. `error` is a plain reason the comparison couldn't be produced — present
+ *  means `html` is empty. Read-only (v1): seeing overlapping work, never merging it. */
+export interface PrComparePayload {
+  html: string;
+  mode: PrCompareMode;
+  base: PrCompareBase;
   error?: string;
 }
 

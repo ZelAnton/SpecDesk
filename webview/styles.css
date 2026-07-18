@@ -5027,3 +5027,197 @@ button.context-panel:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
 }
+
+/* ---- In-flight PR awareness & comparison (PoC-7 Part C) ------------------------------------------------
+   The entry-point affordance and the comparison panel reuse the info tint of the other GitHub steps and the
+   shared add/del/mov/warn diff tokens, so every theme is covered and no one-off colours are introduced. */
+#pr-compare-affordance:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--info-border);
+  background: var(--info-bg);
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+#pr-compare-affordance-text {
+  flex: 1;
+  min-width: 0;
+}
+
+#pr-compare-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--info-border);
+  background: var(--info-bg);
+  font-size: 0.85rem;
+}
+
+#pr-compare-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+#pr-compare-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+#pr-compare-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 30vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.pr-compare-row {
+  margin: 0;
+}
+
+#pr-compare-panel .pr-compare-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+#pr-compare-panel .pr-compare-pick[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 0.18rem 0 0 var(--accent);
+}
+
+.pr-compare-row-title {
+  font-weight: 600;
+}
+
+.pr-compare-row-meta {
+  color: var(--text-muted);
+  font-size: 0.8em;
+}
+
+#pr-compare-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+#pr-compare-base,
+#pr-compare-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: auto;
+}
+
+#pr-compare-controls legend {
+  padding: 0;
+  margin-right: 0.4rem;
+  color: var(--text-muted);
+  font-size: 0.8em;
+}
+
+#pr-compare-controls button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#pr-compare-status {
+  color: var(--text-muted);
+}
+
+#pr-compare-view:not(:empty) {
+  max-height: 45vh;
+  padding: 0.5rem 0.75rem;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+/* Rendered comparison: the PR head document, with each changed/added/moved top-level block washed by its
+   kind's token (matching the "Show changes" overlay) and removed base blocks shown as struck markers. */
+#pr-compare-view [data-diff="added"] {
+  background: var(--add-bg);
+  box-shadow: inset 0.18rem 0 0 var(--add-border);
+}
+
+#pr-compare-view [data-diff="changed"] {
+  background: var(--warn-bg);
+  box-shadow: inset 0.18rem 0 0 var(--warn-dot);
+}
+
+#pr-compare-view [data-diff="moved"] {
+  background: var(--mov-bg);
+  box-shadow: inset 0.18rem 0 0 var(--mov-border);
+}
+
+#pr-compare-view .cmp-block.cmp-removed {
+  margin: 0.15rem 0;
+  padding: 0.1rem 0.6rem;
+  border-left: 0.18rem solid var(--del-border);
+  background: var(--del-bg);
+  color: var(--del-text);
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+#pr-compare-view .cmp-notice {
+  padding: 0.25rem 0.6rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Raw comparison: the literal source, one line per row, changed/added lines washed and removed base lines
+   shown struck. Monospace, wrapping so long lines stay readable in the bounded panel. */
+.pr-compare--raw {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pr-compare--raw .cmp-line {
+  display: block;
+  min-height: 1.2em;
+  padding: 0 0.4rem;
+}
+
+.pr-compare--raw .cmp-added {
+  background: var(--add-bg);
+  box-shadow: inset 0.18rem 0 0 var(--add-border);
+}
+
+.pr-compare--raw .cmp-changed {
+  background: var(--warn-bg);
+  box-shadow: inset 0.18rem 0 0 var(--warn-dot);
+}
+
+.pr-compare--raw .cmp-removed {
+  background: var(--del-bg);
+  color: var(--del-text);
+  box-shadow: inset 0.18rem 0 0 var(--del-border);
+  text-decoration: line-through;
+}

@@ -28,6 +28,11 @@ public static class MessageKinds
 	public const string VersionNoteRequest = "version.note.request";
 	public const string PrSuggestedRequest = "pr.suggested.request";
 	public const string PrListRequest = "pr.list.request";
+	// PoC-7 Part C. `pr.forFile` is used in BOTH directions (request `{ path }` / reply `{ path, items }`),
+	// correlated by envelope id, so it is one wire kind; `pr.compare.request` (webview→native) pairs with the
+	// `pr.compare.rendered` reply below.
+	public const string PrForFile = "pr.forFile";
+	public const string PrCompareRequest = "pr.compare.request";
 	public const string PrDetailsRequest = "pr.details.request";
 	public const string PrReviewersRequest = "pr.reviewers.request";
 	public const string PrCommentCreate = "pr.comment.create";
@@ -95,6 +100,7 @@ public static class MessageKinds
 	public const string VersionNoteSuggested = "version.note.suggested";
 	public const string PrSuggested = "pr.suggested";
 	public const string PrList = "pr.list";
+	public const string PrCompareRendered = "pr.compare.rendered";
 	public const string PrDetails = "pr.details";
 	public const string PrMutationCompleted = "pr.mutationCompleted";
 	public const string ReviewCommentSync = "review.commentSync";
@@ -358,6 +364,62 @@ public sealed record PrListRequestPayload(string? Scope);
 /// first. <paramref name="Error"/> is a plain-language reason the list couldn't be loaded (not connected, a
 /// transport failure) — non-null means <paramref name="Items"/> is empty and the webview shows the reason.</summary>
 public sealed record PrListPayload(IReadOnlyList<PrListItemPayload> Items, string? Error);
+
+/// <summary>Payload of <c>pr.forFile</c> (webview→native, PoC-7 Part C): request the open pull requests
+/// touching a document. <paramref name="Path"/> is the webview's view of the current document path; the host
+/// resolves the authoritative repository-relative path from its own current-document state (K-010) and echoes
+/// the resolved path back in the reply, treating this only as a stale-view hint.</summary>
+public sealed record PrForFileRequestPayload(string Path);
+
+/// <summary>One open pull request touching the current file (native→webview, inside
+/// <see cref="PrForFilePayload"/>): its <paramref name="Number"/>, <paramref name="Title"/>, web
+/// <paramref name="Url"/>, and <paramref name="Repo"/> (<c>owner/name</c>). Reviewer-facing but
+/// git-vocabulary-free — the author picks one of these to compare against their working copy or <c>main</c>.</summary>
+public sealed record PrForFileItemPayload(int Number, string Title, string Url, string Repo);
+
+/// <summary>Payload of <c>pr.forFile</c> (native→webview, correlated to the request by id): the open pull
+/// requests whose changed-file set includes the open document. <paramref name="Path"/> is the
+/// repository-relative path the host resolved and matched on; <paramref name="Items"/> are the touching pull
+/// requests (empty when none); <paramref name="Error"/> is a plain reason the list couldn't be loaded (not
+/// connected, not a GitHub repo, a transport failure) — non-null means <paramref name="Items"/> is empty and
+/// the affordance stays hidden. A best-effort background awareness read, so a failure is never fatal.</summary>
+public sealed record PrForFilePayload(
+	string Path, IReadOnlyList<PrForFileItemPayload> Items, string? Error);
+
+/// <summary>Wire values for <see cref="PrCompareRequestPayload.Base"/> — the two comparison lenses of PoC-7
+/// Part C. <see cref="WorkingCopy"/> is the author's current local content including unsaved edits ("how does
+/// their proposal differ from what I'm looking at now?"); <see cref="Main"/> is the published baseline at the
+/// local <c>main</c> tip ("what does their PR change about the current published spec?").</summary>
+public static class PrCompareBases
+{
+	public const string WorkingCopy = "workingCopy";
+	public const string Main = "main";
+}
+
+/// <summary>Wire values for <see cref="PrCompareRequestPayload.Mode"/> — the two representations of the same
+/// comparison (the mandatory raw/rendered toggle). <see cref="Rendered"/> is the structural rendered diff (the
+/// document as it reads, changed blocks highlighted); <see cref="Raw"/> is the literal <c>.md</c> line diff.</summary>
+public static class PrCompareModes
+{
+	public const string Rendered = "rendered";
+	public const string Raw = "raw";
+}
+
+/// <summary>Payload of <c>pr.compare.request</c> (webview→native, PoC-7 Part C): compare pull request
+/// <paramref name="PrNumber"/>'s version of the open file against a chosen base. <paramref name="Base"/> is one
+/// of <see cref="PrCompareBases"/>; <paramref name="Mode"/> is one of <see cref="PrCompareModes"/>. The host
+/// resolves owner/repo and the repository-relative path from its own current-document state (K-010), never from
+/// this payload; the PR head content is fetched read-only and compared through the existing structural diff.</summary>
+public sealed record PrCompareRequestPayload(int PrNumber, string Base, string Mode);
+
+/// <summary>Payload of <c>pr.compare.rendered</c> (native→webview, correlated to <c>pr.compare.request</c> by
+/// id): the rendered comparison. <paramref name="Html"/> is the pre-rendered comparison (the PR head version
+/// with the differences from the chosen base marked, in the requested representation); <paramref name="Mode"/>
+/// and <paramref name="Base"/> echo the request so the webview can drop a stale reply and reflect the active
+/// toggle. <paramref name="Error"/> is a plain reason the comparison couldn't be produced (not connected, the
+/// file isn't at the PR head, a transport failure) — non-null means <paramref name="Html"/> is empty. Read-only
+/// (v1 boundary): seeing overlapping work, never merging it.</summary>
+public sealed record PrComparePayload(string Html, string Mode, string Base, string? Error);
 
 /// <summary>Identifies one GitHub pull request for an in-app details request.</summary>
 public sealed record PrDetailsRequestPayload(string Repo, int Number);

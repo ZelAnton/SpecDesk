@@ -36,9 +36,12 @@ import {
   type LineSpan,
   type PrCommentPayload,
   type PrCommitPayload,
+  type PrComparePayload,
   type PrDetailsPayload,
   type PreferencesPayload,
   type PreviewPayload,
+  type PrForFileItemPayload,
+  type PrForFilePayload,
   type PrListItemPayload,
   type PrListPayload,
   type PrMutationCompletedPayload,
@@ -644,6 +647,59 @@ export function parsePrList(value: unknown): PrListPayload | null {
   // `error` is optional (exactOptionalPropertyTypes forbids an explicit undefined), so add it only when it's
   // a real (non-null) string.
   return isString(value.error) ? { items, error: value.error } : { items };
+}
+
+function parsePrForFileItem(value: unknown): PrForFileItemPayload | null {
+  if (
+    !isRecord(value) ||
+    !isNumber(value.number) ||
+    !isString(value.title) ||
+    !isString(value.url) ||
+    !isString(value.repo)
+  ) {
+    return null;
+  }
+  return { number: value.number, title: value.title, url: value.url, repo: value.repo };
+}
+
+/** Decode a `pr.forFile` reply (PoC-7 Part C): the open PRs touching the current file. One malformed row is
+ *  skipped rather than failing the whole list (mirrors {@link parsePrList}); `error` is optional. */
+export function parsePrForFile(value: unknown): PrForFilePayload | null {
+  if (!isRecord(value) || !isString(value.path) || !Array.isArray(value.items)) {
+    return null;
+  }
+  if (value.error !== undefined && value.error !== null && !isString(value.error)) {
+    return null;
+  }
+  const items: PrForFileItemPayload[] = [];
+  for (const raw of value.items) {
+    const item = parsePrForFileItem(raw);
+    if (item !== null) {
+      items.push(item);
+    }
+  }
+  return isString(value.error)
+    ? { path: value.path, items, error: value.error }
+    : { path: value.path, items };
+}
+
+/** Decode a `pr.compare.rendered` reply (PoC-7 Part C): the pre-rendered comparison plus the echoed
+ *  `mode`/`base` (so a stale reply is dropped and the toggle reflected). `error` is optional. */
+export function parsePrCompare(value: unknown): PrComparePayload | null {
+  if (
+    !isRecord(value) ||
+    !isString(value.html) ||
+    (value.mode !== "rendered" && value.mode !== "raw") ||
+    (value.base !== "workingCopy" && value.base !== "main")
+  ) {
+    return null;
+  }
+  if (value.error !== undefined && value.error !== null && !isString(value.error)) {
+    return null;
+  }
+  return isString(value.error)
+    ? { html: value.html, mode: value.mode, base: value.base, error: value.error }
+    : { html: value.html, mode: value.mode, base: value.base };
 }
 
 function parsePrParticipant(value: unknown): PrParticipantPayload | null {

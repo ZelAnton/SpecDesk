@@ -14,6 +14,7 @@ import { isSplit, isViewMode, paneVisibility, type ViewMode } from "./chrome/vie
 import { MarkdownEditor } from "./editors/editor.js";
 import { FormattedEditor } from "./editors/formatted.js";
 import { SelectionCommentSession, selectionDocumentKey } from "./editors/selection-comments.js";
+import { PrCompare } from "./review/pr-compare.js";
 import { Preview } from "./review/preview.js";
 import { ReviewController } from "./review/review.js";
 import { ReviewsPanel } from "./review/reviews-panel.js";
@@ -42,9 +43,11 @@ import {
   parseGitHubCode,
   parseGitHubRepositories,
   parseImageInserted,
+  parsePrCompare,
   parsePrDetails,
   parsePreferencesState,
   parsePreview,
+  parsePrForFile,
   parsePrList,
   parsePrMutationCompleted,
   parsePrSuggested,
@@ -393,6 +396,24 @@ function wire(): void {
   const reviewsCloseBtn = document.querySelector<HTMLButtonElement>("#reviews-close");
   const reviewsUrlInput = document.querySelector<HTMLInputElement>("#reviews-url-input");
   const reviewsUrlOpenBtn = document.querySelector<HTMLButtonElement>("#reviews-url-open");
+  // PoC-7 Part C: the in-flight PR comparison surface.
+  const prCompareAffordance = document.querySelector<HTMLElement>("#pr-compare-affordance");
+  const prCompareAffordanceText = document.querySelector<HTMLElement>(
+    "#pr-compare-affordance-text",
+  );
+  const prCompareOpenBtn = document.querySelector<HTMLButtonElement>("#pr-compare-open");
+  const prComparePanelEl = document.querySelector<HTMLElement>("#pr-compare-panel");
+  const prCompareListEl = document.querySelector<HTMLElement>("#pr-compare-list");
+  const prCompareControlsEl = document.querySelector<HTMLElement>("#pr-compare-controls");
+  const prCompareStatusEl = document.querySelector<HTMLElement>("#pr-compare-status");
+  const prCompareViewEl = document.querySelector<HTMLElement>("#pr-compare-view");
+  const prCompareCloseBtn = document.querySelector<HTMLButtonElement>("#pr-compare-close");
+  const prCompareBaseButtons = [
+    ...document.querySelectorAll<HTMLButtonElement>("#pr-compare-controls [data-base]"),
+  ];
+  const prCompareModeButtons = [
+    ...document.querySelectorAll<HTMLButtonElement>("#pr-compare-controls [data-mode]"),
+  ];
 
   if (!editorEl || !previewEl || !formattedEl) {
     return;
@@ -648,6 +669,44 @@ function wire(): void {
       return fallback;
     }
   }
+
+  // PoC-7 Part C: the open reviews touching the current file, and a read-only comparison of a chosen one
+  // against the working copy / main. Best-effort — the host replies with an empty list (affordance hidden)
+  // when the document isn't in a connected GitHub repository, so it is safe to refresh on every document open.
+  // Declared before the doc.loaded handler that drives its refresh/clear.
+  const prCompare = new PrCompare({
+    affordance: prCompareAffordance,
+    affordanceText: prCompareAffordanceText,
+    openBtn: prCompareOpenBtn,
+    panel: prComparePanelEl,
+    list: prCompareListEl,
+    controls: prCompareControlsEl,
+    status: prCompareStatusEl,
+    view: prCompareViewEl,
+    closeBtn: prCompareCloseBtn,
+    baseButtons: prCompareBaseButtons,
+    modeButtons: prCompareModeButtons,
+    requestForFile: (path) =>
+      requestSuggestion(
+        Kinds.prForFile,
+        parsePrForFile,
+        { path, items: [], error: "Couldn't check for other reviews of this file." },
+        { path },
+      ),
+    requestCompare: (request) =>
+      requestSuggestion(
+        Kinds.prCompareRequest,
+        parsePrCompare,
+        {
+          html: "",
+          mode: request.mode,
+          base: request.base,
+          error: "Couldn't load that comparison. Check your connection and try again.",
+        },
+        request,
+      ),
+    onOpenLink: (url) => ipc.send(Kinds.linkOpen, { url }),
+  });
 
   // Review-status refresh cadence. While a document is under review the status is polled — a reviewer can
   // act while the SpecDesk window stays focused, so a focus event alone would miss it — and also refreshed
@@ -1221,6 +1280,13 @@ function wire(): void {
         // Drop any review overlay BEFORE re-hydrating: the marks belong to the old document, and the
         // setText calls below would otherwise re-apply them (clamped) against the new one for a frame.
         review.clear();
+        // PoC-7 Part C: refresh the open reviews touching the now-current file (or hide the surface when the
+        // document was cleared). Best-effort and correlated — a slow/failed reply just leaves it hidden.
+        if (documentCleared) {
+          prCompare.clear();
+        } else {
+          void prCompare.refresh(payload.path);
+        }
         // The first load primes the hidden editor while Start remains the calm application landing page.
         // Every later load follows an explicit open/navigation action and returns the centre to the editor.
         const revealEditor = receivedInitialDocument && !documentCleared;
@@ -1648,6 +1714,7 @@ function wire(): void {
           githubAccountIdentity = nextBoundary;
           applySelectionCommentPrincipal(nextIdentity, payload.publicationId);
           reviewsPanel.clearAccountState();
+          prCompare.clear();
           activityStream.clear();
           fileTree?.clearAccountState();
           repositoriesPanel?.clearAccountState();

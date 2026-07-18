@@ -127,6 +127,43 @@
       <ul id="reviews-list" aria-live="polite"></ul>
       <span id="reviews-status" aria-live="polite"></span>
     </div>
+    <!-- In-flight PR awareness & comparison (PoC-7 Part C): the entry-point affordance is revealed when open
+         reviews touch the current file — the actionable form of the "someone else is editing this" warning. -->
+    <div id="pr-compare-affordance" role="status" hidden>
+      <span id="pr-compare-affordance-text"></span>
+      <button id="pr-compare-open" type="button">Compare</button>
+    </div>
+    <!-- The comparison panel: pick a review, then compare its version of the file against your working copy
+         or the published version, in the formatted or source representation (the mandatory toggle). -->
+    <div id="pr-compare-panel" hidden>
+      <div id="pr-compare-head">
+        <span id="pr-compare-title">Other reviews of this file</span>
+        <button id="pr-compare-close" type="button">Close</button>
+      </div>
+      <ul id="pr-compare-list" aria-live="polite"></ul>
+      <div id="pr-compare-controls" hidden>
+        <fieldset id="pr-compare-base">
+          <legend>Compare against</legend>
+          <button id="pr-compare-base-working" type="button" data-base="workingCopy" aria-pressed="true">
+            My working copy
+          </button>
+          <button id="pr-compare-base-main" type="button" data-base="main" aria-pressed="false">
+            Published version
+          </button>
+        </fieldset>
+        <fieldset id="pr-compare-mode">
+          <legend>View as</legend>
+          <button id="pr-compare-mode-rendered" type="button" data-mode="rendered" aria-pressed="true">
+            Formatted
+          </button>
+          <button id="pr-compare-mode-raw" type="button" data-mode="raw" aria-pressed="false">
+            Source
+          </button>
+        </fieldset>
+      </div>
+      <span id="pr-compare-status" aria-live="polite"></span>
+      <div id="pr-compare-view" class="sd-doc"></div>
+    </div>
     <!-- Shown only while "Show changes" is on and the working copy matches the last saved version, so
          the author isn't left wondering why nothing is highlighted. -->
     <div id="review-empty-bar" role="status" hidden>No changes since the last saved version.</div>

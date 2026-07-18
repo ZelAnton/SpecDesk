@@ -58,6 +58,13 @@ public interface IDocumentVersioning
     /// when the repository has no commits yet, or the file is not tracked at HEAD.</summary>
     string? ReadHeadContent(string repoRoot, string repoRelativePath);
 
+    /// <summary>Read a file's content as of the tip of local branch <paramref name="branch"/> — the
+    /// published baseline for a "compare against <c>main</c>" lens (PoC-7 Part C), independent of whatever
+    /// draft is currently checked out. <paramref name="repoRelativePath"/> is the file path relative to
+    /// <paramref name="repoRoot"/> (forward slashes). Returns <c>null</c> when the branch does not exist
+    /// locally, has no commits, or the file is not tracked at that tip.</summary>
+    string? ReadBranchContent(string repoRoot, string branch, string repoRelativePath);
+
     /// <summary>Return the commits that changed the selected document, newest first and bounded.</summary>
     IReadOnlyList<DocumentVersion> GetDocumentVersions(
         string repoRoot,

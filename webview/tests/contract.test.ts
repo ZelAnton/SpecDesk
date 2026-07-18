@@ -27,9 +27,11 @@ import {
   parseGitHubCode,
   parseGitHubRepositories,
   parseImageInserted,
+  parsePrCompare,
   parsePrDetails,
   parsePreferencesState,
   parsePreview,
+  parsePrForFile,
   parsePrList,
   parsePrMutationCompleted,
   parsePrSuggested,
@@ -162,6 +164,45 @@ describe("native→webview contract (decoders accept the C# host's wire shapes)"
       status: "changesRequested",
     });
     expect(payload?.items[1]).toMatchObject({ role: "reviewer", status: "inReview" });
+  });
+
+  it("pr.forFile (open reviews touching the current file; error absent)", () => {
+    const payload = parsePrForFile(fixture["pr.forFile"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.error).toBeUndefined();
+    expect(payload?.path).toBe("specs/billing.md");
+    expect(payload?.items).toHaveLength(1);
+    expect(payload?.items[0]).toMatchObject({ number: 51, repo: "octo/spec-repo" });
+    // A load failure carries a plain reason and an empty list.
+    expect(
+      parsePrForFile({ path: "specs/billing.md", items: [], error: "Couldn't check." }),
+    ).toEqual({
+      path: "specs/billing.md",
+      items: [],
+      error: "Couldn't check.",
+    });
+    // Contract drift: a missing path or non-array items is rejected.
+    expect(parsePrForFile({ items: [] })).toBeNull();
+    expect(parsePrForFile({ path: "specs/billing.md" })).toBeNull();
+  });
+
+  it("pr.compare.rendered (echoes mode/base; error absent)", () => {
+    const payload = parsePrCompare(fixture["pr.compare.rendered"]);
+    expect(payload).not.toBeNull();
+    expect(payload?.error).toBeUndefined();
+    expect(payload?.mode).toBe("rendered");
+    expect(payload?.base).toBe("workingCopy");
+    expect(payload?.html).toContain('data-diff="changed"');
+    // A failure carries a plain reason and empty html.
+    expect(parsePrCompare({ html: "", mode: "raw", base: "main", error: "boom" })).toEqual({
+      html: "",
+      mode: "raw",
+      base: "main",
+      error: "boom",
+    });
+    // Contract drift: an unknown mode or base is rejected.
+    expect(parsePrCompare({ html: "x", mode: "wide", base: "main" })).toBeNull();
+    expect(parsePrCompare({ html: "x", mode: "raw", base: "trunk" })).toBeNull();
   });
 
   it("pr.details and mutation acknowledgement", () => {

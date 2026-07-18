@@ -19,7 +19,7 @@
     "path": "C:\\specs\\billing-repo\\specs\\refund-policy.md"
   },
   "preview.html": {
-    "html": "<h1>Billing</h1>",
+    "html": "\u003Ch1\u003EBilling\u003C/h1\u003E",
     "lineMap": [
       {
         "lineStart": 0,
@@ -74,6 +74,22 @@
       }
     ]
   },
+  "pr.forFile": {
+    "path": "specs/billing.md",
+    "items": [
+      {
+        "number": 51,
+        "title": "Tighten the refund wording",
+        "url": "https://github.com/octo/spec-repo/pull/51",
+        "repo": "octo/spec-repo"
+      }
+    ]
+  },
+  "pr.compare.rendered": {
+    "html": "\u003Cdiv class=\u0022pr-compare pr-compare--rendered\u0022\u003E\u003Cp data-line-start=\u00220\u0022 data-diff=\u0022changed\u0022\u003EThe refund window is 30 days.\u003C/p\u003E\u003C/div\u003E",
+    "mode": "rendered",
+    "base": "workingCopy"
+  },
   "pr.details": {
     "number": 42,
     "repo": "octo/spec-repo",
@@ -101,8 +117,8 @@
         "author": "sam",
         "avatarUrl": "https://img/sam",
         "body": "Please clarify.",
-        "createdAt": "1970-01-01T00:00:00+00:00",
-        "updatedAt": "1970-01-01T00:00:00+00:00",
+        "createdAt": "1970-01-01T00:00:00\u002B00:00",
+        "updatedAt": "1970-01-01T00:00:00\u002B00:00",
         "viewerDidAuthor": false
       }
     ],
@@ -111,7 +127,7 @@
         "oid": "abcdef",
         "shortOid": "abcdef0",
         "title": "Clarify the window",
-        "when": "1970-01-01T00:00:00+00:00",
+        "when": "1970-01-01T00:00:00\u002B00:00",
         "checkState": "success"
       }
     ],
@@ -140,7 +156,7 @@
         "inReplyToId": 0,
         "author": "sam",
         "body": "Please clarify the window here.",
-        "when": "1970-01-01T00:00:00+00:00"
+        "when": "1970-01-01T00:00:00\u002B00:00"
       }
     ]
   },
@@ -278,7 +294,7 @@
         "id": "abc123",
         "note": "Clarify refunds",
         "author": "Alex",
-        "when": "1970-01-01T00:00:00+00:00"
+        "when": "1970-01-01T00:00:00\u002B00:00"
       }
     ],
     "historyState": "loaded",
@@ -290,7 +306,7 @@
         "label": "Document updated",
         "note": "Clarify refunds",
         "author": "Alex",
-        "when": "1970-01-01T00:00:00+00:00"
+        "when": "1970-01-01T00:00:00\u002B00:00"
       }
     ]
   },

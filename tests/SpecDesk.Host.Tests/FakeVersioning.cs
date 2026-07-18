@@ -124,6 +124,13 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     /// <summary>Canned "last committed version" returned by <see cref="ReadHeadContent"/>.</summary>
     public string? HeadContent { get; set; }
 
+    /// <summary>Canned "content at a named branch tip" returned by <see cref="ReadBranchContent"/> (PoC-7's
+    /// "compare against main" baseline). Keyed by branch name; an absent branch returns <c>null</c>.</summary>
+    public Dictionary<string, string?> BranchContent { get; } = [];
+
+    /// <summary>The last (branch, path) pair asked of <see cref="ReadBranchContent"/>, for assertions.</summary>
+    public (string Branch, string Path)? LastBranchContentQuery { get; private set; }
+
     /// <summary>When set, <see cref="BeginEdit"/> throws <see cref="DirtyWorkingTreeException"/> with this
     /// branch name — to exercise the "another document's autosaved draft would be wiped by a forced
     /// checkout" refusal path.</summary>
@@ -138,6 +145,12 @@ internal sealed class FakeVersioning : IDocumentVersioning, IGitPublishing
     }
 
     public string? ReadHeadContent(string repoRoot, string repoRelativePath) => HeadContent;
+
+    public string? ReadBranchContent(string repoRoot, string branch, string repoRelativePath)
+    {
+        LastBranchContentQuery = (branch, repoRelativePath);
+        return BranchContent.TryGetValue(branch, out string? content) ? content : null;
+    }
 
     public IReadOnlyList<DocumentVersion> DocumentVersions { get; set; } = [];
 
