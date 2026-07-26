@@ -33,7 +33,7 @@ jobs:
     steps:
       # Actions are pinned to a full commit SHA (supply-chain hardening); the trailing comment records
       # the human-readable version, matching ci.yml.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -65,7 +65,7 @@ jobs:
     name: e2e perf (Layer 1 large-document budgets)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # One Node (pinned by webview/.nvmrc) for both packages; cache the npm store keyed on BOTH
       # lockfiles since this job installs webview AND e2e dependencies.
