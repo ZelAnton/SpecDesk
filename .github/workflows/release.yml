@@ -31,7 +31,7 @@ jobs:
       # comment records the human-readable version, matching .github/workflows/ci.yml.
       # fetch-depth: 0 brings full history + tags so the git-cliff notes fallback can
       # diff the previous tag against this one.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -81,7 +81,7 @@ jobs:
       # Node is required: the publish rebuilds and content-verifies the webview bundle
       # from the committed lockfile (SkipWebview is forbidden on publish), so a shipped
       # exe can never carry a stale bundle.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: webview/.nvmrc
           cache: npm
@@ -109,7 +109,7 @@ jobs:
       # Uploaded even on failure so a red release run is diagnosable from the .trx.
       - name: Upload test results
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-test-results
           path: ./TestResults/*.trx
@@ -184,7 +184,7 @@ jobs:
       # tag; --output writes the notes file the release step consumes.
       - name: Generate release notes with git-cliff (fallback)
         if: ${{ steps.notes.outputs.found != 'true' }}
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         with:
           config: cliff.toml
           args: "--current --output release-notes.md"
