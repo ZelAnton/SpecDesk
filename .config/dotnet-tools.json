@@ -1,13 +1,13 @@
 {
-	"version": 1,
-	"isRoot": true,
-	"tools": {
-		"fantomas": {
-			"version": "7.0.5",
-			"commands": [
-				"fantomas"
-			],
-			"rollForward": false
-		}
-	}
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "fantomas": {
+      "version": "8.0.10",
+      "commands": [
+        "fantomas"
+      ],
+      "rollForward": false
+    }
+  }
 }
