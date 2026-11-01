@@ -1,13 +1,13 @@
-name: Layer 2 nightly (full-app e2e)
+name: Layer 2 weekly (full-app e2e)
 
-# Rung 5 (docs/testing.md) drives the REAL SpecDesk.Host.exe (Photino + WebView2) over CDP against a
-# disposable fixture repo; that needs a real window + WebView2 runtime, so it stays out of the
-# push/PR `ci.yml` pipeline and runs here instead: nightly on a schedule, plus on demand. See
-# docs/testing.md → "Layer 2 — full-app over CDP (rung 5)" for the first-run confirmation status.
+# Rung 5 drives SpecDesk.Host.exe over CDP against a disposable fixture repository.
+# It needs a real window and the WebView2 runtime.
+# The workflow runs weekly and on manual dispatch, outside the ordinary push and pull request checks.
+# See docs/testing.md for the confirmation status of hosted Windows runs.
 on:
   schedule:
-    # 03:17 UTC nightly — off the hour so it doesn't pile onto GitHub's on-the-hour scheduling spike.
-    - cron: '17 3 * * *'
+    # Saturday at 03:17 UTC avoids the start of the hour.
+    - cron: '17 3 * * 6'
   workflow_dispatch:
 
 concurrency:
@@ -72,9 +72,9 @@ jobs:
         env:
           E2E_SKIP_BUILD: '1'
 
-      # Artifacts (screenshots, geometry.json, trace-ring.json, app-log.txt) land under
-      # e2e/../artifacts/e2e (repo-root artifacts/e2e) on any failing scenario, plus a final.png on
-      # success — upload on every outcome so a red nightly run is diagnosable without re-running.
+      # Failure artifacts include screenshots, geometry.json, trace-ring.json, and app-log.txt under artifacts/e2e.
+      # Successful scenarios also produce final.png.
+      # Artifacts from successful and failed runs support diagnosis without another run.
       - name: Upload Layer 2 E2E artifacts
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

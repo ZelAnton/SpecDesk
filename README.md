@@ -61,6 +61,11 @@ webview/                   # TS  — CodeMirror editor, preview, IPC client (esb
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build/test/lint commands and contributor conventions.
 
+Full application checks run weekly on Saturday at 03:17 UTC.
+Performance checks run on Saturday at 04:17 UTC.
+Both workflows also support manual dispatch.
+See the [verification guide](docs/testing.md) for their coverage.
+
 ## Quick start
 
 ```sh
