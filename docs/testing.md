@@ -15,13 +15,13 @@ it has passed the rung that actually exercises what it changed — not merely th
 | 2 | **Contract fixtures** | part of the unit runs | The native↔webview wire contract can't drift silently (C#/F# ↔ TS pinned by JSON fixtures). | dev + CI |
 | 3 | **jsdom delivery gate** | `cd webview && npm run test:delivery` | The *shipped* `webview.js` bundle is present and wired — real modules, real `index.ts`, but **rigged (synthetic) layout**. | dev + CI |
 | 4 | **Layer 1 — Playwright + real Chromium** | `cd e2e && npm run e2e` | **Real rendered geometry** of the bundle against a mock host: the current no-spacer Split policy, selection overlays, list indentation, and scroll coupling — the things jsdom can't render. Screenshots. | dev + ubuntu CI |
-| 5 | **Layer 2 — full app over CDP** | `cd e2e && npm run e2e:app` | The **real `SpecDesk.Host.exe`** (Photino + WebView2) over a disposable git repo: native startup (ready → auto-load → lifecycle-from-git → render), and **native effects** (autosave-to-disk, git commit). | Windows-local + nightly CI |
+| 5 | **Layer 2 — full app over CDP** | `cd e2e && npm run e2e:app` | The **real `SpecDesk.Host.exe`** (Photino + WebView2) over a disposable git repo: native startup (ready → auto-load → lifecycle-from-git → render), and **native effects** (autosave-to-disk, git commit). | Windows-local + weekly CI |
 
-Rungs 1–4 run in CI on every push/PR. **Rung 5 is Windows-only**, run locally on demand and, since
-`.github/workflows/layer2-nightly.yml` (T-087), also **nightly + on demand in CI** on a `windows-latest`
-hosted runner — see "Layer 2 in CI" below. It does not run on every push/PR (a full native launch is too
-slow for that cadence); `ci.yml` still typechecks the `e2e/` package on every push/PR so the Layer 2 code
-itself can't rot between nightly runs.
+Rungs 1–4 run in CI on every push and pull request.
+Rung 5 requires Windows and supports local runs on demand.
+The workflow (`.github/workflows/layer2-nightly.yml`) runs weekly and on manual dispatch on `windows-latest`.
+The weekly schedule avoids a slow native launch on every change.
+Ordinary CI still checks the `e2e/` package types between weekly runs.
 
 ### When you must climb which rung
 
@@ -72,28 +72,26 @@ The guards (`MainWorktreeGuard`, `WebviewBundleGuard`) stay **armed** in Layer 2
 main working copy fails the launch loudly rather than being tested. Do not set the `SPECDESK_*_ALLOW_STALE`
 overrides for E2E.
 
-### Layer 2 in CI (T-087)
+### Layer 2 in CI
 
-`.github/workflows/layer2-nightly.yml` runs Layer 2 on a `windows-latest` hosted runner: nightly
-(`schedule`) and on demand (`workflow_dispatch`, e.g. from the Actions tab). It builds `SpecDesk.Host`
-once (`dotnet build src/SpecDesk.Host/SpecDesk.Host.csproj -c Debug`, webview bundled), then runs
-`npm run e2e:app` with `E2E_SKIP_BUILD=1` so the per-spec-file `buildHost()` calls don't rebuild the
-already-current host. Artifacts (screenshots, `geometry.json`, `trace-ring.json`, `app-log.txt`) are
-uploaded via `actions/upload-artifact` on every outcome, same as the local failure bundle below.
+`.github/workflows/layer2-nightly.yml` runs Layer 2 on `windows-latest` each Saturday at 03:17 UTC and on manual dispatch.
+It builds `SpecDesk.Host` once with `dotnet build src/SpecDesk.Host/SpecDesk.Host.csproj -c Debug`, including the webview bundle.
+It then runs `npm run e2e:app` with `E2E_SKIP_BUILD=1` to prevent repeated builds in each specification file.
+Unless canceled, the workflow uploads screenshots, `geometry.json`, `trace-ring.json`, and `app-log.txt` through `actions/upload-artifact`.
 
-GitHub's own hosted Windows runner images ship the Microsoft Edge WebView2 Runtime and run as a real,
-non-headless interactive session (unlike the Linux runners, which need a virtual display for GUI apps),
-so a Photino/WebView2 window is expected to come up there the same as on a Windows dev machine or a
-self-hosted runner. **This has not yet been confirmed by a live run**: the workflow can only be exercised
-by GitHub Actions itself once it exists on a ref GitHub knows about, which is outside what a coding agent
-without push access can trigger — so the first real signal is the first nightly run (or an immediate
-`workflow_dispatch` after merge). If that first run shows the hosted runner genuinely cannot create a
-Photino/WebView2 window (rather than a fixable test/harness bug — check `app-log.txt` and the Playwright
-output first), do not leave the job permanently red: disable the `schedule` trigger, record the concrete
-failure mode here, and stand up a **self-hosted Windows runner** instead (a Windows box — physical or a
-VM with GUI, e.g. a persistent Windows 11 VM or an existing dev machine — registered as a self-hosted
-runner is the natural fallback since it is just a real desktop session, which is exactly what Layer 2
-needs and what a hosted Linux-style headless runner can't offer).
+The performance workflow (`.github/workflows/perf.yml`) runs each Saturday at 04:17 UTC and on manual dispatch.
+It includes the BenchmarkDotNet micro-benchmarks and the Layer 1 performance budgets.
+These schedules reduce GitHub Actions usage while retaining all scenarios and manual runs.
+
+The hosted Windows image includes the WebView2 runtime and supports an interactive desktop session.
+A successful native window launch still needs confirmation from a live workflow run.
+The first weekly run or a manual dispatch can provide that evidence.
+
+Before you classify a launch failure, inspect `app-log.txt` and the Playwright output.
+If the hosted runner cannot create a Photino/WebView2 window, disable the scheduled trigger.
+Record the confirmed runner limitation here.
+Use a Windows machine with an interactive desktop as a self-hosted runner.
+This fallback applies to a confirmed runner limitation, not a repairable test or harness failure.
 
 ## Failure artifacts
 

@@ -1,5 +1,5 @@
-# Performance harness — an OPT-IN stage kept out of the ordinary CI gate (ci.yml) so a normal
-# pull-request / push run is never slowed by it. It runs on a nightly schedule and on manual dispatch:
+# The performance harness runs weekly and on manual dispatch.
+# It stays outside ordinary push and pull request checks to keep them fast.
 #
 #   * bench      — the BenchmarkDotNet micro-benchmarks (Markdown reparse + AST diff on large synthetic
 #                  documents). Informational: it records result reports as artifacts so a regression is
@@ -16,8 +16,8 @@ name: Perf
 on:
   workflow_dispatch:
   schedule:
-    # Nightly at 04:00 UTC — off the normal working-hours CI load.
-    - cron: '0 4 * * *'
+    # Saturday at 04:17 UTC separates this start from the full-app tests.
+    - cron: '17 4 * * 6'
 
 concurrency:
   group: perf-${{ github.ref }}
@@ -46,13 +46,11 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('Directory.Packages.props', 'nuget.config', 'global.json') }}
           restore-keys: ${{ runner.os }}-nuget-
 
-      # --job short keeps each benchmark to a bounded iteration count so the nightly stays within a
-      # sensible budget while still producing stable-enough numbers to spot a real regression.
+      # --job short limits benchmark iterations while preserving useful regression measurements.
       - name: Run benchmarks
         run: dotnet run -c Release --project bench/SpecDesk.Bench -- --filter '*' --job short
 
-      # BenchmarkDotNet writes its markdown/CSV reports here; upload them even on failure so a nightly is
-      # diagnosable from the numbers without re-running.
+      # Reports from failed runs support diagnosis without another benchmark run.
       - name: Upload benchmark results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

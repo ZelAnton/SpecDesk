@@ -29,10 +29,10 @@ import type { Page } from "@playwright/test";
  *    blowup trips them — not slow hardware.
  *  - The growth guard is 3x for a 2x size step: linear scaling is ~2x and quadratic is ~4x, so 3x sits
  *    between them, failing on quadratic while tolerating measurement noise and fixed per-frame floors.
- *  - This is a NIGHTLY / on-demand stage, not the normal CI gate (see .github/workflows/perf.yml and the
- *    `*.perf.e2e.ts` exclusion in playwright.config.ts), so it never slows an ordinary run. Per KB K-003,
- *    a single red nightly on a Layer 1 job should be cross-checked against the base-commit run before it
- *    is treated as a real regression rather than known environment flakiness.
+ *  - This stage runs weekly and on demand through .github/workflows/perf.yml.
+ *    The *.perf.e2e.ts exclusion in playwright.config.ts keeps it outside the ordinary gate.
+ *    Before you classify a failure as a regression, compare it with a run on the base commit.
+ *    This comparison separates a regression from an existing environment failure.
  */
 
 // The scaling pair: SMALL and its 2x. Both are far larger (dozens of sections) than the ~60-line geometry
